@@ -237,7 +237,7 @@ module "kubernetes_cluster" {
   hackmd_db_password    = var.hackmd_db_password
 
   # using the following hack to dynamically update dns from outside
-  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, "85.130.108.6", "85.130.108.66")
+  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, "85.130.108.66", "85.130.108.66")
   bind_db_viktorbarzin_lan = var.bind_db_viktorbarzin_lan
   bind_named_conf_options  = var.bind_named_conf_options
 
