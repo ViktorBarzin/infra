@@ -1,0 +1,4 @@
+# Steps to migrate 1 .tfstate into another
+
+# Inside the dir to be migrated out from do:
+for s in $(tf state list); do tf state mv -state-out=../../terraform.tfstate $s "module.UPPER_WORKSPACE_MODULE_NAME.$s"; done
