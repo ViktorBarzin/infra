@@ -3,6 +3,12 @@ variable "tls_crt" {}
 variable "tls_key" {}
 variable "client_certificate_secret_name" {}
 
+resource "random_password" "csrf_token" {
+  length           = 16
+  special          = true
+  override_special = "_%@"
+}
+
 module "dashboard" {
   #   source = "cookielab/dashboard/kubernetes"
   # source  = "ViktorBarzin/dashboard/kubernetes"
@@ -10,7 +16,7 @@ module "dashboard" {
   # TODO: update this once merged
   source = "/opt/terraform-kubernetes-dashboard"
   # insert the 1 required variable here
-  kubernetes_dashboard_csrf = "kekerino"
+  kubernetes_dashboard_csrf = random_password.csrf_token.result
   kubernetes_dashboard_deployment_args = list(
     "--auto-generate-certificates",
     "--token-ttl=0"
