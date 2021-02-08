@@ -161,4 +161,6 @@ module "kubernetes_cluster" {
   bind_named_conf_options  = var.bind_named_conf_options
 
   alertmanager_account_password = var.alertmanager_account_password
+
+  depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
 }

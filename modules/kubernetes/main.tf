@@ -15,11 +15,18 @@ variable "bind_db_viktorbarzin_lan" {}
 variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
 
+resource "null_resource" "core_services" {
+  # List all the core modules that must be provisioned first
+  depends_on = [module.metallb, module.bind, module.dnscrypt, module.pihole]
+}
+
 module "blog" {
   source          = "./blog"
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
+
+  depends_on = [null_resource.core_services]
 }
 
 module "bind" {
@@ -38,6 +45,8 @@ module "f1-stream" {
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
+
+  depends_on = [null_resource.core_services]
 }
 
 module "hackmd" {
@@ -46,6 +55,8 @@ module "hackmd" {
   tls_secret_name    = var.tls_secret_name
   tls_crt            = var.tls_crt
   tls_key            = var.tls_key
+
+  depends_on = [null_resource.core_services]
 }
 
 # TODO
@@ -58,10 +69,9 @@ module "kms" {
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
-}
 
-# TODO
-# module "kube-system"{}
+  depends_on = [null_resource.core_services]
+}
 
 module "k8s-dashboard" {
   source                         = "./k8s-dashboard"
@@ -69,12 +79,16 @@ module "k8s-dashboard" {
   tls_crt                        = var.tls_crt
   tls_key                        = var.tls_key
   client_certificate_secret_name = var.client_certificate_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "mailserver" {
   source                  = "./mailserver"
   mailserver_accounts     = var.mailserver_accounts
   postfix_account_aliases = var.mailserver_aliases
+
+  depends_on = [null_resource.core_services]
 }
 
 module "metallb" {
@@ -87,6 +101,8 @@ module monitoring {
   tls_crt                       = var.tls_crt
   tls_key                       = var.tls_key
   alertmanager_account_password = var.alertmanager_account_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module openid_help_page {
@@ -94,6 +110,8 @@ module openid_help_page {
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
+
+  depends_on = [null_resource.core_services]
 }
 
 module pihole {
@@ -112,6 +130,8 @@ module privatebin {
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
+
+  depends_on = [null_resource.core_services]
 }
 
 module webhook_handler {
@@ -120,6 +140,8 @@ module webhook_handler {
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
   webhook_secret  = var.webhook_handler_secret
+
+  depends_on = [null_resource.core_services]
 }
 
 module wireguard {
