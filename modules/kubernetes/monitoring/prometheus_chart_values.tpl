@@ -134,6 +134,33 @@ serverFiles:
             severity: page
           annotations:
             summary: Power voltage on a power supply is critically low indicating power outage.
+      - name: HighPowerUsage
+        rules:
+        - alert: HighPowerUsage
+          expr: (max(r730_idrac_amperageProbeReading) or on() vector(0)) > 112
+          for: 30m
+          labels:
+            severity: page
+          annotations:
+            summary: High Power usage. Baseline is 112W
+      - name: NoNodeLoadData
+        rules:
+        - alert: NoNodeLoadData
+          expr: (node_load1 OR on() vector(0)) == 0
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: No node load data. Can signal that prometheus is not scraping
+      - name: NoiDRACData
+        rules:
+        - alert: NoiDRACData
+          expr: (max(r730_idrac_amperageProbeReading) or on() vector(0)) == 0
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
@@ -155,7 +182,7 @@ extraScrapeConfigs: |
         target_label: '__name__'
         action: replace
         regex: '(.*)'
-        replacement: 'r730_idrac_${1}'
+        replacement: 'r730_idrac_$${1}'
   - job_name: 'openwrt'
     static_configs:
         - targets:
@@ -173,4 +200,4 @@ extraScrapeConfigs: |
         target_label: '__name__'
         action: replace
         regex: '(.*)'
-        replacement: 'openwrt_${1}'
+        replacement: 'openwrt_$${1}'
