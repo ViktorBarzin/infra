@@ -348,3 +348,21 @@ resource "kubernetes_service" "drone_runner_secret" {
   }
 }
 
+# SQL to delete last N builds (n = 1000)
+# PRAGMA foreign_keys = ON;
+
+# WITH n_build_ids_per_repo as (
+#   SELECT build_id
+#   FROM (
+#     SELECT
+#       build_id,
+#       build_repo_id,
+#       DENSE_RANK() OVER (PARTITION BY build_repo_id ORDER BY build_id DESC) AS rank
+#     FROM builds
+#   ) AS t
+#   WHERE t.rank <= 1000
+# )
+# DELETE FROM
+#   builds 
+# WHERE 
+#   builds.build_id NOT IN (SELECT build_id FROM n_build_ids_per_repo);
