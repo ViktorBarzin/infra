@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "tls_crt" {}
 variable "tls_key" {}
+# variable "dockerhub_password" {}
 
 resource "kubernetes_namespace" "website" {
   metadata {
@@ -15,6 +16,12 @@ module "tls_secret" {
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
 }
+
+# module "dockerhub_creds" {
+#   source    = "../dockerhub_secret"
+#   namespace = "website"
+#   password  = var.dockerhub_password
+# }
 
 resource "kubernetes_deployment" "blog" {
   metadata {

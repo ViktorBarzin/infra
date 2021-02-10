@@ -14,6 +14,10 @@ variable "bind_db_viktorbarzin_me" {}
 variable "bind_db_viktorbarzin_lan" {}
 variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
+variable "drone_github_client_id" {}
+variable "drone_github_client_secret" {}
+variable "drone_rpc_secret" {}
+# variable "dockerhub_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -25,6 +29,7 @@ module "blog" {
   tls_secret_name = var.tls_secret_name
   tls_crt         = var.tls_crt
   tls_key         = var.tls_key
+  # dockerhub_password = var.dockerhub_password
 
   depends_on = [null_resource.core_services]
 }
@@ -38,6 +43,22 @@ module "bind" {
 
 module "dnscrypt" {
   source = "./dnscrypt"
+}
+
+# CI/CD
+module "drone" {
+  source          = "./drone"
+  tls_secret_name = var.tls_secret_name
+  tls_crt         = var.tls_crt
+  tls_key         = var.tls_key
+
+  github_client_id     = var.drone_github_client_id
+  github_client_secret = var.drone_github_client_secret
+  rpc_secret           = var.drone_rpc_secret
+  server_host          = "drone.viktorbarzin.me"
+  server_proto         = "https"
+
+  depends_on = [null_resource.core_services]
 }
 
 module "f1-stream" {
