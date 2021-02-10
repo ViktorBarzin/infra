@@ -17,6 +17,10 @@ variable "bind_db_viktorbarzin_lan" {}
 variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
 variable "wireguard_wg_0_key" {}
+variable "drone_github_client_id" {}
+variable "drone_github_client_secret" {}
+variable "drone_rpc_secret" {}
+# variable "dockerhub_password" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -143,9 +147,10 @@ module "k8s_node5" {
 module "kubernetes_cluster" {
   source = "./modules/kubernetes"
 
-  tls_secret_name                = var.tls_secret_name
-  tls_crt                        = var.tls_crt
-  tls_key                        = var.tls_key
+  tls_secret_name = var.tls_secret_name
+  tls_crt         = var.tls_crt
+  tls_key         = var.tls_key
+  # dockerhub_password             = var.dockerhub_password
   client_certificate_secret_name = var.client_certificate_secret_name
   mailserver_accounts            = var.mailserver_accounts
   mailserver_aliases             = var.mailserver_aliases
@@ -162,5 +167,10 @@ module "kubernetes_cluster" {
 
   alertmanager_account_password = var.alertmanager_account_password
 
-  depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
+  # Drone
+  drone_github_client_id     = var.drone_github_client_id
+  drone_github_client_secret = var.drone_github_client_secret
+  drone_rpc_secret           = var.drone_rpc_secret
+
+  # depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
 }
