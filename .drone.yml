@@ -1,0 +1,43 @@
+kind: pipeline
+type: kubernetes
+name: default
+
+steps:
+  - name: test
+    image: alpine
+    # environment:
+      # kek:
+      #   from_secret: tfstate
+    commands:
+      - "apk update && apk add jq curl perl"
+      # - "sleep 900"
+      - |
+        curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/tfstate -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.tfstate | base64 -d | gzip -d > /terraform.tfstate
+      - |
+        curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/tfvars -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.tfvars | base64 -d | gzip -d > /terraform.tfvars
+      - "cp /terraform.tfstate . && cp /terraform.tfvars ."
+      # - "cat /terraform.tfvars | head"
+      # - "env | grep kek"
+      # - 'echo $kek > /terraform.tfstate'
+      # - "sleep 300"
+    # volumes:
+    #   - name: tfstate
+    #     path: /terraform.tfstate
+  - name: Terraform apply
+    image: hashicorp/terraform:latest
+    commands:
+      - "terraform init && terraform plan"
+    # plan: true
+    # root_dir: "/data/src"
+    # var_files:
+    #   - "/terraform.tfvars"
+    # remote:
+    #   backend: 
+    
+
+# ---
+# kind: secret
+# name: tfstate
+# get:
+#   path: tfstate-default-state
+#   name: tfstate

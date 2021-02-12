@@ -10,12 +10,9 @@ resource "random_password" "csrf_token" {
 }
 
 module "dashboard" {
-  #   source = "cookielab/dashboard/kubernetes"
-  # source  = "ViktorBarzin/dashboard/kubernetes"
-  # version = "0.13.0"
-  # TODO: update this once merged
-  source = "/opt/terraform-kubernetes-dashboard"
-  # insert the 1 required variable here
+  # source = "cookielab/dashboard/kubernetes"
+  source                    = "ViktorBarzin/dashboard/kubernetes"
+  version                   = "0.13.1"
   kubernetes_dashboard_csrf = random_password.csrf_token.result
   kubernetes_dashboard_deployment_args = list(
     "--auto-generate-certificates",
