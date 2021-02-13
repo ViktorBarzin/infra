@@ -28,6 +28,28 @@ module "tls_secret" {
   tls_key         = var.tls_key
 }
 
+resource "kubernetes_config_map" "tfvars" {
+  metadata {
+    name      = "tfvars"
+    namespace = "drone"
+  }
+
+  data = {
+    "tfvars" = base64gzip(file("${path.root}/terraform.tfvars"))
+  }
+}
+
+resource "kubernetes_config_map" "tfstate" {
+  metadata {
+    name      = "tfstate"
+    namespace = "drone"
+  }
+
+  data = {
+    "tfstate" = base64gzip(file("${path.root}/terraform.tfstate"))
+  }
+}
+
 resource "kubernetes_deployment" "drone_server" {
   metadata {
     name      = "drone-server"
@@ -141,6 +163,8 @@ resource "kubernetes_ingress" "drone" {
     namespace = "drone"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
+      //"nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      //"nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }
   }
 
@@ -171,6 +195,11 @@ resource "kubernetes_cluster_role" "drone" {
   }
   rule {
     api_groups = [""]
+    resources  = ["configmaps"]
+    verbs      = ["get", "list", "update", "patch"]
+  }
+  rule {
+    api_groups = [""]
     resources  = ["secrets"]
     verbs      = ["get", "list", "create", "delete"]
   }
@@ -196,8 +225,9 @@ resource "kubernetes_cluster_role_binding" "drone" {
     namespace = "drone"
   }
   role_ref {
-    kind      = "ClusterRole"
-    name      = "drone"
+    kind = "ClusterRole"
+    # name      = "drone"
+    name      = "cluster-admin"
     api_group = "rbac.authorization.k8s.io"
   }
 }
@@ -240,6 +270,15 @@ resource "kubernetes_deployment" "drone_runner" {
               memory = "1Gi"
             }
           }
+          volume_mount {
+            mount_path = "/terraform.tfvars"
+            name       = "tfvars"
+            sub_path   = "tfvars"
+          }
+          # volume_mount {
+          #   mount_path = "/data/"
+          #   name       = "data"
+          # }
           env {
             name  = "DRONE_RPC_HOST"
             value = var.rpc_host
@@ -274,6 +313,22 @@ resource "kubernetes_deployment" "drone_runner" {
             value = "true"
           }
         }
+        volume {
+          name = "tfvars"
+          config_map {
+            name = "tfvars"
+          }
+        }
+        # volume {
+        #   name = "data"
+        #   iscsi {
+        #     target_portal = "iscsi.viktorbarzin.lan:3260"
+        #     fs_type       = "ext4"
+        #     iqn           = "iqn.2020-12.lan.viktorbarzin:storage:drone:tfstate"
+        #     lun           = 0
+        #     read_only     = false
+        #   }
+        # }
       }
     }
   }
@@ -320,6 +375,11 @@ resource "kubernetes_deployment" "drone_runner_secret" {
           env {
             name  = "KUBERNETES_NAMESPACE"
             value = "drone"
+          }
+          // Custom variable to start terraform as prod
+          env {
+            name  = "TF_VAR_prod"
+            value = true
           }
         }
       }
