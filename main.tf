@@ -1,3 +1,7 @@
+variable "prod" {
+  type    = bool
+  default = false
+}
 variable "vsphere_password" {}
 variable "vsphere_user" {}
 variable "vsphere_server" {}
@@ -26,13 +30,26 @@ variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
   description = "Provisioner command"
 }
+
+data "terraform_remote_state" "foo" {
+  backend = "kubernetes"
+  config = {
+    secret_suffix     = "state"
+    namespace         = "drone"
+    in_cluster_config = var.prod
+    host              = "https://kubernetes:6443"
+    //  load_config_file  = true
+  }
+
+  depends_on = [module.kubernetes_cluster]
+}
 provider "kubernetes" {
-  config_path = "~/.kube/config"
+  # config_path = "~/.kube/config"
 }
 
 provider "helm" {
   kubernetes {
-    config_path = "~/.kube/config"
+    # config_path = "~/.kube/config"
   }
 }
 

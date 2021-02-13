@@ -3,14 +3,13 @@ type: kubernetes
 name: default
 
 steps:
-  - name: test
+  - name: Get terraform files
     image: alpine
     # environment:
       # kek:
       #   from_secret: tfstate
     commands:
-      - "apk update && apk add jq curl perl"
-      # - "sleep 900"
+      - "apk update && apk add jq curl"
       - |
         curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/tfstate -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.tfstate | base64 -d | gzip -d > /terraform.tfstate
       - |
@@ -26,7 +25,14 @@ steps:
   - name: Terraform apply
     image: hashicorp/terraform:latest
     commands:
-      - "terraform init && terraform plan"
+      - "terraform init"
+      - "terraform plan -target=module.kubernetes_cluster"
+
+  - name: Update configmap
+    image: alpine
+    commands:
+      - "apk update && apk add curl"
+      - "head terraform.tfstate"
     # plan: true
     # root_dir: "/data/src"
     # var_files:
