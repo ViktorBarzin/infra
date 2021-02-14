@@ -3,7 +3,7 @@ type: kubernetes
 name: default
 
 steps:
-  - name: PRepare terraform files
+  - name: Prepare terraform files
     image: alpine
     commands:
       - "apk update && apk add jq curl git git-crypt"
@@ -16,29 +16,15 @@ steps:
       TF_VAR_prod: "true"
     commands:
       - "terraform init"
-      - "terraform plan -target=module.kubernetes_cluster"
+      - "terraform apply -target=module.kubernetes_cluster -auto-approve"
 
-  # - name: Update configmap
-  #   image: alpine
-  #   commands:
-  #     - "apk update && apk add curl"
-  #     - "head terraform.tfstate"
-    # plan: true
-    # root_dir: "/data/src"
-    # var_files:
-    #   - "/terraform.tfvars"
-    # remote:
-    #   backend: 
-    
-
-# ---
-# kind: secret
-# name: tfstate
-# get:
-#   path: tfstate-default-state
-#   name: tfstate
-
-# ---
-# kind: secret
-# name: tfstate
-# data: zQSRlrUlUyY/lJL4AADpjTt+CfLmybuZqI4uHbPKv8kn2Aq4jomsNmseYgvrxbOF
+  - name: Push commit
+    image: alpine
+    commands:
+      - "apk update && apk add openssh-client git git-crypt"
+      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - 'chmod 400 secrets/deploy_key'
+      - "git add ."
+      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
+      - "git commit -m 'Drone CI deploy commit' || echo 'No changes'"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
