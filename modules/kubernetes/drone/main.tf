@@ -292,22 +292,6 @@ resource "kubernetes_deployment" "drone_runner" {
             value = "true"
           }
         }
-        # volume {
-        #   name = "tfvars"
-        #   config_map {
-        #     name = "tfvars"
-        #   }
-        # }
-        # volume {
-        #   name = "data"
-        #   iscsi {
-        #     target_portal = "iscsi.viktorbarzin.lan:3260"
-        #     fs_type       = "ext4"
-        #     iqn           = "iqn.2020-12.lan.viktorbarzin:storage:drone:tfstate"
-        #     lun           = 0
-        #     read_only     = false
-        #   }
-        # }
       }
     }
   }
