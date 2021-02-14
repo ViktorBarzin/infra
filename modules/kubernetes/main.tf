@@ -155,6 +155,13 @@ module privatebin {
   depends_on = [null_resource.core_services]
 }
 
+module vault {
+  source          = "./vault"
+  tls_secret_name = var.tls_secret_name
+  tls_crt         = var.tls_crt
+  tls_key         = var.tls_key
+}
+
 module webhook_handler {
   source          = "./webhook_handler"
   tls_secret_name = var.tls_secret_name

@@ -28,25 +28,14 @@ module "tls_secret" {
   tls_key         = var.tls_key
 }
 
-resource "kubernetes_config_map" "tfvars" {
+resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
-    name      = "tfvars"
+    name      = "git-crypt-key"
     namespace = "drone"
   }
 
   data = {
-    "tfvars" = base64gzip(file("${path.root}/terraform.tfvars"))
-  }
-}
-
-resource "kubernetes_config_map" "tfstate" {
-  metadata {
-    name      = "tfstate"
-    namespace = "drone"
-  }
-
-  data = {
-    "tfstate" = base64gzip(file("${path.root}/terraform.tfstate"))
+    "key" = filebase64("${path.root}/.git/git-crypt/keys/default")
   }
 }
 
@@ -270,15 +259,6 @@ resource "kubernetes_deployment" "drone_runner" {
               memory = "1Gi"
             }
           }
-          volume_mount {
-            mount_path = "/terraform.tfvars"
-            name       = "tfvars"
-            sub_path   = "tfvars"
-          }
-          # volume_mount {
-          #   mount_path = "/data/"
-          #   name       = "data"
-          # }
           env {
             name  = "DRONE_RPC_HOST"
             value = var.rpc_host
@@ -300,8 +280,7 @@ resource "kubernetes_deployment" "drone_runner" {
             value = var.rpc_secret
           }
           env {
-            name = "DRONE_SECRET_PLUGIN_ENDPOINT"
-            # value = "http://localhost:3000"
+            name  = "DRONE_SECRET_PLUGIN_ENDPOINT"
             value = "http://drone-runner-secret.drone.svc.cluster.local:3000"
           }
           env {
@@ -313,12 +292,12 @@ resource "kubernetes_deployment" "drone_runner" {
             value = "true"
           }
         }
-        volume {
-          name = "tfvars"
-          config_map {
-            name = "tfvars"
-          }
-        }
+        # volume {
+        #   name = "tfvars"
+        #   config_map {
+        #     name = "tfvars"
+        #   }
+        # }
         # volume {
         #   name = "data"
         #   iscsi {

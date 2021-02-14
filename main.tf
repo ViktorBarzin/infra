@@ -44,12 +44,12 @@ data "terraform_remote_state" "foo" {
   depends_on = [module.kubernetes_cluster]
 }
 provider "kubernetes" {
-  # config_path = "~/.kube/config"
+  config_path = var.prod ? "" : "~/.kube/config"
 }
 
 provider "helm" {
   kubernetes {
-    # config_path = "~/.kube/config"
+    config_path = var.prod ? "" : "~/.kube/config"
   }
 }
 
