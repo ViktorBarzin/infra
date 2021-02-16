@@ -34,22 +34,22 @@ send -- "\r"
 # Do the same for the 2nd dns record
 expect -re "Before continuing, verify" { 
     set challenge [ exec sh -c "echo '$expect_out(buffer)' | tail -n 3 | head -n 1" ]
-    set dns_record "_acme-challenge IN TXT \"$challenge\""
-    puts $dns_record
+    set dns_record1 "_acme-challenge IN TXT \"$challenge\""
+    puts $dns_record1
     puts $dns_file
 
     # Check if dns record is not already present
     try {
-        set results [exec grep -q $dns_record $dns_file]
+        set results [exec grep -q $dns_record1 $dns_file]
         set status 0
     } trap CHILDSTATUS {results options} {
         set status [lindex [dict get $options -errorcode] 2]
     }
     if {$status != 0} {
-        exec echo $dns_record | tee -a $dns_file
+        exec echo $dns_record1 | tee -a $dns_file
         puts "Teed into file"
     } else {
-        puts "DNS record '$dns_record' already in file"
+        puts "DNS record '$dns_record1' already in file"
     } 
 }
 
@@ -68,6 +68,7 @@ send -- "\r"
 
 # Clean up
 exec sed -i "s/$dns_record//g" "$dns_file"
+exec sed -i "s/$dns_record1//g" "$dns_file"
 
 # Success
 expect ".*Congratulations!"
