@@ -28,3 +28,42 @@ steps:
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
       - "git commit -m 'Drone CI deploy commit' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+
+---
+kind: pipeline
+type: kubernetes
+name: renew-tls-certificate
+trigger:
+  event:
+  - cron
+  cron:
+  - nightly
+
+steps:
+  - name: Prepare terraform files
+    image: alpine
+    commands:
+      - "apk update && apk add jq curl git git-crypt"
+      - |
+        curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
+      - "git-crypt unlock /tmp/key"
+  - name: Run renew script
+    image: alpine
+    environment:
+      TF_VAR_prod: "true"
+    commands:
+      - "apk update && apk add git certbot expect curl gzip"
+      # Install terraform cli
+      - "curl https://releases.hashicorp.com/terraform/0.14.6/terraform_0.14.6_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
+      - "terraform init"
+      - "./modules/kubernetes/setup_tls_secret/renew.sh"
+  - name: Commit updated certificates
+    image: alpine
+    commands:
+      - "apk update && apk add openssh-client git git-crypt"
+      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - 'chmod 400 secrets/deploy_key'
+      - "git add ."
+      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
+      - "git commit -m 'Drone CI Update TLS Certificates Commit' || echo 'No changes'"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"

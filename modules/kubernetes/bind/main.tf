@@ -16,7 +16,7 @@ resource "kubernetes_config_map" "bind_configmap" {
 
   data = {
     "db.viktorbarzin.lan"       = var.db_viktorbarzin_lan
-    "db.viktorbarzin.me"        = var.db_viktorbarzin_me
+    "db.viktorbarzin.me"        = format("%s%s", var.db_viktorbarzin_me, file("${path.module}/extra/viktorbarzin.me"))
     "named.conf"                = var.named_conf
     "named.conf.local"          = var.named_conf_local
     "named.conf.options"        = var.named_conf_options
