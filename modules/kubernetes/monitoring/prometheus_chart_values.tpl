@@ -102,8 +102,7 @@ serverFiles:
         rules:
         - alert: NodeHighCPUUsage
           expr: node_load1 > 2
-          # for: 10m
-          for: 1m # DEBUG
+          for: 10m
           labels:
             severity: page
           annotations:
