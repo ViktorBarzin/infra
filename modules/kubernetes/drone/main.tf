@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "github_client_id" {}
 variable "github_client_secret" {}
 variable "rpc_secret" {}
@@ -24,8 +22,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "drone"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "kubernetes_config_map" "git_crypt_key" {

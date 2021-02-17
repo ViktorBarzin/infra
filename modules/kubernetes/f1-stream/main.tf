@@ -1,6 +1,4 @@
-variable tls_secret_name {}
-variable "tls_crt" {}
-variable "tls_key" {}
+variable "tls_secret_name" {}
 
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
@@ -76,8 +74,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "f1-stream"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 
