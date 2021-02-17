@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "client_certificate_secret_name" {}
 variable "hackmd_db_password" {}
 variable "mailserver_accounts" {}
@@ -49,8 +47,6 @@ module "dnscrypt" {
 module "drone" {
   source          = "./drone"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   github_client_id     = var.drone_github_client_id
   github_client_secret = var.drone_github_client_secret
@@ -64,8 +60,6 @@ module "drone" {
 module "f1-stream" {
   source          = "./f1-stream"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   depends_on = [null_resource.core_services]
 }
@@ -74,8 +68,6 @@ module "hackmd" {
   source             = "./hackmd"
   hackmd_db_password = var.hackmd_db_password
   tls_secret_name    = var.tls_secret_name
-  tls_crt            = var.tls_crt
-  tls_key            = var.tls_key
 
   depends_on = [null_resource.core_services]
 }
@@ -88,8 +80,6 @@ module "hackmd" {
 module "kms" {
   source          = "./kms"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   depends_on = [null_resource.core_services]
 }
@@ -97,8 +87,6 @@ module "kms" {
 module "k8s-dashboard" {
   source                         = "./k8s-dashboard"
   tls_secret_name                = var.tls_secret_name
-  tls_crt                        = var.tls_crt
-  tls_key                        = var.tls_key
   client_certificate_secret_name = var.client_certificate_secret_name
 
   depends_on = [null_resource.core_services]
@@ -116,67 +104,53 @@ module "metallb" {
   source = "./metallb"
 }
 
-module monitoring {
+module "monitoring" {
   source                        = "./monitoring"
   tls_secret_name               = var.tls_secret_name
-  tls_crt                       = var.tls_crt
-  tls_key                       = var.tls_key
   alertmanager_account_password = var.alertmanager_account_password
 
   depends_on = [null_resource.core_services]
 }
 
-module openid_help_page {
+module "openid_help_page" {
   source          = "./openid_help_page"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   depends_on = [null_resource.core_services]
 }
 
-module pihole {
+module "pihole" {
   source       = "./pihole"
   web_password = var.pihole_web_password
 
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   depends_on = [module.bind] # DNS goes like pihole -> bind -> dnscrypt
 }
 
-module privatebin {
+module "privatebin" {
   source          = "./privatebin"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 
   depends_on = [null_resource.core_services]
 }
 
-module vault {
+module "vault" {
   source          = "./vault"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
-module webhook_handler {
+module "webhook_handler" {
   source          = "./webhook_handler"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
   webhook_secret  = var.webhook_handler_secret
 
   depends_on = [null_resource.core_services]
 }
 
-module wireguard {
+module "wireguard" {
   source          = "./wireguard"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
   firewall_sh     = var.wireguard_firewall_sh

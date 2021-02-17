@@ -1,9 +1,13 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "wg_0_conf" {}
 variable "firewall_sh" {}
 variable "wg_0_key" {}
+
+module "tls_secret" {
+  source          = "../setup_tls_secret"
+  namespace       = "wireguard"
+  tls_secret_name = var.tls_secret_name
+}
 
 resource "kubernetes_namespace" "wireguard" {
   metadata {

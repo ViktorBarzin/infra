@@ -1,14 +1,10 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "alertmanager_account_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "monitoring"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "helm_release" "prometheus" {

@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "client_certificate_secret_name" {}
 
 resource "random_password" "csrf_token" {
@@ -24,8 +22,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "kubernetes-dashboard"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 # # locals {

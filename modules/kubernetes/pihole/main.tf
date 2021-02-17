@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "web_password" {}
 
 resource "kubernetes_namespace" "pihole" {
@@ -13,8 +11,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "pihole"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 

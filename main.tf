@@ -165,8 +165,6 @@ module "kubernetes_cluster" {
   source = "./modules/kubernetes"
 
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
   # dockerhub_password             = var.dockerhub_password
   client_certificate_secret_name = var.client_certificate_secret_name
   mailserver_accounts            = var.mailserver_accounts

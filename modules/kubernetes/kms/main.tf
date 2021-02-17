@@ -1,7 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
-
 
 resource "kubernetes_namespace" "kms" {
   metadata {
@@ -13,8 +10,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "kms"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "kubernetes_config_map" "kms-web-page" {

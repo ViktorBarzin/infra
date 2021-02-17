@@ -1,7 +1,5 @@
 
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "webhook_secret" {}
 
 resource "kubernetes_namespace" "webhook-handler" {
@@ -14,8 +12,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "webhook-handler"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "kubernetes_cluster_role" "deployment_updater" {

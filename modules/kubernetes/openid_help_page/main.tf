@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 
 resource "kubernetes_namespace" "openid_help_page" {
   metadata {
@@ -12,8 +10,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "openid-help-page"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "kubernetes_deployment" "openid_help_page" {

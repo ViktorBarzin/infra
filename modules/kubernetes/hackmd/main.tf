@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 variable "hackmd_db_password" {}
 
 resource "kubernetes_namespace" "hackmd" {
@@ -13,8 +11,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "hackmd"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
 }
 
 resource "kubernetes_deployment" "hackmd" {
