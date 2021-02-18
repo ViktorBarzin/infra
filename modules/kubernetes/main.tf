@@ -3,6 +3,7 @@ variable "client_certificate_secret_name" {}
 variable "hackmd_db_password" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
+variable "mailserver_opendkim_key" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
 variable "wireguard_wg_0_conf" {}
@@ -25,8 +26,6 @@ resource "null_resource" "core_services" {
 module "blog" {
   source          = "./blog"
   tls_secret_name = var.tls_secret_name
-  tls_crt         = var.tls_crt
-  tls_key         = var.tls_key
   # dockerhub_password = var.dockerhub_password
 
   depends_on = [null_resource.core_services]
@@ -94,8 +93,10 @@ module "k8s-dashboard" {
 
 module "mailserver" {
   source                  = "./mailserver"
+  tls_secret_name         = var.tls_secret_name
   mailserver_accounts     = var.mailserver_accounts
   postfix_account_aliases = var.mailserver_aliases
+  opendkim_key            = var.mailserver_opendkim_key
 
   depends_on = [null_resource.core_services]
 }
