@@ -1,6 +1,4 @@
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
 # variable "dockerhub_password" {}
 
 resource "kubernetes_namespace" "website" {
