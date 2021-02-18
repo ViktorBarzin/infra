@@ -142,3 +142,63 @@ resource "helm_release" "grafana" {
 
   values = [file("${path.module}/grafana_chart_values.yaml")]
 }
+
+resource "kubernetes_ingress" "status" {
+  metadata {
+    name      = "hetrix-redirect-ingress"
+    namespace = "monitoring"
+    annotations = {
+      "kubernetes.io/ingress.class"                    = "nginx"
+      "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["status.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "status.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "not-used" # redirected by annotation
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_ingress" "status_yotovski" {
+  metadata {
+    name      = "hetrix-yotovski-redirect-ingress"
+    namespace = "monitoring"
+    annotations = {
+      "kubernetes.io/ingress.class"                    = "nginx"
+      "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/2ba9d7a5e017794db0fd91f0115a8b3b/"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["yotovski-status.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "yotovski-status.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "not-used" # redirected by annotation
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+}

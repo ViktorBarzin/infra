@@ -20,8 +20,8 @@ inet_interfaces = all
 inet_protocols = ipv4
 
 # TLS parameters
-smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
-smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_cert_file=/tmp/ssl/tls.crt
+smtpd_tls_key_file=/tmp/ssl/tls.key
 #smtpd_tls_CAfile=
 #smtp_tls_CAfile=
 smtpd_tls_security_level = may

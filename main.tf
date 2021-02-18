@@ -11,6 +11,7 @@ variable "tls_key" {}
 variable "client_certificate_secret_name" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
+variable "mailserver_opendkim_key" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
 variable "wireguard_wg_0_conf" {}
@@ -169,6 +170,7 @@ module "kubernetes_cluster" {
   client_certificate_secret_name = var.client_certificate_secret_name
   mailserver_accounts            = var.mailserver_accounts
   mailserver_aliases             = var.mailserver_aliases
+  mailserver_opendkim_key        = var.mailserver_opendkim_key
   pihole_web_password            = var.pihole_web_password
   webhook_handler_secret         = var.webhook_handler_secret
   wireguard_wg_0_conf            = var.wireguard_wg_0_conf
