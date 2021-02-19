@@ -97,7 +97,7 @@ serverFiles:
           labels:
             severity: page
           annotations:
-            summary: Node down.
+            summary: Node {{$labels.instance}} down.
       - name: NodeHighCPUUsage
         rules:
         - alert: NodeHighCPUUsage
@@ -106,7 +106,7 @@ serverFiles:
           labels:
             severity: page
           annotations:
-            summary: High CPU usage on node.
+            summary: "High CPU usage on node. Node load: {{ $value }}"
       # - name: PodStuckNotReady
       #   rules:
       #   - alert: PodStuckNotReady
@@ -141,7 +141,7 @@ serverFiles:
           labels:
             severity: page
           annotations:
-            summary: High Power usage. Baseline is 112W
+            summary: "High Power usage. Baseline is 112W. Current reading: {{$value}}"
       - name: NoNodeLoadData
         rules:
         - alert: NoNodeLoadData
