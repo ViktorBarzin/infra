@@ -33,11 +33,11 @@ steps:
 kind: pipeline
 type: kubernetes
 name: renew-tls-certificate
-trigger:
-  event:
-  - cron
-  cron:
-  - nightly
+# trigger:
+#   event:
+#   - cron
+#   cron:
+#   - nightly
 
 steps:
   - name: Prepare terraform files
