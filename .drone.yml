@@ -26,7 +26,7 @@ steps:
       - 'chmod 400 secrets/deploy_key'
       - "git add ."
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
-      - "git commit -m 'Drone CI deploy commit' || echo 'No changes'"
+      - "git commit -m 'Drone CI deploy commit [CI SKIP]' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
 
 ---
