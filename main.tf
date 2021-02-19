@@ -6,8 +6,12 @@ variable "vsphere_password" {}
 variable "vsphere_user" {}
 variable "vsphere_server" {}
 variable "tls_secret_name" {}
-variable "tls_crt" {}
-variable "tls_key" {}
+variable "tls_crt" {
+  default = ""
+}
+variable "tls_key" {
+  default = ""
+}
 variable "client_certificate_secret_name" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
