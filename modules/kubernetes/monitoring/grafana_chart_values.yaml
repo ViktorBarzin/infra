@@ -48,6 +48,8 @@ grafana.ini:
     logs: "/var/log/grafana"
     plugins: "/var/lib/grafana/plugins"
     provisioning: "/etc/grafana/provisioning"
+  security:
+    allow_embedding: true  # Allow to be iframed
 dashboards:
   default:
     node_exporter:

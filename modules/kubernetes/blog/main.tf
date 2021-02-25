@@ -129,5 +129,17 @@ resource "kubernetes_ingress" "blog" {
         }
       }
     }
+    rule {
+      host = "www.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "blog"
+            service_port = "80"
+          }
+        }
+      }
+    }
   }
 }
