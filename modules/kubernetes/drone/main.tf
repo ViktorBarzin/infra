@@ -63,16 +63,16 @@ resource "kubernetes_deployment" "drone_server" {
         container {
           image = "drone/drone:1"
           name  = "drone-server"
-          resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "500m"
-              memory = "1Gi"
-            }
-          }
+          # resources {
+          #   limits = {
+          #     cpu    = "1"
+          #     memory = "1Gi"
+          #   }
+          #   requests = {
+          #     cpu    = "500m"
+          #     memory = "1Gi"
+          #   }
+          # }
           port {
             container_port = 80
           }
