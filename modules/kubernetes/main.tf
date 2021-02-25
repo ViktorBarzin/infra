@@ -136,10 +136,10 @@ module "privatebin" {
   depends_on = [null_resource.core_services]
 }
 
-module "vault" {
-  source          = "./vault"
-  tls_secret_name = var.tls_secret_name
-}
+# module "vault" {
+#   source          = "./vault"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "webhook_handler" {
   source          = "./webhook_handler"
