@@ -198,3 +198,55 @@ resource "kubernetes_service" "wireguard_exporter" {
     }
   }
 }
+resource "kubernetes_service" "webui" {
+  metadata {
+    name      = "webui"
+    namespace = "wireguard"
+
+    labels = {
+      app = "webui"
+    }
+  }
+  spec {
+    type = "ClusterIP"
+    port {
+      name        = "http"
+      protocol    = "TCP"
+      port        = 80
+      target_port = "8080"
+    }
+    selector = {
+      app = "webui"
+    }
+  }
+}
+
+
+resource "kubernetes_ingress" "webui" {
+  metadata {
+    name      = "webui-ingress"
+    namespace = "wireguard"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["wg.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "wg.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "webui"
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+}
