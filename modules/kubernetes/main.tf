@@ -17,6 +17,9 @@ variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
+variable "oauth_client_id" {}
+variable "oauth_client_secret" {}
+variable "webhook_handler_fb_verify_token" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -113,6 +116,15 @@ module "monitoring" {
   depends_on = [null_resource.core_services]
 }
 
+module "oauth" {
+  source          = "./oauth-proxy"
+  tls_secret_name = var.tls_secret_name
+  client_id       = var.oauth_client_id
+  client_secret   = var.oauth_client_secret
+
+  depends_on = [null_resource.core_services]
+}
+
 module "openid_help_page" {
   source          = "./openid_help_page"
   tls_secret_name = var.tls_secret_name
@@ -145,6 +157,7 @@ module "webhook_handler" {
   source          = "./webhook_handler"
   tls_secret_name = var.tls_secret_name
   webhook_secret  = var.webhook_handler_secret
+  fb_verify_token = var.webhook_handler_fb_verify_token
 
   depends_on = [null_resource.core_services]
 }
