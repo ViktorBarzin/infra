@@ -30,6 +30,9 @@ variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
+variable "oauth_client_id" {}
+variable "oauth_client_secret" {}
+variable "webhook_handler_fb_verify_token" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -176,11 +179,14 @@ module "kubernetes_cluster" {
   mailserver_aliases             = var.mailserver_aliases
   mailserver_opendkim_key        = var.mailserver_opendkim_key
   pihole_web_password            = var.pihole_web_password
-  webhook_handler_secret         = var.webhook_handler_secret
-  wireguard_wg_0_conf            = var.wireguard_wg_0_conf
-  wireguard_wg_0_key             = var.wireguard_wg_0_key
-  wireguard_firewall_sh          = var.wireguard_firewall_sh
-  hackmd_db_password             = var.hackmd_db_password
+
+  webhook_handler_secret          = var.webhook_handler_secret
+  webhook_handler_fb_verify_token = var.webhook_handler_fb_verify_token
+
+  wireguard_wg_0_conf   = var.wireguard_wg_0_conf
+  wireguard_wg_0_key    = var.wireguard_wg_0_key
+  wireguard_firewall_sh = var.wireguard_firewall_sh
+  hackmd_db_password    = var.hackmd_db_password
 
   bind_db_viktorbarzin_me  = var.bind_db_viktorbarzin_me
   bind_db_viktorbarzin_lan = var.bind_db_viktorbarzin_lan
@@ -193,5 +199,8 @@ module "kubernetes_cluster" {
   drone_github_client_secret = var.drone_github_client_secret
   drone_rpc_secret           = var.drone_rpc_secret
 
+  # Oauth proxy
+  oauth_client_id     = var.oauth_client_id
+  oauth_client_secret = var.oauth_client_secret
   # depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
 }
