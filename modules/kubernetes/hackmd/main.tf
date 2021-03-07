@@ -99,6 +99,9 @@ resource "kubernetes_deployment" "hackmd" {
             protocol       = "TCP"
           }
         }
+        security_context {
+          fs_group = "1500"
+        }
         volume {
           name = "data"
           iscsi {
