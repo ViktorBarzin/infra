@@ -160,6 +160,15 @@ serverFiles:
             severity: page
           annotations:
             summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
+      - name: OpenWRT High Memory Usage
+        rules:
+        - alert: OpenWRT High Memory Usage
+          expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: OpenWRT high memory usage. Can cause services getting stuck.
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'

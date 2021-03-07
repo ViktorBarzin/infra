@@ -96,6 +96,10 @@ resource "kubernetes_deployment" "webhook_handler" {
             name  = "FB_PAGE_TOKEN"
             value = var.fb_page_token
           }
+          env {
+            name  = "CONFIG"
+            value = "./chatbot/config/viktorwebservices.yaml"
+          }
         }
       }
     }
