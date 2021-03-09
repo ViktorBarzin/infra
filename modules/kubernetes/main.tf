@@ -21,6 +21,7 @@ variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
+variable "webhook_handler_fb_app_secret" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -160,6 +161,7 @@ module "webhook_handler" {
   webhook_secret  = var.webhook_handler_secret
   fb_verify_token = var.webhook_handler_fb_verify_token
   fb_page_token   = var.webhook_handler_fb_page_token
+  fb_app_secret   = var.webhook_handler_fb_app_secret
 
   depends_on = [null_resource.core_services]
 }

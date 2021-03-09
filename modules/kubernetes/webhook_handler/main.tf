@@ -3,6 +3,7 @@ variable "tls_secret_name" {}
 variable "webhook_secret" {}
 variable "fb_verify_token" {}
 variable "fb_page_token" {}
+variable "fb_app_secret" {}
 
 resource "kubernetes_namespace" "webhook-handler" {
   metadata {
@@ -87,6 +88,10 @@ resource "kubernetes_deployment" "webhook_handler" {
           env {
             name  = "WEBHOOKSECRET"
             value = var.webhook_secret
+          }
+          env {
+            name  = "FB_APP_SECRET"
+            value = var.fb_app_secret
           }
           env {
             name  = "FB_VERIFY_TOKEN"
