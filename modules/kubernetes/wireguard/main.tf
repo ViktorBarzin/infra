@@ -26,7 +26,7 @@ resource "kubernetes_config_map" "wg_0_conf" {
 
   data = {
     "setup-firewall.sh" = var.firewall_sh
-    "wg0.conf"          = var.wg_0_conf
+    "wg0.conf"          = format("%s%s", var.wg_0_conf, file("${path.module}/extra/clients.conf"))
   }
 }
 
