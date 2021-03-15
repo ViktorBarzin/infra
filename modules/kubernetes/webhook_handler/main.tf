@@ -4,6 +4,8 @@ variable "webhook_secret" {}
 variable "fb_verify_token" {}
 variable "fb_page_token" {}
 variable "fb_app_secret" {}
+variable "git_user" {}
+variable "git_token" {}
 
 resource "kubernetes_namespace" "webhook-handler" {
   metadata {
@@ -104,6 +106,14 @@ resource "kubernetes_deployment" "webhook_handler" {
           env {
             name  = "CONFIG"
             value = "./chatbot/config/viktorwebservices.yaml"
+          }
+          env {
+            name  = "GIT_USER"
+            value = var.git_user
+          }
+          env {
+            name  = "GIT_TOKEN"
+            value = var.git_token
           }
         }
       }
