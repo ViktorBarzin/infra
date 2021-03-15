@@ -35,6 +35,8 @@ variable "oauth_client_secret" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
+variable "webhook_handler_git_user" {}
+variable "webhook_handler_git_token" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -187,6 +189,8 @@ module "kubernetes_cluster" {
   webhook_handler_fb_verify_token = var.webhook_handler_fb_verify_token
   webhook_handler_fb_page_token   = var.webhook_handler_fb_page_token
   webhook_handler_fb_app_secret   = var.webhook_handler_fb_app_secret
+  webhook_handler_git_user        = var.webhook_handler_git_user
+  webhook_handler_git_token       = var.webhook_handler_git_token
 
   wireguard_wg_0_conf   = var.wireguard_wg_0_conf
   wireguard_wg_0_key    = var.wireguard_wg_0_key
