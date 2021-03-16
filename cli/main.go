@@ -87,9 +87,5 @@ func run() error {
 	if err = gitFs.Push(); err != nil {
 		return errors.Wrapf(err, "failed to push changes")
 	}
-
-	// err = gitRepo()
-	// glog.Infof(err.Error())
-
 	return nil
 }
