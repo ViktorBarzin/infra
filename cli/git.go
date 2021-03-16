@@ -23,7 +23,7 @@ var (
 
 type GitFS struct {
 	repo *git.Repository
-	fs   billy.Filesystem
+	fs   *billy.Filesystem
 	auth *http.BasicAuth
 }
 
@@ -34,17 +34,19 @@ func NewGitFS(repoURL string) (*GitFS, error) {
 		Password: gitToken,
 	}
 	storer := memory.NewStorage()
+	fs := memfs.New()
 
-	r, err := git.Clone(storer, g.fs, &git.CloneOptions{
+	r, err := git.Clone(storer, fs, &git.CloneOptions{
 		URL:  repository,
 		Auth: auth,
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to clone repo from repo url '%s'", repoURL)
 	}
-	return &GitFS{repo: r, fs: memfs.New(), auth: auth}, nil
+	return &GitFS{repo: r, fs: &fs, auth: auth}, nil
 }
 
 func (g *GitFS) Push() error {
+	glog.Infof("Attemping to push with auth: %+v", g.auth)
 	return g.repo.Push(&git.PushOptions{Auth: g.auth})
 }
