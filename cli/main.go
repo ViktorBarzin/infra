@@ -75,7 +75,7 @@ func run() error {
 			return errors.Wrapf(err, "failed to add vpn client")
 		}
 		// commit changes
-		if _, err = worktree.Commit("Added new VPN client config (still testing) [CI SKIP]", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
+		if _, err = worktree.Commit("Added new VPN client config", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
 			return errors.Wrapf(err, "failed to commit")
 		}
 	default:
