@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
 )
@@ -74,7 +75,7 @@ func run() error {
 			return errors.Wrapf(err, "failed to add vpn client")
 		}
 		// commit changes
-		if _, err = worktree.Commit("Added new VPN client config (still testing) [CI SKIP]", &git.CommitOptions{All: true}); err != nil {
+		if _, err = worktree.Commit("Added new VPN client config (still testing) [CI SKIP]", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
 			return errors.Wrapf(err, "failed to commit")
 		}
 	default:
