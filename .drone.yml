@@ -32,6 +32,28 @@ steps:
 ---
 kind: pipeline
 type: kubernetes
+name: build-cli
+
+steps:
+- name: Build image  
+  image: plugins/docker
+  settings:
+    username: "viktorbarzin"
+    password: 
+      from_secret: dockerhub_password
+    repo: viktorbarzin/infra
+    dockerfile: cli/Dockerfile
+    context: cli
+    auto_tag: true
+
+---
+kind: secret
+name: dockerhub_password
+data: 9Gn6YOfsRTMHP3oxQ06d6JsRaZSbUyEYZ256Iiem2ROPy8THs2gsDyL5cgC5gsOt
+
+---
+kind: pipeline
+type: kubernetes
 name: renew-tls-certificate
 trigger:
   event:

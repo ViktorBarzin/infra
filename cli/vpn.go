@@ -15,8 +15,8 @@ const (
 	vpnUseCaseFlagName         = "vpn"
 	vpnClientNameFlagName      = "vpn-client-name"
 	vpnClientPubKeyFlagName    = "vpn-pub-key"
-	vpnClientsConfFileRelative = "modules/kubernetes/wireguard/extra/clients.conf"
-	vpnLastIPConfFileRelative  = "modules/kubernetes/wireguard/extra/last_ip.txt"
+	vpnClientsConfFileRelative = "/modules/kubernetes/wireguard/extra/clients.conf"
+	vpnLastIPConfFileRelative  = "/modules/kubernetes/wireguard/extra/last_ip.txt"
 )
 
 // addVPNClient inserts new client config
@@ -29,7 +29,7 @@ func addVPNClient(gitFs *GitFS, clientName, publicKey, clientsConfPath, ip strin
 	}
 	contents := "[Peer]\n# friendly_name = " + clientName + "\nPublicKey = " + publicKey + "\nAllowedIPs = " + ip + "\n\n"
 	glog.Infof("adding the following config: \n%s", contents)
-	f, err := gitFs.fs.OpenFile(clientsConfPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := (*gitFs.fs).OpenFile(clientsConfPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return errors.Wrapf(err, "failed to open client configs file to add new vpn client")
 	}
@@ -63,7 +63,8 @@ func incrementIP(origIP, cidr string) (string, error) {
 
 // getAndUpdateIP Reads `fileName`, tries to get the ip, increments it, tries to write it back and returns the new address
 func getAndUpdateIP(gitFs *GitFS, fileName string) (string, error) {
-	bytes, err := ioutil.ReadFile(fileName)
+	f, err := (*gitFs.fs).Open(fileName)
+	bytes, err := ioutil.ReadAll(f)
 	if err != nil {
 		return "", errors.Wrapf(err, "filed to read file %s", fileName)
 	}
@@ -87,7 +88,7 @@ func getAndUpdateIP(gitFs *GitFS, fileName string) (string, error) {
 
 	// Write back updated ip
 	fileContents := fmt.Sprintf("# DO NOT MANUALLY EDIT THIS LINE. Last IP: %s", incrementedIP+"/"+cidr)
-	f, err := gitFs.fs.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0644)
+	f, err = (*gitFs.fs).OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to open file %s for writing", fileName)
 	}
