@@ -22,6 +22,9 @@ resource "kubernetes_config_map" "wg_0_conf" {
     labels = {
       app = "wireguard"
     }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
 
   data = {
@@ -34,6 +37,10 @@ resource "kubernetes_secret" "wg_0_key" {
   metadata {
     name      = "wg0-key"
     namespace = "wireguard"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
   data = {
     "wg0.key" = var.wg_0_key
@@ -48,6 +55,9 @@ resource "kubernetes_deployment" "wireguard" {
     namespace = "wireguard"
     labels = {
       app = "wireguard"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
