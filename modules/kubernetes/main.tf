@@ -157,6 +157,10 @@ module "privatebin" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
+module "reloader" {
+  source = "./reloader"
+}
+
 module "webhook_handler" {
   source          = "./webhook_handler"
   tls_secret_name = var.tls_secret_name
