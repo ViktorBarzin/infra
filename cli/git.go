@@ -47,6 +47,5 @@ func NewGitFS(repoURL string) (*GitFS, error) {
 }
 
 func (g *GitFS) Push() error {
-	glog.Infof("Attemping to push with auth: %+v", g.auth)
 	return g.repo.Push(&git.PushOptions{Auth: g.auth})
 }

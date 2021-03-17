@@ -39,7 +39,7 @@ func addVPNClient(gitFs *GitFS, clientName, publicKey, clientsConfPath, ip strin
 		return errors.Wrapf(err, "failed to write config to file")
 	}
 
-	glog.Infof("successfully added new vpn client config for %s", clientName)
+	glog.Infof("successfully added new vpn client config for %s with interface ip %s", clientName, ip)
 	return nil
 }
 
