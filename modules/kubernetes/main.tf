@@ -83,6 +83,11 @@ module "hackmd" {
 #   source = "./ingress-nginx"
 # }
 
+module "kafka" {
+  source          = "./kafka"
+  tls_secret_name = var.tls_secret_name
+}
+
 module "kms" {
   source          = "./kms"
   tls_secret_name = var.tls_secret_name
