@@ -22,7 +22,7 @@ const (
 
 var (
 	allowedClientName = regexp.MustCompile(`^[a-zA-Z0-9 ]+$`)
-	allowedPubKey     = regexp.MustCompile(`^[a-zA-Z0-9=]$`)
+	allowedPubKey     = regexp.MustCompile(`^[a-zA-Z0-9=]+$`)
 )
 
 // addVPNClient inserts new client config
