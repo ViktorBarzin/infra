@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "client_certificate_secret_name" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -109,7 +110,10 @@ resource "kubernetes_ingress" "kafka-ui" {
     name      = "kafka-ui-ingress"
     namespace = "kafka"
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "kubernetes.io/ingress.class"                        = "nginx"
+      "nginx.ingress.kubernetes.io/force-ssl-redirect"     = "true"
+      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      "nginx.ingress.kubernetes.io/auth-tls-secret"        = var.client_certificate_secret_name
     }
   }
 

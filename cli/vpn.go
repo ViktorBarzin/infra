@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/golang/glog"
@@ -19,6 +20,11 @@ const (
 	vpnLastIPConfFileRelative  = "/modules/kubernetes/wireguard/extra/last_ip.txt"
 )
 
+var (
+	allowedClientName = regexp.MustCompile(`^[a-zA-Z0-9 ]+$`)
+	allowedPubKey     = regexp.MustCompile(`^[a-zA-Z0-9=]$`)
+)
+
 // addVPNClient inserts new client config
 func addVPNClient(gitFs *GitFS, clientName, publicKey, clientsConfPath, ip string) error {
 	if clientName == "" {
@@ -27,6 +33,13 @@ func addVPNClient(gitFs *GitFS, clientName, publicKey, clientsConfPath, ip strin
 	if publicKey == "" {
 		return fmt.Errorf("public key cannot be empty when creating new vpn config")
 	}
+	if !allowedClientName.Match([]byte(clientName)) {
+		return fmt.Errorf("client key must match '%s', got %s", allowedClientName.String(), clientName)
+	}
+	if !allowedPubKey.Match([]byte(publicKey)) {
+		return fmt.Errorf("client public key must match '%s', got '%s'", allowedPubKey.String(), publicKey)
+	}
+
 	contents := "[Peer]\n# friendly_name = " + clientName + "\nPublicKey = " + publicKey + "\nAllowedIPs = " + ip + "\n\n"
 	glog.Infof("adding the following config: \n%s", contents)
 	f, err := (*gitFs.fs).OpenFile(clientsConfPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)

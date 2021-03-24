@@ -84,8 +84,9 @@ module "hackmd" {
 # }
 
 module "kafka" {
-  source          = "./kafka"
-  tls_secret_name = var.tls_secret_name
+  source                         = "./kafka"
+  client_certificate_secret_name = var.client_certificate_secret_name
+  tls_secret_name                = var.tls_secret_name
 }
 
 module "kms" {
