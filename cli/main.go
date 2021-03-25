@@ -23,7 +23,7 @@ var (
 func main() {
 	err := run()
 	if err != nil {
-		glog.Fatalf("run failed: %s", err.Error())
+		glog.Errorf("run failed: %s", err.Error())
 	}
 }
 
