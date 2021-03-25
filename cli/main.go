@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -24,6 +25,7 @@ func main() {
 	err := run()
 	if err != nil {
 		glog.Errorf("run failed: %s", err.Error())
+		os.Exit(255)
 	}
 }
 
