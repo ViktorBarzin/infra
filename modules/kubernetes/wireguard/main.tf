@@ -218,7 +218,7 @@ resource "kubernetes_deployment" "webui" {
       app = "webui"
     }
     annotations = {
-      "reloader.stakater.com/search" = "true"
+      "configmap.reloader.stakater.com/reload" = "wg0-conf"
     }
   }
   spec {
