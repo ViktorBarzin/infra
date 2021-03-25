@@ -208,6 +208,69 @@ resource "kubernetes_service" "wireguard_exporter" {
     }
   }
 }
+
+
+resource "kubernetes_deployment" "webui" {
+  metadata {
+    name      = "webui"
+    namespace = "wireguard"
+    labels = {
+      app = "webui"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "webui"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "webui"
+        }
+      }
+      spec {
+        container {
+          image             = "embarkstudios/wireguard-ui:latest"
+          name              = "webui"
+          image_pull_policy = "IfNotPresent"
+          lifecycle {
+          }
+          command = ["/wireguard-ui"]
+          args = [
+            "--data-dir",
+            "/data",
+            "--log-level",
+            "debug",
+            "--wg-endpoint",
+            "vpn.viktorbarzin.me:51820",
+            "--wg-dns",
+            "10.0.20.1",
+            "--wg-allowed-ips",
+            "0.0.0.0/0",
+            "--client-ip-range",
+            "10.3.3.10/24",
+          ]
+          port {
+            container_port = 8080
+            protocol       = "TCP"
+          }
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN", "SYS_MODULE", "CAP_SYS_ADMIN"]
+            }
+          }
+        }
+
+      }
+    }
+  }
+}
 resource "kubernetes_service" "webui" {
   metadata {
     name      = "webui"
