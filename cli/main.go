@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	"github.com/go-git/go-git/v5"
@@ -18,7 +19,7 @@ const (
 )
 
 var (
-	validUseCases = []string{"setup-vpn"}
+	validUseCases = []string{"setup-vpn", setupOpenWRTDNSFlagName}
 )
 
 func main() {
@@ -37,6 +38,9 @@ func run() error {
 	// VPN flags
 	vpnClientName := flag.String(vpnClientNameFlagName, "", fmt.Sprintf("Friendly VPN user name."))
 	vpnClientPubKey := flag.String(vpnClientPubKeyFlagName, "", fmt.Sprintf("VPN client public key."))
+
+	// OpenWRT DNS flags
+	openWRTNewDNS := flag.String(setupOpenWRTNewDNSFlagName, "", fmt.Sprintf("New DNS server to set."))
 
 	// Flag definitions above!
 	flag.Parse()
@@ -60,18 +64,19 @@ func run() error {
 
 	glog.Infof("Use case is: %s", *useCase)
 	// glog.Infof("Repo root is: %s", repoRoot)
-
-	gitFs, err := NewGitFS(repository)
-	if err != nil {
-		return errors.Wrapf(err, "failed to initialize git fs")
-	}
-	worktree, err := gitFs.repo.Worktree()
-	if err != nil {
-		return errors.Wrapf(err, "failed to get worktree")
-	}
+	var err error
 
 	switch *useCase {
 	case vpnUseCaseFlagName:
+		gitFs, err := NewGitFS(repository)
+		if err != nil {
+			return errors.Wrapf(err, "failed to initialize git fs")
+		}
+		worktree, err := gitFs.repo.Worktree()
+		if err != nil {
+			return errors.Wrapf(err, "failed to get worktree")
+		}
+
 		// get last used ip and increment
 		ip, err := getAndUpdateIP(gitFs, vpnLastIPConfFileRelative)
 		if err != nil {
@@ -89,14 +94,32 @@ func run() error {
 		if *printResultOnly {
 			println(ip)
 		}
+		if err = gitFs.Push(); err != nil {
+			return errors.Wrapf(err, "failed to push changes")
+		}
+	case setupOpenWRTDNSFlagName:
+		if *openWRTNewDNS == "" {
+			return fmt.Errorf("New DNS cannot be empty")
+		}
+		if sshKeyPath == "" {
+			return fmt.Errorf("Env variable %s must be set to the location of the private key to use", sshKeyPath)
+		}
+		key, err := ioutil.ReadFile(sshKeyPath)
+		if err != nil {
+			return errors.Wrapf(err, "unable to read private key")
+		}
+		output, err := SetOpenWRTDNS(key, *openWRTNewDNS)
+		if err != nil {
+			return errors.Wrapf(err, fmt.Sprintf("cmd output: %s", output))
+		}
+		if *printResultOnly {
+			println(fmt.Sprintf("Successfully set DNS server to '%s'", *openWRTNewDNS))
+		}
 	default:
 		err = errors.New(fmt.Sprintf("unsupported use case: %s", *useCase))
 	}
 	if err != nil {
 		return err
-	}
-	if err = gitFs.Push(); err != nil {
-		return errors.Wrapf(err, "failed to push changes")
 	}
 	return nil
 }
