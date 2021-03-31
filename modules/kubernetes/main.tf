@@ -24,6 +24,7 @@ variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
 variable "webhook_handler_git_token" {}
+variable "webhook_handler_ssh_key" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -176,6 +177,7 @@ module "webhook_handler" {
   fb_app_secret   = var.webhook_handler_fb_app_secret
   git_user        = var.webhook_handler_git_user
   git_token       = var.webhook_handler_git_token
+  ssh_key         = var.webhook_handler_ssh_key
 
   depends_on = [null_resource.core_services]
 }

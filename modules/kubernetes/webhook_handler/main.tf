@@ -6,6 +6,7 @@ variable "fb_page_token" {}
 variable "fb_app_secret" {}
 variable "git_user" {}
 variable "git_token" {}
+variable "ssh_key" {}
 
 resource "kubernetes_namespace" "webhook-handler" {
   metadata {
@@ -49,12 +50,30 @@ resource "kubernetes_cluster_role_binding" "update_deployment_binding" {
   }
 }
 
+
+resource "kubernetes_secret" "ssh-key" {
+  metadata {
+    name      = "ssh-key"
+    namespace = "webhook-handler"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  data = {
+    "id_rsa" = var.ssh_key
+  }
+  type = "generic"
+}
 resource "kubernetes_deployment" "webhook_handler" {
   metadata {
     name      = "webhook-handler"
     namespace = "webhook-handler"
     labels = {
       app = "webhook-handler"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
@@ -72,6 +91,17 @@ resource "kubernetes_deployment" "webhook_handler" {
       }
       spec {
         container {
+          # security_context {
+          #   run_as_user = 1000
+          # }
+          # lifecycle {
+          #   post_start {
+          #     exec {
+          #       # Must be kept in sycn with webhook_handler dockerfile
+          #       command = ["echo", "\"$SSH_KEY\"", ">", "/opt/id_rsa", "&&", "chown", "appuser", "/opt/id_rsa", "&&", "chmod", "600", "/opt/id_rsa"]
+          #     }
+          #   }
+          # }
           image = "viktorbarzin/webhook-handler:latest"
           name  = "webhook-handler"
           resources {
@@ -86,6 +116,11 @@ resource "kubernetes_deployment" "webhook_handler" {
           }
           port {
             container_port = 80
+          }
+          volume_mount {
+            name       = "id-rsa"
+            mount_path = "/opt/id_rsa"
+            sub_path   = "id_rsa"
           }
           env {
             name  = "WEBHOOKSECRET"
@@ -115,6 +150,17 @@ resource "kubernetes_deployment" "webhook_handler" {
             name  = "GIT_TOKEN"
             value = var.git_token
           }
+          env {
+            name  = "SSH_KEY"
+            value = "/opt/id_rsa"
+          }
+        }
+        volume {
+          name = "id-rsa"
+          secret {
+            secret_name = "ssh-key"
+          }
+
         }
       }
     }
