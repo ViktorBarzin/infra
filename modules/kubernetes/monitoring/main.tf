@@ -143,6 +143,36 @@ resource "helm_release" "grafana" {
   values = [file("${path.module}/grafana_chart_values.yaml")]
 }
 
+resource "kubernetes_cron_job" "monitor_prom" {
+  metadata {
+    name = "monitor-prometheus"
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "*/30 * * * *"
+    job_template {
+      metadata {
+
+      }
+      spec {
+        template {
+          metadata {
+
+          }
+          spec {
+            container {
+              name    = "monitor-prometheus"
+              image   = "alpine"
+              command = ["/bin/sh", "-c", "apk add --update curl && curl --connect-timeout 2 prometheus-server.monitoring.svc.cluster.local || curl https://webhook.viktorbarzin.me/fb/message-viktor -d 'Prometheus is down!'"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 resource "kubernetes_ingress" "status" {
   metadata {
     name      = "hetrix-redirect-ingress"

@@ -44,6 +44,8 @@ resource "kubernetes_secret" "wg_0_key" {
   }
   data = {
     "wg0.key" = var.wg_0_key
+    # If thep rivate key changes the pub key must be updated manually
+    "wg-ui-config" = format("{\"PrivateKey\": \"%s\",\"PublicKey\": \"%s\",\"Users\": {}}", var.wg_0_key, "3OeDa6Z3Z6vPVxn/WKJujYL7DoDYPPpI5W+2glUYLHU=")
   }
   type = "generic"
 }
@@ -217,8 +219,11 @@ resource "kubernetes_deployment" "webui" {
     labels = {
       app = "webui"
     }
+    # annotations = {
+    #   "configmap.reloader.stakater.com/reload" = "wg0-conf"
+    # }
     annotations = {
-      "configmap.reloader.stakater.com/reload" = "wg0-conf"
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
@@ -235,6 +240,21 @@ resource "kubernetes_deployment" "webui" {
         }
       }
       spec {
+        init_container {
+          image   = "busybox"
+          name    = "setup-config"
+          command = ["/bin/sh", "-c", "cat /config/config.json && cp /config/config.json /cache/config.json"]
+          # command = ["/bin/sh", "-c", "cat /config/config.json /cache/config.json; tail -f /dev/null"]
+          volume_mount {
+            name       = "config"
+            mount_path = "/config/config.json"
+            sub_path   = "config.json"
+          }
+          volume_mount {
+            name       = "cache"
+            mount_path = "/cache"
+          }
+        }
         container {
           image             = "embarkstudios/wireguard-ui:latest"
           name              = "webui"
@@ -265,8 +285,43 @@ resource "kubernetes_deployment" "webui" {
               add = ["NET_ADMIN", "SYS_MODULE", "CAP_SYS_ADMIN"]
             }
           }
-        }
 
+          # volume_mount {
+          #   name       = "wg0-key"
+          #   mount_path = "/data/config.json"
+          #   sub_path   = "config.json"
+          # }
+          volume_mount {
+            name       = "cache"
+            mount_path = "/data"
+          }
+          # volume_mount {
+          #   name       = "wg0-key"
+          #   mount_path = "/etc/wireguard/wg0.key"
+          #   sub_path   = "wg0.key"
+          # }
+        }
+        # volume {
+        #   name = "wg0-conf"
+        #   config_map {
+        #     name = "wg0-conf"
+        #   }
+        # }
+        volume {
+          name = "config"
+          secret {
+            secret_name = "wg0-key"
+            items {
+              key  = "wg-ui-config"
+              path = "config.json"
+            }
+          }
+        }
+        volume {
+          name = "cache"
+          empty_dir {
+          }
+        }
       }
     }
   }
