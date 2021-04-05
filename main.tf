@@ -38,6 +38,8 @@ variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
 variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
+variable "monitoring_idrac_username" {}
+variable "monitoring_idrac_password" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -214,4 +216,7 @@ module "kubernetes_cluster" {
   oauth_client_id     = var.oauth_client_id
   oauth_client_secret = var.oauth_client_secret
   # depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
+
+  idrac_username = var.monitoring_idrac_username
+  idrac_password = var.monitoring_idrac_password
 }
