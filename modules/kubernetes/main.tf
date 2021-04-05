@@ -25,6 +25,8 @@ variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
 variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
+variable "idrac_username" {}
+variable "idrac_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -123,6 +125,8 @@ module "monitoring" {
   source                        = "./monitoring"
   tls_secret_name               = var.tls_secret_name
   alertmanager_account_password = var.alertmanager_account_password
+  idrac_username                = var.idrac_username
+  idrac_password                = var.idrac_password
 
   depends_on = [null_resource.core_services]
 }

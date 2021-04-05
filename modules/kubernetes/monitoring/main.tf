@@ -1,5 +1,14 @@
 variable "tls_secret_name" {}
 variable "alertmanager_account_password" {}
+variable "idrac_host" {
+  default = "idrac"
+}
+variable "idrac_username" {
+  default = "root"
+}
+variable "idrac_password" {
+  default = "calvin"
+}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -229,6 +238,101 @@ resource "kubernetes_ingress" "status_yotovski" {
           }
         }
       }
+    }
+  }
+}
+
+resource "kubernetes_config_map" "redfish-config" {
+  metadata {
+    name      = "redfish-exporter-config"
+    namespace = "monitoring"
+  }
+  data = {
+    "config.yml" = <<-EOF
+      hosts:
+        ${var.idrac_host}:
+          username: ${var.idrac_username}
+          password: ${var.idrac_password}
+        default:
+          username: root
+          password: calvin
+      groups:
+        group1:
+          username: user
+          password: pass
+    EOF
+  }
+}
+
+resource "kubernetes_deployment" "idrac-redfish" {
+  metadata {
+    name      = "idrac-redfish-exporter"
+    namespace = "monitoring"
+    labels = {
+      app = "idrac-redfish-exporter"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "idrac-redfish-exporter"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "idrac-redfish-exporter"
+        }
+      }
+      spec {
+        container {
+          image   = "viktorbarzin/redfish-exporter:latest"
+          name    = "redfish-exporter"
+          command = ["/bin/sh", "-c", "redfish-exporter --config.file /app/config.yml"]
+          port {
+            container_port = 9610
+          }
+
+          volume_mount {
+            name       = "redfish-exporter-config"
+            mount_path = "/app/config.yml"
+            sub_path   = "config.yml"
+          }
+        }
+        volume {
+          name = "redfish-exporter-config"
+          config_map {
+            name = "redfish-exporter-config"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "idrac-redfish-exporter" {
+  metadata {
+    name      = "idrac-redfish-exporter"
+    namespace = "monitoring"
+    labels = {
+      "app" = "idrac-redfish-exporter"
+    }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = "9090"
+    }
+  }
+
+  spec {
+    selector = {
+      "app" = "idrac-redfish-exporter"
+    }
+    port {
+      name        = "http"
+      port        = "9090"
+      target_port = "9610"
     }
   }
 }
