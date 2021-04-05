@@ -49,8 +49,8 @@ alertmanagerFiles:
 
 server:
   # Enable me to delete metrics
-  # extraFlags:
-  #   - "web.enable-admin-api"
+  #extraFlags:
+  #  - "web.enable-admin-api"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
@@ -185,6 +185,26 @@ extraScrapeConfigs: |
         target_label: instance
       - target_label: __address__
         replacement: 'prometheus-snmp-exporter.monitoring.svc.cluster.local:9116'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'r730_idrac_$${1}'
+  - job_name: 'redfish-idrac'
+    scrape_interval: 5m
+    scrape_timeout: 2m
+    metrics_path: /redfish
+    static_configs:
+      - targets:
+        - idrac.viktorbarzin.lan
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: idrac-redfish-exporter.monitoring.svc.cluster.local:9090  
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
