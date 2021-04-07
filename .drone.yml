@@ -59,7 +59,7 @@ trigger:
   event:
   - cron
   cron:
-  - "@daily"
+  - renew-tls-certificate-daily
 
 steps:
   - name: Prepare terraform files
