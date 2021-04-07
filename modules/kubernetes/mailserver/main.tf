@@ -55,6 +55,9 @@ resource "kubernetes_config_map" "mailserver_config" {
     labels = {
       app = "mailserver"
     }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
 
   data = {
@@ -113,6 +116,9 @@ resource "kubernetes_deployment" "mailserver" {
     namespace = "mailserver"
     labels = {
       "app" = "mailserver"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
