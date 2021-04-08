@@ -1,6 +1,12 @@
 kind: pipeline
 type: kubernetes
 name: default
+trigger:
+  event:
+    - cron
+    - push
+  cron:
+    - build-state-daily
 
 steps:
   - name: Prepare terraform files
@@ -59,7 +65,7 @@ trigger:
   event:
   - cron
   cron:
-  - renew-tls-certificate-daily
+  - renew-tls-certificate
 
 steps:
   - name: Prepare terraform files
