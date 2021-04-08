@@ -43,7 +43,7 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	newContents := getAddedAliasContents(string(fileContentsBytes), aliasEmail, to)
 
 	// Write new contents
-	fWrite, err := (*gitFs.fs).OpenFile(emailAliasesConfigFileRelative, os.O_WRONLY, 0644)
+	fWrite, err := (*gitFs.fs).OpenFile(emailAliasesConfigFileRelative, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to open file where new email alias will be added")
 	}
@@ -77,5 +77,5 @@ func getAddedAliasContents(currentContents, from, to string) string {
 		}
 	}
 	newLines = append(newLines, getPostFixAlias(from, to))
-	return strings.Join(newLines, "\n")
+	return strings.Join(newLines, "\n") + "\n"
 }
