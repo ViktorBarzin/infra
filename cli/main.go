@@ -42,6 +42,10 @@ func run() error {
 	// OpenWRT DNS flags
 	openWRTNewDNS := flag.String(setupOpenWRTNewDNSFlagName, "", fmt.Sprintf("New DNS server to set."))
 
+	// add email alias flags
+	emailToForwardTo := flag.String(emailAliasFlagName, "", "Email which is used to forward emails to.")
+	fromDomain := flag.String(fromEmailDomainFlagName, "@viktorbarzin.me", "Domain name which will receive emails. Example @viktorbarzin.me")
+
 	// Flag definitions above!
 	flag.Parse()
 
@@ -115,6 +119,36 @@ func run() error {
 		if *printResultOnly {
 			println(fmt.Sprintf("Successfully set DNS server to '%s'", *openWRTNewDNS))
 		}
+	case addEmailAliasUseCase:
+		if *emailToForwardTo == "" {
+			return fmt.Errorf("%s must not be empty when using %s use case", emailAliasFlagName, addEmailAliasUseCase)
+		}
+		glog.Infof("Trying to add %s email alias", *emailToForwardTo)
+		gitFs, err := NewGitFS(repository)
+		if err != nil {
+			return errors.Wrapf(err, "failed to initialize git fs")
+		}
+		worktree, err := gitFs.repo.Worktree()
+		if err != nil {
+			return errors.Wrapf(err, "failed to get worktree")
+		}
+		emailAlias, err := addEmailAlias(gitFs, *emailToForwardTo, *fromDomain)
+		if err != nil {
+			return errors.Wrapf(err, "failed to add email alias")
+		}
+		glog.Infof("generated %s email alias", emailAlias)
+		// commit changes
+		if _, err = worktree.Commit("Added new email alias", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
+			return errors.Wrapf(err, "failed to commit")
+		}
+		if *printResultOnly {
+			fmt.Printf("Successfully created '%s' -> '%s' forwarding", emailAlias, *emailToForwardTo)
+			// println(ip)
+		}
+		if err = gitFs.Push(); err != nil {
+			return errors.Wrapf(err, "failed to push changes")
+		}
+		glog.Infof("successfully added %s -> %s email aliasing", emailAlias, *emailToForwardTo)
 	default:
 		err = errors.New(fmt.Sprintf("unsupported use case: %s", *useCase))
 	}
