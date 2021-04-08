@@ -64,7 +64,7 @@ resource "kubernetes_config_map" "mailserver_config" {
     # Actual mail settings
     "postfix-accounts.cf" = local.postfix_accounts_cf
     "postfix-main.cf"     = var.postfix_cf
-    "postfix-virtual.cf"  = var.postfix_account_aliases
+    "postfix-virtual.cf"  = format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt"))
 
     KeyTable     = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
     SigningTable = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"

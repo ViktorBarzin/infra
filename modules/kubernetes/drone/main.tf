@@ -105,6 +105,10 @@ resource "kubernetes_deployment" "drone_server" {
             name  = "DRONE_USER_FILTER"
             value = var.allowed_users
           }
+          env {
+            name  = "DRONE_CRON_INTERVAL"
+            value = "1m"
+          }
 
         }
         volume {

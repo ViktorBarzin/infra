@@ -3,10 +3,12 @@ type: kubernetes
 name: default
 trigger:
   event:
-    - cron
-    - push
-  cron:
-    - build-state-daily
+    include:
+      # - cron
+      - push
+  # target:
+  #   include:
+  #     - build-state-daily
 
 steps:
   - name: Prepare terraform files
@@ -39,6 +41,10 @@ steps:
 kind: pipeline
 type: kubernetes
 name: build-cli
+trigger:
+  event:
+    include:
+      - push
 
 steps:
 - name: Build image  
