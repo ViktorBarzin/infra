@@ -1,6 +1,8 @@
 kind: pipeline
 type: kubernetes
 name: default
+concurrency: 
+  limit: 1
 trigger:
   event:
   - push
@@ -36,6 +38,8 @@ steps:
 kind: pipeline
 type: kubernetes
 name: build-cli
+concurrency: 
+  limit: 1
 trigger:
   event:
     include:
