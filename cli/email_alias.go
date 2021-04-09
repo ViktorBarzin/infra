@@ -28,7 +28,6 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	}
 	aliasEmail := generateRandomEmail(fromDomain)
 	glog.Infof("adding %s -> %s alias to %s", aliasEmail, to, emailAliasesConfigFileRelative)
-	contents := fmt.Sprintf("%s %s", aliasEmail, to)
 
 	// Read existing contents
 	fRead, err := (*gitFs.fs).OpenFile(emailAliasesConfigFileRelative, os.O_RDONLY, 0644)
@@ -40,20 +39,19 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 		return "", errors.Wrapf(err, "failed to read existing aliases file")
 	}
 	glog.Infof("current aliases file contents: \n%s", string(fileContentsBytes))
-	fRead.Close()
-	newContents := getAddedAliasContents(string(fileContentsBytes), aliasEmail, to)
+	defer fRead.Close()
 
+	newContents := getAddedAliasContents(string(fileContentsBytes), aliasEmail, to)
 	// Write new contents
 	fWrite, err := (*gitFs.fs).OpenFile(emailAliasesConfigFileRelative, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to open file where new email alias will be added")
 	}
-	defer fWrite.Close()
-
 	glog.Infof("writing new contents to file: \n%s", newContents)
-	if _, err = fWrite.Write([]byte(contents)); err != nil {
+	if _, err = fWrite.Write([]byte(newContents)); err != nil {
 		return "", errors.Wrapf(err, "failed to write config to file")
 	}
+	defer fWrite.Close()
 	return aliasEmail, nil
 }
 
