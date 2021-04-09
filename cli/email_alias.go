@@ -39,6 +39,7 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to read existing aliases file")
 	}
+	glog.Infof("current aliases file contents: \n%s", string(fileContentsBytes))
 	fRead.Close()
 	newContents := getAddedAliasContents(string(fileContentsBytes), aliasEmail, to)
 
