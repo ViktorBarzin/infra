@@ -27,7 +27,7 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 		return "", errors.Wrapf(err, fmt.Sprintf("failed to create new email aliases because domain for %s does not exist", to))
 	}
 	aliasEmail := generateRandomEmail(fromDomain)
-	glog.Infof("Adding %s -> %s alias to %s", aliasEmail, to, emailAliasesConfigFileRelative)
+	glog.Infof("adding %s -> %s alias to %s", aliasEmail, to, emailAliasesConfigFileRelative)
 	contents := fmt.Sprintf("%s %s", aliasEmail, to)
 
 	// Read existing contents
@@ -39,7 +39,7 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to read existing aliases file")
 	}
-	defer fRead.Close()
+	fRead.Close()
 	newContents := getAddedAliasContents(string(fileContentsBytes), aliasEmail, to)
 
 	// Write new contents
@@ -49,9 +49,7 @@ func addEmailAlias(gitFs *GitFS, to, fromDomain string) (string, error) {
 	}
 	defer fWrite.Close()
 
-	glog.Infof("writing new contents to file: %s", newContents)
-	fRead.Write([]byte(newContents))
-
+	glog.Infof("writing new contents to file: \n%s", newContents)
 	if _, err = fWrite.Write([]byte(contents)); err != nil {
 		return "", errors.Wrapf(err, "failed to write config to file")
 	}
@@ -62,20 +60,23 @@ func generateRandomEmail(fromDomain string) string {
 	return fmt.Sprintf("%s-%s-generated%s", strings.ToLower(gofakeit.Adverb()), strings.ToLower(gofakeit.FirstName()), fromDomain)
 }
 
-func getPostFixAlias(from, to string) string {
+func getPostfixAlias(from, to string) string {
 	return fmt.Sprintf("%s %s", from, to)
 }
 
 func getAddedAliasContents(currentContents, from, to string) string {
-	glog.Infof("Existingcontent: %s", currentContents)
 	lines := strings.Split(currentContents, "\n")
 	newLines := []string{}
-	// If `to` already has an alias, overwrite it
 	for _, l := range lines {
-		if !strings.HasSuffix(l, to) {
-			newLines = append(newLines, l)
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
 		}
+		if strings.HasSuffix(l, to) {
+			continue
+		}
+		newLines = append(newLines, l)
 	}
-	newLines = append(newLines, getPostFixAlias(from, to))
+	newLines = append(newLines, getPostfixAlias(from, to))
 	return strings.Join(newLines, "\n") + "\n"
 }
