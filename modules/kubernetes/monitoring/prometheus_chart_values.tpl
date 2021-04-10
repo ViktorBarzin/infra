@@ -169,6 +169,14 @@ serverFiles:
             severity: page
           annotations:
             summary: OpenWRT high memory usage. Can cause services getting stuck.
+      - name: Mailserver Down
+        rules:
+        - alert: Mail server has no replicas available
+          expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
+          for: 1m
+          labels:
+            severity: page
+          annotations: Mail server has no available replicas. This means mail may not be received.
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
