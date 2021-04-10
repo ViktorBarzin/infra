@@ -9,6 +9,9 @@ resource "kubernetes_deployment" "bind" {
       "app" = "bind"
       "kubernetes.io/cluster-service" : "true"
     }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
   spec {
     replicas = "3"
@@ -61,6 +64,11 @@ resource "kubernetes_deployment" "bind" {
           volume_mount {
             mount_path = "/etc/bind/db.viktorbarzin.lan"
             sub_path   = "db.viktorbarzin.lan"
+            name       = "bindconf"
+          }
+          volume_mount {
+            mount_path = "/etc/bind/db.181.191.213.in-addr.arpa"
+            sub_path   = "db.181.191.213.in-addr.arpa"
             name       = "bindconf"
           }
         }
