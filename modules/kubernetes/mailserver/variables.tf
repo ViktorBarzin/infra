@@ -111,7 +111,7 @@ sender_canonical_classes = envelope_sender
 recipient_canonical_maps = tcp:localhost:10002
 recipient_canonical_classes = envelope_recipient,header_recipient
 compatibility_level = 2
-
+enable_original_recipient = no
 always_add_missing_headers = yes
 EOT
 }
