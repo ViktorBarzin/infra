@@ -12,16 +12,21 @@ resource "kubernetes_config_map" "bind_configmap" {
   metadata {
     name      = "bind-configmap"
     namespace = "bind"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
 
   data = {
-    "db.viktorbarzin.lan"       = var.db_viktorbarzin_lan
-    "db.viktorbarzin.me"        = format("%s%s", var.db_viktorbarzin_me, file("${path.module}/extra/viktorbarzin.me"))
-    "named.conf"                = var.named_conf
-    "named.conf.local"          = var.named_conf_local
-    "named.conf.options"        = var.named_conf_options
-    "public-named.conf.local"   = var.public_named_conf_local
-    "public-named.conf.options" = var.public_named_conf_options
+    "db.viktorbarzin.lan"         = var.db_viktorbarzin_lan
+    "db.viktorbarzin.me"          = format("%s%s", var.db_viktorbarzin_me, file("${path.module}/extra/viktorbarzin.me"))
+    "db.181.191.213.in-addr.arpa" = var.db_ptr
+    "named.conf"                  = var.named_conf
+    "named.conf.local"            = var.named_conf_local
+    "named.conf.options"          = var.named_conf_options
+    "public-named.conf.local"     = var.public_named_conf_local
+    "public-named.conf.options"   = var.public_named_conf_options
   }
 }
 
