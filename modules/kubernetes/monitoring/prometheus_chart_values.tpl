@@ -169,14 +169,32 @@ serverFiles:
             severity: page
           annotations:
             summary: OpenWRT high memory usage. Can cause services getting stuck.
+
+      # Check if services are down
       - name: Mailserver Down
         rules:
         - alert: Mail server has no replicas available
           expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
-          for: 1m
+          for: 10m
           labels:
             severity: page
           annotations: Mail server has no available replicas. This means mail may not be received.
+      - name: Hackmd Down
+        rules:
+        - alert: Hackmd has no replicas available
+          expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
+          for: 1m
+          labels:
+            severity: page
+          annotations: Hackmd has no available replicas. 
+      - name: Privatebin Down
+        rules:
+        - alert: Privatebin has no replicas available
+          expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
+          for: 10m
+          labels:
+            severity: page
+          annotations: Privatebin has no available replicas. 
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
