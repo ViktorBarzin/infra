@@ -170,7 +170,6 @@ serverFiles:
           annotations:
             summary: OpenWRT high memory usage. Can cause services getting stuck.
 
-      # Check if services are down
       - name: Mailserver Down
         rules:
         - alert: Mail server has no replicas available
@@ -178,7 +177,8 @@ serverFiles:
           for: 10m
           labels:
             severity: page
-          annotations: Mail server has no available replicas. This means mail may not be received.
+          annotations: 
+            summary: Mail server has no available replicas. This means mail may not be received.
       - name: Hackmd Down
         rules:
         - alert: Hackmd has no replicas available
@@ -186,7 +186,8 @@ serverFiles:
           for: 1m
           labels:
             severity: page
-          annotations: Hackmd has no available replicas. 
+          annotations: 
+            summary: Hackmd has no available replicas. 
       - name: Privatebin Down
         rules:
         - alert: Privatebin has no replicas available
@@ -194,7 +195,8 @@ serverFiles:
           for: 10m
           labels:
             severity: page
-          annotations: Privatebin has no available replicas. 
+          annotations: 
+            summary: Privatebin has no available replicas. 
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
