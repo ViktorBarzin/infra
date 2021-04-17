@@ -32,6 +32,7 @@ variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
 variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
+variable "url_shortener_geolite_license_key" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
@@ -67,6 +68,12 @@ provider "helm" {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
+# provider "kubectl" {
+# host                   = "kubernetes.viktorbarzin.lan"
+# cluster_ca_certificate = base64decode(var.eks_cluster_ca)
+# token                  = data.aws_eks_cluster_auth.main.token
+# load_config_file = true
+# }
 
 # Main module to init infra from
 module "pxe_server" {
@@ -219,4 +226,6 @@ module "kubernetes_cluster" {
 
   idrac_username = var.monitoring_idrac_username
   idrac_password = var.monitoring_idrac_password
+
+  url_shortener_geolite_license_key = var.url_shortener_geolite_license_key
 }

@@ -19,6 +19,7 @@ variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
 variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
+variable "url_shortener_geolite_license_key" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
@@ -46,6 +47,11 @@ module "bind" {
   db_viktorbarzin_me  = var.bind_db_viktorbarzin_me
   db_viktorbarzin_lan = var.bind_db_viktorbarzin_lan
   named_conf_options  = var.bind_named_conf_options
+}
+
+module "dbaas" {
+  source          = "./dbaas"
+  tls_secret_name = var.tls_secret_name
 }
 
 module "dnscrypt" {
@@ -170,6 +176,12 @@ module "privatebin" {
 
 module "reloader" {
   source = "./reloader"
+}
+
+module "url" {
+  source              = "./url-shortener"
+  tls_secret_name     = var.tls_secret_name
+  geolite_license_key = var.url_shortener_geolite_license_key
 }
 
 module "webhook_handler" {

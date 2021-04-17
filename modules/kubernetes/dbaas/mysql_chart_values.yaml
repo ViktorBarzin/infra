@@ -1,0 +1,10 @@
+---
+orchestrator:
+  persistence:
+    enabled: false
+  ingress:
+    enabled: true
+    tls:
+     - secretName: ${secretName}
+       hosts:
+         - db.viktorbarzin.me

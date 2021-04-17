@@ -37,6 +37,8 @@ grafana.ini:
   auth.anonymous:
     enabled: true
     org_role: Viewer
+  # auth.google:
+  #   enabled: true
   analytics:
     check_for_updates: "true"
   grafana_net:
