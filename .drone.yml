@@ -72,14 +72,7 @@ trigger:
   cron:
   - renew-tls-certificate
 
-clone:
-  disable: true
-
 steps:
-  - name: clone
-    image: alpine/git
-    commands:
-    - git clone https://github.com/ViktorBarzin/infra.git .
   - name: Prepare terraform files
     image: alpine
     commands:
