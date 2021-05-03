@@ -49,10 +49,10 @@ module "bind" {
   named_conf_options  = var.bind_named_conf_options
 }
 
-# module "dbaas" {
-#   source          = "./dbaas"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "dbaas" {
+  source          = "./dbaas"
+  tls_secret_name = var.tls_secret_name
+}
 
 module "descheduler" {
   source = "./descheduler"

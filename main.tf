@@ -69,6 +69,9 @@ provider "helm" {
   }
 }
 # provider "kubectl" {
+#   config_path = var.prod ? "" : "~/.kube/config"
+# }
+# provider "kubectl" {
 # host                   = "kubernetes.viktorbarzin.lan"
 # cluster_ca_certificate = base64decode(var.eks_cluster_ca)
 # token                  = data.aws_eks_cluster_auth.main.token
