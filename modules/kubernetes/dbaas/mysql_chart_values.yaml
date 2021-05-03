@@ -4,7 +4,11 @@ orchestrator:
     enabled: false
   ingress:
     enabled: true
+    hosts:
+    - host: db.viktorbarzin.me
+      paths:
+      # - path: /
     tls:
-     - secretName: ${secretName}
-       hosts:
-         - db.viktorbarzin.me
+    - secretName: ${secretName}
+      hosts:
+        - db.viktorbarzin.me
