@@ -54,6 +54,10 @@ module "dbaas" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "descheduler" {
+  source = "./descheduler"
+}
+
 module "dnscrypt" {
   source = "./dnscrypt"
 }
