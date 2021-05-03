@@ -2,8 +2,8 @@
 # all values - https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus/values.yaml
 alertmanager:
   persistentVolume:
-    # enabled: false
-    existingClaim: alertmanager-iscsi-pvc
+    enabled: false
+    #existingClaim: alertmanager-iscsi-pvc
     # storageClass: rook-cephfs
   strategy:
     type: Recreate
@@ -49,8 +49,9 @@ alertmanagerFiles:
 
 server:
   # Enable me to delete metrics
-  #extraFlags:
+  extraFlags:
   #  - "web.enable-admin-api"
+    - "storage.tsdb.allow-overlapping-blocks"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
