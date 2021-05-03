@@ -1,5 +1,8 @@
 # DB as a service. Installs MySQL operator
 variable "tls_secret_name" {}
+variable "cluster_master_service" {
+  default = "mysql-cluster-mysql-master"
+}
 
 resource "kubernetes_namespace" "dbaas" {
   metadata {
@@ -72,10 +75,144 @@ resource "kubernetes_secret" "cluster-password" {
   }
   type = "Opaque"
   data = {
-    "ROOT_PASSWORD" = "kek"
+    "ROOT_PASSWORD" = "a2VrCg=="
   }
 }
-# resource "kubernetes_manifest" "mysql-cluster" {
+
+resource "kubernetes_ingress" "dbaas" {
+  metadata {
+    name      = "orchestrator-ingress"
+    namespace = "dbaas"
+    annotations = {
+      "kubernetes.io/ingress.class"                        = "nginx"
+      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["db.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "db.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "mysql-mysql-operator"
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+}
+
+
+# PHPMyAdmin instance
+resource "kubernetes_deployment" "phpmyadmin" {
+  metadata {
+    name      = "phpmyadmin"
+    namespace = "dbaas"
+    labels = {
+      "app" = "phpmyadmin"
+    }
+  }
+  spec {
+    replicas = "1"
+    selector {
+      match_labels = {
+        "app" = "phpmyadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          "app" = "phpmyadmin"
+        }
+      }
+      spec {
+        container {
+          name  = "phpmyadmin"
+          image = "phpmyadmin/phpmyadmin"
+          port {
+            container_port = 80
+          }
+          env {
+            name  = "PMA_HOST"
+            value = var.cluster_master_service
+          }
+          env {
+            name  = "PMA_PORT"
+            value = "3306"
+          }
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "cluster-secret"
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "phpmyadmin" {
+  metadata {
+    name      = "phpmyadmin"
+    namespace = "dbaas"
+  }
+  spec {
+    selector = {
+      "app" = "phpmyadmin"
+    }
+    port {
+      name = "web"
+      port = 80
+    }
+  }
+}
+
+resource "kubernetes_ingress" "phpmyadmin" {
+  metadata {
+    name      = "phpmyadmin-ingress"
+    namespace = "dbaas"
+
+    annotations = {
+      "kubernetes.io/ingress.class"                        = "nginx"
+      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+    }
+  }
+  spec {
+    tls {
+      hosts       = ["pma.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "pma.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "phpmyadmin"
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+
+}
+
+
+# resource "kubectl_manifest" "mysql-cluster" {
 #   manifest = {
 #     apiVersion = "mysql.presslabs.org/v1alpha1"
 #     kind       = "MysqlCluster"

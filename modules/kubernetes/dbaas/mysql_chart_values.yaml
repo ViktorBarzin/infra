@@ -3,11 +3,11 @@ orchestrator:
   persistence:
     enabled: false
   ingress:
-    enabled: true
+    enable: false
     hosts:
     - host: db.viktorbarzin.me
       paths:
-      # - path: /
+      - path: /
     tls:
     - secretName: ${secretName}
       hosts:
