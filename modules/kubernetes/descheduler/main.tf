@@ -72,6 +72,7 @@ resource "kubernetes_config_map" "policy" {
   data = {
     "policy.yaml" = <<-EOF
           apiVersion: "descheduler/v1alpha1"
+          maxNoOfPodsToEvictPerNode: 5
           kind: "DeschedulerPolicy"
           strategies:
             "RemoveDuplicates":
