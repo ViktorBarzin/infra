@@ -33,6 +33,7 @@ variable "drone_rpc_secret" {}
 variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
 variable "url_shortener_geolite_license_key" {}
+variable "url_shortener_api_key" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
@@ -231,4 +232,5 @@ module "kubernetes_cluster" {
   idrac_password = var.monitoring_idrac_password
 
   url_shortener_geolite_license_key = var.url_shortener_geolite_license_key
+  url_shortener_api_key             = var.url_shortener_api_key
 }
