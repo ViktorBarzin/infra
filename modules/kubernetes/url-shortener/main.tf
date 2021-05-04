@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "geolite_license_key" {}
+variable "api_key" {}
 variable "domain" {
   default = "url.viktorbarzin.me"
 }
@@ -138,7 +139,7 @@ resource "kubernetes_config_map" "shlink-web" {
     "servers.json" = jsonencode([{
       name   = "Main"
       url    = "https://url.viktorbarzin.me"
-      apiKey = "9f0c32d6-605d-480b-ac80-764e122498b5"
+      apiKey = var.api_key
     }])
   }
 }
