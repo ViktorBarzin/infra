@@ -20,6 +20,7 @@ variable "drone_rpc_secret" {}
 variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
 variable "url_shortener_geolite_license_key" {}
+variable "url_shortener_api_key" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
@@ -186,6 +187,7 @@ module "url" {
   source              = "./url-shortener"
   tls_secret_name     = var.tls_secret_name
   geolite_license_key = var.url_shortener_geolite_license_key
+  api_key             = var.url_shortener_api_key
 }
 
 module "webhook_handler" {
