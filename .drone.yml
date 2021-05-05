@@ -20,6 +20,7 @@ steps:
     environment:
       TF_VAR_prod: "true"
     commands:
+      - "env"
       - "terraform init"
       - "terraform apply -target=module.kubernetes_cluster -auto-approve"
 
