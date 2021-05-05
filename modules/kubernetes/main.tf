@@ -1,3 +1,4 @@
+variable "prod" {}
 variable "tls_secret_name" {}
 variable "client_certificate_secret_name" {}
 variable "hackmd_db_password" {}
@@ -13,6 +14,7 @@ variable "bind_db_viktorbarzin_me" {}
 variable "bind_db_viktorbarzin_lan" {}
 variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
+variable "dbaas_root_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
@@ -21,6 +23,7 @@ variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
 variable "url_shortener_geolite_license_key" {}
 variable "url_shortener_api_key" {}
+variable "url_shortener_mysql_password" {}
 variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
@@ -51,8 +54,10 @@ module "bind" {
 }
 
 module "dbaas" {
-  source          = "./dbaas"
-  tls_secret_name = var.tls_secret_name
+  source              = "./dbaas"
+  prod                = var.prod
+  tls_secret_name     = var.tls_secret_name
+  dbaas_root_password = var.dbaas_root_password
 }
 
 module "descheduler" {
@@ -188,6 +193,7 @@ module "url" {
   tls_secret_name     = var.tls_secret_name
   geolite_license_key = var.url_shortener_geolite_license_key
   api_key             = var.url_shortener_api_key
+  mysql_password      = var.url_shortener_mysql_password
 }
 
 module "webhook_handler" {

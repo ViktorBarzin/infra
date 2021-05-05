@@ -26,12 +26,14 @@ variable "bind_db_viktorbarzin_lan" {}
 variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
 variable "wireguard_wg_0_key" {}
+variable "dbaas_root_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
 variable "oauth_client_id" {}
 variable "oauth_client_secret" {}
+variable "url_shortener_mysql_password" {}
 variable "url_shortener_geolite_license_key" {}
 variable "url_shortener_api_key" {}
 variable "webhook_handler_fb_verify_token" {}
@@ -69,15 +71,6 @@ provider "helm" {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
-# provider "kubectl" {
-#   config_path = var.prod ? "" : "~/.kube/config"
-# }
-# provider "kubectl" {
-# host                   = "kubernetes.viktorbarzin.lan"
-# cluster_ca_certificate = base64decode(var.eks_cluster_ca)
-# token                  = data.aws_eks_cluster_auth.main.token
-# load_config_file = true
-# }
 
 # Main module to init infra from
 module "pxe_server" {
@@ -190,6 +183,7 @@ module "k8s_node5" {
 module "kubernetes_cluster" {
   source = "./modules/kubernetes"
 
+  prod            = var.prod
   tls_secret_name = var.tls_secret_name
   # dockerhub_password             = var.dockerhub_password
   client_certificate_secret_name = var.client_certificate_secret_name
@@ -233,4 +227,10 @@ module "kubernetes_cluster" {
 
   url_shortener_geolite_license_key = var.url_shortener_geolite_license_key
   url_shortener_api_key             = var.url_shortener_api_key
+  url_shortener_mysql_password      = var.url_shortener_mysql_password
+
+  # dbaas
+  dbaas_root_password = var.dbaas_root_password
+
+
 }
