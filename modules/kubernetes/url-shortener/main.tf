@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "geolite_license_key" {}
 variable "api_key" {}
+variable "mysql_password" {}
 variable "domain" {
   default = "url.viktorbarzin.me"
 }
@@ -15,6 +16,53 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "url"
   tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_secret" "mysql_config" {
+  metadata {
+    name      = "mysql-config"
+    namespace = "url"
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  data = {
+    # TODO user other user...
+    # "DB_USER" = "shlink"
+    "DB_USER" = "root"
+    # "DB_PASSWORD" = var.mysql_password
+    "DB_PASSWORD" = "cDMyUEFDbGNpQmdjT2RtNXNac2YK"
+  }
+}
+
+# this depends on the mysql installation
+resource "kubectl_manifest" "mysql-user" {
+  yaml_body = <<-YAML
+    apiVersion: mysql.presslabs.org/v1alpha1
+    kind: MysqlUser
+    metadata:
+      name: shlink
+      namespace: url
+    spec:
+      user: shlink
+      clusterRef:
+        name: mysql-cluster
+        namespace: dbaas
+      password:
+        name: mysql-config
+        key: password
+      allowedHosts:
+        - '%'
+  YAML
+  # permissions:
+  #   - schema: db-name-in-mysql
+  #     tables: ["table1", "table2"]
+  #     permissions:
+  #       - SELECT
+  #       - UPDATE
+  #       - CREATE
+  # allowedHosts:
+  #   - localhost
 }
 
 resource "kubernetes_deployment" "shlink" {
@@ -54,6 +102,28 @@ resource "kubernetes_deployment" "shlink" {
             name  = "GEOLITE_LICENSE_KEY"
             value = var.geolite_license_key
           }
+          # DB config
+          env {
+            name  = "DB_DRIVER"
+            value = "mysql"
+          }
+          env {
+            name  = "DB_HOST"
+            value = "mysql-cluster-mysql-master.dbaas.svc.cluster.local"
+          }
+          # env {
+          #   name  = "DB_USER"
+          #   value = "shlink"
+          # }
+          env_from {
+            secret_ref {
+              name = "mysql-config"
+            }
+          }
+          # env {
+          #   name  = "DB_PASSWORD"
+          #   value = var.mysql_password
+          # }
           resources {
             limits = {
               cpu    = "0.5"
