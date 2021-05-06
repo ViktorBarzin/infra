@@ -11,10 +11,16 @@ variable "prod" {
 
 provider "kubectl" {
   # config_path = var.prod ? "" : "~/.kube/config"
-  host               = "kubernetes:6443"
-  client_certificate = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/ca.crt" : ""
-  token              = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/token" : ""
-  insecure           = true
+  host     = "https://kubernetes:6443"
+  insecure = true
+  # load_config_file = !var.prod
+  # config_context   = "kubernetes-admin@kubernetes"
+
+  # client_certificate     = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/ca.crt" : ""
+  # token                  = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/token" : ""
+  # insecure = true
+  # insecure               = true
+
 }
 resource "kubernetes_namespace" "dbaas" {
   metadata {
