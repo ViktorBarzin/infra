@@ -109,7 +109,7 @@ resource "kubernetes_cron_job" "descheduler" {
     namespace = "descheduler"
   }
   spec {
-    schedule           = "0 * * * *"
+    schedule           = "0 0 * * *"
     concurrency_policy = "Forbid"
     job_template {
       metadata {
