@@ -36,34 +36,34 @@ resource "kubernetes_secret" "mysql_config" {
 }
 
 # this depends on the mysql installation
-resource "kubectl_manifest" "mysql-user" {
-  yaml_body = <<-YAML
-    apiVersion: mysql.presslabs.org/v1alpha1
-    kind: MysqlUser
-    metadata:
-      name: shlink
-      namespace: url
-    spec:
-      user: shlink
-      clusterRef:
-        name: mysql-cluster
-        namespace: dbaas
-      password:
-        name: mysql-config
-        key: password
-      allowedHosts:
-        - '%'
-  YAML
-  # permissions:
-  #   - schema: db-name-in-mysql
-  #     tables: ["table1", "table2"]
-  #     permissions:
-  #       - SELECT
-  #       - UPDATE
-  #       - CREATE
-  # allowedHosts:
-  #   - localhost
-}
+# resource "kubectl_manifest" "mysql-user" {
+#   yaml_body = <<-YAML
+#     apiVersion: mysql.presslabs.org/v1alpha1
+#     kind: MysqlUser
+#     metadata:
+#       name: shlink
+#       namespace: url
+#     spec:
+#       user: shlink
+#       clusterRef:
+#         name: mysql-cluster
+#         namespace: dbaas
+#       password:
+#         name: mysql-config
+#         key: password
+#       allowedHosts:
+#         - '%'
+#   YAML
+#   # permissions:
+#   #   - schema: db-name-in-mysql
+#   #     tables: ["table1", "table2"]
+#   #     permissions:
+#   #       - SELECT
+#   #       - UPDATE
+#   #       - CREATE
+#   # allowedHosts:
+#   #   - localhost
+# }
 
 resource "kubernetes_deployment" "shlink" {
   metadata {
