@@ -71,34 +71,36 @@ resource "kubernetes_config_map" "policy" {
   }
   data = {
     "policy.yaml" = <<-EOF
-          apiVersion: "descheduler/v1alpha1"
-          maxNoOfPodsToEvictPerNode: 5
-          kind: "DeschedulerPolicy"
-          strategies:
-            "RemoveDuplicates":
-              enabled: true
-            "RemovePodsViolatingInterPodAntiAffinity":
-              enabled: true
-            "LowNodeUtilization":
-              enabled: true
-              params:
-                nodeResourceUtilizationThresholds:
-                  thresholds:
-                    "cpu" : 20
-                    "memory": 20
-                    "pods": 20
-                  targetThresholds:
-                    "cpu" : 50
-                    "memory": 50
-                    "pods": 50
-            "PodLifeTime":
-              enabled: true
-              params:
-                maxPodLifeTimeSeconds: 86400
-                namespaces:
-                  exclude:
-                  - "monitoring"
-                  - "kube-system"
+      apiVersion: "descheduler/v1alpha1"
+      maxNoOfPodsToEvictPerNode: 5
+      kind: "DeschedulerPolicy"
+      strategies:
+        "RemoveDuplicates":
+          enabled: true
+        "RemovePodsViolatingInterPodAntiAffinity":
+          enabled: true
+        "LowNodeUtilization":
+          enabled: true
+          params:
+            nodeResourceUtilizationThresholds:
+              thresholds:
+                "cpu" : 50
+                "memory": 30
+                "pods": 20
+              targetThresholds:
+                "cpu" : 70
+                "memory": 30
+                "pods": 50
+        "PodLifeTime":
+          enabled: true
+          params:
+            podLifeTime:
+              maxPodLifeTimeSeconds: 604800
+            namespaces:
+              exclude:
+              - "bind"
+              - "monitoring"
+              - "kube-system"
     EOF
   }
 }
@@ -124,7 +126,7 @@ resource "kubernetes_cron_job" "descheduler" {
             priority_class_name = "system-cluster-critical"
             container {
               name  = "descheduler"
-              image = "us.gcr.io/k8s-artifacts-prod/descheduler/descheduler:v0.18.0"
+              image = "k8s.gcr.io/descheduler/descheduler:v0.20.0"
               volume_mount {
                 mount_path = "/policy-dir"
                 name       = "policy-volume"
