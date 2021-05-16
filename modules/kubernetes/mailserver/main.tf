@@ -144,6 +144,11 @@ resource "kubernetes_deployment" "mailserver" {
           name              = "docker-mailserver"
           image             = "tvial/docker-mailserver:release-v7.2.0"
           image_pull_policy = "IfNotPresent"
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN"]
+            }
+          }
 
           # lifecycle {
           #   post_start {
@@ -336,6 +341,64 @@ resource "kubernetes_deployment" "mailserver" {
           empty_dir {}
         }
       }
+    }
+  }
+}
+
+resource "kubernetes_service" "mailserver" {
+  metadata {
+    name      = "mailserver"
+    namespace = "mailserver"
+
+    labels = {
+      app = "mailserver"
+    }
+
+    annotations = {
+      "metallb.universe.tf/allow-shared-ip" = "shared"
+    }
+  }
+
+  spec {
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local"
+    selector = {
+      app = "mailserver"
+    }
+
+    port {
+      name        = "smtp"
+      protocol    = "TCP"
+      port        = 25
+      target_port = "smtp"
+    }
+
+    port {
+      name        = "smtp-secure"
+      protocol    = "TCP"
+      port        = 465
+      target_port = "smtp-secure"
+    }
+
+    port {
+      name        = "smtp-auth"
+      protocol    = "TCP"
+      port        = 587
+      target_port = "smtp-auth"
+    }
+
+    port {
+      name        = "imap"
+      protocol    = "TCP"
+      port        = 143
+      target_port = "imap"
+    }
+
+    port {
+      name        = "imap-secure"
+      protocol    = "TCP"
+      port        = 993
+      target_port = "imap-secure"
     }
   }
 }
