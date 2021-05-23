@@ -170,6 +170,12 @@ resource "kubernetes_ingress" "shlink" {
     namespace = "url"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
+      "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
+          more_set_headers "Host: $host";
+          more_set_headers "X-Real-IP: $remote_addr";
+          more_set_headers "X-Forwarded-For: $proxy_add_x_forwarded_for";
+          more_set_headers "X-Forwarded-Proto: $scheme";
+        EOF
     }
   }
 
@@ -316,6 +322,97 @@ resource "kubernetes_ingress" "shlink-web" {
           path = "/"
           backend {
             service_name = "shlink-web"
+            service_port = "80"
+          }
+        }
+      }
+    }
+  }
+}
+# TESTING
+
+resource "kubernetes_deployment" "shlink2" {
+  metadata {
+    name      = "shlink2"
+    namespace = "url"
+    labels = {
+      run = "shlink2"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        run = "shlink2"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          run = "shlink2"
+        }
+      }
+      spec {
+        container {
+          image = "brndnmtthws/nginx-echo-headers"
+          name  = "shlink2"
+        }
+      }
+    }
+  }
+}
+resource "kubernetes_service" "shlink2" {
+  metadata {
+    name      = "shlink2"
+    namespace = "url"
+    labels = {
+      "run" = "shlink2"
+    }
+  }
+
+  spec {
+    selector = {
+      run = "shlink2"
+    }
+    port {
+      name        = "http"
+      port        = "80"
+      target_port = "8080"
+    }
+  }
+}
+
+resource "kubernetes_ingress" "shlink2" {
+  metadata {
+    name      = "shlink-ingress2"
+    namespace = "url"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+      "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
+          more_set_headers "Kek: $host";
+          more_set_headers "Host: $host";
+          more_set_headers "X-Real-IP: $remote_addr";
+          more_set_headers "X-Forwarded-For: $proxy_add_x_forwarded_for";
+          more_set_headers "X-Forwarded-Proto: $scheme";
+        EOF
+      "nginx.org/location-snippets" : <<-EOF
+          add_header my-test-header test-value;
+        EOF
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["url2.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "url2.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service_name = "shlink2"
             service_port = "80"
           }
         }
