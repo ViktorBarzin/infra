@@ -32,7 +32,7 @@ resource "kubernetes_deployment" "kms-web-page" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     selector {
       match_labels = {
         "app" = "kms-web-page"
@@ -184,7 +184,7 @@ resource "kubernetes_service" "windows_kms" {
     name      = "windows-kms"
     namespace = "kms"
     labels = {
-      "app" = "windows-kms"
+      app = "kms-service"
     }
     annotations = {
       "metallb.universe.tf/allow-shared-ip" = "shared"
@@ -195,7 +195,7 @@ resource "kubernetes_service" "windows_kms" {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"
     selector = {
-      "app" = "windows-kms"
+      app = "kms-service"
     }
     port {
       port = "1688"
