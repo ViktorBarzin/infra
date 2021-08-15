@@ -50,18 +50,18 @@ variable "ansible_prefix" {
   description = "Provisioner command"
 }
 
-data "terraform_remote_state" "foo" {
-  backend = "kubernetes"
-  config = {
-    secret_suffix     = "state"
-    namespace         = "drone"
-    in_cluster_config = var.prod
-    host              = "https://kubernetes:6443"
-    //  load_config_file  = true
-  }
+# data "terraform_remote_state" "foo" {
+#   backend = "kubernetes"
+#   config = {
+#     secret_suffix     = "state"
+#     namespace         = "drone"
+#     in_cluster_config = var.prod
+#     host              = "https://kubernetes:6443"
+#     //  load_config_file  = true
+#   }
 
-  depends_on = [module.kubernetes_cluster]
-}
+#   depends_on = [module.kubernetes_cluster]
+# }
 provider "kubernetes" {
   config_path = var.prod ? "" : "~/.kube/config"
 }
