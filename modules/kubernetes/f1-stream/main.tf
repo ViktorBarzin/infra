@@ -85,6 +85,7 @@ resource "kubernetes_ingress" "f1-stream" {
       "kubernetes.io/ingress.class" = "nginx"
       "nginx.ingress.kubernetes.io/force-ssl-redirect" : "false"
       "nginx.ingress.kubernetes.io/ssl-redirect" : "false"
+      # "nginx.ingress.kubernetes.io/temporal-redirect" : "http://f1.viktorbarzin.me"
     }
   }
 
