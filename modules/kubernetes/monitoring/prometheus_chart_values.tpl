@@ -243,7 +243,8 @@ extraScrapeConfigs: |
   - job_name: 'openwrt'
     static_configs:
         - targets:
-          - "home.viktorbarzin.lan:9100"
+          #- "home.viktorbarzin.lan:9100"
+          - "10.0.20.1:9100"
     metrics_path: '/metrics'
     relabel_configs:
       - source_labels: [__address__]
@@ -251,7 +252,8 @@ extraScrapeConfigs: |
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: 'home.viktorbarzin.lan:9100'
+        #replacement: 'home.viktorbarzin.lan:9100'
+        replacement: '10.0.20.1:9100'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
