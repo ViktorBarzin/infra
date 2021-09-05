@@ -244,7 +244,7 @@ extraScrapeConfigs: |
     static_configs:
         - targets:
           #- "home.viktorbarzin.lan:9100"
-          - "10.0.20.1:9100"
+          - "10.0.20.100:9100"
     metrics_path: '/metrics'
     relabel_configs:
       - source_labels: [__address__]
@@ -253,7 +253,7 @@ extraScrapeConfigs: |
         target_label: instance
       - target_label: __address__
         #replacement: 'home.viktorbarzin.lan:9100'
-        replacement: '10.0.20.1:9100'
+        replacement: '10.0.20.100:9100'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
