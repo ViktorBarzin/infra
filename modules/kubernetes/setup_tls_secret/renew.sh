@@ -9,7 +9,7 @@ spawn certbot certonly --manual --preferred-challenge=dns --email me@viktorbarzi
 
 set prompt "$"
 set dns_file "$pwd/modules/kubernetes/bind/extra/viktorbarzin.me"
-expect -re "Before continuing, verify" { 
+expect -re "Please deploy a DNS TXT" {
     set challenge [ exec sh -c "echo '$expect_out(buffer)' | tail -n 3 | head -n 1" ]
     set dns_record "_acme-challenge IN TXT \"$challenge\""
     puts $dns_record
