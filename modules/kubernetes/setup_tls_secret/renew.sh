@@ -9,11 +9,13 @@ spawn certbot certonly --manual --preferred-challenge=dns --email me@viktorbarzi
 
 set prompt "$"
 set dns_file "$pwd/modules/kubernetes/bind/extra/viktorbarzin.me"
-expect -re "Please deploy a DNS TXT" {
-    set challenge [ exec sh -c "echo '$expect_out(buffer)' | tail -n 3 | head -n 1" ]
+# expect -re "Please deploy a DNS TXT record under the name" {
+expect -re "Press Enter to Continue" {
+    set challenge [ exec sh -c "echo '$expect_out(buffer)' | tail -n 4 | head -n 1" ]
     set dns_record "_acme-challenge IN TXT \"$challenge\""
-    puts $dns_record
-    puts $dns_file
+    puts "\nChallenge: '$challenge'"
+    # send \x03
+    puts "Dns file: '$dns_file'"
 
     # Check if dns record is not already present
     try {
@@ -32,11 +34,13 @@ expect -re "Please deploy a DNS TXT" {
 
 send -- "\r"
 # Do the same for the 2nd dns record
-expect -re "Before continuing, verify" { 
-    set challenge [ exec sh -c "echo '$expect_out(buffer)' | tail -n 3 | head -n 1" ]
+expect -re "\[a-zA-Z0-9_-\]{43}" {
+    set challenge $expect_out(0,string)
+    # set challenge [ exec sh -c "echo $expect_out(0, buffer) | tail -n 8 | head -n 1" ]
     set dns_record1 "_acme-challenge IN TXT \"$challenge\""
-    puts $dns_record1
-    puts $dns_file
+    puts "Challenge: '$challenge'"
+    puts "Dns record: '$dns_record1'"
+    puts "Dns file: '$dns_file'"
 
     # Check if dns record is not already present
     try {
