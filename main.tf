@@ -31,8 +31,8 @@ variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
 # variable "dockerhub_password" {}
-variable "oauth_client_id" {}
-variable "oauth_client_secret" {}
+# variable "oauth_client_id" {}
+# variable "oauth_client_secret" {}
 variable "url_shortener_mysql_password" {}
 variable "url_shortener_geolite_license_key" {}
 variable "url_shortener_api_key" {}
@@ -218,8 +218,8 @@ module "kubernetes_cluster" {
   drone_rpc_secret           = var.drone_rpc_secret
 
   # Oauth proxy
-  oauth_client_id     = var.oauth_client_id
-  oauth_client_secret = var.oauth_client_secret
+  # oauth_client_id     = var.oauth_client_id
+  # oauth_client_secret = var.oauth_client_secret
   # depends_on = [module.k8s_master, module.k8s_node1, module.k8s_node2] # wait until master and at least 2 nodes are up
 
   idrac_username = var.monitoring_idrac_username
