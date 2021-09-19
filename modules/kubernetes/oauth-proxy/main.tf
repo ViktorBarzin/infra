@@ -1,18 +1,17 @@
-variable "tls_secret_name" {}
+variable "namespace" {
+  type = string
+}
+variable "host" {
+  type = string
+}
+variable "tls_secret_name" {
+  type = string
+}
+variable "svc_name" {
+  type = string
+}
 variable "client_id" {}
 variable "client_secret" {}
-
-resource "kubernetes_namespace" "oauth" {
-  metadata {
-    name = "oauth"
-  }
-}
-
-module "tls_secret" {
-  source          = "../setup_tls_secret"
-  namespace       = "oauth"
-  tls_secret_name = var.tls_secret_name
-}
 
 resource "random_password" "cookie" {
   length           = 16
@@ -23,7 +22,7 @@ resource "random_password" "cookie" {
 resource "kubernetes_deployment" "oauth_proxy" {
   metadata {
     name      = "oauth-proxy"
-    namespace = "oauth"
+    namespace = var.namespace
     labels = {
       run = "oauth-proxy"
     }
@@ -80,8 +79,8 @@ resource "kubernetes_deployment" "oauth_proxy" {
 
 resource "kubernetes_service" "oauth_proxy" {
   metadata {
-    name      = "oauth-proxy"
-    namespace = "oauth"
+    name      = var.svc_name
+    namespace = var.namespace
     labels = {
       run = "oauth-proxy"
     }
@@ -102,24 +101,25 @@ resource "kubernetes_service" "oauth_proxy" {
 resource "kubernetes_ingress" "oauth" {
   metadata {
     name      = "oauth-ingress"
-    namespace = "oauth"
+    namespace = var.namespace
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "kubernetes.io/ingress.class"           = "nginx"
+      "nginx.ingress.kubernetes.io/use-regex" = "true"
     }
   }
 
   spec {
     tls {
-      hosts       = ["oauth.viktorbarzin.me"]
+      hosts       = [var.host]
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "oauth.viktorbarzin.me"
+      host = var.host
       http {
         path {
-          path = "/"
+          path = "/oauth2/.*"
           backend {
-            service_name = "oauth-proxy"
+            service_name = var.svc_name
             service_port = "80"
           }
         }
