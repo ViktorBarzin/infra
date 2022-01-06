@@ -106,7 +106,7 @@ resource "kubernetes_service" "kms-web-page" {
   }
 }
 
-resource "kubernetes_ingress" "kms-web-page" {
+resource "kubernetes_ingress_v1" "kms-web-page" {
   metadata {
     name      = "kms-web-page"
     namespace = "kms"
@@ -126,8 +126,12 @@ resource "kubernetes_ingress" "kms-web-page" {
         path {
           path = "/"
           backend {
-            service_name = "kms-web-page"
-            service_port = "80"
+            service {
+              name = "kms-web-page"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

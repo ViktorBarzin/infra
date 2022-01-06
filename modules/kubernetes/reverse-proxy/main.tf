@@ -41,7 +41,7 @@ resource "kubernetes_service" "openwrt" {
 #         port: 443
 #         protocol: TCP
 
-resource "kubernetes_ingress" "openwrt" {
+resource "kubernetes_ingress_v1" "openwrt" {
   metadata {
     name      = "openwrt-ingress"
     namespace = "website"

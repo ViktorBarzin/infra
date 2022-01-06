@@ -137,7 +137,7 @@ resource "kubernetes_service" "hackmd" {
   }
 }
 
-resource "kubernetes_ingress" "hackmd" {
+resource "kubernetes_ingress_v1" "hackmd" {
   metadata {
     name      = "hackmd-ingress"
     namespace = "hackmd"
@@ -157,8 +157,12 @@ resource "kubernetes_ingress" "hackmd" {
         path {
           path = "/"
           backend {
-            service_name = "hackmd"
-            service_port = "80"
+            service {
+              name = "hackmd"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

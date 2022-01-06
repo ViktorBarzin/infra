@@ -77,7 +77,7 @@ module "tls_secret" {
 }
 
 
-resource "kubernetes_ingress" "f1-stream" {
+resource "kubernetes_ingress_v1" "f1-stream" {
   metadata {
     name      = "f1-ingress"
     namespace = "f1-stream"
@@ -100,8 +100,12 @@ resource "kubernetes_ingress" "f1-stream" {
         path {
           path = "/"
           backend {
-            service_name = "f1-stream"
-            service_port = "80"
+            service {
+              name = "f1-stream"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
