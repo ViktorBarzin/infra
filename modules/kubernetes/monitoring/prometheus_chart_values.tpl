@@ -31,6 +31,7 @@ alertmanagerFiles:
       smtp_auth_username: "alertmanager@viktorbarzin.me"
       smtp_auth_password: "${alertmanager_mail_pass}"
       smtp_require_tls: true
+      slack_api_url: "${alertmanager_slack_api_url}"
     templates:
       - "/etc/alertmanager/template/*.tmpl"
     route:
@@ -38,14 +39,17 @@ alertmanagerFiles:
       group_wait: 3s
       group_interval: 5s
       repeat_interval: 1h
-      receiver: SMTP_STARTTLS
+      receiver: ALL
     receivers:
-      - name: 'SMTP_STARTTLS'
+      - name: ALL
         email_configs:
           - to: "me@viktorbarzin.me"
             send_resolved: true
             tls_config:
               insecure_skip_verify: true
+        slack_configs:
+          - send_resolved: true
+            channel: "#general"
 
 server:
   # Enable me to delete metrics
@@ -93,7 +97,7 @@ serverFiles:
       - name: NodeDown
         rules:
         - alert: NodeDown
-          expr: up{job="kubernetes-nodes"} == 0
+          expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
           for: 1m
           labels:
             severity: page
@@ -120,7 +124,7 @@ serverFiles:
       - name: ReadyPodsInDeploymentLessThanSpec
         rules:
         - alert: ReadyPodsInDeploymentLessThanSpec
-          expr: kube_deployment_status_replicas_available - on(namespace, deployment) kube_deployment_spec_replicas < 0
+          expr: kube_deployment_status_replicas_available - on(exported_namespace, deployment) kube_deployment_spec_replicas < 0
           for: 10m
           labels:
             severity: page
@@ -174,7 +178,7 @@ serverFiles:
       - name: Mailserver Down
         rules:
         - alert: Mail server has no replicas available
-          expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
+          expr: (kube_deployment_status_replicas_available{exported_namespace="mailserver"} or on() vector(0)) < 1
           for: 10m
           labels:
             severity: page
@@ -183,7 +187,7 @@ serverFiles:
       - name: Hackmd Down
         rules:
         - alert: Hackmd has no replicas available
-          expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
+          expr: (kube_deployment_status_replicas_available{exported_namespace="hackmd"} or on() vector(0)) < 1
           for: 1m
           labels:
             severity: page
@@ -192,7 +196,7 @@ serverFiles:
       - name: Privatebin Down
         rules:
         - alert: Privatebin has no replicas available
-          expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
+          expr: (kube_deployment_status_replicas_available{exported_namespace="privatebin"} or on() vector(0)) < 1
           for: 10m
           labels:
             severity: page

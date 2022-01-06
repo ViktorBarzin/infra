@@ -9,6 +9,7 @@ variable "idrac_username" {
 variable "idrac_password" {
   default = "calvin"
 }
+variable "alertmanager_slack_api_url" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -23,8 +24,9 @@ resource "helm_release" "prometheus" {
 
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
+  version    = "15.0.2"
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password })]
+  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url })]
 }
 
 # Terraform get angry with the 30k values file :/ use ansible until solved
