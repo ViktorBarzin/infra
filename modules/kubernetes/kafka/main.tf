@@ -105,7 +105,7 @@ resource "kubernetes_service" "kafka-ui" {
   }
 }
 
-resource "kubernetes_ingress" "kafka-ui" {
+resource "kubernetes_ingress_v1" "kafka-ui" {
   metadata {
     name      = "kafka-ui-ingress"
     namespace = "kafka"
@@ -128,8 +128,12 @@ resource "kubernetes_ingress" "kafka-ui" {
         path {
           path = "/"
           backend {
-            service_name = "kafka-ui"
-            service_port = "80"
+            service {
+              name = "kafka-ui"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

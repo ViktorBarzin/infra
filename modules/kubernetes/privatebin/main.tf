@@ -98,7 +98,7 @@ resource "kubernetes_service" "privatebin" {
   }
 }
 
-resource "kubernetes_ingress" "privatebin" {
+resource "kubernetes_ingress_v1" "privatebin" {
   metadata {
     name      = "privatebin-ingress"
     namespace = "privatebin"
@@ -118,8 +118,12 @@ resource "kubernetes_ingress" "privatebin" {
         path {
           path = "/"
           backend {
-            service_name = "privatebin"
-            service_port = "80"
+            service {
+              name = "privatebin"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -130,8 +134,12 @@ resource "kubernetes_ingress" "privatebin" {
         path {
           path = "/"
           backend {
-            service_name = "privatebin"
-            service_port = "80"
+            service {
+              name = "privatebin"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

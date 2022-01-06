@@ -164,7 +164,7 @@ resource "kubernetes_service" "pihole-web" {
   }
 }
 
-resource "kubernetes_ingress" "pihole" {
+resource "kubernetes_ingress_v1" "pihole" {
   metadata {
     name      = "pihole-ingress"
     namespace = "pihole"
@@ -186,8 +186,12 @@ resource "kubernetes_ingress" "pihole" {
         path {
           path = "/"
           backend {
-            service_name = "pihole-web"
-            service_port = "80"
+            service {
+              name = "pihole-web"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

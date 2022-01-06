@@ -78,7 +78,7 @@ resource "kubernetes_service" "openid_help_page" {
   }
 }
 
-resource "kubernetes_ingress" "openid_help_page" {
+resource "kubernetes_ingress_v1" "openid_help_page" {
   metadata {
     name      = "openid-help-page"
     namespace = "openid-help-page"
@@ -98,8 +98,12 @@ resource "kubernetes_ingress" "openid_help_page" {
         path {
           path = "/"
           backend {
-            service_name = "openid-help-page"
-            service_port = "80"
+            service {
+              name = "openid-help-page"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

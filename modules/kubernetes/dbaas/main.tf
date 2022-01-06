@@ -103,7 +103,7 @@ resource "kubernetes_secret" "cluster-password" {
   }
 }
 
-resource "kubernetes_ingress" "dbaas" {
+resource "kubernetes_ingress_v1" "dbaas" {
   metadata {
     name      = "orchestrator-ingress"
     namespace = "dbaas"
@@ -125,8 +125,12 @@ resource "kubernetes_ingress" "dbaas" {
         path {
           path = "/"
           backend {
-            service_name = "mysql-mysql-operator"
-            service_port = "80"
+            service {
+              name = "mysql-mysql-operator"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -207,7 +211,7 @@ resource "kubernetes_service" "phpmyadmin" {
   }
 }
 
-resource "kubernetes_ingress" "phpmyadmin" {
+resource "kubernetes_ingress_v1" "phpmyadmin" {
   metadata {
     name      = "phpmyadmin-ingress"
     namespace = "dbaas"
@@ -229,8 +233,12 @@ resource "kubernetes_ingress" "phpmyadmin" {
         path {
           path = "/"
           backend {
-            service_name = "phpmyadmin"
-            service_port = "80"
+            service {
+              name = "phpmyadmin"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

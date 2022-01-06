@@ -10,12 +10,12 @@ resource "random_password" "csrf_token" {
 module "dashboard" {
   # source = "cookielab/dashboard/kubernetes"
   source                    = "ViktorBarzin/dashboard/kubernetes"
-  version                   = "0.13.1"
+  version                   = "0.13.2"
   kubernetes_dashboard_csrf = random_password.csrf_token.result
-  kubernetes_dashboard_deployment_args = list(
+  kubernetes_dashboard_deployment_args = tolist([
     "--auto-generate-certificates",
     "--token-ttl=0"
-  )
+  ])
 }
 
 module "tls_secret" {
@@ -41,7 +41,7 @@ module "tls_secret" {
 #   depends_on = [kubernetes_namespace.kubernetes-dashboard]
 # }
 
-resource "kubernetes_ingress" "kubernetes-dashboard" {
+resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
   metadata {
     name      = "kubernetes-dashboard"
     namespace = "kubernetes-dashboard"
@@ -68,8 +68,12 @@ resource "kubernetes_ingress" "kubernetes-dashboard" {
         path {
           path = "/"
           backend {
-            service_name = "kubernetes-dashboard"
-            service_port = "443"
+            service {
+              name = "kubernetes-dashboard"
+              port {
+                number = 443
+              }
+            }
           }
         }
       }
@@ -96,7 +100,7 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
   depends_on = [module.dashboard]
 }
 
-# resource "kubernetes_ingress" "oauth" {
+# resource "kubernetes_ingress_v1" "oauth" {
 #   metadata {
 #     name      = "kubernetes-dashboard"
 #     namespace = "oauth"

@@ -98,7 +98,7 @@ resource "kubernetes_service" "oauth_proxy" {
   }
 }
 
-resource "kubernetes_ingress" "oauth" {
+resource "kubernetes_ingress_v1" "oauth" {
   metadata {
     name      = "oauth-ingress"
     namespace = var.namespace
@@ -119,8 +119,12 @@ resource "kubernetes_ingress" "oauth" {
         path {
           path = "/oauth2/.*"
           backend {
-            service_name = var.svc_name
-            service_port = "80"
+            service {
+              name = var.svc_name
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

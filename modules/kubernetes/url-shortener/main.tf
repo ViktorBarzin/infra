@@ -164,7 +164,7 @@ resource "kubernetes_service" "shlink" {
   }
 }
 
-resource "kubernetes_ingress" "shlink" {
+resource "kubernetes_ingress_v1" "shlink" {
   metadata {
     name      = "shlink-ingress"
     namespace = "url"
@@ -190,8 +190,12 @@ resource "kubernetes_ingress" "shlink" {
         path {
           path = "/"
           backend {
-            service_name = "shlink"
-            service_port = "80"
+            service {
+              name = "shlink"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -299,7 +303,7 @@ resource "kubernetes_service" "shlink-web" {
   }
 }
 
-resource "kubernetes_ingress" "shlink-web" {
+resource "kubernetes_ingress_v1" "shlink-web" {
   metadata {
     name      = "shlink-web-ingress"
     namespace = "url"
@@ -321,8 +325,12 @@ resource "kubernetes_ingress" "shlink-web" {
         path {
           path = "/"
           backend {
-            service_name = "shlink-web"
-            service_port = "80"
+            service {
+              name = "shlink-web"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -382,7 +390,7 @@ resource "kubernetes_service" "shlink2" {
   }
 }
 
-resource "kubernetes_ingress" "shlink2" {
+resource "kubernetes_ingress_v1" "shlink2" {
   metadata {
     name      = "shlink-ingress2"
     namespace = "url"
@@ -412,8 +420,12 @@ resource "kubernetes_ingress" "shlink2" {
         path {
           path = "/"
           backend {
-            service_name = "shlink2"
-            service_port = "80"
+            service {
+              name = "shlink2"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

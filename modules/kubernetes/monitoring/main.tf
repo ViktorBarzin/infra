@@ -182,7 +182,7 @@ resource "kubernetes_cron_job" "monitor_prom" {
   }
 }
 
-resource "kubernetes_ingress" "status" {
+resource "kubernetes_ingress_v1" "status" {
   metadata {
     name      = "hetrix-redirect-ingress"
     namespace = "monitoring"
@@ -203,8 +203,12 @@ resource "kubernetes_ingress" "status" {
         path {
           path = "/"
           backend {
-            service_name = "not-used" # redirected by annotation
-            service_port = "80"
+            service {
+              name = "not-used"
+              port {
+                number = 80 # redirected by annotation
+              }
+            }
           }
         }
       }
@@ -212,7 +216,7 @@ resource "kubernetes_ingress" "status" {
   }
 }
 
-resource "kubernetes_ingress" "status_yotovski" {
+resource "kubernetes_ingress_v1" "status_yotovski" {
   metadata {
     name      = "hetrix-yotovski-redirect-ingress"
     namespace = "monitoring"
@@ -233,8 +237,12 @@ resource "kubernetes_ingress" "status_yotovski" {
         path {
           path = "/"
           backend {
-            service_name = "not-used" # redirected by annotation
-            service_port = "80"
+            service {
+              name = "not-used" # redirected by annotation
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

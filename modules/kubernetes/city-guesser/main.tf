@@ -104,7 +104,7 @@ resource "kubernetes_service" "city-guesser" {
 #   }
 # }
 
-resource "kubernetes_ingress" "city-guesser" {
+resource "kubernetes_ingress_v1" "city-guesser" {
   metadata {
     name      = "city-guesser-ingress"
     namespace = "city-guesser"
@@ -127,8 +127,12 @@ resource "kubernetes_ingress" "city-guesser" {
         path {
           path = "/"
           backend {
-            service_name = "city-guesser"
-            service_port = "80"
+            service {
+              name = "city-guesser"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -136,7 +140,7 @@ resource "kubernetes_ingress" "city-guesser" {
   }
 }
 
-# resource "kubernetes_ingress" "city-guesser-oauth" {
+# resource "kubernetes_ingress_v1" "city-guesser-oauth" {
 #   metadata {
 #     name      = "city-guesser-ingress-oauth"
 #     namespace = "city-guesser"

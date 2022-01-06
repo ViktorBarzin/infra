@@ -187,7 +187,7 @@ resource "kubernetes_service" "webhook_handler" {
   }
 }
 
-resource "kubernetes_ingress" "webhook_handler" {
+resource "kubernetes_ingress_v1" "webhook_handler" {
   metadata {
     name      = "webhook-handler-ingress"
     namespace = "webhook-handler"
@@ -207,8 +207,12 @@ resource "kubernetes_ingress" "webhook_handler" {
         path {
           path = "/"
           backend {
-            service_name = "webhook-handler"
-            service_port = "80"
+            service {
+              name = "webhook-handler"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
