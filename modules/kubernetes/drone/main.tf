@@ -146,7 +146,7 @@ resource "kubernetes_service" "drone" {
   }
 }
 
-resource "kubernetes_ingress" "drone" {
+resource "kubernetes_ingress_v1" "drone" {
   metadata {
     name      = "drone-ingress"
     namespace = "drone"
@@ -168,8 +168,12 @@ resource "kubernetes_ingress" "drone" {
         path {
           path = "/"
           backend {
-            service_name = "drone"
-            service_port = "80"
+            service {
+              name = "drone"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

@@ -350,7 +350,7 @@ resource "kubernetes_service" "webui" {
 }
 
 
-resource "kubernetes_ingress" "webui" {
+resource "kubernetes_ingress_v1" "webui" {
   metadata {
     name      = "webui-ingress"
     namespace = "wireguard"
@@ -370,8 +370,12 @@ resource "kubernetes_ingress" "webui" {
         path {
           path = "/"
           backend {
-            service_name = "webui"
-            service_port = "80"
+            service {
+              name = "webui"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }

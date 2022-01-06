@@ -103,7 +103,7 @@ resource "kubernetes_service" "blog" {
   }
 }
 
-resource "kubernetes_ingress" "blog" {
+resource "kubernetes_ingress_v1" "blog" {
   metadata {
     name      = "blog-ingress"
     namespace = "website"
@@ -123,8 +123,12 @@ resource "kubernetes_ingress" "blog" {
         path {
           path = "/"
           backend {
-            service_name = "blog"
-            service_port = "80"
+            service {
+              name = "blog"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
@@ -135,8 +139,12 @@ resource "kubernetes_ingress" "blog" {
         path {
           path = "/"
           backend {
-            service_name = "blog"
-            service_port = "80"
+            service {
+              name = "blog"
+              port {
+                number = 80
+              }
+            }
           }
         }
       }
