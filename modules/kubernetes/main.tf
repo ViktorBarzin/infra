@@ -32,6 +32,7 @@ variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
 variable "idrac_username" {}
 variable "idrac_password" {}
+variable "alertmanager_slack_api_url" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -143,6 +144,7 @@ module "monitoring" {
   alertmanager_account_password = var.alertmanager_account_password
   idrac_username                = var.idrac_username
   idrac_password                = var.idrac_password
+  alertmanager_slack_api_url    = var.alertmanager_slack_api_url
 
   depends_on = [null_resource.core_services]
 }

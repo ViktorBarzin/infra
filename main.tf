@@ -44,6 +44,7 @@ variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
 variable "monitoring_idrac_username" {}
 variable "monitoring_idrac_password" {}
+variable "alertmanager_slack_api_url" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -211,6 +212,7 @@ module "kubernetes_cluster" {
   bind_named_conf_options  = var.bind_named_conf_options
 
   alertmanager_account_password = var.alertmanager_account_password
+  alertmanager_slack_api_url    = var.alertmanager_slack_api_url
 
   # Drone
   drone_github_client_id     = var.drone_github_client_id
