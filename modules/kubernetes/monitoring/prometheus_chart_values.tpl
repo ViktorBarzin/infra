@@ -142,7 +142,7 @@ serverFiles:
         rules:
         - alert: HighPowerUsage
           expr: (max(r730_idrac_amperageProbeReading) or on() vector(0)) > 112
-          for: 30m
+          for: 60m
           labels:
             severity: page
           annotations:
