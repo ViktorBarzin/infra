@@ -101,6 +101,7 @@ resource "kubernetes_config_map" "policy" {
               - "bind"
               - "monitoring"
               - "kube-system"
+              - "wireguard"
     EOF
   }
 }
