@@ -33,6 +33,7 @@ variable "webhook_handler_ssh_key" {}
 variable "idrac_username" {}
 variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
+variable "home_assistant_configuration" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -224,4 +225,11 @@ module "wireguard" {
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
   firewall_sh     = var.wireguard_firewall_sh
+}
+
+module "home_assistant" {
+  source                         = "./home_assistant"
+  tls_secret_name                = var.tls_secret_name
+  client_certificate_secret_name = var.client_certificate_secret_name
+  configuration_yaml             = var.home_assistant_configuration
 }

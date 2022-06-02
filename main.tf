@@ -45,6 +45,7 @@ variable "webhook_handler_ssh_key" {}
 variable "monitoring_idrac_username" {}
 variable "monitoring_idrac_password" {}
 variable "alertmanager_slack_api_url" {}
+variable "home_assistant_configuration" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -234,5 +235,6 @@ module "kubernetes_cluster" {
   # dbaas
   dbaas_root_password = var.dbaas_root_password
 
-
+  # home-assistant
+  home_assistant_configuration = var.home_assistant_configuration
 }
