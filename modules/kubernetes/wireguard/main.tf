@@ -132,7 +132,7 @@ resource "kubernetes_deployment" "wireguard" {
           name              = "prometheus-exporter"
           image             = "mindflavor/prometheus-wireguard-exporter"
           image_pull_policy = "IfNotPresent"
-          command           = ["prometheus_wireguard_exporter", "-a", "-v", "-n", "/etc/wireguard/wg0.conf"]
+          command           = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
           volume_mount {
             name       = "wg0-conf"
             mount_path = "/etc/wireguard/wg0.conf"
@@ -275,6 +275,7 @@ resource "kubernetes_deployment" "webui" {
             "0.0.0.0/0",
             "--client-ip-range",
             "10.3.3.10/24",
+            "--no-nat",
           ]
           port {
             container_port = 8080
