@@ -1,7 +1,7 @@
 # Creates namespace and everythin needed
 module "metallb" {
   source  = "colinwilson/metallb/kubernetes"
-  version = "0.1.5"
+  version = "0.1.7"
 }
 
 resource "kubernetes_config_map" "config" {
