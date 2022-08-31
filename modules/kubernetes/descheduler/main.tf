@@ -106,7 +106,7 @@ resource "kubernetes_config_map" "policy" {
   }
 }
 
-resource "kubernetes_cron_job" "descheduler" {
+resource "kubernetes_cron_job_v1" "descheduler" {
   metadata {
     name      = "descheduler"
     namespace = "descheduler"

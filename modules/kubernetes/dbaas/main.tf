@@ -42,6 +42,7 @@ resource "helm_release" "mysql" {
 
   repository = "https://presslabs.github.io/charts"
   chart      = "mysql-operator"
+  # version    = "v0.5.0-rc.3"
 
   values = [templatefile("${path.module}/mysql_chart_values.yaml", { secretName = var.tls_secret_name })]
   atomic = true

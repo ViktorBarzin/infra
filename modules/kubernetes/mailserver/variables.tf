@@ -53,7 +53,7 @@ disable_vrfy_command = yes
 
 # Postscreen settings to drop zombies/open relays/spam early
 postscreen_dnsbl_action = enforce
-postscreen_dnsbl_sites = zen.spamhaus.org*3
+postscreen_dnsbl_sites = zen.spamhaus.org*2
         bl.mailspike.net
         b.barracudacentral.org*2
         bl.spameatingmonkey.net

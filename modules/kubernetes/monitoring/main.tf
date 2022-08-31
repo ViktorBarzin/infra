@@ -154,7 +154,7 @@ resource "helm_release" "grafana" {
   values = [file("${path.module}/grafana_chart_values.yaml")]
 }
 
-resource "kubernetes_cron_job" "monitor_prom" {
+resource "kubernetes_cron_job_v1" "monitor_prom" {
   metadata {
     name = "monitor-prometheus"
   }
