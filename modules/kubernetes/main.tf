@@ -34,6 +34,7 @@ variable "idrac_username" {}
 variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
+variable "shadowsocks_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -189,6 +190,11 @@ module "privatebin" {
 
 module "reloader" {
   source = "./reloader"
+}
+
+module "shadowsocks" {
+  source   = "./shadowsocks"
+  password = var.shadowsocks_password
 }
 
 module "city-guesser" {

@@ -46,6 +46,7 @@ variable "monitoring_idrac_username" {}
 variable "monitoring_idrac_password" {}
 variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
+variable "shadowsocks_password" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -237,4 +238,7 @@ module "kubernetes_cluster" {
 
   # home-assistant
   home_assistant_configuration = var.home_assistant_configuration
+
+  # shadowsocks
+  shadowsocks_password = var.shadowsocks_password
 }
