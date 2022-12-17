@@ -16,6 +16,7 @@ variable "client_certificate_secret_name" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
 variable "mailserver_opendkim_key" {}
+variable "mailserver_sasl_passwd" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
 variable "wireguard_wg_0_conf" {}
@@ -191,6 +192,7 @@ module "kubernetes_cluster" {
   # dockerhub_password             = var.dockerhub_password
   client_certificate_secret_name = var.client_certificate_secret_name
   mailserver_accounts            = var.mailserver_accounts
+  mailserver_sasl_passwd         = var.mailserver_sasl_passwd
   mailserver_aliases             = var.mailserver_aliases
   mailserver_opendkim_key        = var.mailserver_opendkim_key
   pihole_web_password            = var.pihole_web_password

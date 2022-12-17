@@ -12,7 +12,6 @@ readme_directory = no
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 mydestination = $myhostname, localhost.$mydomain, localhost
-relayhost =
 mynetworks = 127.0.0.0/8 [::1]/128 [fe80::]/64 10.47.0.11/32
 mailbox_size_limit = 0
 recipient_delimiter = +
@@ -27,7 +26,6 @@ smtpd_tls_key_file=/tmp/ssl/tls.key
 smtpd_tls_security_level = may
 smtpd_use_tls=yes
 smtpd_tls_loglevel = 1
-smtp_tls_security_level = may
 smtp_tls_loglevel = 1
 tls_ssl_options = NO_COMPRESSION
 tls_high_cipherlist = ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS
@@ -72,10 +70,18 @@ postscreen_bare_newline_action = enforce
 smtpd_sasl_auth_enable = yes
 smtpd_sasl_path = /var/spool/postfix/private/auth
 smtpd_sasl_type = dovecot
-
 smtpd_sasl_security_options = noanonymous
 smtpd_sasl_local_domain = $mydomain
 broken_sasl_auth_clients = yes
+
+# SMTP configuration
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl/passwd
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous
+smtp_tls_security_level = encrypt
+header_size_limit = 4096000
+relayhost = [smtp.sendgrid.net]:587
 
 # Mail directory
 virtual_transport = lmtp:unix:/var/run/dovecot/lmtp
