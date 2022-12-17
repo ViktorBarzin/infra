@@ -5,6 +5,7 @@ variable "hackmd_db_password" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
 variable "mailserver_opendkim_key" {}
+variable "mailserver_sasl_passwd" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
 variable "wireguard_wg_0_conf" {}
@@ -132,6 +133,7 @@ module "mailserver" {
   mailserver_accounts     = var.mailserver_accounts
   postfix_account_aliases = var.mailserver_aliases
   opendkim_key            = var.mailserver_opendkim_key
+  sasl_passwd             = var.mailserver_sasl_passwd
 
   depends_on = [null_resource.core_services]
 }

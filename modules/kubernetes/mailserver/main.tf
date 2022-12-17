@@ -2,6 +2,9 @@ variable "tls_secret_name" {}
 variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
+variable "sasl_passwd" {
+  default = ""
+}
 
 resource "kubernetes_namespace" "mailserver" {
   metadata {
@@ -66,9 +69,10 @@ resource "kubernetes_config_map" "mailserver_config" {
     "postfix-main.cf"     = var.postfix_cf
     "postfix-virtual.cf"  = format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt"))
 
-    KeyTable     = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
-    SigningTable = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
-    TrustedHosts = "127.0.0.1\nlocalhost\n"
+    KeyTable      = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
+    SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
+    TrustedHosts  = "127.0.0.1\nlocalhost\n"
+    "sasl_passwd" = var.sasl_passwd
   }
   # Password hashes are different each time and avoid changing secret constantly. 
   # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
@@ -251,6 +255,12 @@ resource "kubernetes_deployment" "mailserver" {
           volume_mount {
             name       = "var-run-dovecot"
             mount_path = "/var/run/dovecot"
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/postfix/sasl/passwd"
+            sub_path   = "sasl_passwd"
+            read_only  = true
           }
           port {
             name           = "smtp"
