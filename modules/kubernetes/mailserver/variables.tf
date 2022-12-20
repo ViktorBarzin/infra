@@ -119,6 +119,8 @@ recipient_canonical_classes = envelope_recipient,header_recipient
 compatibility_level = 2
 # enable_original_recipient = no  # b4 uncommenting see https://serverfault.com/questions/661615/how-to-drop-orig-to-using-postfix-virtual-domains
 always_add_missing_headers = yes
+
+anvil_status_update_time = 5s
 EOT
 }
 
