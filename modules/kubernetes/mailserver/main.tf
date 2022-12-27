@@ -154,17 +154,19 @@ resource "kubernetes_deployment" "mailserver" {
             }
           }
 
-          # lifecycle {
-          #   post_start {
-          #     exec {
-          #       command = [
-          #         "/bin/sh",
-          #         "-c",
-          #         "cp -f /tmp/user-patches.sh /tmp/docker-mailserver/user-patches.sh && chown root:root /var/log/mail && chmod 755 /var/log/mail",
-          #       ]
-          #     }
-          #   }
-          # }
+          lifecycle {
+            post_start {
+              exec {
+                command = [
+                  "postmap",
+                  "/etc/postfix/sasl/passwd"
+                  # "/bin/sh",
+                  # "-c",
+                  # "cp -f /tmp/user-patches.sh /tmp/docker-mailserver/user-patches.sh && chown root:root /var/log/mail && chmod 755 /var/log/mail",
+                ]
+              }
+            }
+          }
 
           volume_mount {
             name       = "config-tls"
