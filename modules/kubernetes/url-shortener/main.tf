@@ -1,3 +1,9 @@
+## Setup
+## Need to manually add
+## user: shlink
+## password: var.mysql_password
+## to the mysql tier
+
 variable "tls_secret_name" {}
 variable "geolite_license_key" {}
 variable "api_key" {}
@@ -27,11 +33,8 @@ resource "kubernetes_secret" "mysql_config" {
     }
   }
   data = {
-    # TODO user other user...
-    # "DB_USER" = "shlink"
-    "DB_USER" = "root"
-    # "DB_PASSWORD" = var.mysql_password
-    "DB_PASSWORD" = "cDMyUEFDbGNpQmdjT2RtNXNac2YK"
+    "DB_USER"     = "shlink"
+    "DB_PASSWORD" = var.mysql_password
   }
 }
 
@@ -91,7 +94,7 @@ resource "kubernetes_deployment" "shlink" {
           image = "shlinkio/shlink:stable"
           name  = "shlink"
           env {
-            name  = "SHORT_DOMAIN_HOST"
+            name  = "DEFAULT_DOMAIN"
             value = var.domain
           }
           env {
@@ -109,7 +112,7 @@ resource "kubernetes_deployment" "shlink" {
           }
           env {
             name  = "DB_HOST"
-            value = "mysql-cluster-mysql-master.dbaas.svc.cluster.local"
+            value = "mysql-cluster.dbaas.svc.cluster.local"
           }
           # env {
           #   name  = "DB_USER"
@@ -327,101 +330,6 @@ resource "kubernetes_ingress_v1" "shlink-web" {
           backend {
             service {
               name = "shlink-web"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-# TESTING
-
-resource "kubernetes_deployment" "shlink2" {
-  metadata {
-    name      = "shlink2"
-    namespace = "url"
-    labels = {
-      run = "shlink2"
-    }
-  }
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        run = "shlink2"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          run = "shlink2"
-        }
-      }
-      spec {
-        container {
-          image = "brndnmtthws/nginx-echo-headers"
-          name  = "shlink2"
-        }
-      }
-    }
-  }
-}
-resource "kubernetes_service" "shlink2" {
-  metadata {
-    name      = "shlink2"
-    namespace = "url"
-    labels = {
-      "run" = "shlink2"
-    }
-  }
-
-  spec {
-    selector = {
-      run = "shlink2"
-    }
-    port {
-      name        = "http"
-      port        = "80"
-      target_port = "8080"
-    }
-  }
-}
-
-resource "kubernetes_ingress_v1" "shlink2" {
-  metadata {
-    name      = "shlink-ingress2"
-    namespace = "url"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
-          more_set_headers "Kek: $host";
-          more_set_headers "Host: $host";
-          more_set_headers "X-Real-IP: $remote_addr";
-          more_set_headers "X-Forwarded-For: $proxy_add_x_forwarded_for";
-          more_set_headers "X-Forwarded-Proto: $scheme";
-        EOF
-      "nginx.org/location-snippets" : <<-EOF
-          add_header my-test-header test-value;
-        EOF
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["url2.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "url2.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "shlink2"
               port {
                 number = 80
               }

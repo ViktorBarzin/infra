@@ -2,7 +2,7 @@
 variable "tls_secret_name" {}
 variable "dbaas_root_password" {}
 variable "cluster_master_service" {
-  default = "mysql-cluster-mysql-master"
+  default = "mysql-cluster"
 }
 variable "prod" {
   default = false
@@ -35,19 +35,42 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# resource "helm_release" "mysql" {
+#   namespace        = "dbaas"
+#   create_namespace = false
+#   name             = "mysql"
+
+#   repository = "https://presslabs.github.io/charts"
+#   chart      = "mysql-operator"
+#   # version    = "v0.5.0-rc.3"
+
+#   values = [templatefile("${path.module}/mysql_chart_values.yaml", { secretName = var.tls_secret_name })]
+#   atomic = true
+
+#   depends_on = [kubernetes_namespace.dbaas]
+# }
+
 resource "helm_release" "mysql" {
   namespace        = "dbaas"
   create_namespace = false
-  name             = "mysql"
+  name             = "mysql-operator"
 
-  repository = "https://presslabs.github.io/charts"
+  repository = "https://mysql.github.io/mysql-operator/"
   chart      = "mysql-operator"
-  # version    = "v0.5.0-rc.3"
-
-  values = [templatefile("${path.module}/mysql_chart_values.yaml", { secretName = var.tls_secret_name })]
-  atomic = true
-
+  atomic     = true
   depends_on = [kubernetes_namespace.dbaas]
+}
+
+resource "helm_release" "innodb-cluster" {
+  namespace        = "dbaas"
+  create_namespace = false
+  name             = var.cluster_master_service
+
+  repository = "https://mysql.github.io/mysql-operator/"
+  chart      = "mysql-innodbcluster"
+  atomic     = true
+  depends_on = [kubernetes_namespace.dbaas]
+  values     = [templatefile("${path.module}/chart_values.tpl", { root_password = var.dbaas_root_password })]
 }
 
 resource "kubernetes_persistent_volume" "mysql-operator" {
