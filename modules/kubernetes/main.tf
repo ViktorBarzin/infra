@@ -205,6 +205,12 @@ module "city-guesser" {
   depends_on      = [null_resource.core_services]
 }
 
+module "echo" {
+  source          = "./echo"
+  tls_secret_name = var.tls_secret_name
+  depends_on      = [null_resource.core_services]
+}
+
 module "url" {
   source              = "./url-shortener"
   tls_secret_name     = var.tls_secret_name
