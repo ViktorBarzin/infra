@@ -372,8 +372,9 @@ resource "kubernetes_service" "mailserver" {
   }
 
   spec {
-    type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    type = "LoadBalancer"
+    # external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "mailserver"
     }
