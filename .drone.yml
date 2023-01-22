@@ -8,6 +8,12 @@ trigger:
   - push
 
 steps:
+  - name: slack
+    image: plugins/slack
+    settings:
+      webhook:
+        from_secret: slack_webhook
+      channel: general
   - name: Prepare terraform files
     image: alpine
     commands:
