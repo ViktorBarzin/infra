@@ -8,14 +8,6 @@ trigger:
   - push
 
 steps:
-  - name: slack
-    image: plugins/slack
-    settings:
-      webhook:
-        from_secret: slack_webhook
-      channel: general
-    when:
-      status: [ success, failure ]
   - name: Prepare terraform files
     image: alpine
     commands:
@@ -42,6 +34,14 @@ steps:
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
       - "git commit -m 'Drone CI deploy commit [CI SKIP]' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+  - name: slack
+    image: plugins/slack
+    settings:
+      webhook:
+        from_secret: slack_webhook
+      channel: general
+    when:
+      status: [ success, failure ]
 
 ---
 kind: pipeline
