@@ -237,7 +237,7 @@ resource "kubernetes_deployment" "drone_runner" {
     strategy {
       type = "Recreate"
     }
-    replicas = 1
+    replicas = 2
     selector {
       match_labels = {
         app = "drone-runner"
@@ -253,16 +253,16 @@ resource "kubernetes_deployment" "drone_runner" {
         container {
           image = "drone/drone-runner-kube:latest"
           name  = "drone-runner"
-          resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "500m"
-              memory = "1Gi"
-            }
-          }
+          # resources {
+          #   limits = {
+          #     cpu    = "1"
+          #     memory = "1Gi"
+          #   }
+          #   requests = {
+          #     cpu    = "500m"
+          #     memory = "1Gi"
+          #   }
+          # }
           env {
             name  = "DRONE_RPC_HOST"
             value = var.rpc_host
