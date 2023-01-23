@@ -202,6 +202,24 @@ serverFiles:
             severity: page
           annotations: 
             summary: Privatebin has no available replicas. 
+      - name: London OpenWRT Down
+        rules:
+        - alert: OpenWRT client unreachable
+          expr: (openwrt_node_openwrt_info or on() vector(0)) == 0
+          for: 10m
+          labels:
+            severity: page
+          annotations: 
+            summary: London OpenWRT router unreachable through VPN
+      - name: London OpenWRT High System Load
+        rules:
+        - alert: OpenWRT high system load
+          expr: openwrt_node_load1 > 0.9
+          for: 15m
+          labels:
+            severity: page
+          annotations: 
+            summary: High system load on OpenWRT 
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
