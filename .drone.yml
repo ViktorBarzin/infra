@@ -13,7 +13,7 @@ steps:
     commands:
       - "apk update && apk add jq curl git git-crypt"
       - |
-        curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
       - "git-crypt unlock /tmp/key"
   - name: Terraform apply
     image: hashicorp/terraform:latest
@@ -87,7 +87,7 @@ steps:
     commands:
       - "apk update && apk add jq curl git git-crypt"
       - |
-        curl -k https://kubernetes:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
       - "git-crypt unlock /tmp/key"
   - name: Run renew script
     image: alpine
