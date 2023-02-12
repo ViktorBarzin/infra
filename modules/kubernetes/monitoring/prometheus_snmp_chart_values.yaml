@@ -18,7 +18,7 @@
 #   port: 9102
 podAnnotations:
   prometheus.io/scrape: "true"
-  prometheus.io/path: "/snmp?target=idrac.viktorbarzin.lan%3A161&module=dell_idrac"
+  prometheus.io/path: "/snmp?target=idrac.viktorbarzin.me%3A161&module=dell_idrac"
   prometheus.io/port: "9116"
 
 # config: |
