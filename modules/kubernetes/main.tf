@@ -38,6 +38,7 @@ variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
 variable "finance_app_monzo_client_id" {}
 variable "finance_app_monzo_client_secret" {}
+variable "finance_app_sqlite_db_path" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -255,4 +256,5 @@ module "finance_app" {
   tls_secret_name     = var.tls_secret_name
   monzo_client_id     = var.finance_app_monzo_client_id
   monzo_client_secret = var.finance_app_monzo_client_secret
+  sqlite_db_path      = var.finance_app_sqlite_db_path
 }

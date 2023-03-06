@@ -50,6 +50,7 @@ variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
 variable "finance_app_monzo_client_id" {}
 variable "finance_app_monzo_client_secret" {}
+variable "finance_app_sqlite_db_path" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -249,4 +250,5 @@ module "kubernetes_cluster" {
   # finance app
   finance_app_monzo_client_id     = var.finance_app_monzo_client_id
   finance_app_monzo_client_secret = var.finance_app_monzo_client_secret
+  finance_app_sqlite_db_path      = var.finance_app_sqlite_db_path
 }
