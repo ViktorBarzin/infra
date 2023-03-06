@@ -39,6 +39,10 @@ variable "shadowsocks_password" {}
 variable "finance_app_monzo_client_id" {}
 variable "finance_app_monzo_client_secret" {}
 variable "finance_app_sqlite_db_path" {}
+variable "finance_app_imap_host" {}
+variable "finance_app_imap_user" {}
+variable "finance_app_imap_password" {}
+variable "finance_app_imap_directory" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -257,4 +261,8 @@ module "finance_app" {
   monzo_client_id     = var.finance_app_monzo_client_id
   monzo_client_secret = var.finance_app_monzo_client_secret
   sqlite_db_path      = var.finance_app_sqlite_db_path
+  imap_host           = var.finance_app_imap_host
+  imap_user           = var.finance_app_imap_user
+  imap_password       = var.finance_app_imap_password
+  imap_directory      = var.finance_app_imap_directory
 }
