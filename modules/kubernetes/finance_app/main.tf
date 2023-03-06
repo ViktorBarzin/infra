@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "monzo_client_id" {}
 variable "monzo_client_secret" {}
+variable "sqlite_db_path" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -16,6 +17,40 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# resource "kubernetes_persistent_volume" "finance_app_pv" {
+#   metadata {
+#     name = "finance-app-iscsi-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "5G"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:finance-app"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+# resource "kubernetes_persistent_volume_claim" "finance_app_pvc" {
+#   metadata {
+#     name      = "finance-iscsi-pvc"
+#     namespace = "finance-app"
+#   }
+#   spec {
+#     access_modes = ["ReadWriteOnce"]
+#     resources {
+#       requests = {
+#         "storage" = "5Gi"
+#       }
+#     }
+#   }
+# }
+
 resource "kubernetes_deployment" "finance_app" {
   metadata {
     name      = "finance-app"
@@ -26,6 +61,9 @@ resource "kubernetes_deployment" "finance_app" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "finance-app"
@@ -49,6 +87,25 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "MONZO_CLIENT_SECRET"
             value = var.monzo_client_secret
+          }
+          env {
+            name  = "SQLITE_DB_PATH"
+            value = var.sqlite_db_path
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+            # sub_path   = ""
+          }
+        }
+        volume {
+          name = "data"
+          iscsi {
+            target_portal = "iscsi.viktorbarzin.lan:3260"
+            fs_type       = "ext4"
+            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:finance-app"
+            lun           = 0
+            read_only     = false
           }
         }
       }
