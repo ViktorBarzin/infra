@@ -36,6 +36,8 @@ variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
+variable "finance_app_monzo_client_id" {}
+variable "finance_app_monzo_client_secret" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -246,4 +248,11 @@ module "home_assistant" {
   tls_secret_name                = var.tls_secret_name
   client_certificate_secret_name = var.client_certificate_secret_name
   configuration_yaml             = var.home_assistant_configuration
+}
+
+module "finance_app" {
+  source              = "./finance_app"
+  tls_secret_name     = var.tls_secret_name
+  monzo_client_id     = var.finance_app_monzo_client_id
+  monzo_client_secret = var.finance_app_monzo_client_secret
 }
