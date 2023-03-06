@@ -2,6 +2,10 @@ variable "tls_secret_name" {}
 variable "monzo_client_id" {}
 variable "monzo_client_secret" {}
 variable "sqlite_db_path" {}
+variable "imap_host" {}
+variable "imap_user" {}
+variable "imap_password" {}
+variable "imap_directory" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -91,6 +95,22 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "SQLITE_DB_PATH"
             value = var.sqlite_db_path
+          }
+          env {
+            name  = "IMAP_HOST"
+            value = var.imap_host
+          }
+          env {
+            name  = "IMAP_USER"
+            value = var.imap_user
+          }
+          env {
+            name  = "IMAP_PASSWORD"
+            value = var.imap_password
+          }
+          env {
+            name  = "IMAP_DIRECTORY"
+            value = var.imap_directory
           }
           volume_mount {
             name       = "data"
