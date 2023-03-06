@@ -25,7 +25,7 @@ resource "kubernetes_deployment" "finance_app" {
     }
   }
   spec {
-    replicas = 2
+    replicas = 1
     selector {
       match_labels = {
         app = "finance-app"
@@ -72,6 +72,39 @@ resource "kubernetes_service" "finance_app" {
     port {
       name = "http"
       port = "8000"
+    }
+  }
+}
+
+resource "kubernetes_ingress_v1" "finance_app" {
+  metadata {
+    name      = "finance-app"
+    namespace = "finance-app"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["finance.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "finance.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "finance-app"
+              port {
+                number = 8000
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
