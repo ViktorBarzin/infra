@@ -61,7 +61,7 @@ resource "kubernetes_deployment" "drone_server" {
       }
       spec {
         container {
-          image = "drone/drone:1"
+          image = "drone/drone"
           name  = "drone-server"
           # resources {
           #   limits = {
