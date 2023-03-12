@@ -133,6 +133,40 @@ resource "kubernetes_deployment" "finance_app" {
   }
 }
 
+resource "kubernetes_deployment" "finance_app_frontend" {
+  metadata {
+    name      = "finance-app-frontend"
+    namespace = "finance-app"
+    labels = {
+      app = "finance-app-frontend"
+    }
+  }
+  spec {
+    replicas = 3
+    strategy {
+      type = "RollingUpdate"
+    }
+    selector {
+      match_labels = {
+        app = "finance-app-frontend"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "finance-app-frontend"
+        }
+      }
+      spec {
+        container {
+          image = "viktorbarzin/finance-app-frontend"
+          name  = "finance-app-frontend"
+        }
+      }
+    }
+  }
+}
+
 resource "kubernetes_service" "finance_app" {
   metadata {
     name      = "finance-app"
