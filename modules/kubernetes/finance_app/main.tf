@@ -153,6 +153,26 @@ resource "kubernetes_service" "finance_app" {
   }
 }
 
+resource "kubernetes_service" "finance_app_frontend" {
+  metadata {
+    name      = "finance-app-frontend"
+    namespace = "finance-app"
+    labels = {
+      app = "finance-app-frontend"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "finance-app-frontend"
+    }
+    port {
+      name = "http"
+      port = "3000"
+    }
+  }
+}
+
 resource "kubernetes_ingress_v1" "finance_app" {
   metadata {
     name      = "finance-app"
@@ -172,6 +192,22 @@ resource "kubernetes_ingress_v1" "finance_app" {
       http {
         path {
           path = "/"
+          backend {
+            service {
+              name = "finance-app-frontend"
+              port {
+                number = 3000
+              }
+            }
+          }
+        }
+      }
+    }
+    rule {
+      host = "finance.viktorbarzin.me"
+      http {
+        path {
+          path = "/graphql"
           backend {
             service {
               name = "finance-app"
