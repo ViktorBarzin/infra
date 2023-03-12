@@ -237,7 +237,7 @@ resource "kubernetes_deployment" "drone_runner" {
     strategy {
       type = "Recreate"
     }
-    replicas = 2
+    replicas = 4
     selector {
       match_labels = {
         app = "drone-runner"
