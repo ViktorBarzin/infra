@@ -21,7 +21,7 @@ resource "kubernetes_deployment" "echo" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 5
     selector {
       match_labels = {
         run = "echo"
