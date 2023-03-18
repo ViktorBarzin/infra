@@ -6,6 +6,10 @@ variable "imap_host" {}
 variable "imap_user" {}
 variable "imap_password" {}
 variable "imap_directory" {}
+variable "prod_graphql_endpoint" {
+  default = "https://finance.viktorbarzin.me/graphql"
+}
+variable "monzo_registered_accounts_json" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -133,6 +137,48 @@ resource "kubernetes_deployment" "finance_app" {
   }
 }
 
+resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
+  metadata {
+    name      = "finance-app-backend-webhook-handler"
+    namespace = "finance-app"
+    labels = {
+      app = "finance-app-backend-webhook-handler"
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "RollingUpdate"
+    }
+    selector {
+      match_labels = {
+        app = "finance-app-backend-webhook-handler"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "finance-app-backend-webhook-handler"
+        }
+      }
+      spec {
+        container {
+          image = "viktorbarzin/finance-app-backend-webhook-handler"
+          name  = "finance-app-backend-webhook-handler"
+          env {
+            name  = "MONZO_REGISTERED_ACCOUNTS_JSON"
+            value = var.monzo_registered_accounts_json
+          }
+          env {
+            name  = "GRAPHQL_ENDPOINT"
+            value = var.prod_graphql_endpoint
+          }
+        }
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
@@ -187,6 +233,25 @@ resource "kubernetes_service" "finance_app" {
   }
 }
 
+resource "kubernetes_service" "finance_app_backend_webhook_handler" {
+  metadata {
+    name      = "finance-app-backend-webhook-handler"
+    namespace = "finance-app"
+    labels = {
+      app = "finance-app-backend-webhook-handler"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "finance-app-backend-webhook-handler"
+    }
+    port {
+      name = "http"
+      port = "5000"
+    }
+  }
+}
 resource "kubernetes_service" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
@@ -247,6 +312,22 @@ resource "kubernetes_ingress_v1" "finance_app" {
               name = "finance-app"
               port {
                 number = 8000
+              }
+            }
+          }
+        }
+      }
+    }
+    rule {
+      host = "finance.viktorbarzin.me"
+      http {
+        path {
+          path = "/webhook"
+          backend {
+            service {
+              name = "finance-app-backend-webhook-handler"
+              port {
+                number = 5000
               }
             }
           }

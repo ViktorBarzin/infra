@@ -55,6 +55,7 @@ variable "finance_app_imap_host" {}
 variable "finance_app_imap_user" {}
 variable "finance_app_imap_password" {}
 variable "finance_app_imap_directory" {}
+variable "finance_app_monzo_registered_accounts_json" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -182,6 +183,20 @@ module "k8s_node5" {
   vsphere_server        = var.vsphere_server
   vsphere_datastore     = "r730-datastore"
   vsphere_resource_pool = "R730"
+
+}
+module "devvm" {
+  source         = "./modules/create-vm"
+  vm_name        = "devvm"
+  vm_mac_address = "00:50:56:b0:a1:41"
+  network        = "dKubernetes"
+  # provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node5 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+
+  vsphere_password      = var.vsphere_password
+  vsphere_user          = var.vsphere_user
+  vsphere_server        = var.vsphere_server
+  vsphere_datastore     = "r730-datastore"
+  vsphere_resource_pool = "R730"
 }
 
 # resource "null_resource" "test" {
@@ -252,11 +267,12 @@ module "kubernetes_cluster" {
   shadowsocks_password = var.shadowsocks_password
 
   # finance app
-  finance_app_monzo_client_id     = var.finance_app_monzo_client_id
-  finance_app_monzo_client_secret = var.finance_app_monzo_client_secret
-  finance_app_sqlite_db_path      = var.finance_app_sqlite_db_path
-  finance_app_imap_host           = var.finance_app_imap_host
-  finance_app_imap_user           = var.finance_app_imap_user
-  finance_app_imap_password       = var.finance_app_imap_password
-  finance_app_imap_directory      = var.finance_app_imap_directory
+  finance_app_monzo_client_id                = var.finance_app_monzo_client_id
+  finance_app_monzo_client_secret            = var.finance_app_monzo_client_secret
+  finance_app_sqlite_db_path                 = var.finance_app_sqlite_db_path
+  finance_app_imap_host                      = var.finance_app_imap_host
+  finance_app_imap_user                      = var.finance_app_imap_user
+  finance_app_imap_password                  = var.finance_app_imap_password
+  finance_app_imap_directory                 = var.finance_app_imap_directory
+  finance_app_monzo_registered_accounts_json = var.finance_app_monzo_registered_accounts_json
 }

@@ -29,8 +29,8 @@ variable "vm_disk_size" {
 
 variable "provisioner_command" {
   description = "Additional provisioning commands to run"
-  # default     = "#"
-  type = string
+  default     = "#"
+  type        = string
 }
 
 variable "network" {
