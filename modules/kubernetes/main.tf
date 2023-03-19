@@ -44,6 +44,8 @@ variable "finance_app_imap_user" {}
 variable "finance_app_imap_password" {}
 variable "finance_app_imap_directory" {}
 variable "finance_app_monzo_registered_accounts_json" {}
+variable "finance_app_oauth_google_client_id" {}
+variable "finance_app_oauth_google_client_secret" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -267,4 +269,6 @@ module "finance_app" {
   imap_password                  = var.finance_app_imap_password
   imap_directory                 = var.finance_app_imap_directory
   monzo_registered_accounts_json = var.finance_app_monzo_registered_accounts_json
+  oauth_google_client_id         = var.finance_app_oauth_google_client_id
+  oauth_google_client_secret     = var.finance_app_oauth_google_client_secret
 }
