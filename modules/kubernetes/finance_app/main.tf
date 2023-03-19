@@ -10,6 +10,8 @@ variable "prod_graphql_endpoint" {
   default = "https://finance.viktorbarzin.me/graphql"
 }
 variable "monzo_registered_accounts_json" {}
+variable "oauth_google_client_id" {}
+variable "oauth_google_client_secret" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -115,6 +117,18 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "IMAP_DIRECTORY"
             value = var.imap_directory
+          }
+          env {
+            name  = "OAUTH_GOOGLE_CLIENT_ID"
+            value = var.oauth_google_client_id
+          }
+          env {
+            name  = "OAUTH_GOOGLE_CLIENT_SECRET"
+            value = var.oauth_google_client_secret
+          }
+          env {
+            name  = "FLASK_DEBUG"
+            value = "true"
           }
           volume_mount {
             name       = "data"
@@ -228,7 +242,7 @@ resource "kubernetes_service" "finance_app" {
     }
     port {
       name = "http"
-      port = "8000"
+      port = "5000"
     }
   }
 }
@@ -311,7 +325,7 @@ resource "kubernetes_ingress_v1" "finance_app" {
             service {
               name = "finance-app"
               port {
-                number = 8000
+                number = 5000
               }
             }
           }
