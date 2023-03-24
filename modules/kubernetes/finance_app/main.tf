@@ -12,6 +12,9 @@ variable "prod_graphql_endpoint" {
 variable "monzo_registered_accounts_json" {}
 variable "oauth_google_client_id" {}
 variable "oauth_google_client_secret" {}
+variable "graphql_api_secret" {
+  default = "kekerino"
+}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -130,6 +133,10 @@ resource "kubernetes_deployment" "finance_app" {
             name  = "FLASK_DEBUG"
             value = "true"
           }
+          env {
+            name  = "GRAPHQL_API_SECRET"
+            value = var.graphql_api_secret
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -187,6 +194,10 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
             name  = "GRAPHQL_ENDPOINT"
             value = var.prod_graphql_endpoint
           }
+          env {
+            name  = "GRAPHQL_API_SECRET"
+            value = var.graphql_api_secret
+          }
         }
       }
     }
@@ -202,7 +213,7 @@ resource "kubernetes_deployment" "finance_app_frontend" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     strategy {
       type = "RollingUpdate"
     }
