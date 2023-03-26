@@ -55,9 +55,9 @@ variable "finance_app_imap_host" {}
 variable "finance_app_imap_user" {}
 variable "finance_app_imap_password" {}
 variable "finance_app_imap_directory" {}
-variable "finance_app_monzo_registered_accounts_json" {}
 variable "finance_app_oauth_google_client_id" {}
 variable "finance_app_oauth_google_client_secret" {}
+variable "finance_app_graphql_api_secret" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -269,14 +269,14 @@ module "kubernetes_cluster" {
   shadowsocks_password = var.shadowsocks_password
 
   # finance app
-  finance_app_monzo_client_id                = var.finance_app_monzo_client_id
-  finance_app_monzo_client_secret            = var.finance_app_monzo_client_secret
-  finance_app_sqlite_db_path                 = var.finance_app_sqlite_db_path
-  finance_app_imap_host                      = var.finance_app_imap_host
-  finance_app_imap_user                      = var.finance_app_imap_user
-  finance_app_imap_password                  = var.finance_app_imap_password
-  finance_app_imap_directory                 = var.finance_app_imap_directory
-  finance_app_monzo_registered_accounts_json = var.finance_app_monzo_registered_accounts_json
-  finance_app_oauth_google_client_id         = var.finance_app_oauth_google_client_id
-  finance_app_oauth_google_client_secret     = var.finance_app_oauth_google_client_secret
+  finance_app_monzo_client_id            = var.finance_app_monzo_client_id
+  finance_app_monzo_client_secret        = var.finance_app_monzo_client_secret
+  finance_app_sqlite_db_path             = var.finance_app_sqlite_db_path
+  finance_app_imap_host                  = var.finance_app_imap_host
+  finance_app_imap_user                  = var.finance_app_imap_user
+  finance_app_imap_password              = var.finance_app_imap_password
+  finance_app_imap_directory             = var.finance_app_imap_directory
+  finance_app_oauth_google_client_id     = var.finance_app_oauth_google_client_id
+  finance_app_oauth_google_client_secret = var.finance_app_oauth_google_client_secret
+  finance_app_graphql_api_secret         = var.finance_app_graphql_api_secret
 }

@@ -9,12 +9,9 @@ variable "imap_directory" {}
 variable "prod_graphql_endpoint" {
   default = "https://finance.viktorbarzin.me/graphql"
 }
-variable "monzo_registered_accounts_json" {}
 variable "oauth_google_client_id" {}
 variable "oauth_google_client_secret" {}
-variable "graphql_api_secret" {
-  default = "kekerino"
-}
+variable "graphql_api_secret" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -186,10 +183,6 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
         container {
           image = "viktorbarzin/finance-app-backend-webhook-handler"
           name  = "finance-app-backend-webhook-handler"
-          env {
-            name  = "MONZO_REGISTERED_ACCOUNTS_JSON"
-            value = var.monzo_registered_accounts_json
-          }
           env {
             name  = "GRAPHQL_ENDPOINT"
             value = var.prod_graphql_endpoint
