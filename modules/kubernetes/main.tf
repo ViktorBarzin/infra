@@ -43,9 +43,9 @@ variable "finance_app_imap_host" {}
 variable "finance_app_imap_user" {}
 variable "finance_app_imap_password" {}
 variable "finance_app_imap_directory" {}
-variable "finance_app_monzo_registered_accounts_json" {}
 variable "finance_app_oauth_google_client_id" {}
 variable "finance_app_oauth_google_client_secret" {}
+variable "finance_app_graphql_api_secret" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -259,16 +259,16 @@ module "home_assistant" {
 }
 
 module "finance_app" {
-  source                         = "./finance_app"
-  tls_secret_name                = var.tls_secret_name
-  monzo_client_id                = var.finance_app_monzo_client_id
-  monzo_client_secret            = var.finance_app_monzo_client_secret
-  sqlite_db_path                 = var.finance_app_sqlite_db_path
-  imap_host                      = var.finance_app_imap_host
-  imap_user                      = var.finance_app_imap_user
-  imap_password                  = var.finance_app_imap_password
-  imap_directory                 = var.finance_app_imap_directory
-  monzo_registered_accounts_json = var.finance_app_monzo_registered_accounts_json
-  oauth_google_client_id         = var.finance_app_oauth_google_client_id
-  oauth_google_client_secret     = var.finance_app_oauth_google_client_secret
+  source                     = "./finance_app"
+  tls_secret_name            = var.tls_secret_name
+  monzo_client_id            = var.finance_app_monzo_client_id
+  monzo_client_secret        = var.finance_app_monzo_client_secret
+  sqlite_db_path             = var.finance_app_sqlite_db_path
+  imap_host                  = var.finance_app_imap_host
+  imap_user                  = var.finance_app_imap_user
+  imap_password              = var.finance_app_imap_password
+  imap_directory             = var.finance_app_imap_directory
+  oauth_google_client_id     = var.finance_app_oauth_google_client_id
+  oauth_google_client_secret = var.finance_app_oauth_google_client_secret
+  graphql_api_secret         = var.finance_app_graphql_api_secret
 }
