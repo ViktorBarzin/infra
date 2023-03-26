@@ -112,6 +112,15 @@ serverFiles:
             severity: page
           annotations:
             summary: "High CPU usage on node. Node load: {{ $value }}"
+      - name: NodeLowFreeMemory
+        rules:
+        - alert: NodeLowFreeMemory
+          expr: node_memory_MemAvailable_bytes < 500000000
+          for: 10m
+          labels:
+            severity: page
+          annotations:
+            summary: "Low free memory on node. Node load: {{ $value }}"
       # - name: PodStuckNotReady
       #   rules:
       #   - alert: PodStuckNotReady
