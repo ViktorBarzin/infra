@@ -143,7 +143,7 @@ resource "kubernetes_deployment" "finance_app" {
         volume {
           name = "data"
           iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
+            target_portal = "iscsi.viktorbarzin.me:3260"
             fs_type       = "ext4"
             iqn           = "iqn.2020-12.lan.viktorbarzin:storage:finance-app"
             lun           = 0
