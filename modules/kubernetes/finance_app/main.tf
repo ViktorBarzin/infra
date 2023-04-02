@@ -172,6 +172,11 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
     labels = {
       app = "finance-app-backend-webhook-handler"
     }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = 5000
+    }
   }
   spec {
     replicas = 1
@@ -187,6 +192,11 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
       metadata {
         labels = {
           app = "finance-app-backend-webhook-handler"
+        }
+        annotations = {
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/path"   = "/metrics"
+          "prometheus.io/port"   = 5000
         }
       }
       spec {
