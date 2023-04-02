@@ -68,6 +68,11 @@ resource "kubernetes_deployment" "finance_app" {
     labels = {
       app = "finance-app"
     }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = 5000
+    }
   }
   spec {
     replicas = 1
@@ -83,6 +88,11 @@ resource "kubernetes_deployment" "finance_app" {
       metadata {
         labels = {
           app = "finance-app"
+        }
+        annotations = {
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/path"   = "/metrics"
+          "prometheus.io/port"   = 5000
         }
       }
       spec {
