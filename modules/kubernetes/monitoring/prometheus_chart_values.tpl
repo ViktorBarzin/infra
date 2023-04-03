@@ -228,15 +228,15 @@ serverFiles:
             severity: page
           annotations: 
             summary: High system load on OpenWRT 
-      - name: Monitor finance app exceptions
+      - name: Finance app webhook exceptions
         rules:
-        - alert: Monitor finance app exceptions
-          expr: changes(webhook_failure[5m]) >= 1
+        - alert: Finance app webhook exceptions
+          expr: changes(webhook_failure_total[5m]) >= 1
           for: 1m
           labels:
             severity: page
           annotations: 
-            summary: Finance app exception
+            summary: Finance app webhook exceptions
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
