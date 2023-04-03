@@ -183,7 +183,6 @@ serverFiles:
             severity: page
           annotations:
             summary: OpenWRT high memory usage. Can cause services getting stuck.
-
       - name: Mailserver Down
         rules:
         - alert: Mail server has no replicas available
@@ -229,6 +228,15 @@ serverFiles:
             severity: page
           annotations: 
             summary: High system load on OpenWRT 
+      - name: Monitor finance app exceptions
+        rules:
+        - alert: Monitor finance app exceptions
+          expr: changes(webhook_failure[5m]) >= 1
+          for: 1m
+          labels:
+            severity: page
+          annotations: 
+            summary: Finance app exception
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
