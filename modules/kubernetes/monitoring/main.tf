@@ -16,6 +16,46 @@ module "tls_secret" {
   namespace       = "monitoring"
   tls_secret_name = var.tls_secret_name
 }
+resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
+  metadata {
+    name      = "prometheus-iscsi-pvc"
+    namespace = "monitoring"
+  }
+
+  spec {
+    access_modes = ["ReadWriteOnce"]
+    resources {
+      requests = {
+        storage = "15Gi"
+      }
+    }
+    # storage_class_name = "standard"
+    volume_name = "prometheus-iscsi-pv"
+  }
+}
+
+resource "kubernetes_persistent_volume" "example" {
+  metadata {
+    name = "prometheus-iscsi-pv"
+  }
+  spec {
+    capacity = {
+      storage = "15Gi"
+    }
+    access_modes = ["ReadWriteOnce"]
+    persistent_volume_source {
+      iscsi {
+        fs_type       = "ext4"
+        iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:prometheus"
+        lun           = 0
+        target_portal = "iscsi.viktorbarzin.me:3260"
+      }
+
+    }
+    persistent_volume_reclaim_policy = "Retain"
+    volume_mode                      = "Filesystem"
+  }
+}
 
 resource "helm_release" "prometheus" {
   namespace        = "monitoring"
