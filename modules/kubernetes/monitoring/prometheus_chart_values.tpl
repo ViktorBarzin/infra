@@ -237,6 +237,15 @@ serverFiles:
             severity: page
           annotations: 
             summary: Finance app webhook exceptions
+      - name: Finance app unhandled exceptions
+        rules:
+        - alert: Finance app unhandled exceptions
+          expr: changes(flask_http_request_exceptions_total[5m]) >= 1
+          for: 1m
+          labels:
+            severity: page
+          annotations: 
+            summary: Finance app unhandled exceptions
           
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
