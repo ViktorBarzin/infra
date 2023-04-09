@@ -272,3 +272,8 @@ module "finance_app" {
   oauth_google_client_secret = var.finance_app_oauth_google_client_secret
   graphql_api_secret         = var.finance_app_graphql_api_secret
 }
+
+module "excalidraw" {
+  source          = "./excalidraw"
+  tls_secret_name = var.tls_secret_name
+}
