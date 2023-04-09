@@ -17,20 +17,20 @@ resource "kubernetes_deployment" "echo" {
     name      = "echo"
     namespace = "echo"
     labels = {
-      run = "echo"
+      app = "echo"
     }
   }
   spec {
     replicas = 5
     selector {
       match_labels = {
-        run = "echo"
+        app = "echo"
       }
     }
     template {
       metadata {
         labels = {
-          run = "echo"
+          app = "echo"
         }
       }
       spec {
@@ -38,10 +38,10 @@ resource "kubernetes_deployment" "echo" {
           image = "mendhak/http-https-echo"
           name  = "echo"
           port {
-            container_port = 80
+            container_port = 8080
           }
           port {
-            container_port = 443
+            container_port = 8443
           }
         }
       }
@@ -54,18 +54,18 @@ resource "kubernetes_service" "echo" {
     name      = "echo"
     namespace = "echo"
     labels = {
-      "run" = "echo"
+      "app" = "echo"
     }
   }
 
   spec {
     selector = {
-      run = "echo"
+      app = "echo"
     }
     port {
       name        = "http"
       port        = "80"
-      target_port = "80"
+      target_port = "8080"
     }
   }
 }
