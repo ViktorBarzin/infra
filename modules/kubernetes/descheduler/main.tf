@@ -91,13 +91,13 @@ resource "kubernetes_config_map" "policy" {
                 "cpu" : 70
                 "memory": 30
                 "pods": 50
-        "HighNodeUtilization"
+        "HighNodeUtilization":
           enabled: true
           params:
             nodeResourceUtilizationThresholds:
               thresholds:
                 "cpu" : 20
-                "memory": 20
+                "memory": 80
                 "pods": 20
         "PodLifeTime":
           enabled: true
