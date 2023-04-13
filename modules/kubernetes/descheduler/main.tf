@@ -72,7 +72,7 @@ resource "kubernetes_config_map" "policy" {
   data = {
     "policy.yaml" = <<-EOF
       apiVersion: "descheduler/v1alpha1"
-      maxNoOfPodsToEvictPerNode: 5
+      maxNoOfPodsToEvictPerNode: 20
       kind: "DeschedulerPolicy"
       strategies:
         "RemoveDuplicates":
@@ -120,7 +120,7 @@ resource "kubernetes_cron_job_v1" "descheduler" {
     namespace = "descheduler"
   }
   spec {
-    schedule           = "0 0 * * *"
+    schedule           = "0 0/6 * * *"
     concurrency_policy = "Forbid"
     job_template {
       metadata {
