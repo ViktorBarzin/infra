@@ -7,6 +7,9 @@ resource "random_password" "csrf_token" {
   override_special = "_%@"
 }
 
+# instructions on deploying:
+# https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/#accessing-the-dashboard-ui
+
 # module "dashboard" {
 #   # source = "cookielab/dashboard/kubernetes"
 #   source                    = "ViktorBarzin/dashboard/kubernetes"
