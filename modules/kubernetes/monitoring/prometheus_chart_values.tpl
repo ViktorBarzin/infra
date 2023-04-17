@@ -56,6 +56,7 @@ server:
   extraFlags:
   #  - "web.enable-admin-api"
     - "storage.tsdb.allow-overlapping-blocks"
+    - "storage.tsdb.retention.size=1GB"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
@@ -88,6 +89,32 @@ server:
 
 serverFiles:
   # prometheus.yml: 
+    # storage:
+    # tsdb:
+    #   # no_lockfile: true
+    #   # max_blocks_in_cache: 100000
+    #   # max_lookback_duration: 0s
+    #   # min_block_duration: 2h
+    #   # retention: 15d
+    #   # chunk_encoding: 1
+    #   # chunk_range: 1h
+    #   # max_chunks_to_persist: 4800
+    #   # chunks_to_persist: 4800
+    #   cache:
+    #     entries: 5000
+    #   head:
+    #     chunk_bytes: 1048576
+    #   # wal:
+    #     # compressions: 1
+    #     # flush_after_seconds: 30
+    #     # segment_size: 1073741824
+    #   series_file:
+    #     # no_sync: true
+    #     # max_concurrent_writes: 256
+    #     # block_size: 262144
+    #     cache:
+    #       max_size: 1073741824
+
   #   alertingaaa:
   #     alertmanagers:
   #       - static_configs:
