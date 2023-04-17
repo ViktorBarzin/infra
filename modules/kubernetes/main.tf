@@ -277,3 +277,9 @@ module "excalidraw" {
   source          = "./excalidraw"
   tls_secret_name = var.tls_secret_name
 }
+
+
+# module "metrics_api" {
+#   source          = "./metrics_api"
+#   tls_secret_name = var.tls_secret_name
+# }
