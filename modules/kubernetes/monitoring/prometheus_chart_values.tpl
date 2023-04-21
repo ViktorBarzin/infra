@@ -56,7 +56,7 @@ server:
   extraFlags:
   #  - "web.enable-admin-api"
     - "storage.tsdb.allow-overlapping-blocks"
-    - "storage.tsdb.retention.size=1GB"
+    # - "storage.tsdb.retention.size=1GB"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
