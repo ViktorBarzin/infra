@@ -9,20 +9,6 @@ variable "prod" {
   type    = bool
 }
 
-# provider "kubectl" {
-#   config_path = var.prod ? "" : "~/.kube/config"
-# host             = "https://kubernetes:6443"
-# insecure         = true
-# load_config_file = !var.prod
-# config_context = "kubernetes-admin@kubernetes"
-# config_context = "kek"
-
-# client_certificate     = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/ca.crt" : ""
-# token                  = var.prod ? "/run/secrets/kubernetes.io/serviceaccount/token" : ""
-# insecure = true
-# insecure               = true
-
-# }
 resource "kubernetes_namespace" "dbaas" {
   metadata {
     name = "dbaas"
@@ -50,48 +36,48 @@ module "tls_secret" {
 #   depends_on = [kubernetes_namespace.dbaas]
 # }
 
-resource "helm_release" "mysql" {
-  namespace        = "dbaas"
-  create_namespace = false
-  name             = "mysql-operator"
+# # resource "helm_release" "mysql" {
+# #   namespace        = "dbaas"
+# #   create_namespace = false
+# #   name             = "mysql-operator"
 
-  repository = "https://mysql.github.io/mysql-operator/"
-  chart      = "mysql-operator"
-  atomic     = true
-  depends_on = [kubernetes_namespace.dbaas]
-}
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-operator"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# # }
 
-resource "helm_release" "innodb-cluster" {
-  namespace        = "dbaas"
-  create_namespace = false
-  name             = var.cluster_master_service
+# # resource "helm_release" "innodb-cluster" {
+# #   namespace        = "dbaas"
+# #   create_namespace = false
+# #   name             = var.cluster_master_service
 
-  repository = "https://mysql.github.io/mysql-operator/"
-  chart      = "mysql-innodbcluster"
-  atomic     = true
-  depends_on = [kubernetes_namespace.dbaas]
-  values     = [templatefile("${path.module}/chart_values.tpl", { root_password = var.dbaas_root_password })]
-}
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-innodbcluster"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# #   values     = [templatefile("${path.module}/chart_values.tpl", { root_password = var.dbaas_root_password })]
+# # }
 
-resource "kubernetes_persistent_volume" "mysql-operator" {
-  metadata {
-    name = "mysql-operator-pv"
-  }
-  spec {
-    capacity = {
-      "storage" = "1Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      iscsi {
-        target_portal = "iscsi.viktorbarzin.lan:3260"
-        iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:operator"
-        lun           = 0
-        fs_type       = "ext4"
-      }
-    }
-  }
-}
+# resource "kubernetes_persistent_volume" "mysql-operator" {
+#   metadata {
+#     name = "mysql-operator-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "1Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:operator"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
 
 resource "kubernetes_persistent_volume" "mysql" {
   metadata {
