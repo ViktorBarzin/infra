@@ -2,7 +2,7 @@
 variable "tls_secret_name" {}
 variable "dbaas_root_password" {}
 variable "cluster_master_service" {
-  default = "mysql-cluster"
+  default = "mysql"
 }
 variable "prod" {
   default = false
@@ -20,6 +20,94 @@ module "tls_secret" {
   namespace       = "dbaas"
   tls_secret_name = var.tls_secret_name
 }
+
+
+resource "kubernetes_service" "mysql" {
+  metadata {
+    name      = var.cluster_master_service
+    namespace = "dbaas"
+  }
+  spec {
+    selector = {
+      app = "mysql"
+    }
+    port {
+      port = 3306
+    }
+  }
+}
+
+resource "kubernetes_deployment" "mysql" {
+  metadata {
+    name      = "mysql"
+    namespace = "dbaas"
+  }
+  spec {
+    selector {
+      match_labels = {
+        app = "mysql"
+      }
+    }
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "mysql"
+        }
+      }
+      spec {
+        container {
+          image = "mysql"
+          name  = "mysql"
+          env {
+            name  = "MYSQL_ROOT_PASSWORD"
+            value = var.dbaas_root_password
+          }
+          port {
+            container_port = 3306
+            name           = "mysql"
+          }
+          volume_mount {
+            name       = "mysql-persistent-storage"
+            mount_path = "/var/lib/mysql"
+          }
+        }
+        volume {
+          name = "mysql-persistent-storage"
+          iscsi {
+            target_portal = "iscsi.viktorbarzin.lan:3260"
+            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
+            lun           = 0
+            fs_type       = "ext4"
+          }
+        }
+      }
+    }
+  }
+}
+
+# resource "kubernetes_persistent_volume" "mysql" {
+#   metadata {
+#     name = "mysql-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "10Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+
 
 # resource "helm_release" "mysql" {
 #   namespace        = "dbaas"
@@ -78,26 +166,6 @@ module "tls_secret" {
 #     }
 #   }
 # }
-
-resource "kubernetes_persistent_volume" "mysql" {
-  metadata {
-    name = "mysql-pv"
-  }
-  spec {
-    capacity = {
-      "storage" = "10Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      iscsi {
-        target_portal = "iscsi.viktorbarzin.lan:3260"
-        iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
-        lun           = 0
-        fs_type       = "ext4"
-      }
-    }
-  }
-}
 
 resource "kubernetes_secret" "cluster-password" {
   metadata {
