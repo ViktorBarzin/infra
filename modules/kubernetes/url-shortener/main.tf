@@ -112,7 +112,7 @@ resource "kubernetes_deployment" "shlink" {
           }
           env {
             name  = "DB_HOST"
-            value = "mysql-cluster.dbaas.svc.cluster.local"
+            value = "mysql.dbaas.svc.cluster.local"
           }
           # env {
           #   name  = "DB_USER"
