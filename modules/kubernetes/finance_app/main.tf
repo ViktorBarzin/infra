@@ -12,6 +12,8 @@ variable "prod_graphql_endpoint" {
 variable "oauth_google_client_id" {}
 variable "oauth_google_client_secret" {}
 variable "graphql_api_secret" {}
+variable "db_connection_string" {
+}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -100,6 +102,10 @@ resource "kubernetes_deployment" "finance_app" {
           image = "viktorbarzin/finance-app"
           name  = "finance-app"
 
+          env {
+            name  = "DB_CONNECTION_STRING"
+            value = var.db_connection_string
+          }
           env {
             name  = "MONZO_CLIENT_ID"
             value = var.monzo_client_id
