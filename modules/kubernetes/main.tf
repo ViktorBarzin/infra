@@ -36,6 +36,7 @@ variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
+variable "finance_app_db_connection_string" {}
 variable "finance_app_monzo_client_id" {}
 variable "finance_app_monzo_client_secret" {}
 variable "finance_app_sqlite_db_path" {}
@@ -271,6 +272,7 @@ module "finance_app" {
   oauth_google_client_id     = var.finance_app_oauth_google_client_id
   oauth_google_client_secret = var.finance_app_oauth_google_client_secret
   graphql_api_secret         = var.finance_app_graphql_api_secret
+  db_connection_string       = var.finance_app_db_connection_string
 }
 
 module "excalidraw" {
