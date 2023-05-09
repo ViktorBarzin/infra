@@ -67,12 +67,13 @@ postscreen_greet_action = enforce
 postscreen_bare_newline_action = enforce
 
 # SASL
-smtpd_sasl_auth_enable = yes
-smtpd_sasl_path = /var/spool/postfix/private/auth
-smtpd_sasl_type = dovecot
-smtpd_sasl_security_options = noanonymous
-smtpd_sasl_local_domain = $mydomain
-broken_sasl_auth_clients = yes
+smtpd_sasl_auth_enable = no
+#smtpd_sasl_auth_enable = yes
+#smtpd_sasl_path = /var/spool/postfix/private/auth
+#smtpd_sasl_type = dovecot
+#smtpd_sasl_security_options = noanonymous
+#smtpd_sasl_local_domain = $mydomain
+#broken_sasl_auth_clients = yes
 
 # SMTP configuration
 smtp_sasl_auth_enable = yes
