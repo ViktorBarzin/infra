@@ -282,6 +282,8 @@ module "excalidraw" {
 
 module "infra-maintenance" {
   source = "./infra-maintenance"
+  git_user        = var.webhook_handler_git_user
+  git_token        = var.webhook_handler_git_token
 }
 
 # module "metrics_api" {
