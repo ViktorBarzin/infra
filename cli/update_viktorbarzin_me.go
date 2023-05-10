@@ -63,14 +63,17 @@ func getNewContent(gitFs *GitFS, currIp, newIp net.IP) (string, error) {
 			// extract old and new ip
 			// line example:
 			//  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, "<current_ip>", "<new_ip>")
-			lineToAdd = strings.Replace(lineToAdd, "\"", "", -1) // remove all quotes
-			lineToAdd = strings.Replace(lineToAdd, ")", "", -1)  // remove the trailing closing bracket
-			splitByComma := strings.Split(lineToAdd, ",")
-			if len(splitByComma) != 3 {
-				return "", fmt.Errorf("invalid line; got: %s", line)
-			}
-			newIpStr := strings.ReplaceAll(splitByComma[2], " ", "")
-			lineToAdd = fmt.Sprintf("  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, \"%s\", \"%s\")", newIpStr, newIp.String())
+			// lineToAdd = strings.Replace(lineToAdd, "\"", "", -1) // remove all quotes
+			// lineToAdd = strings.Replace(lineToAdd, ")", "", -1)  // remove the trailing closing bracket
+			// splitByComma := strings.Split(lineToAdd, ",")
+			// if len(splitByComma) != 3 {
+			// 	return "", fmt.Errorf("invalid line; got: %s", line)
+			// }
+			// newIpStr := strings.ReplaceAll(splitByComma[2], " ", "")
+			// lineToAdd = fmt.Sprintf("  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, \"%s\", \"%s\")", newIpStr, newIp.String())
+
+			// Since we're not changing tfvars, only update the replacement value
+			lineToAdd = fmt.Sprintf("  bind_db_viktorbarzin_me  = replace(var.bind_db_viktorbarzin_me, \"85.130.108.6\", \"%s\")", newIp.String())
 		}
 		newLines = append(newLines, lineToAdd)
 	}
