@@ -13,7 +13,7 @@ import (
 const (
 	dynDnsDomainFlagName          = "dynamic-domain"
 	publicDomainFlagName          = "public-domain"
-	updatePublicIPUseCaseFlagName = "kek"
+	updatePublicIPUseCaseFlagName = "update-public-ip"
 
 	maintfFileRelative = "/main.tf"
 )
