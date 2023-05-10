@@ -178,7 +178,7 @@ func run() error {
 		currIP, newIP := publicDNSIps[0], dynamicDNSIps[0]
 		if currIP.Equal(newIP) {
 			glog.Infof("IPs of dyndns and current ip match, nothing to do: current=%s, dyndns=%s", currIP, newIP)
-			// return nil // TODO: uncomment
+			return nil
 		}
 		// setup git repo
 		gitFs, err := NewGitFS(repository)
