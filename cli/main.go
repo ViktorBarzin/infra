@@ -180,6 +180,11 @@ func run() error {
 			glog.Infof("IPs of dyndns and current ip match, nothing to do: current=%s, dyndns=%s", currIP, newIP)
 			return nil
 		}
+		// Send notification as glue records can't be modified programatically for godaddy :/
+		err = notifyForIPChange(currIP, newIP)
+		if err != nil {
+			return errors.Wrapf(err, "failed to notify for ip change. this must succeed otherwise the glue records won't be updated")
+		}
 		// setup git repo
 		gitFs, err := NewGitFS(repository)
 		if err != nil {
