@@ -280,6 +280,9 @@ module "excalidraw" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "infra-maintenance" {
+  source = "./infra-maintenance"
+}
 
 # module "metrics_api" {
 #   source          = "./metrics_api"

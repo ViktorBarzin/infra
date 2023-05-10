@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 
+	"github.com/golang/glog"
 	"github.com/pkg/errors"
 )
 
@@ -72,4 +75,31 @@ func getNewContent(gitFs *GitFS, currIp, newIp net.IP) (string, error) {
 		newLines = append(newLines, lineToAdd)
 	}
 	return strings.Join(newLines, "\n"), nil
+}
+
+func notifyForIPChange(oldIP, newIP net.IP) error {
+	// Notify if dyndns ip is different to public
+	// Currently send a message to Viktor via the webhook handler
+	const url = "https://webhook.viktorbarzin.me/fb/message-viktor"
+	body := []byte(fmt.Sprintf("Public IP (%s) is different than dynamic dns IP (%s)", oldIP.String(), newIP.String()))
+
+	// Send the HTTP request
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return errors.Wrapf(err, "Error sending request")
+	}
+	defer resp.Body.Close()
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Request failed. Status code: %d", resp.StatusCode)
+	}
+
+	// Read the response body
+	responseBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return errors.Wrapf(err, "Error reading response")
+	}
+	glog.Infof("Response:", string(responseBody))
+	return nil
 }
