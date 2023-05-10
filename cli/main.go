@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 
 	"github.com/go-git/go-git/v5"
@@ -16,10 +17,12 @@ const (
 	useCaseFlagName         = "use-case"
 	repoRootFlagName        = "repo-root"
 	printResultOnlyFlagName = "result-only"
+	dynamicDnsDomainDefault = "viktorbarzin.ddns.net"
+	publicDomainDefault     = "viktorbarzin.me"
 )
 
 var (
-	validUseCases = []string{"setup-vpn", setupOpenWRTDNSFlagName}
+	validUseCases = []string{vpnUseCaseFlagName, setupOpenWRTDNSFlagName, addEmailAliasUseCase}
 )
 
 func main() {
@@ -45,6 +48,10 @@ func run() error {
 	// add email alias flags
 	emailToForwardTo := flag.String(emailAliasFlagName, "", "Email which is used to forward emails to.")
 	fromDomain := flag.String(fromEmailDomainFlagName, "@viktorbarzin.me", "Domain name which will receive emails. Example @viktorbarzin.me")
+
+	// settings for updating the main domain using the dyndns domain
+	dynDnsDomain := flag.String(dynDnsDomainFlagName, dynamicDnsDomainDefault, "Dynamic DNS domain to check against - used to update the main domain")
+	publicDomain := flag.String(publicDomainFlagName, publicDomainDefault, "Public domain to update")
 
 	// Flag definitions above!
 	flag.Parse()
@@ -149,6 +156,50 @@ func run() error {
 			return errors.Wrapf(err, "failed to push changes")
 		}
 		glog.Infof("successfully added %s -> %s email aliasing", emailAlias, *emailToForwardTo)
+	case updatePublicIPUseCaseFlagName:
+		// Resolve the dynamic dns record
+		publicDNSIps, err := net.LookupIP(*publicDomain)
+		if err != nil {
+			return errors.Wrapf(err, "failed to resolve IP addresses")
+		}
+		if len(publicDNSIps) < 1 {
+			return fmt.Errorf("no ips found for %s", *dynDnsDomain)
+		}
+
+		// Resolve the dynamic dns record
+		dynamicDNSIps, err := net.LookupIP(*dynDnsDomain)
+		if err != nil {
+			return errors.Wrap(err, "failed to resolve IP addresses")
+		}
+		if len(dynamicDNSIps) < 1 {
+			return fmt.Errorf("no ips found for %s", *dynDnsDomain)
+		}
+
+		currIP, newIP := publicDNSIps[0], dynamicDNSIps[0]
+		if currIP.Equal(newIP) {
+			glog.Infof("IPs of dyndns and current ip match, nothing to do: current=%s, dyndns=%s", currIP, newIP)
+			// return nil // TODO: uncomment
+		}
+		// setup git repo
+		gitFs, err := NewGitFS(repository)
+		if err != nil {
+			return errors.Wrapf(err, "failed to initialize git fs")
+		}
+		worktree, err := gitFs.repo.Worktree()
+		if err != nil {
+			return errors.Wrapf(err, "failed to get worktree")
+		}
+		err = updatePublicIP(gitFs, currIP, newIP)
+		if err != nil {
+			return fmt.Errorf("failed to update public ip: %w", err)
+		}
+		// // commit changes
+		if _, err = worktree.Commit("Update public ip and ns records", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
+			return errors.Wrapf(err, "failed to commit")
+		}
+		if err = gitFs.Push(); err != nil {
+			return errors.Wrapf(err, "failed to push changes")
+		}
 	default:
 		err = errors.New(fmt.Sprintf("unsupported use case: %s", *useCase))
 	}
