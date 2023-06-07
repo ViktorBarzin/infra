@@ -322,6 +322,8 @@ resource "kubernetes_ingress_v1" "finance_app" {
     namespace = "finance-app"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
+      #"nginx.ingress.kubernetes.io/auth-url"= "https://oauth-provider/auth"
+      #"nginx.ingress.kubernetes.io/auth-signin"= "https://oauth-provider/sign_in?rd=$request_uri"
     }
   }
 
