@@ -296,8 +296,8 @@ resource "kubernetes_ingress_v1" "phpmyadmin" {
 
     annotations = {
       "kubernetes.io/ingress.class"                        = "nginx"
-      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }
   }
   spec {
