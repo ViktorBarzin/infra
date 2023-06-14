@@ -150,6 +150,14 @@ resource "kubernetes_deployment" "finance_app" {
             name  = "GRAPHQL_API_SECRET"
             value = var.graphql_api_secret
           }
+          env {
+            name = "ENABLE_SCHEDULER"
+            value = 1
+          }
+          env {
+            name = "DEBUG_METRICS"
+            value = 1
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
