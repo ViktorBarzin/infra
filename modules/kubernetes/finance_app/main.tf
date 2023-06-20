@@ -99,7 +99,7 @@ resource "kubernetes_deployment" "finance_app" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app"
+          image = "viktorbarzin/finance-app:latest"
           name  = "finance-app"
 
           env {
@@ -215,7 +215,7 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app-backend-webhook-handler"
+          image = "viktorbarzin/finance-app-backend-webhook-handler:latest"
           name  = "finance-app-backend-webhook-handler"
           env {
             name  = "GRAPHQL_ENDPOINT"
@@ -257,7 +257,7 @@ resource "kubernetes_deployment" "finance_app_frontend" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app-frontend"
+          image = "viktorbarzin/finance-app-frontend:latest"
           name  = "finance-app-frontend"
         }
       }
