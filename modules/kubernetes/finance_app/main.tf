@@ -151,11 +151,11 @@ resource "kubernetes_deployment" "finance_app" {
             value = var.graphql_api_secret
           }
           env {
-            name = "ENABLE_SCHEDULER"
+            name  = "ENABLE_SCHEDULER"
             value = 1
           }
           env {
-            name = "DEBUG_METRICS"
+            name  = "DEBUG_METRICS"
             value = 1
           }
           volume_mount {
