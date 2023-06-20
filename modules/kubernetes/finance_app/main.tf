@@ -99,8 +99,9 @@ resource "kubernetes_deployment" "finance_app" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app:latest"
-          name  = "finance-app"
+          image             = "viktorbarzin/finance-app:latest"
+          name              = "finance-app"
+          image_pull_policy = "Always"
 
           env {
             name  = "DB_CONNECTION_STRING"
@@ -215,8 +216,9 @@ resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app-backend-webhook-handler:latest"
-          name  = "finance-app-backend-webhook-handler"
+          image             = "viktorbarzin/finance-app-backend-webhook-handler:latest"
+          name              = "finance-app-backend-webhook-handler"
+          image_pull_policy = "Always"
           env {
             name  = "GRAPHQL_ENDPOINT"
             value = var.prod_graphql_endpoint
@@ -257,8 +259,9 @@ resource "kubernetes_deployment" "finance_app_frontend" {
       }
       spec {
         container {
-          image = "viktorbarzin/finance-app-frontend:latest"
-          name  = "finance-app-frontend"
+          image             = "viktorbarzin/finance-app-frontend:latest"
+          name              = "finance-app-frontend"
+          image_pull_policy = "Always"
         }
       }
     }
