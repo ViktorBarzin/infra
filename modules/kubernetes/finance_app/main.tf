@@ -14,6 +14,8 @@ variable "oauth_google_client_secret" {}
 variable "graphql_api_secret" {}
 variable "db_connection_string" {
 }
+variable "gocardless_secret_id" {}
+variable "gocardless_secret_key" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -158,6 +160,14 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "DEBUG_METRICS"
             value = 1
+          }
+          env {
+            name  = "GOCARDLESS_SECRET_ID"
+            value = var.gocardless_secret_id
+          }
+          env {
+            name  = "GOCARDLESS_SECRET_KEY"
+            value = var.gocardless_secret_key
           }
           volume_mount {
             name       = "data"

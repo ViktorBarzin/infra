@@ -47,6 +47,8 @@ variable "finance_app_imap_directory" {}
 variable "finance_app_oauth_google_client_id" {}
 variable "finance_app_oauth_google_client_secret" {}
 variable "finance_app_graphql_api_secret" {}
+variable "finance_app_gocardless_secret_id" {}
+variable "finance_app_gocardless_secret_key" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -273,6 +275,8 @@ module "finance_app" {
   oauth_google_client_secret = var.finance_app_oauth_google_client_secret
   graphql_api_secret         = var.finance_app_graphql_api_secret
   db_connection_string       = var.finance_app_db_connection_string
+  gocardless_secret_id       = var.finance_app_gocardless_secret_id
+  gocardless_secret_key      = var.finance_app_gocardless_secret_key
 }
 
 module "excalidraw" {
@@ -281,9 +285,9 @@ module "excalidraw" {
 }
 
 module "infra-maintenance" {
-  source = "./infra-maintenance"
-  git_user        = var.webhook_handler_git_user
-  git_token        = var.webhook_handler_git_token
+  source    = "./infra-maintenance"
+  git_user  = var.webhook_handler_git_user
+  git_token = var.webhook_handler_git_token
 }
 
 # module "metrics_api" {
