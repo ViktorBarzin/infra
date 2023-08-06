@@ -290,6 +290,11 @@ module "infra-maintenance" {
   git_token = var.webhook_handler_git_token
 }
 
+module "travel_blog" {
+  source          = "./travel_blog"
+  tls_secret_name = var.tls_secret_name
+}
+
 # module "metrics_api" {
 #   source          = "./metrics_api"
 #   tls_secret_name = var.tls_secret_name
