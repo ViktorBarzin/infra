@@ -1,6 +1,6 @@
 variable "tls_secret_name" {}
 
-resource "kubernetes_namespace" "website" {
+resource "kubernetes_namespace" "travel-blog" {
   metadata {
     name = "travel-blog"
   }
@@ -41,7 +41,7 @@ resource "kubernetes_deployment" "blog" {
       }
       spec {
         container {
-          image = "viktorbarzin/travel-blog:latest"
+          image = "viktorbarzin/travel_blog:latest"
           name  = "travel-blog"
           resources {
             limits = {
@@ -58,14 +58,14 @@ resource "kubernetes_deployment" "blog" {
           }
         }
 
-        container {
-          image = "nginx/nginx-prometheus-exporter"
-          name  = "nginx-exporter"
-          args  = ["-nginx.scrape-uri", "http://127.0.0.1:8080/nginx_status"]
-          port {
-            container_port = 9113
-          }
-        }
+        # container {
+        #   image = "nginx/nginx-prometheus-exporter"
+        #   name  = "nginx-exporter"
+        #   args  = ["-nginx.scrape-uri", "http://127.0.0.1:8080/nginx_status"]
+        #   port {
+        #     container_port = 9113
+        #   }
+        # }
       }
     }
   }
@@ -117,7 +117,7 @@ resource "kubernetes_ingress_v1" "travel-blog" {
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "viktorbarzin.me"
+      host = "travel.viktorbarzin.me"
       http {
         path {
           path = "/"
