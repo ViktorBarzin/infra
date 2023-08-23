@@ -169,6 +169,10 @@ resource "kubernetes_deployment" "finance_app" {
             name  = "GOCARDLESS_SECRET_KEY"
             value = var.gocardless_secret_key
           }
+          env {
+            name  = "ML_MODEL_PATH"
+            value = "/data/ml_categorizer.pkl"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
