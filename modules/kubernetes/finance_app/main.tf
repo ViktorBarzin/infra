@@ -173,6 +173,14 @@ resource "kubernetes_deployment" "finance_app" {
             name  = "ML_MODEL_PATH"
             value = "/data/ml_categorizer.pkl"
           }
+          env {
+            name  = "LABEL_ENCODER_PATH"
+            value = "/data/label_encoder_categorizer.pkl"
+          }
+          env {
+            name  = "VECTORIZER_PATH"
+            value = "/data/vectorizer_categorizer.pkl"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
