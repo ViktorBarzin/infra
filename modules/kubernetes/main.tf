@@ -295,6 +295,11 @@ module "travel_blog" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "technitium" {
+  source          = "./technitium"
+  tls_secret_name = var.tls_secret_name
+}
+
 # module "metrics_api" {
 #   source          = "./metrics_api"
 #   tls_secret_name = var.tls_secret_name

@@ -128,8 +128,8 @@ resource "kubernetes_service" "pihole-dns" {
   }
 
   spec {
-    type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    # type                    = "LoadBalancer"
+    # external_traffic_policy = "Cluster"
     selector = {
       app = "pihole"
     }
