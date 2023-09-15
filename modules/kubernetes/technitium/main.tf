@@ -12,7 +12,8 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_deployment" "technitium" {
+# resource "kubernetes_deployment" "technitium" {
+resource "kubernetes_daemonset" "technitium" {
   metadata {
     name      = "technitium"
     namespace = "technitium"
@@ -21,7 +22,7 @@ resource "kubernetes_deployment" "technitium" {
     }
   }
   spec {
-    replicas = 1
+    # replicas = 1
     selector {
       match_labels = {
         app = "technitium"
@@ -38,14 +39,14 @@ resource "kubernetes_deployment" "technitium" {
           image = "technitium/dns-server:latest"
           name  = "technitium"
           resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
+            # limits = {
+            #   cpu    = "1"
+            #   memory = "1Gi"
+            # }
+            # requests = {
+            #   cpu    = "1"
+            #   memory = "1Gi"
+            # }
           }
           port {
             container_port = 5380
@@ -110,8 +111,9 @@ resource "kubernetes_service" "technitium-dns" {
   }
 
   spec {
-    type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    type = "LoadBalancer"
+    # external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "technitium"
 
@@ -129,7 +131,8 @@ resource "kubernetes_ingress_v1" "technitium" {
     name      = "technitium-ingress"
     namespace = "technitium"
     annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
+      "kubernetes.io/ingress.class"          = "nginx"
+      "nginx.ingress.kubernetes.io/affinity" = "cookie"
       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
       "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }
