@@ -52,7 +52,7 @@ variable "finance_app_gocardless_secret_key" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
-  depends_on = [module.metallb, module.bind, module.dnscrypt]
+  depends_on = [module.metallb, module.bind]
 }
 
 module "blog" {
@@ -81,9 +81,9 @@ module "descheduler" {
   source = "./descheduler"
 }
 
-module "dnscrypt" {
-  source = "./dnscrypt"
-}
+# module "dnscrypt" {
+#   source = "./dnscrypt"
+# }
 
 # CI/CD
 module "drone" {
