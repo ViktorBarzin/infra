@@ -12,8 +12,8 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# resource "kubernetes_deployment" "technitium" {
-resource "kubernetes_daemonset" "technitium" {
+resource "kubernetes_deployment" "technitium" {
+  # resource "kubernetes_daemonset" "technitium" {
   metadata {
     name      = "technitium"
     namespace = "technitium"
@@ -35,6 +35,7 @@ resource "kubernetes_daemonset" "technitium" {
         }
       }
       spec {
+        node_name = "k8s-node1" # Horrible hack but only way I found to preserve client ip
         container {
           image = "technitium/dns-server:latest"
           name  = "technitium"
@@ -111,17 +112,19 @@ resource "kubernetes_service" "technitium-dns" {
   }
 
   spec {
-    type = "LoadBalancer"
+    # type = "LoadBalancer"
     # external_traffic_policy = "Cluster"
+    type = "NodePort"
+    port {
+      name      = "technitium-dns"
+      port      = 53
+      node_port = 30053
+      protocol  = "UDP"
+    }
     external_traffic_policy = "Local"
     selector = {
       app = "technitium"
 
-    }
-    port {
-      name     = "technitium-dns"
-      port     = "53"
-      protocol = "UDP"
     }
   }
 }
@@ -131,8 +134,8 @@ resource "kubernetes_ingress_v1" "technitium" {
     name      = "technitium-ingress"
     namespace = "technitium"
     annotations = {
-      "kubernetes.io/ingress.class"          = "nginx"
-      "nginx.ingress.kubernetes.io/affinity" = "cookie"
+      "kubernetes.io/ingress.class"                        = "nginx"
+      "nginx.ingress.kubernetes.io/affinity"               = "cookie"
       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
       "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }

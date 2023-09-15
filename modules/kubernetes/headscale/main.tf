@@ -345,6 +345,52 @@ resource "kubernetes_config_map" "headscale-config" {
         unix_socket_permission: "0770"
 
         randomize_client_port: false
+        
+        # headscale supports experimental OpenID connect support,
+        # it is still being tested and might have some bugs, please
+        # help us test it.
+        # OpenID Connect
+        oidc:
+          only_start_if_oidc_is_available: true
+          issuer: "https://accounts.google.com"
+          client_id: "533122798643-4ti3espgjqhfnop0rors9t7r4o5i8top.apps.googleusercontent.com"
+          client_secret: "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"
+        
+          # The amount of time from a node is authenticated with OpenID until it
+          # expires and needs to reauthenticate.
+          # Setting the value to "0" will mean no expiry.
+          expiry: 180d
+        
+          # Use the expiry from the token received from OpenID when the user logged
+          # in, this will typically lead to frequent need to reauthenticate and should
+          # only been enabled if you know what you are doing.
+          # Note: enabling this will cause `oidc.expiry` to be ignored.
+          use_expiry_from_token: false
+        
+          # Customize the scopes used in the OIDC flow, defaults to "openid", "profile" and "email" and add custom query
+          # parameters to the Authorize Endpoint request. Scopes default to "openid", "profile" and "email".
+        
+          scope: ["openid", "profile", "email"]
+          # extra_params:
+          #   domain_hint: example.com
+        
+          # List allowed principal domains and/or users. If an authenticated user's domain is not in this list, the
+          # authentication request will be rejected.
+        
+          # allowed_domains:
+          #   - example.com
+          # Note: Groups from keycloak have a leading '/'
+          # allowed_groups:
+          #   - /headscale
+          allowed_users:
+            - vbarzin@gmail.com
+        
+          # If `strip_email_domain` is set to `true`, the domain part of the username email address will be removed.
+          # This will transform `first-name.last-name@example.com` to the user `first-name.last-name`
+          # If `strip_email_domain` is set to `false` the domain part will NOT be removed resulting to the following
+          # user: `first-name.last-name.example.com`
+        
+          # strip_email_domain: true
     EOT
   }
 }
