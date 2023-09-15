@@ -49,6 +49,7 @@ variable "finance_app_oauth_google_client_secret" {}
 variable "finance_app_graphql_api_secret" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "finance_app_gocardless_secret_key" {}
+variable "headscale_config" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -301,8 +302,9 @@ module "technitium" {
 }
 
 module "headscale" {
-  source          = "./headscale"
-  tls_secret_name = var.tls_secret_name
+  source           = "./headscale"
+  tls_secret_name  = var.tls_secret_name
+  headscale_config = var.headscale_config
 }
 
 # module "metrics_api" {
