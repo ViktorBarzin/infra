@@ -52,7 +52,7 @@ variable "finance_app_gocardless_secret_key" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
-  depends_on = [module.metallb, module.bind]
+  depends_on = [module.metallb]
 }
 
 module "blog" {
@@ -63,12 +63,12 @@ module "blog" {
   depends_on = [null_resource.core_services]
 }
 
-module "bind" {
-  source              = "./bind"
-  db_viktorbarzin_me  = var.bind_db_viktorbarzin_me
-  db_viktorbarzin_lan = var.bind_db_viktorbarzin_lan
-  named_conf_options  = var.bind_named_conf_options
-}
+# module "bind" {
+#   source              = "./bind"
+#   db_viktorbarzin_me  = var.bind_db_viktorbarzin_me
+#   db_viktorbarzin_lan = var.bind_db_viktorbarzin_lan
+#   named_conf_options  = var.bind_named_conf_options
+# }
 
 module "dbaas" {
   source              = "./dbaas"
