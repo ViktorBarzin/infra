@@ -61,6 +61,7 @@ variable "finance_app_oauth_google_client_secret" {}
 variable "finance_app_graphql_api_secret" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "finance_app_gocardless_secret_key" {}
+variable "headscale_config" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -286,6 +287,8 @@ module "kubernetes_cluster" {
   finance_app_db_connection_string       = var.finance_app_db_connection_string
   finance_app_gocardless_secret_id       = var.finance_app_gocardless_secret_id
   finance_app_gocardless_secret_key      = var.finance_app_gocardless_secret_key
+
+  headscale_config = var.headscale_config
 }
 
 
