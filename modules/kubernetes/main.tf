@@ -52,7 +52,7 @@ variable "finance_app_gocardless_secret_key" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
-  depends_on = [module.metallb, module.bind, module.dnscrypt, module.pihole]
+  depends_on = [module.metallb, module.bind, module.dnscrypt]
 }
 
 module "blog" {
@@ -182,14 +182,14 @@ module "openid_help_page" {
   depends_on = [null_resource.core_services]
 }
 
-module "pihole" {
-  source       = "./pihole"
-  web_password = var.pihole_web_password
+# module "pihole" {
+#   source       = "./pihole"
+#   web_password = var.pihole_web_password
 
-  tls_secret_name = var.tls_secret_name
+#   tls_secret_name = var.tls_secret_name
 
-  depends_on = [module.bind] # DNS goes like pihole -> bind -> dnscrypt
-}
+#   depends_on = [module.bind] # DNS goes like pihole -> bind -> dnscrypt
+# }
 
 module "privatebin" {
   source          = "./privatebin"
