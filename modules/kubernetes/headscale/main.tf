@@ -138,17 +138,12 @@ resource "kubernetes_service" "headscale" {
       port     = "9090"
       protocol = "TCP"
     }
-    # port {
-    #   name     = "server"
-    #   port     = "41641"
-    #   protocol = "UDP"
-    # }
   }
 }
 
-resource "kubernetes_ingress_v1" "headscale" {
+resource "kubernetes_ingress_v1" "headscale-admin" {
   metadata {
-    name      = "headscale-ingress"
+    name      = "headscale-admin-ingress"
     namespace = "headscale"
     annotations = {
       "kubernetes.io/ingress.class"                        = "nginx"
@@ -176,6 +171,41 @@ resource "kubernetes_ingress_v1" "headscale" {
             }
           }
         }
+      }
+    }
+  }
+}
+
+resource "kubernetes_ingress_v1" "headscale" {
+  metadata {
+    name      = "headscale-ingress"
+    namespace = "headscale"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["headscale-ui.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "headscale.viktorbarzin.me"
+      http {
+        # path {
+        #   path = "/manager"
+        #   backend {
+        #     service {
+        #       name = "headscale"
+        #       port {
+        #         number = 80
+        #       }
+        #     }
+        #   }
+        # }
         path {
           path = "/"
           backend {
