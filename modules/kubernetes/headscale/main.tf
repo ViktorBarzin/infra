@@ -141,14 +141,14 @@ resource "kubernetes_service" "headscale" {
   }
 }
 
-resource "kubernetes_ingress_v1" "headscale-admin" {
+resource "kubernetes_ingress_v1" "headscale" {
   metadata {
-    name      = "headscale-admin-ingress"
+    name      = "headscale-ingress"
     namespace = "headscale"
     annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
-      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+      "kubernetes.io/ingress.class" = "nginx"
+      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }
   }
 
@@ -171,41 +171,6 @@ resource "kubernetes_ingress_v1" "headscale-admin" {
             }
           }
         }
-      }
-    }
-  }
-}
-
-resource "kubernetes_ingress_v1" "headscale" {
-  metadata {
-    name      = "headscale-ingress"
-    namespace = "headscale"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["headscale-ui.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "headscale.viktorbarzin.me"
-      http {
-        # path {
-        #   path = "/manager"
-        #   backend {
-        #     service {
-        #       name = "headscale"
-        #       port {
-        #         number = 80
-        #       }
-        #     }
-        #   }
-        # }
         path {
           path = "/"
           backend {
