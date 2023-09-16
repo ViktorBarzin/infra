@@ -22,6 +22,9 @@ resource "kubernetes_deployment" "technitium" {
     }
   }
   spec {
+    strategy {
+      type = "Recreate"
+    }
     # replicas = 1
     selector {
       match_labels = {
