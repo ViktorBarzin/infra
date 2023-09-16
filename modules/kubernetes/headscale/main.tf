@@ -44,16 +44,6 @@ resource "kubernetes_deployment" "headscale" {
           image   = "headscale/headscale:latest"
           name    = "headscale"
           command = ["headscale", "serve"]
-          resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-          }
           port {
             container_port = 8080
           }
@@ -77,7 +67,6 @@ resource "kubernetes_deployment" "headscale" {
         volume {
           name = "config-volume"
           config_map {
-            # name = kubernetes_config_map.headscale-config.metadata[0].name
             name = "headscale-config"
             items {
               key  = "config.yaml"
