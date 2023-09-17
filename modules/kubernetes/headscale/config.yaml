@@ -210,7 +210,8 @@ dns_config:
 
   # List of DNS servers to expose to clients.
   nameservers:
-    - 1.1.1.1
+    - "10.0.20.101"
+    - "1.1.1.1"
 
   # NextDNS (see https://tailscale.com/kb/1218/nextdns/).
   # "abc123" is example NextDNS ID, replace with yours.
@@ -235,7 +236,7 @@ dns_config:
   #     - 8.8.8.8
 
   # Search domains to inject.
-  domains: []
+  domains: ["viktorbarzin.lan"]
 
   # Extra DNS records
   # so far only A-records are supported (on the tailscale side)
@@ -256,7 +257,7 @@ dns_config:
   # `base_domain` must be a FQDNs, without the trailing dot.
   # The FQDN of the hosts will be
   # `hostname.user.base_domain` (e.g., _myhost.myuser.example.com_).
-  base_domain: example.com
+  base_domain: viktorbarzin.lan
 
 # Unix socket used for the CLI to connect without authentication
 # Note: for production you will want to set this to something like:
