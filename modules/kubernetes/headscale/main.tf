@@ -28,6 +28,9 @@ resource "kubernetes_deployment" "headscale" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "headscale"
@@ -99,6 +102,10 @@ resource "kubernetes_service" "headscale" {
     namespace = "headscale"
     labels = {
       "app" = "headscale"
+    }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/port"   = "9090"
     }
     # annotations = {
     #   "metallb.universe.tf/allow-shared-ip" : "shared"
