@@ -165,6 +165,15 @@ func run() error {
 		if len(publicDNSIps) < 1 {
 			return fmt.Errorf("no ips found for %s", *dynDnsDomain)
 		}
+		var publicDNSIp net.IP = nil
+		for _, ip := range publicDNSIps {
+			if ip.To4() != nil {
+				publicDNSIp = ip
+			}
+		}
+		if publicDNSIp == nil {
+			return errors.Wrapf(err, "failed to resolve IPv4 address for dyndns")
+		}
 
 		// Resolve the dynamic dns record
 		dynamicDNSIps, err := net.LookupIP(*dynDnsDomain)
@@ -174,14 +183,19 @@ func run() error {
 		if len(dynamicDNSIps) < 1 {
 			return fmt.Errorf("no ips found for %s", *dynDnsDomain)
 		}
+		var dynamicDNSIp net.IP
+		for _, ip := range dynamicDNSIps {
+			if ip.To4() != nil {
+				dynamicDNSIp = ip
+			}
+		}
 
-		currIP, newIP := publicDNSIps[0], dynamicDNSIps[0]
-		if currIP.Equal(newIP) {
-			glog.Infof("IPs of dyndns and current ip match, nothing to do: current=%s, dyndns=%s", currIP, newIP)
+		if publicDNSIp.Equal(dynamicDNSIp) {
+			glog.Infof("IPs of dyndns and current ip match, nothing to do: current=%s, dyndns=%s", publicDNSIp, dynamicDNSIp)
 			return nil
 		}
 		// Send notification as glue records can't be modified programatically for godaddy :/
-		err = notifyForIPChange(currIP, newIP)
+		err = notifyForIPChange(publicDNSIp, dynamicDNSIp)
 		if err != nil {
 			return errors.Wrapf(err, "failed to notify for ip change. this must succeed otherwise the glue records won't be updated")
 		}
@@ -194,7 +208,7 @@ func run() error {
 		if err != nil {
 			return errors.Wrapf(err, "failed to get worktree")
 		}
-		err = updatePublicIP(gitFs, currIP, newIP)
+		err = updatePublicIP(gitFs, publicDNSIp, dynamicDNSIp)
 		if err != nil {
 			return fmt.Errorf("failed to update public ip: %w", err)
 		}
