@@ -273,6 +273,14 @@ serverFiles:
               severity: page
             annotations:
               summary: Finance app unhandled exceptions
+      - name: New Tailscale client
+        rules:
+          - alert: New Tailscale client
+            expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
+            labels:
+              severity: page
+            annotations:
+              summary: New tailscale client registered
 
 extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
