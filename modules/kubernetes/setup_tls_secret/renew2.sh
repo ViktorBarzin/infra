@@ -44,8 +44,12 @@ cat $certbot_cleanup
 echo "Executing certbot renew command"
 certbot certonly --manual --preferred-challenges=dns --email me@viktorbarzin.me --server https://acme-v02.api.letsencrypt.org/directory --agree-tos --manual-auth-hook $certbot_auth --config-dir $config_dir --work-dir $le_dir/workdir --logs-dir $le_dir/logsdir --no-eff-email --manual-cleanup-hook $certbot_cleanup -d viktorbarzin.me -d *.viktorbarzin.me
 
-exec cp --remove-destination $config_dir/live/viktorbarzin.me/fullchain.pem ./secrets
-exec cp --remove-destination $config_dir/live/viktorbarzin.me/privkey.pem ./secrets
+cat $config_dir/live/viktorbarzin.me/fullchain.pem 
+cat $config_dir/live/viktorbarzin.me/privkey.pem
+
+cp --remove-destination $config_dir/live/viktorbarzin.me/fullchain.pem ./secrets
+cp --remove-destination $config_dir/live/viktorbarzin.me/privkey.pem ./secrets
+
 
 echo "Done renewing cert. Output certificates stored in ./secrets\n"
 ls ./secrets
