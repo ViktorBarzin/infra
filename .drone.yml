@@ -93,6 +93,8 @@ steps:
     image: alpine
     environment:
       TF_VAR_prod: "true"
+      TECHNITIUM_API_KEY:
+        from_secret: TECHNITIUM_API_KEY
     commands:
       - "apk update && apk add git certbot expect curl gzip"
       # Install terraform cli
