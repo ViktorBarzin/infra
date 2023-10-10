@@ -142,9 +142,8 @@ resource "kubernetes_ingress_v1" "headscale" {
     name      = "headscale-ingress"
     namespace = "headscale"
     annotations = {
+      // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
       "kubernetes.io/ingress.class" = "nginx"
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
     }
   }
 
