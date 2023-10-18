@@ -202,59 +202,6 @@ resource "kubernetes_deployment" "finance_app" {
   }
 }
 
-resource "kubernetes_deployment" "finance_app_backend_webhook_handler" {
-  metadata {
-    name      = "finance-app-backend-webhook-handler"
-    namespace = "finance-app"
-    labels = {
-      app = "finance-app-backend-webhook-handler"
-    }
-    annotations = {
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = 5000
-    }
-  }
-  spec {
-    replicas = 1
-    strategy {
-      type = "RollingUpdate"
-    }
-    selector {
-      match_labels = {
-        app = "finance-app-backend-webhook-handler"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "finance-app-backend-webhook-handler"
-        }
-        annotations = {
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/path"   = "/metrics"
-          "prometheus.io/port"   = 5000
-        }
-      }
-      spec {
-        container {
-          image             = "viktorbarzin/finance-app-backend-webhook-handler:latest"
-          name              = "finance-app-backend-webhook-handler"
-          image_pull_policy = "Always"
-          env {
-            name  = "GRAPHQL_ENDPOINT"
-            value = var.prod_graphql_endpoint
-          }
-          env {
-            name  = "GRAPHQL_API_SECRET"
-            value = var.graphql_api_secret
-          }
-        }
-      }
-    }
-  }
-}
-
 resource "kubernetes_deployment" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
@@ -310,25 +257,6 @@ resource "kubernetes_service" "finance_app" {
   }
 }
 
-resource "kubernetes_service" "finance_app_backend_webhook_handler" {
-  metadata {
-    name      = "finance-app-backend-webhook-handler"
-    namespace = "finance-app"
-    labels = {
-      app = "finance-app-backend-webhook-handler"
-    }
-  }
-
-  spec {
-    selector = {
-      app = "finance-app-backend-webhook-handler"
-    }
-    port {
-      name = "http"
-      port = "5000"
-    }
-  }
-}
 resource "kubernetes_service" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
@@ -404,7 +332,7 @@ resource "kubernetes_ingress_v1" "finance_app" {
           path = "/webhook"
           backend {
             service {
-              name = "finance-app-backend-webhook-handler"
+              name = "finance-app"
               port {
                 number = 5000
               }
