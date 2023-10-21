@@ -11,6 +11,14 @@ variable "tls_secret_name" {
   type = string
 }
 
+variable "oauth2_proxy_client_secret" {
+  type = string
+}
+
+variable "oauth2_proxy_client_id" {
+  type = string
+}
+
 module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "oauth2"
@@ -109,11 +117,11 @@ resource "kubernetes_deployment" "oauth2-proxy" {
           args  = ["--provider=google", "--email-domain=*", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-"]
           env {
             name  = "OAUTH2_PROXY_CLIENT_ID"
-            value = "533122798643-rkefmkuegbt218bpkibbdmghb4irlrv5.apps.googleusercontent.com"
+            value = var.oauth2_proxy_client_id
           }
           env {
             name  = "OAUTH2_PROXY_CLIENT_SECRET"
-            value = "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"
+            value = var.oauth2_proxy_client_secret
           }
           env {
             name  = "OAUTH2_PROXY_COOKIE_SECRET"

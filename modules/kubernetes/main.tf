@@ -19,9 +19,8 @@ variable "dbaas_root_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
-# variable "dockerhub_password" {}
-# variable "oauth_client_id" {}
-# variable "oauth_client_secret" {}
+variable "oauth2_proxy_client_id" {}
+variable "oauth2_proxy_client_secret" {}
 variable "url_shortener_geolite_license_key" {}
 variable "url_shortener_api_key" {}
 variable "url_shortener_mysql_password" {}
@@ -167,14 +166,14 @@ module "monitoring" {
   depends_on = [null_resource.core_services]
 }
 
-# module "oauth" {
-#   source          = "./oauth-proxy"
-#   tls_secret_name = var.tls_secret_name
-#   client_id       = var.oauth_client_id
-#   client_secret   = var.oauth_client_secret
+module "oauth" {
+  source          = "./oauth-proxy"
+  tls_secret_name = var.tls_secret_name
+oauth2_proxy_client_id = var.oauth2_proxy_client_id
+oauth2_proxy_client_secret = var.oauth2_proxy_client_secret
 
-#   depends_on = [null_resource.core_services]
-# }
+  depends_on = [null_resource.core_services]
+}
 
 module "openid_help_page" {
   source          = "./openid_help_page"

@@ -170,14 +170,14 @@ resource "kubernetes_ingress_v1" "city-guesser" {
 # }
 
 
-module "oauth" {
-  source = "../oauth-proxy"
-  # oauth_client_id     = "3d8ce4bf7b893899d967"
-  # oauth_client_secret = "08dca09b05e511cfa7f85cd7f85c332fd0768113"
-  client_id       = "3d8ce4bf7b893899d967"
-  client_secret   = "08dca09b05e511cfa7f85cd7f85c332fd0768113"
-  namespace       = "city-guesser"
-  host            = "city-guesser.viktorbarzin.me"
-  tls_secret_name = var.tls_secret_name
-  svc_name        = "city-guesser-oauth"
-}
+# module "oauth" {
+#   source = "../oauth-proxy"
+#   # oauth_client_id     = "3d8ce4bf7b893899d967"
+#   # oauth_client_secret = "08dca09b05e511cfa7f85cd7f85c332fd0768113"
+#   client_id       = "3d8ce4bf7b893899d967"
+#   client_secret   = "08dca09b05e511cfa7f85cd7f85c332fd0768113"
+#   namespace       = "city-guesser"
+#   host            = "city-guesser.viktorbarzin.me"
+#   tls_secret_name = var.tls_secret_name
+#   svc_name        = "city-guesser-oauth"
+# }
