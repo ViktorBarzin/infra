@@ -1,17 +1,56 @@
-variable "namespace" {
-  type = string
-}
-variable "host" {
-  type = string
+# variable "host" {
+#   type = string
+# }
+
+resource "kubernetes_namespace" "oauth2" {
+  metadata {
+    name = "oauth2"
+  }
 }
 variable "tls_secret_name" {
   type = string
 }
-variable "svc_name" {
-  type = string
+
+module "tls_secret" {
+  source          = "../setup_tls_secret"
+  namespace       = "oauth2"
+  tls_secret_name = var.tls_secret_name
 }
-variable "client_id" {}
-variable "client_secret" {}
+
+resource "kubernetes_config_map" "config" {
+  metadata {
+    name      = "oauth2-proxy-nginx"
+    namespace = "oauth2"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+  data = {
+    "nginx.conf" = <<-EOT
+    worker_processes 5;
+
+    events {
+    }
+
+    http {
+      server {
+        listen 80 default_server;
+
+        location = /healthcheck {
+          add_header Content-Type text/plain;
+          return 200 'ok';
+        }
+
+        location ~ /redirect/(.*) {
+          return 307 https://$1$is_args$args;
+        }
+      }
+    }
+    EOT
+  }
+}
 
 resource "random_password" "cookie" {
   length           = 16
@@ -19,57 +58,77 @@ resource "random_password" "cookie" {
   override_special = "_%@"
 }
 
-resource "kubernetes_deployment" "oauth_proxy" {
+resource "kubernetes_deployment" "oauth2-proxy" {
   metadata {
-    name      = "oauth-proxy"
-    namespace = var.namespace
+    name      = "oauth2-proxy"
+    namespace = "oauth2"
     labels = {
-      run = "oauth-proxy"
+      app = "oauth2"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
     replicas = 1
     selector {
       match_labels = {
-        run = "oauth-proxy"
+        app = "oauth2"
       }
     }
     template {
       metadata {
         labels = {
-          run = "oauth-proxy"
+          app = "oauth2"
         }
       }
       spec {
         container {
-          image             = "quay.io/oauth2-proxy/oauth2-proxy:latest"
-          args              = ["--provider=github", "--email-domain=*", "upstream=file:///dev/null", "--http-address=0.0.0.0:4180"]
-          name              = "oauth-proxy"
-          image_pull_policy = "IfNotPresent"
-          resources {
-            limits = {
-              cpu    = "0.5"
-              memory = "512Mi"
-            }
-            requests = {
-              cpu    = "250m"
-              memory = "50Mi"
-            }
-          }
+          image = "nginx:latest"
+          name  = "nginx"
+
           port {
-            container_port = 4180
+            name           = "http"
+            container_port = 80
+            protocol       = "TCP"
           }
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/nginx/"
+          }
+          liveness_probe {
+            http_get {
+              path = "/healthcheck"
+              port = 80
+            }
+          }
+        }
+        container {
+          image = "quay.io/pusher/oauth2_proxy:latest"
+          name  = "oauth2-proxy"
+          args  = ["--provider=google", "--email-domain=*", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-"]
           env {
             name  = "OAUTH2_PROXY_CLIENT_ID"
-            value = var.client_id
+            value = "533122798643-rkefmkuegbt218bpkibbdmghb4irlrv5.apps.googleusercontent.com"
           }
           env {
             name  = "OAUTH2_PROXY_CLIENT_SECRET"
-            value = var.client_secret
+            value = "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"
           }
           env {
             name  = "OAUTH2_PROXY_COOKIE_SECRET"
             value = random_password.cookie.result
+          }
+          port {
+            name           = "oauth"
+            container_port = 4180
+            protocol       = "TCP"
+          }
+        }
+        volume {
+          name = "config"
+          config_map {
+            name = "oauth2-proxy-nginx"
           }
         }
       }
@@ -79,48 +138,47 @@ resource "kubernetes_deployment" "oauth_proxy" {
 
 resource "kubernetes_service" "oauth_proxy" {
   metadata {
-    name      = var.svc_name
-    namespace = var.namespace
+    name      = "oauth2"
+    namespace = "oauth2"
     labels = {
-      run = "oauth-proxy"
+      app = "oauth2"
     }
   }
 
   spec {
     selector = {
-      run = "oauth-proxy"
+      app = "oauth2"
     }
     port {
       name        = "http"
       port        = "80"
-      target_port = "4180"
+      target_port = 4180
     }
   }
 }
 
 resource "kubernetes_ingress_v1" "oauth" {
   metadata {
-    name      = "oauth-ingress"
-    namespace = var.namespace
+    name      = "oauth2"
+    namespace = "oauth2"
     annotations = {
-      "kubernetes.io/ingress.class"           = "nginx"
-      "nginx.ingress.kubernetes.io/use-regex" = "true"
+      "kubernetes.io/ingress.class" = "nginx"
     }
   }
 
   spec {
     tls {
-      hosts       = [var.host]
+      hosts       = ["oauth2.viktorbarzin.me"]
       secret_name = var.tls_secret_name
     }
     rule {
-      host = var.host
+      host = "oauth2.viktorbarzin.me"
       http {
         path {
-          path = "/oauth2/.*"
+          path = "/"
           backend {
             service {
-              name = var.svc_name
+              name = "oauth2"
               port {
                 number = 80
               }
@@ -131,6 +189,130 @@ resource "kubernetes_ingress_v1" "oauth" {
     }
   }
 }
+
+
+
+
+
+# variable "svc_name" {
+#   type = string
+# }
+# variable "client_id" {}
+# variable "client_secret" {}
+
+
+# resource "kubernetes_deployment" "oauth_proxy" {
+#   metadata {
+#     name      = "oauth-proxy"
+#     namespace = var.namespace
+#     labels = {
+#       run = "oauth-proxy"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     selector {
+#       match_labels = {
+#         run = "oauth-proxy"
+#       }
+#     }
+#     template {
+#       metadata {
+#         labels = {
+#           run = "oauth-proxy"
+#         }
+#       }
+#       spec {
+#         container {
+#           image             = "quay.io/oauth2-proxy/oauth2-proxy:latest"
+#           args              = ["--provider=google", "--email-domain=*", "upstream=file:///dev/null", "--http-address=0.0.0.0:4180"]
+#           name              = "oauth-proxy"
+#           image_pull_policy = "IfNotPresent"
+#           resources {
+#             limits = {
+#               cpu    = "0.5"
+#               memory = "512Mi"
+#             }
+#             requests = {
+#               cpu    = "250m"
+#               memory = "50Mi"
+#             }
+#           }
+#           port {
+#             container_port = 4180
+#           }
+#           env {
+#             name  = "OAUTH2_PROXY_CLIENT_ID"
+#             value = var.client_id
+#           }
+#           env {
+#             name  = "OAUTH2_PROXY_CLIENT_SECRET"
+#             value = var.client_secret
+#           }
+#           env {
+#             name  = "OAUTH2_PROXY_COOKIE_SECRET"
+#             value = random_password.cookie.result
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
+
+# resource "kubernetes_service" "oauth_proxy" {
+#   metadata {
+#     name      = var.svc_name
+#     namespace = var.namespace
+#     labels = {
+#       run = "oauth-proxy"
+#     }
+#   }
+
+#   spec {
+#     selector = {
+#       run = "oauth-proxy"
+#     }
+#     port {
+#       name        = "http"
+#       port        = "80"
+#       target_port = "4180"
+#     }
+#   }
+# }
+
+# resource "kubernetes_ingress_v1" "oauth" {
+#   metadata {
+#     name      = "oauth-ingress"
+#     namespace = var.namespace
+#     annotations = {
+#       "kubernetes.io/ingress.class"           = "nginx"
+#       "nginx.ingress.kubernetes.io/use-regex" = "true"
+#     }
+#   }
+
+#   spec {
+#     tls {
+#       hosts       = [var.host]
+#       secret_name = var.tls_secret_name
+#     }
+#     rule {
+#       host = var.host
+#       http {
+#         path {
+#           path = "/oauth2/.*"
+#           backend {
+#             service {
+#               name = var.svc_name
+#               port {
+#                 number = 80
+#               }
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
 
 # apiVersion: apps/v1
 # kind: Deployment
