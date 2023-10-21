@@ -1,0 +1,372 @@
+appConfig:
+  theme: dashy-docs
+  language: en
+  layout: auto
+  iconSize: large
+  startingView: default
+  defaultOpeningMethod: newtab
+  statusCheck: false
+  statusCheckInterval: 0
+  faviconApi: allesedv
+  routingMode: history
+  enableMultiTasking: false
+  widgetsAlwaysUseProxy: false
+  webSearch:
+    disableWebSearch: true
+    searchEngine: duckduckgo
+    openingMethod: newtab
+    searchBangs: {}
+  enableFontAwesome: true
+  enableMaterialDesignIcons: true
+  hideComponents:
+    hideHeading: true
+    hideNav: true
+    hideSearch: true
+    hideSettings: true
+    hideFooter: true
+  auth:
+    enableGuestAccess: false
+    users: []
+    enableKeycloak: false
+  showSplashScreen: false
+  preventWriteToDisk: false
+  preventLocalSave: false
+  disableConfiguration: false
+  disableConfigurationForNonAdmin: false
+  allowConfigEdit: true
+  enableServiceWorker: false
+  disableContextMenu: false
+  disableUpdateChecks: false
+  disableSmartSort: false
+  enableErrorReporting: false
+pageInfo:
+  title: Viktor Barzin's home lab
+  description: Dashboard with the most important services
+  navLinks:
+    - title: GitHub
+      path: https://github.com/ViktorBarzin
+      target: newtab
+  footerText: ''
+sections:
+  - name: Getting Started
+    icon: fas fa-rocket
+    items:
+      - &ref_0
+        title: Dashy Live
+        description: Development a project management links for Dashy
+        icon: https://i.ibb.co/qWWpD0v/astro-dab-128.png
+        url: https://live.dashy.to/
+        target: newtab
+        id: 0_1481_dashylive
+      - &ref_1
+        title: GitHub
+        description: Source Code, Issues and Pull Requests
+        url: https://github.com/lissy93/dashy
+        icon: favicon
+        id: 1_1481_github
+      - &ref_2
+        title: Docs
+        description: Configuring & Usage Documentation
+        provider: Dashy.to
+        icon: far fa-book
+        url: https://dashy.to/docs
+        id: 2_1481_docs
+      - &ref_3
+        title: Showcase
+        description: See how others are using Dashy
+        url: https://github.com/Lissy93/dashy/blob/master/docs/showcase.md
+        icon: far fa-grin-hearts
+        id: 3_1481_showcase
+      - &ref_4
+        title: Config Guide
+        description: See full list of configuration options
+        url: https://github.com/Lissy93/dashy/blob/master/docs/configuring.md
+        icon: fas fa-wrench
+        id: 4_1481_configguide
+      - &ref_5
+        title: Support
+        description: Get help with Dashy, raise a bug, or get in contact
+        url: https://github.com/Lissy93/dashy/blob/master/.github/SUPPORT.md
+        icon: far fa-hands-helping
+        id: 5_1481_support
+    filteredItems:
+      - *ref_0
+      - *ref_1
+      - *ref_2
+      - *ref_3
+      - *ref_4
+      - *ref_5
+    displayData:
+      sortBy: default
+      rows: 2
+      cols: 1
+      collapsed: true
+      hideForGuests: false
+  - name: Infra
+    icon: si-databricks
+    displayData:
+      sortBy: alphabetical
+      rows: 2
+      cols: 1
+      collapsed: false
+      hideForGuests: false
+    items:
+      - &ref_6
+        title: ESXi R730 (Server)
+        description: R730 esxi UI
+        icon: si-vmware
+        url: https://r730.viktorbarzin.lan/ui/#/login
+        target: newtab
+        id: 0_496_esxirserver
+      - &ref_7
+        title: PFsense (Firewall)
+        description: Firewall
+        icon: si-pfsense
+        url: https://pfsense.viktorbarzin.lan
+        target: newtab
+        id: 1_496_pfsensefirewall
+      - &ref_8
+        title: iDRAC
+        description: ''
+        icon: si-dell
+        url: https://idrac.viktorbarzin.lan/
+        target: newtab
+        id: 2_496_idrac
+      - &ref_9
+        title: TP-Link Gateway Router
+        icon: hl-asus-router
+        url: https://192.168.1.1/webpages/login.html
+        id: 3_496_tplinkgatewayrouter
+      - &ref_10
+        title: Truenas
+        description: Network Storage VM
+        icon: si-truenas
+        url: http://truenas.viktorbarzin.lan/ui/dashboard
+        id: 4_496_truenas
+      - &ref_11
+        title: NAS
+        description: ''
+        icon: si-synology
+        url: https://nas.viktorbarzin.lan:5001/
+        id: 5_496_nas
+    filteredItems:
+      - *ref_6
+      - *ref_7
+      - *ref_8
+      - *ref_9
+      - *ref_10
+      - *ref_11
+  - name: Monitoring
+    icon: hl-grafana
+    displayData:
+      sortBy: alphabetical
+      rows: 3
+      collapsed: false
+      hideForGuests: false
+    items:
+      - &ref_12
+        title: iDRAC Grafana
+        icon: si-dell
+        url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
+        target: modal
+        statusCheck: true
+        statusCheckAcceptCodes: '400'
+        id: 0_1062_idracgrafana
+      - &ref_13
+        title: Kubernetes Cluster Nodes
+        description: Kubernetes Nodes Stats
+        icon: hl-kubernetes
+        url: https://grafana.viktorbarzin.me/d/xfpJB9FGz/node-exporter?orgId=1
+        target: modal
+        statusCheck: true
+        statusCheckAcceptCodes: '400'
+        id: 1_1062_kubernetesclusternodes
+      - &ref_14
+        title: OpenWRT (London)
+        icon: si-openwrt
+        url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
+        target: modal
+        statusCheck: true
+        statusCheckAcceptCodes: '400'
+        id: 2_1062_openwrtlondon
+      - &ref_15
+        title: Prometheus
+        icon: si-prometheus
+        url: https://prometheus.viktorbarzin.me/
+        statusCheckAcceptCodes: '400'
+        statusCheck: true
+        id: 3_1062_prometheus
+      - &ref_16
+        title: Alert Manager
+        icon: si-protractor
+        url: https://alertmanager.viktorbarzin.me/
+        id: 4_1062_alertmanager
+      - &ref_17
+        title: External Monitoring
+        description: Hetrix report
+        icon: si-amp
+        url: https://wl.hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/
+        target: modal
+        id: 5_1062_externalmonitoring
+    filteredItems:
+      - *ref_12
+      - *ref_13
+      - *ref_14
+      - *ref_15
+      - *ref_16
+      - *ref_17
+  - name: Infra Services
+    displayData:
+      sortBy: default
+      rows: 3
+      cols: 1
+      collapsed: false
+      hideForGuests: false
+    items:
+      - &ref_18
+        title: PhpMyAdmin
+        description: Admin UI for the DB Cluster
+        icon: si-phpmyadmin
+        url: https://pma.viktorbarzin.me/index.php
+        displayData: ttt
+        target: newtab
+        statusCheck: true
+        id: 0_1364_phpmyadmin
+      - &ref_19
+        title: Drone CI
+        description: CI/CD Service
+        icon: si-drone
+        url: https://drone.viktorbarzin.me/
+        target: modal
+        statusCheck: true
+        id: 1_1364_droneci
+      - &ref_20
+        title: DNS Server
+        description: Technitium
+        icon: hl-azure-dns
+        url: https://technitium.viktorbarzin.me/
+        target: newtab
+        statusCheck: true
+        statusCheckAcceptCodes: '400'
+        id: 2_1364_dnsserver
+      - &ref_21
+        title: Headscale (VPN) UI
+        icon: si-wireguard
+        url: https://headscale.viktorbarzin.me/manager
+        target: newtab
+        statusCheckAcceptCodes: '400'
+        statusCheck: true
+        id: 3_1364_headscalevpnui
+      - &ref_22
+        title: URL Shorterner
+        description: Shlink
+        icon: si-curl
+        url: https://shlink.viktorbarzin.me
+        statusCheck: true
+        statusCheckAcceptCodes: '400'
+        id: 4_1364_urlshorterner
+      - &ref_23
+        title: Home Assistant London
+        icon: si-homeassistant
+        url: http://ha2.viktorbarzin.lan:8123/lovelace/default_view
+        id: 5_1364_homeassistantlondon
+    filteredItems:
+      - *ref_18
+      - *ref_19
+      - *ref_20
+      - *ref_21
+      - *ref_22
+      - *ref_23
+    icon: si-adminer
+  - name: Public Services
+    displayData:
+      sortBy: alphabetical
+      rows: 2
+      cols: 4
+      collapsed: false
+      hideForGuests: false
+    items:
+      - &ref_24
+        title: City Guesser
+        description: Geolocator Game
+        icon: hl-openmaptiles
+        url: https://city-guesser.viktorbarzin.me/
+        target: newtab
+        statusCheck: true
+        id: 0_1475_cityguesser
+      - &ref_25
+        title: Excalidraw
+        description: Collaborative Hand Drawing Tool
+        icon: hl-excalidraw-light
+        url: https://excalidraw.viktorbarzin.me
+        target: newtab
+        statusCheck: true
+        id: 1_1475_excalidraw
+      - &ref_26
+        title: Formula 1 Stream
+        icon: si-f1
+        url: http://f1.viktorbarzin.me/
+        statusCheck: true
+        id: 2_1475_formulastream
+      - &ref_27
+        title: HackMD
+        description: Collaborative Markdown Document Editing
+        icon: si-hackclub
+        url: https://hackmd.viktorbarzin.me/
+        statusCheck: true
+        id: 3_1475_hackmd
+      - &ref_28
+        title: Activate Windows (KMS)
+        description: How to activate Windows Machines
+        icon: si-windows95
+        url: https://kms.viktorbarzin.me/
+        statusCheck: true
+        id: 4_1475_activatewindowskms
+      - &ref_29
+        title: PrivateBin
+        description: E2E Encrypted Pastebin
+        icon: si-pastebin
+        url: https://pb.viktorbarzin.me/
+        statusCheck: true
+        id: 5_1475_privatebin
+      - &ref_30
+        title: Blog
+        description: Personal Blog
+        icon: si-rss
+        url: https://viktorbarzin.me/
+        statusCheck: true
+        id: 6_1475_blog
+    filteredItems:
+      - *ref_24
+      - *ref_25
+      - *ref_26
+      - *ref_27
+      - *ref_28
+      - *ref_29
+      - *ref_30
+    icon: si-sublimetext
+  - name: Under Construction
+    displayData:
+      sortBy: alphabetical
+      rows: 1
+      cols: 1
+      collapsed: false
+      hideForGuests: false
+    items:
+      - &ref_31
+        title: Travel Blog
+        icon: si-hugo
+        url: https://travel.viktorbarzin.me/
+        target: newtab
+        statusCheck: true
+        id: 0_1833_travelblog
+      - &ref_32
+        title: Personal Finance App
+        icon: si-abstract
+        url: https://finance.viktorbarzin.me/transaction
+        statusCheck: true
+        id: 1_1833_personalfinanceapp
+    filteredItems:
+      - *ref_31
+      - *ref_32
+    icon: si-progress
