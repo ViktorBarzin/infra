@@ -311,3 +311,8 @@ module "headscale" {
 #   source          = "./metrics_api"
 #   tls_secret_name = var.tls_secret_name
 # }
+
+module "dashy" {
+  source          = "./dashy"
+  tls_secret_name = var.tls_secret_name
+}

@@ -58,9 +58,16 @@ resource "kubernetes_deployment" "technitium" {
           port {
             container_port = 53
           }
+          port {
+            container_port = 80
+          }
           volume_mount {
             mount_path = "/etc/dns"
             name       = "nfs-config"
+          }
+          volume_mount {
+            mount_path = "/etc/tls/"
+            name       = "tls-cert"
           }
         }
         volume {
@@ -68,6 +75,12 @@ resource "kubernetes_deployment" "technitium" {
           nfs {
             path   = "/mnt/main/technitium"
             server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "tls-cert"
+          secret {
+            secret_name = var.tls_secret_name
           }
         }
       }
@@ -97,6 +110,11 @@ resource "kubernetes_service" "technitium-web" {
     port {
       name     = "technitium-dns"
       port     = "5380"
+      protocol = "TCP"
+    }
+    port {
+      name     = "technitium-doh"
+      port     = "80"
       protocol = "TCP"
     }
   }
@@ -159,6 +177,39 @@ resource "kubernetes_ingress_v1" "technitium" {
               name = "technitium-web"
               port {
                 number = 5380
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_ingress_v1" "technitium-doh" {
+  metadata {
+    name      = "technitium-doh-ingress"
+    namespace = "technitium"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["dns.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "dns.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "technitium-web"
+              port {
+                number = 80
               }
             }
           }
