@@ -18,6 +18,10 @@ variable "oauth2_proxy_client_secret" {
 variable "oauth2_proxy_client_id" {
   type = string
 }
+variable "authenticated_emails" {
+  type    = string
+  default = ""
+}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -57,6 +61,21 @@ resource "kubernetes_config_map" "config" {
       }
     }
     EOT
+  }
+}
+
+resource "kubernetes_config_map" "authorized-emails" {
+  metadata {
+    name      = "authorized-emails"
+    namespace = "oauth2"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+  data = {
+    "authorized_emails.txt" = var.authenticated_emails
   }
 }
 
@@ -114,7 +133,7 @@ resource "kubernetes_deployment" "oauth2-proxy" {
         container {
           image = "quay.io/pusher/oauth2_proxy:latest"
           name  = "oauth2-proxy"
-          args  = ["--provider=google", "--email-domain=*", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-"]
+          args  = ["--provider=google", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-", "--authenticated-emails-file=/etc/authorized_emails/authorized_emails.txt"]
           env {
             name  = "OAUTH2_PROXY_CLIENT_ID"
             value = var.oauth2_proxy_client_id
@@ -132,11 +151,21 @@ resource "kubernetes_deployment" "oauth2-proxy" {
             container_port = 4180
             protocol       = "TCP"
           }
+          volume_mount {
+            name       = "authorized-emails"
+            mount_path = "/etc/authorized_emails"
+          }
         }
         volume {
           name = "config"
           config_map {
             name = "oauth2-proxy-nginx"
+          }
+        }
+        volume {
+          name = "authorized-emails"
+          config_map {
+            name = "authorized-emails"
           }
         }
       }

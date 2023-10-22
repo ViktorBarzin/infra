@@ -13,9 +13,11 @@ alertmanager:
       kubernetes.io/ingress.class: nginx
       nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
       # Enable client certificate authentication
-      nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+      # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
       # Create the secret containing the trusted ca certificates
-      nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
+      # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
+      nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
+      nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
     tls:
       - secretName: "tls-secret"
         hosts:
@@ -70,9 +72,11 @@ server:
       kubernetes.io/ingress.class: nginx
       nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
       # Enable client certificate authentication
-      nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+      # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
       # Create the secret containing the trusted ca certificates
-      nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
+      # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
+      nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
+      nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
     tls:
       - secretName: "tls-secret"
         hosts:
