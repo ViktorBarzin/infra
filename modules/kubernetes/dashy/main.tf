@@ -24,7 +24,7 @@ resource "kubernetes_config_map" "config" {
   }
 
   data = {
-    "conf.yml" = file("${path.root}/modules/kubernetes/dashy/conf.yml")
+    "conf.yml" = file("${path.module}/conf.yml")
   }
 }
 
