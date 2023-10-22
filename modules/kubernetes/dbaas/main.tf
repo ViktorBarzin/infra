@@ -295,9 +295,11 @@ resource "kubernetes_ingress_v1" "phpmyadmin" {
     namespace = "dbaas"
 
     annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
+      "kubernetes.io/ingress.class" = "nginx"
       # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
       # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
+      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
     }
   }
   spec {
