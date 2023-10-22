@@ -169,7 +169,7 @@ sections:
         icon: si-dell
         url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
         target: modal
-        statusCheck: true
+        statusCheck: false
         statusCheckAcceptCodes: '400'
         id: 0_1062_idracgrafana
       - &ref_13
@@ -178,7 +178,7 @@ sections:
         icon: hl-kubernetes
         url: https://grafana.viktorbarzin.me/d/xfpJB9FGz/node-exporter?orgId=1
         target: modal
-        statusCheck: true
+        statusCheck: false
         statusCheckAcceptCodes: '400'
         id: 1_1062_kubernetesclusternodes
       - &ref_14
@@ -186,15 +186,15 @@ sections:
         icon: si-openwrt
         url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
         target: modal
-        statusCheck: true
+        statusCheck: false
         statusCheckAcceptCodes: '400'
         id: 2_1062_openwrtlondon
       - &ref_15
         title: Prometheus
         icon: si-prometheus
         url: https://prometheus.viktorbarzin.me/
+        statusCheck: false
         statusCheckAcceptCodes: '400'
-        statusCheck: true
         id: 3_1062_prometheus
       - &ref_16
         title: Alert Manager
@@ -230,7 +230,7 @@ sections:
         url: https://pma.viktorbarzin.me/index.php
         displayData: ttt
         target: newtab
-        statusCheck: true
+        statusCheck: false
         id: 0_1364_phpmyadmin
       - &ref_19
         title: Drone CI
@@ -238,7 +238,7 @@ sections:
         icon: si-drone
         url: https://drone.viktorbarzin.me/
         target: modal
-        statusCheck: true
+        statusCheck: false
         id: 1_1364_droneci
       - &ref_20
         title: DNS Server
@@ -246,7 +246,7 @@ sections:
         icon: hl-azure-dns
         url: https://technitium.viktorbarzin.me/
         target: newtab
-        statusCheck: true
+        statusCheck: false
         statusCheckAcceptCodes: '400'
         id: 2_1364_dnsserver
       - &ref_21
@@ -254,15 +254,15 @@ sections:
         icon: si-wireguard
         url: https://headscale.viktorbarzin.me/manager
         target: newtab
+        statusCheck: false
         statusCheckAcceptCodes: '400'
-        statusCheck: true
         id: 3_1364_headscalevpnui
       - &ref_22
         title: URL Shorterner
         description: Shlink
         icon: si-curl
         url: https://shlink.viktorbarzin.me
-        statusCheck: true
+        statusCheck: false
         statusCheckAcceptCodes: '400'
         id: 4_1364_urlshorterner
       - &ref_23
@@ -292,7 +292,7 @@ sections:
         icon: hl-openmaptiles
         url: https://city-guesser.viktorbarzin.me/
         target: newtab
-        statusCheck: true
+        statusCheck: false
         id: 0_1475_cityguesser
       - &ref_25
         title: Excalidraw
@@ -300,41 +300,41 @@ sections:
         icon: hl-excalidraw-light
         url: https://excalidraw.viktorbarzin.me
         target: newtab
-        statusCheck: true
+        statusCheck: false
         id: 1_1475_excalidraw
       - &ref_26
         title: Formula 1 Stream
         icon: si-f1
         url: http://f1.viktorbarzin.me/
-        statusCheck: true
+        statusCheck: false
         id: 2_1475_formulastream
       - &ref_27
         title: HackMD
         description: Collaborative Markdown Document Editing
         icon: si-hackclub
         url: https://hackmd.viktorbarzin.me/
-        statusCheck: true
+        statusCheck: false
         id: 3_1475_hackmd
       - &ref_28
         title: Activate Windows (KMS)
         description: How to activate Windows Machines
         icon: si-windows95
         url: https://kms.viktorbarzin.me/
-        statusCheck: true
+        statusCheck: false
         id: 4_1475_activatewindowskms
       - &ref_29
         title: PrivateBin
         description: E2E Encrypted Pastebin
         icon: si-pastebin
         url: https://pb.viktorbarzin.me/
-        statusCheck: true
+        statusCheck: false
         id: 5_1475_privatebin
       - &ref_30
         title: Blog
         description: Personal Blog
         icon: si-rss
         url: https://viktorbarzin.me/
-        statusCheck: true
+        statusCheck: false
         id: 6_1475_blog
     filteredItems:
       - *ref_24
@@ -358,13 +358,13 @@ sections:
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
-        statusCheck: true
+        statusCheck: false
         id: 0_1833_travelblog
       - &ref_32
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
-        statusCheck: true
+        statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
       - *ref_31
