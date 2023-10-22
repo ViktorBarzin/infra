@@ -46,7 +46,7 @@ pageInfo:
     - title: GitHub
       path: https://github.com/ViktorBarzin
       target: newtab
-  footerText: ''
+  footerText: ""
 sections:
   - name: Getting Started
     icon: fas fa-rocket
@@ -127,7 +127,7 @@ sections:
         id: 1_496_pfsensefirewall
       - &ref_8
         title: iDRAC
-        description: ''
+        description: ""
         icon: si-dell
         url: https://idrac.viktorbarzin.lan/
         target: newtab
@@ -145,7 +145,7 @@ sections:
         id: 4_496_truenas
       - &ref_11
         title: NAS
-        description: ''
+        description: ""
         icon: si-synology
         url: https://nas.viktorbarzin.lan:5001/
         id: 5_496_nas
@@ -170,7 +170,7 @@ sections:
         url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
         target: modal
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 0_1062_idracgrafana
       - &ref_13
         title: Kubernetes Cluster Nodes
@@ -179,7 +179,7 @@ sections:
         url: https://grafana.viktorbarzin.me/d/xfpJB9FGz/node-exporter?orgId=1
         target: modal
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 1_1062_kubernetesclusternodes
       - &ref_14
         title: OpenWRT (London)
@@ -187,14 +187,14 @@ sections:
         url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
         target: modal
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 2_1062_openwrtlondon
       - &ref_15
         title: Prometheus
         icon: si-prometheus
         url: https://prometheus.viktorbarzin.me/
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 3_1062_prometheus
       - &ref_16
         title: Alert Manager
@@ -247,7 +247,7 @@ sections:
         url: https://technitium.viktorbarzin.me/
         target: newtab
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 2_1364_dnsserver
       - &ref_21
         title: Headscale (VPN) UI
@@ -255,7 +255,7 @@ sections:
         url: https://headscale.viktorbarzin.me/manager
         target: newtab
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 3_1364_headscalevpnui
       - &ref_22
         title: URL Shorterner
@@ -263,7 +263,7 @@ sections:
         icon: si-curl
         url: https://shlink.viktorbarzin.me
         statusCheck: false
-        statusCheckAcceptCodes: '400'
+        statusCheckAcceptCodes: "400"
         id: 4_1364_urlshorterner
       - &ref_23
         title: Home Assistant London
