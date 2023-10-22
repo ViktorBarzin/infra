@@ -21,6 +21,7 @@ variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
 variable "oauth2_proxy_client_id" {}
 variable "oauth2_proxy_client_secret" {}
+variable "oauth2_proxy_authenticated_emails" {}
 variable "url_shortener_geolite_license_key" {}
 variable "url_shortener_api_key" {}
 variable "url_shortener_mysql_password" {}
@@ -167,10 +168,11 @@ module "monitoring" {
 }
 
 module "oauth" {
-  source          = "./oauth-proxy"
-  tls_secret_name = var.tls_secret_name
-oauth2_proxy_client_id = var.oauth2_proxy_client_id
-oauth2_proxy_client_secret = var.oauth2_proxy_client_secret
+  source                     = "./oauth-proxy"
+  tls_secret_name            = var.tls_secret_name
+  oauth2_proxy_client_id     = var.oauth2_proxy_client_id
+  oauth2_proxy_client_secret = var.oauth2_proxy_client_secret
+  authenticated_emails       = var.oauth2_proxy_authenticated_emails
 
   depends_on = [null_resource.core_services]
 }
@@ -315,3 +317,8 @@ module "dashy" {
   source          = "./dashy"
   tls_secret_name = var.tls_secret_name
 }
+
+# module "localai" {
+#   source          = "./localai"
+#   tls_secret_name = var.tls_secret_name
+# }
