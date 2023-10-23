@@ -1,7 +1,7 @@
 variable "tls_secret_name" {}
 variable "alertmanager_account_password" {}
 variable "idrac_host" {
-  default = "idrac"
+  default = "192.168.1.4"
 }
 variable "idrac_username" {
   default = "root"
@@ -296,6 +296,10 @@ resource "kubernetes_config_map" "redfish-config" {
   metadata {
     name      = "redfish-exporter-config"
     namespace = "monitoring"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
   data = {
     "config.yml" = <<-EOF
@@ -320,6 +324,9 @@ resource "kubernetes_deployment" "idrac-redfish" {
     namespace = "monitoring"
     labels = {
       app = "idrac-redfish-exporter"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
