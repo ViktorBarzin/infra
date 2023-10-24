@@ -309,11 +309,11 @@ extraScrapeConfigs: |
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
     scrape_interval: 5m
-    scrape_timeout: 2m
+    scrape_timeout: 4m
     metrics_path: /redfish
     static_configs:
       - targets:
-        - idrac.viktorbarzin.lan
+        - 192.168.1.4
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
