@@ -1,4 +1,5 @@
 # dockerhub: viktorbarzin/redfish-exporter
+# repo: https://pkg.go.dev/github.com/jenningsloy318/redfish_exporter#section-readme
 FROM golang:rc-bullseye AS builder
 
 LABEL maintainer="Viktor Barzin <me@viktorbarzin.me>"
