@@ -344,9 +344,11 @@ resource "kubernetes_deployment" "idrac-redfish" {
       }
       spec {
         container {
-          image   = "viktorbarzin/redfish-exporter:latest"
-          name    = "redfish-exporter"
-          command = ["/bin/sh", "-c", "redfish-exporter --config.file /app/config.yml"]
+          image = "viktorbarzin/redfish-exporter:latest"
+          name  = "redfish-exporter"
+          # command = ["/bin/sh", "-c", "redfish-exporter --config.file /app/config.yml"]
+          # command = ["/usr/local/bin/redfish_exporter", "--config.file", "/etc/prometheus/redfish_exporter.yml"]
+          command = ["/usr/local/bin/redfish_exporter", "--config.file", "/app/config.yml"]
           port {
             container_port = 9610
           }
@@ -354,7 +356,8 @@ resource "kubernetes_deployment" "idrac-redfish" {
           volume_mount {
             name       = "redfish-exporter-config"
             mount_path = "/app/config.yml"
-            sub_path   = "config.yml"
+            # mount_path = "/etc/prometheus/redfish_exporter.yml"
+            sub_path = "config.yml"
           }
         }
         volume {
