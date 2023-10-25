@@ -106,50 +106,6 @@ resource "kubernetes_deployment" "finance_app" {
           image_pull_policy = "Always"
 
           env {
-            name  = "DB_CONNECTION_STRING"
-            value = var.db_connection_string
-          }
-          env {
-            name  = "MONZO_CLIENT_ID"
-            value = var.monzo_client_id
-          }
-          env {
-            name  = "MONZO_CLIENT_SECRET"
-            value = var.monzo_client_secret
-          }
-          env {
-            name  = "SQLITE_DB_PATH"
-            value = var.sqlite_db_path
-          }
-          env {
-            name  = "IMAP_HOST"
-            value = var.imap_host
-          }
-          env {
-            name  = "IMAP_USER"
-            value = var.imap_user
-          }
-          env {
-            name  = "IMAP_PASSWORD"
-            value = var.imap_password
-          }
-          env {
-            name  = "IMAP_DIRECTORY"
-            value = var.imap_directory
-          }
-          env {
-            name  = "OAUTH_GOOGLE_CLIENT_ID"
-            value = var.oauth_google_client_id
-          }
-          env {
-            name  = "OAUTH_GOOGLE_CLIENT_SECRET"
-            value = var.oauth_google_client_secret
-          }
-          env {
-            name  = "FLASK_DEBUG"
-            value = "true"
-          }
-          env {
             name  = "GRAPHQL_API_SECRET"
             value = var.graphql_api_secret
           }
@@ -160,14 +116,6 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "DEBUG_METRICS"
             value = 1
-          }
-          env {
-            name  = "GOCARDLESS_SECRET_ID"
-            value = var.gocardless_secret_id
-          }
-          env {
-            name  = "GOCARDLESS_SECRET_KEY"
-            value = var.gocardless_secret_key
           }
           env {
             name  = "ML_MODEL_PATH"
