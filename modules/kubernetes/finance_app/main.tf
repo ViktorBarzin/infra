@@ -1,21 +1,10 @@
 variable "tls_secret_name" {}
-variable "monzo_client_id" {}
-variable "monzo_client_secret" {}
-variable "sqlite_db_path" {}
-variable "imap_host" {}
-variable "imap_user" {}
-variable "imap_password" {}
-variable "imap_directory" {}
 variable "prod_graphql_endpoint" {
   default = "https://finance.viktorbarzin.me/graphql"
 }
-variable "oauth_google_client_id" {}
-variable "oauth_google_client_secret" {}
 variable "graphql_api_secret" {}
 variable "db_connection_string" {
 }
-variable "gocardless_secret_id" {}
-variable "gocardless_secret_key" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -105,6 +94,10 @@ resource "kubernetes_deployment" "finance_app" {
           name              = "finance-app"
           image_pull_policy = "Always"
 
+          env {
+            name  = "DB_CONNECTION_STRING"
+            value = var.db_connection_string
+          }
           env {
             name  = "GRAPHQL_API_SECRET"
             value = var.graphql_api_secret
