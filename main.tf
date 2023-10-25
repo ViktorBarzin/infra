@@ -50,18 +50,7 @@ variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
 variable "finance_app_db_connection_string" {}
-variable "finance_app_monzo_client_id" {}
-variable "finance_app_monzo_client_secret" {}
-variable "finance_app_sqlite_db_path" {}
-variable "finance_app_imap_host" {}
-variable "finance_app_imap_user" {}
-variable "finance_app_imap_password" {}
-variable "finance_app_imap_directory" {}
-variable "finance_app_oauth_google_client_id" {}
-variable "finance_app_oauth_google_client_secret" {}
 variable "finance_app_graphql_api_secret" {}
-variable "finance_app_gocardless_secret_id" {}
-variable "finance_app_gocardless_secret_key" {}
 variable "headscale_config" {}
 
 variable "ansible_prefix" {
@@ -278,19 +267,8 @@ module "kubernetes_cluster" {
   shadowsocks_password = var.shadowsocks_password
 
   # finance app
-  finance_app_monzo_client_id            = var.finance_app_monzo_client_id
-  finance_app_monzo_client_secret        = var.finance_app_monzo_client_secret
-  finance_app_sqlite_db_path             = var.finance_app_sqlite_db_path
-  finance_app_imap_host                  = var.finance_app_imap_host
-  finance_app_imap_user                  = var.finance_app_imap_user
-  finance_app_imap_password              = var.finance_app_imap_password
-  finance_app_imap_directory             = var.finance_app_imap_directory
-  finance_app_oauth_google_client_id     = var.finance_app_oauth_google_client_id
-  finance_app_oauth_google_client_secret = var.finance_app_oauth_google_client_secret
-  finance_app_graphql_api_secret         = var.finance_app_graphql_api_secret
-  finance_app_db_connection_string       = var.finance_app_db_connection_string
-  finance_app_gocardless_secret_id       = var.finance_app_gocardless_secret_id
-  finance_app_gocardless_secret_key      = var.finance_app_gocardless_secret_key
+  finance_app_graphql_api_secret   = var.finance_app_graphql_api_secret
+  finance_app_db_connection_string = var.finance_app_db_connection_string
 
   headscale_config = var.headscale_config
 }
