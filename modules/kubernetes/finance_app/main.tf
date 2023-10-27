@@ -5,6 +5,7 @@ variable "prod_graphql_endpoint" {
 variable "graphql_api_secret" {}
 variable "db_connection_string" {
 }
+variable "currency_converter_api_key" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -121,6 +122,10 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "VECTORIZER_PATH"
             value = "/data/vectorizer_categorizer.pkl"
+          }
+          env {
+            name  = "CURRENCY_CONVERTER_API_KEY"
+            value = var.currency_converter_api_key
           }
           volume_mount {
             name       = "data"

@@ -50,6 +50,7 @@ variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
 variable "finance_app_db_connection_string" {}
+variable "finance_app_currency_converter_api_key" {}
 variable "finance_app_graphql_api_secret" {}
 variable "headscale_config" {}
 
@@ -267,8 +268,9 @@ module "kubernetes_cluster" {
   shadowsocks_password = var.shadowsocks_password
 
   # finance app
-  finance_app_graphql_api_secret   = var.finance_app_graphql_api_secret
-  finance_app_db_connection_string = var.finance_app_db_connection_string
+  finance_app_graphql_api_secret         = var.finance_app_graphql_api_secret
+  finance_app_db_connection_string       = var.finance_app_db_connection_string
+  finance_app_currency_converter_api_key = var.finance_app_currency_converter_api_key
 
   headscale_config = var.headscale_config
 }
