@@ -37,6 +37,7 @@ variable "alertmanager_slack_api_url" {}
 variable "home_assistant_configuration" {}
 variable "shadowsocks_password" {}
 variable "finance_app_db_connection_string" {}
+variable "finance_app_currency_converter_api_key" {}
 variable "finance_app_graphql_api_secret" {}
 variable "headscale_config" {}
 
@@ -253,10 +254,11 @@ module "home_assistant" {
 }
 
 module "finance_app" {
-  source               = "./finance_app"
-  tls_secret_name      = var.tls_secret_name
-  graphql_api_secret   = var.finance_app_graphql_api_secret
-  db_connection_string = var.finance_app_db_connection_string
+  source                     = "./finance_app"
+  tls_secret_name            = var.tls_secret_name
+  graphql_api_secret         = var.finance_app_graphql_api_secret
+  db_connection_string       = var.finance_app_db_connection_string
+  currency_converter_api_key = var.finance_app_currency_converter_api_key
 }
 
 module "excalidraw" {
