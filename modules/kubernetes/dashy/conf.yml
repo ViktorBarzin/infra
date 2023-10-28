@@ -123,19 +123,19 @@ sections:
         icon: si-openwrt
         url: https://valchedrym.viktorbarzin.lan/
         target: newtab
-        id: 0_1335_valchedrymopenwrt
+        id: 0_1567_valchedrymopenwrt
       - &ref_8
         title: Valchedram Alarm IP150
         icon: 📷
         url: http://valchedrym.ddns.net:8080/login_page.html
         target: newtab
-        id: 1_1335_valchedramalarmip
+        id: 1_1567_valchedramalarmip
       - &ref_9
         title: Mladost 3 Router
         icon: si-ghostery
         url: http://mladost3.ddns.net:8080/
         target: newtab
-        id: 2_1335_mladostrouter
+        id: 2_1567_mladostrouter
     filteredItems:
       - *ref_7
       - *ref_8
@@ -322,6 +322,13 @@ sections:
         url: https://viktorbarzin.me/
         statusCheck: false
         id: 6_1475_blog
+      - &ref_29
+        title: Setup VPN (Tailscale)
+        description: "URL to set in app config: https://headscale.viktorbarzin.me"
+        icon: si-wireguard
+        url: https://github.com/juanfont/headscale/blob/main/docs/iOS-client.md
+        target: newtab
+        id: 7_1475_setupvpntailscale
     filteredItems:
       - *ref_22
       - *ref_23
@@ -330,6 +337,7 @@ sections:
       - *ref_26
       - *ref_27
       - *ref_28
+      - *ref_29
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -339,20 +347,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_29
+      - &ref_30
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_30
+      - &ref_31
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_29
       - *ref_30
+      - *ref_31
     icon: si-progress
