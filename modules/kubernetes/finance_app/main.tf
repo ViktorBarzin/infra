@@ -96,6 +96,10 @@ resource "kubernetes_deployment" "finance_app" {
           image_pull_policy = "Always"
 
           env {
+            name  = "ENVIRONMENT"
+            value = "prod"
+          }
+          env {
             name  = "DB_CONNECTION_STRING"
             value = var.db_connection_string
           }

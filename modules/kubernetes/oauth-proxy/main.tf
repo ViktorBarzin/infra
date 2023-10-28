@@ -134,6 +134,8 @@ resource "kubernetes_deployment" "oauth2-proxy" {
           image = "quay.io/pusher/oauth2_proxy:latest"
           name  = "oauth2-proxy"
           args  = ["--provider=google", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-", "--authenticated-emails-file=/etc/authorized_emails/authorized_emails.txt"]
+          # args = ["--provider=google", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-", "--email-domain=*", "--google-group=barzini-lab-admins@googlegroups.com", "--google-admin-email=vbarzin@gmail.com", "--google-service-account-json=/etc/google_service_account/google_service_account.json"]
+          # args = ["--provider=google", "--upstream=file:///dev/null", "--upstream=http://localhost/redirect/", "--http-address=0.0.0.0:4180", "--cookie-domain=.viktorbarzin.me", "--footer=-", "--email-domain=*", "--google-group=barzini-lab-admins", "--google-admin-email=533122798643-compute@developer.gserviceaccount.com", "--google-service-account-json=/etc/google_service_account/google_service_account.json"]
           env {
             name  = "OAUTH2_PROXY_CLIENT_ID"
             value = var.oauth2_proxy_client_id
@@ -155,6 +157,10 @@ resource "kubernetes_deployment" "oauth2-proxy" {
             name       = "authorized-emails"
             mount_path = "/etc/authorized_emails"
           }
+          # volume_mount {
+          #   name       = "sa-json"
+          #   mount_path = "/etc/google_service_account/"
+          # }
         }
         volume {
           name = "config"
@@ -168,6 +174,12 @@ resource "kubernetes_deployment" "oauth2-proxy" {
             name = "authorized-emails"
           }
         }
+        # volume {
+        #   name = "sa-json"
+        #   config_map {
+        #     name = "google-service-account"
+        #   }
+        # }
       }
     }
   }
