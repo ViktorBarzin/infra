@@ -302,3 +302,8 @@ module "dashy" {
 #   source          = "./localai"
 #   tls_secret_name = var.tls_secret_name
 # }
+
+module "vaultwarden" {
+  source          = "./vaultwarden"
+  tls_secret_name = var.tls_secret_name
+}
