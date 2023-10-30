@@ -329,6 +329,13 @@ sections:
         url: https://github.com/juanfont/headscale/blob/main/docs/iOS-client.md
         target: newtab
         id: 7_1475_setupvpntailscale
+      - &ref_30
+        title: Vaultwarden
+        description: Self-hosted Bitwarden server (Password Manager)
+        icon: si-bitwarden
+        url: https://vaultwarden.viktorbarzin.me
+        target: newtab
+        id: 8_1475_vaultwarden
     filteredItems:
       - *ref_22
       - *ref_23
@@ -338,6 +345,7 @@ sections:
       - *ref_27
       - *ref_28
       - *ref_29
+      - *ref_30
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -347,20 +355,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_30
+      - &ref_31
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_31
+      - &ref_32
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_30
       - *ref_31
+      - *ref_32
     icon: si-progress
