@@ -40,6 +40,10 @@ resource "kubernetes_deployment" "vaultwarden" {
         container {
           image = "vaultwarden/server:latest"
           name  = "vaultwarden"
+          env {
+            name  = "DOMAIN"
+            value = "https://vaultwarden.viktorbarzin.me"
+          }
 
           port {
             container_port = 80
