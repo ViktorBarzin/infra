@@ -154,8 +154,7 @@ sections:
         title: iDRAC Grafana
         icon: si-dell
         url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
-        target: modal
-        statusCheck: false
+        target: newtab
         statusCheckAcceptCodes: "400"
         id: 0_1062_idracgrafana
       - &ref_11
@@ -163,16 +162,14 @@ sections:
         description: Kubernetes Nodes Stats
         icon: hl-kubernetes
         url: https://grafana.viktorbarzin.me/d/xfpJB9FGz/node-exporter?orgId=1
-        target: modal
-        statusCheck: false
+        target: newtab
         statusCheckAcceptCodes: "400"
         id: 1_1062_kubernetesclusternodes
       - &ref_12
         title: OpenWRT (London)
         icon: si-openwrt
         url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
-        target: modal
-        statusCheck: false
+        target: newtab
         statusCheckAcceptCodes: "400"
         id: 2_1062_openwrtlondon
       - &ref_13
@@ -186,6 +183,7 @@ sections:
         title: Alert Manager
         icon: si-protractor
         url: https://alertmanager.viktorbarzin.me/
+        target: newtab
         id: 4_1062_alertmanager
       - &ref_15
         title: External Monitoring
@@ -223,8 +221,7 @@ sections:
         description: CI/CD Service
         icon: si-drone
         url: https://drone.viktorbarzin.me/
-        target: modal
-        statusCheck: false
+        target: newtab
         id: 1_1364_droneci
       - &ref_18
         title: DNS Server
