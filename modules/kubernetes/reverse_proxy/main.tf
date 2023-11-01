@@ -37,11 +37,12 @@ module "nas" {
 
 # https://idrac.viktorbarzin.me/
 module "idrac" {
-  source          = "./factory"
-  name            = "idrac"
-  external_name   = "idrac.viktorbarzin.lan"
-  port            = 80
-  tls_secret_name = var.tls_secret_name
+  source           = "./factory"
+  name             = "idrac"
+  external_name    = "idrac.viktorbarzin.lan"
+  port             = 443
+  tls_secret_name  = var.tls_secret_name
+  backend_protocol = "HTTPS"
 }
 
 # Can either listen on https or http; can't do both :/
