@@ -290,7 +290,7 @@ extraScrapeConfigs: |
   - job_name: 'snmp-idrac'
     static_configs:
         - targets:
-          - "idrac.viktorbarzin.me:161"
+          - "idrac.viktorbarzin.lan:161"
     metrics_path: '/snmp'
     params:
       module: [dell_idrac]
