@@ -61,39 +61,39 @@ sections:
         title: ESXi R730 (Server)
         description: R730 esxi UI
         icon: si-vmware
-        url: https://r730.viktorbarzin.lan/ui/#/login
+        url: https://esxi.viktorbarzin.me/ui/#/login
         target: newtab
         id: 0_496_esxirserver
       - &ref_1
         title: PFsense (Firewall)
         description: Firewall
         icon: si-pfsense
-        url: https://pfsense.viktorbarzin.lan
+        url: https://pfsense.viktorbarzin.me
         target: newtab
         id: 1_496_pfsensefirewall
       - &ref_2
         title: iDRAC
         description: ""
         icon: si-dell
-        url: https://idrac.viktorbarzin.lan/
+        url: https://idrac.viktorbarzin.me/
         target: newtab
         id: 2_496_idrac
       - &ref_3
         title: TP-Link Gateway Router
         icon: hl-asus-router
-        url: https://192.168.1.1/webpages/login.html
+        url: https://gw.viktorbarzin.me/webpages/login.html
         id: 3_496_tplinkgatewayrouter
       - &ref_4
         title: Truenas
         description: Network Storage VM
         icon: si-truenas
-        url: http://truenas.viktorbarzin.lan/ui/dashboard
+        url: http://truenas.viktorbarzin.me/ui/dashboard
         id: 4_496_truenas
       - &ref_5
         title: NAS
         description: ""
         icon: si-synology
-        url: https://nas.viktorbarzin.lan:5001/
+        url: https://nas.viktorbarzin.me/
         id: 5_496_nas
       - &ref_6
         title: Server Switch
@@ -121,19 +121,19 @@ sections:
       - &ref_7
         title: Valchedrym OpenWRT
         icon: si-openwrt
-        url: https://valchedrym.viktorbarzin.lan/
+        url: https://valchedrym.viktorbarzin.me/
         target: newtab
         id: 0_1567_valchedrymopenwrt
       - &ref_8
         title: Valchedram Alarm IP150
         icon: 📷
-        url: http://valchedrym.ddns.net:8080/login_page.html
+        url: https://ip150.viktorbarzin.me/
         target: newtab
         id: 1_1567_valchedramalarmip
       - &ref_9
         title: Mladost 3 Router
         icon: si-ghostery
-        url: http://mladost3.ddns.net:8080/
+        url: https://mladost3.viktorbarzin.me/
         target: newtab
         id: 2_1567_mladostrouter
     filteredItems:
