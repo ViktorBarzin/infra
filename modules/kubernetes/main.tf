@@ -307,3 +307,8 @@ module "vaultwarden" {
   source          = "./vaultwarden"
   tls_secret_name = var.tls_secret_name
 }
+
+module "reverse-proxy" {
+  source          = "./reverse_proxy"
+  tls_secret_name = var.tls_secret_name
+}
