@@ -296,6 +296,25 @@ resource "kubernetes_deployment" "mailserver" {
           }
 
         }
+
+        container {
+          name  = "roundcube"
+          image = "roundcube/roundcubemail"
+          env {
+            name  = "ROUNDCUBEMAIL_DEFAULT_HOST"
+            value = "127.0.0.1" # running in same pod
+          }
+          env {
+            name  = "ROUNDCUBEMAIL_SMTP_SERVER"
+            value = "tls://smtp.viktorbarzin.me"
+          }
+          port {
+            name           = "web"
+            container_port = 80
+            protocol       = "TCP"
+          }
+
+        }
         container {
           name  = "dovecot-exporter"
           image = "viktorbarzin/dovecot_exporter:latest"
@@ -413,5 +432,48 @@ resource "kubernetes_service" "mailserver" {
       port        = 993
       target_port = "imap-secure"
     }
+
+    port {
+      name     = "roundcube"
+      protocol = "TCP"
+      port     = 80
+    }
   }
 }
+
+
+resource "kubernetes_ingress_v1" "roundcube" {
+  metadata {
+    name      = "roundcube"
+    namespace = "mailserver"
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
+      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+    }
+  }
+
+  spec {
+    tls {
+      hosts       = ["mail.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "mail.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "mailserver"
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
