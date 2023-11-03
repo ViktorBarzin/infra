@@ -35,6 +35,18 @@ module "nas" {
   backend_protocol = "HTTPS"
 }
 
+# https://files.viktorbarzin.me/
+module "nas-files" {
+  source           = "./factory"
+  name             = "files"
+  external_name    = "nas.viktorbarzin.lan"
+  port             = 5001
+  tls_secret_name  = var.tls_secret_name
+  backend_protocol = "HTTPS"
+  protected        = false # allow anyone to download files
+  ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js"]
+}
+
 # https://idrac.viktorbarzin.me/
 module "idrac" {
   source           = "./factory"
