@@ -44,7 +44,7 @@ module "nas-files" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   protected        = false # allow anyone to download files
-  ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js"]
+  ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
 }
 
 # https://idrac.viktorbarzin.me/
