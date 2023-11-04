@@ -1,22 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F1 Streams</title>
+  </head>
 
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>F1 Streams</title>
-</head>
-
-<body>
-  <h3>Use the players below to watch ad-free</h3>
-  <!-- <h3>
+  <body>
+    <h3>Use the players below to watch ad-free</h3>
+    <!-- <h3>
     If none work go to
     <a href="https://f1livegp.me/f1/live.html">https://f1livegp.me/f1/live.html</a>
     <a href="http://mx.freestreams-live1.com/f1-live-stream1/">http://mx.freestreams-live1.com/f1-live-stream1/</a> or
     <a href="http://freestreams-live1.com/f1-live-streams/">http://freestreams-live1.com/f1-live-streams/</a>
   </h3> -->
 
-  <!-- <h3>
+    <!-- <h3>
     If you don't see <span id="numstreams"></span> streams try accessing the
     page via http*(try incognito if browser keeps opening https):
     <a href="http://f1.viktorbarzin.me">http://f1.viktorbarzin.me</a>
@@ -31,61 +30,90 @@
     and blocked by upstream ISPs, firewalls etc.
   </h5> -->
 
-  <div id="root">
-    <iframe id="s2-iframe" width="1000" height="600" src="https://mrgamingstreams.com/excess-1/" frameborder="0"
-      scrolling="yes" gesture="media" allow="encrypted-media" allowfullscreen=""
-      sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"></iframe>
+    <div id="root">
+      <iframe
+        id="s0-iframe"
+        width="1000"
+        height="600"
+        src="https://latifistreams.com/"
+        frameborder="0"
+        scrolling="yes"
+        gesture="media"
+        allow="encrypted-media"
+        allowfullscreen=""
+        sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"
+      ></iframe>
 
-    <iframe id="s1-iframe" width="1000" height="600" src="https://wikisport.click/strm/f1.php" frameborder="0"
-      scrolling="no" gesture="media" allow="encrypted-media" allowfullscreen=""></iframe>
+      <iframe
+        id="s2-iframe"
+        width="1000"
+        height="600"
+        src="https://mrgamingstreams.com/excess-1/"
+        frameborder="0"
+        scrolling="yes"
+        gesture="media"
+        allow="encrypted-media"
+        allowfullscreen=""
+        sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"
+      ></iframe>
 
-    <!-- <iframe id="s1" onclick='document.getElementById("s1").src="http://mx.freestreams-live1.com/f1-live-stream1/";'
+      <iframe
+        id="s1-iframe"
+        width="1000"
+        height="600"
+        src="https://wikisport.click/strm/f1.php"
+        frameborder="0"
+        scrolling="no"
+        gesture="media"
+        allow="encrypted-media"
+        allowfullscreen=""
+      ></iframe>
+
+      <!-- <iframe id="s1" onclick='document.getElementById("s1").src="http://mx.freestreams-live1.com/f1-live-stream1/";'
       style="border-width: 10mm;" src="http://mx.freestreams-live1.com/f1-live-stream1/" class="embed-responsive-item"
       frameborder="1" height="580" width="40%" allowfullscreen="" scrolling="no" allowtransparency=""
       sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"></iframe> -->
 
-    <!-- <iframe id="s1" onclick='document.getElementById("s2").src="https://f1livegp.me/f1/live.html";' -->
-    <!-- <iframe id="s1" onclick='document.getElementById("s2").src="https://f1livegp.me/f1/live3.html";'
+      <!-- <iframe id="s1" onclick='document.getElementById("s2").src="https://f1livegp.me/f1/live.html";' -->
+      <!-- <iframe id="s1" onclick='document.getElementById("s2").src="https://f1livegp.me/f1/live3.html";'
       class="embed-responsive-item" frameborder="1" style="border-width: 10mm;" height="580" width="40%"
       allowfullscreen="" scrolling="yes" allowtransparency="" src="https://f1livegp.me/f1/live3.html"
       sandbox="allow-forms allow-scripts allow-same-origin"
       ></iframe> -->
 
-
-    <!-- <iframe id="s2" onclick='document.getElementById("s2").src="http://mx.freestreams-live1.com/skysportsf1-stream/";'
+      <!-- <iframe id="s2" onclick='document.getElementById("s2").src="http://mx.freestreams-live1.com/skysportsf1-stream/";'
       class="embed-responsive-item" frameborder="1" style="border-width: 10mm;" height="580" width="40%"
       allowfullscreen="" scrolling="yes" allowtransparency="" src=""
       sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"></iframe> -->
 
-    <!-- <iframe id="s3"
+      <!-- <iframe id="s3"
       onclick='document.getElementById("s3").src="http://fomny.com/Video/United-kindom/Sky-sport/stream/Sky-sport-F1.php";'
       class="embed-responsive-item" frameborder="1" style="border-width: 10mm;" height="580" width="40%"
       allowfullscreen="" scrolling="yes" allowtransparency="" src=""
       sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"></iframe> -->
 
-    <!-- <iframe id="s4" onclick='document.getElementById("s4").src="https://cricfree.pw/sky-sports-f1-live-stream";'
+      <!-- <iframe id="s4" onclick='document.getElementById("s4").src="https://cricfree.pw/sky-sports-f1-live-stream";'
       class="embed-responsive-item" frameborder="1" style="border-width: 10mm;" height="580" width="40%"
       allowfullscreen="" scrolling="yes" allowtransparency="" src=""
       sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation"></iframe> -->
 
-    <!-- <iframe id="s6" onclick='document.getElementById("s6").src="https://en.viprow.me/sky-sports-f1-online-stream";'
+      <!-- <iframe id="s6" onclick='document.getElementById("s6").src="https://en.viprow.me/sky-sports-f1-online-stream";'
       class="embed-responsive-item" frameborder="1" style="border-width: 10mm;" height="580" width="40%"
       allowfullscreen="" scrolling="yes" allowtransparency="" src=""
       sandbox="allow-forms allow-scripts allow-same-origin "></iframe> -->
 
-
-    <!-- ESPN -->
-    <!-- <iframe src="http://freestreams-live1.com/usa/espn.php" marginwidth="0" marginheight="0" scrolling="no" width="40%"
+      <!-- ESPN -->
+      <!-- <iframe src="http://freestreams-live1.com/usa/espn.php" marginwidth="0" marginheight="0" scrolling="no" width="40%"
       height="580" frameborder="0" allowfullscreen="allowfullscreen" sandbox="allow-scripts allow-same-origin"></iframe>
 
     <iframe src="http://freestreams-live1.com/usa/espn2.php" marginwidth="0" marginheight="0" scrolling="no" width="40%"
       height="580" frameborder="0" allowfullscreen="allowfullscreen" sandbox="allow-scripts allow-same-origin"></iframe> -->
-  </div>
-  <!-- The ones below don't work well :/ -->
+    </div>
+    <!-- The ones below don't work well :/ -->
 
-  <!-- Stream 3 -->
-  <!-- Domain protected -->
-  <!-- <iframe
+    <!-- Stream 3 -->
+    <!-- Domain protected -->
+    <!-- <iframe
       src="https://sportscart.xyz/ch/scplayer-60.php"
       width="40%"
       height="580"
@@ -97,95 +125,109 @@
       sandbox="allow-scripts allow-same-origin"
     ></iframe> -->
 
-  <!-- Stream 5 -->
-  <!-- Ads popup not closing :/ -->
-  <!-- <iframe src="http://channelstream.club/stream/uk_skysport_f1.php" width="100%" height="580" frameborder="0"
+    <!-- Stream 5 -->
+    <!-- Ads popup not closing :/ -->
+    <!-- <iframe src="http://channelstream.club/stream/uk_skysport_f1.php" width="100%" height="580" frameborder="0"
     marginwidth="0" marginheight="0" scrolling="no" allowfullscreen="allowfullscreen"
     sandbox="allow-scripts allow-same-origin allow-forms"></iframe> -->
-</body>
+  </body>
 
-<!-- <script>
+  <!-- <script>
   document.getElementById("numstreams").textContent = document.getElementById(
     "root"
   ).childElementCount;
 </script> -->
 
-<script>
+  <script>
+    // Get a reference to the iframe
+    var root = document.getElementById("root");
 
-  // Get a reference to the iframe
-  var root = document.getElementById('root');
+    // if (window.self !== window.top) {
+    //   // The code is running inside an iframe
+    //   root.style.backgroundColor = 'lightblue';
+    //   root.innerHTML = '<iframe id="s1-iframe" width="1000" height="600" src="https://wikisport.click/strm/f1.php" frameborder="0" scrolling="no" gesture="media" allow="encrypted-media" allowfullscreen="" ></>';
+    // } else {
+    //   // The code is running in the parent window
+    //   document.body.style.backgroundColor = 'lightgreen';
+    //   document.body.innerHTML = '<iframe width="1000" height="600" src="https://f1.viktorbarzin.me" sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation" />';
+    // }
 
-  // if (window.self !== window.top) {
-  //   // The code is running inside an iframe
-  //   root.style.backgroundColor = 'lightblue';
-  //   root.innerHTML = '<iframe id="s1-iframe" width="1000" height="600" src="https://wikisport.click/strm/f1.php" frameborder="0" scrolling="no" gesture="media" allow="encrypted-media" allowfullscreen="" ></>';
-  // } else {
-  //   // The code is running in the parent window
-  //   document.body.style.backgroundColor = 'lightgreen';
-  //   document.body.innerHTML = '<iframe width="1000" height="600" src="https://f1.viktorbarzin.me" sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation" />';
-  // }
+    // Add a 'load' event listener to the iframe
+    myIframe.addEventListener("load", function () {
+      // Set the iframe's 'contentWindow.location' property to the current URL
+      myIframe.contentWindow.location = myIframe.contentWindow.location.href;
+    });
 
-
-  // Add a 'load' event listener to the iframe
-  myIframe.addEventListener('load', function () {
-    // Set the iframe's 'contentWindow.location' property to the current URL
-    myIframe.contentWindow.location = myIframe.contentWindow.location.href;
-  });
-
-  // Add a 'beforeunload' event listener to the window to prevent redirection
-  myIframe.addEventListener('beforeunload', function (event) {
-    // If the event was triggered by a frame...
-    console.log('before unload')
-    if (event.target !== window) {
-      // Prevent the default action of the event
-      event.preventDefault();
-    }
-  });
-  // Add event listener to handle messages from the iframe
-  window.addEventListener("message", function (event) {
-    // Check if the message is a redirect request
-    if (event.data.redirectTo) {
-      // Reject the redirect request by logging an error message
-      console.error("Iframe attempted to redirect to:", event.data.redirectTo);
-    }
-  }, false);
-  window.onbeforeunload = function () {
-    // Check if an iframe attempted to redirect the parent
-    if (window.location.href != "about:blank") {
-      // Block the navigation attempt
-      event.returnValue = "Are you sure you want to leave this page?";
-    }
-  }
-
-  window.location = new Proxy(window.location, {
-    set: function (target, property, value, receiver) {
-      console.log('location edite')
-      // Check if the caller is the child iframe
-      if (window.frames.indexOf(receiver) != -1) {
-        // Block any attempts to modify the location object
-        console.error("Blocked attempt to modify parent window location:", target, property, value);
-        return false;
-      } else {
-        // Allow other modifications to the location object
-        return Reflect.set(target, property, value, receiver);
+    // Add a 'beforeunload' event listener to the window to prevent redirection
+    myIframe.addEventListener("beforeunload", function (event) {
+      // If the event was triggered by a frame...
+      console.log("before unload");
+      if (event.target !== window) {
+        // Prevent the default action of the event
+        event.preventDefault();
       }
-    }
-  });
-
-  window.history = new Proxy(window.history, {
-    set: function (target, property, value, receiver) {
-      console.log('history edite')
-      // Check if the caller is the child iframe
-      if (window.frames.indexOf(receiver) != -1) {
-        // Block any attempts to modify the history object
-        console.error("Blocked attempt to modify parent window history:", target, property, value);
-        return false;
-      } else {
-        // Allow other modifications to the history object
-        return Reflect.set(target, property, value, receiver);
+    });
+    // Add event listener to handle messages from the iframe
+    window.addEventListener(
+      "message",
+      function (event) {
+        // Check if the message is a redirect request
+        if (event.data.redirectTo) {
+          // Reject the redirect request by logging an error message
+          console.error(
+            "Iframe attempted to redirect to:",
+            event.data.redirectTo
+          );
+        }
+      },
+      false
+    );
+    window.onbeforeunload = function () {
+      // Check if an iframe attempted to redirect the parent
+      if (window.location.href != "about:blank") {
+        // Block the navigation attempt
+        event.returnValue = "Are you sure you want to leave this page?";
       }
-    }
-  });
-</script>
+    };
 
+    window.location = new Proxy(window.location, {
+      set: function (target, property, value, receiver) {
+        console.log("location edite");
+        // Check if the caller is the child iframe
+        if (window.frames.indexOf(receiver) != -1) {
+          // Block any attempts to modify the location object
+          console.error(
+            "Blocked attempt to modify parent window location:",
+            target,
+            property,
+            value
+          );
+          return false;
+        } else {
+          // Allow other modifications to the location object
+          return Reflect.set(target, property, value, receiver);
+        }
+      },
+    });
+
+    window.history = new Proxy(window.history, {
+      set: function (target, property, value, receiver) {
+        console.log("history edite");
+        // Check if the caller is the child iframe
+        if (window.frames.indexOf(receiver) != -1) {
+          // Block any attempts to modify the history object
+          console.error(
+            "Blocked attempt to modify parent window history:",
+            target,
+            property,
+            value
+          );
+          return false;
+        } else {
+          // Allow other modifications to the history object
+          return Reflect.set(target, property, value, receiver);
+        }
+      },
+    });
+  </script>
 </html>
