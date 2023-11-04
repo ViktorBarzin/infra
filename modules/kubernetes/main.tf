@@ -318,3 +318,8 @@ module "send" {
   source          = "./send"
   tls_secret_name = var.tls_secret_name
 }
+
+module "redis" {
+  source          = "./redis"
+  tls_secret_name = var.tls_secret_name
+}
