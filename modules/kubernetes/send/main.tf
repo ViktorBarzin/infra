@@ -12,7 +12,7 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_deployment" "dashy" {
+resource "kubernetes_deployment" "send" {
   metadata {
     name      = "send"
     namespace = "send"
@@ -63,6 +63,10 @@ resource "kubernetes_deployment" "dashy" {
           env {
             name  = "MAX_EXPIRE_SECONDS"
             value = 7 * 24 * 3600
+          }
+          env {
+            name  = "REDIS_HOST"
+            value = "redis.redis.svc.cluster.local"
           }
           volume_mount {
             name       = "data"
