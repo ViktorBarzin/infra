@@ -312,3 +312,9 @@ module "reverse-proxy" {
   source          = "./reverse_proxy"
   tls_secret_name = var.tls_secret_name
 }
+
+# Selfhosted Firefox send
+module "send" {
+  source          = "./send"
+  tls_secret_name = var.tls_secret_name
+}
