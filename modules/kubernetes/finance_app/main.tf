@@ -6,6 +6,8 @@ variable "graphql_api_secret" {}
 variable "db_connection_string" {
 }
 variable "currency_converter_api_key" {}
+variable "gocardless_secret_key" {}
+variable "gocardless_secret_id" {}
 
 
 resource "kubernetes_namespace" "finance_app" {
@@ -130,6 +132,14 @@ resource "kubernetes_deployment" "finance_app" {
           env {
             name  = "CURRENCY_CONVERTER_API_KEY"
             value = var.currency_converter_api_key
+          }
+          env {
+            name  = "GOCARDLESS_SECRET_ID"
+            value = var.gocardless_secret_id
+          }
+          env {
+            name  = "GOCARDLESS_SECRET_KEY"
+            value = var.gocardless_secret_key
           }
           volume_mount {
             name       = "data"
