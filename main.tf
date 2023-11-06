@@ -52,6 +52,8 @@ variable "shadowsocks_password" {}
 variable "finance_app_db_connection_string" {}
 variable "finance_app_currency_converter_api_key" {}
 variable "finance_app_graphql_api_secret" {}
+variable "finance_app_gocardless_secret_key" {}
+variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 
 variable "ansible_prefix" {
@@ -271,6 +273,8 @@ module "kubernetes_cluster" {
   finance_app_graphql_api_secret         = var.finance_app_graphql_api_secret
   finance_app_db_connection_string       = var.finance_app_db_connection_string
   finance_app_currency_converter_api_key = var.finance_app_currency_converter_api_key
+  finance_app_gocardless_secret_key      = var.finance_app_gocardless_secret_key
+  finance_app_gocardless_secret_id       = var.finance_app_gocardless_secret_id
 
   headscale_config = var.headscale_config
 }
