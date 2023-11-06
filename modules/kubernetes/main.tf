@@ -39,6 +39,8 @@ variable "shadowsocks_password" {}
 variable "finance_app_db_connection_string" {}
 variable "finance_app_currency_converter_api_key" {}
 variable "finance_app_graphql_api_secret" {}
+variable "finance_app_gocardless_secret_key" {}
+variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 
 resource "null_resource" "core_services" {
@@ -259,6 +261,8 @@ module "finance_app" {
   graphql_api_secret         = var.finance_app_graphql_api_secret
   db_connection_string       = var.finance_app_db_connection_string
   currency_converter_api_key = var.finance_app_currency_converter_api_key
+  gocardless_secret_key      = var.finance_app_gocardless_secret_key
+  gocardless_secret_id       = var.finance_app_gocardless_secret_id
 }
 
 module "excalidraw" {
