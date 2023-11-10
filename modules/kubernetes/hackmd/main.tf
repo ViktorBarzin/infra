@@ -78,7 +78,7 @@ resource "kubernetes_deployment" "hackmd" {
 
         container {
           name              = "codumd"
-          image             = "nabo.codimd.dev/hackmdio/hackmd:2.0.1"
+          image             = "nabo.codimd.dev/hackmdio/hackmd:latest"
           image_pull_policy = "IfNotPresent"
           env {
             name  = "CMD_DB_URL"
