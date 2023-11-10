@@ -65,12 +65,9 @@ resource "kubernetes_deployment" "privatebin" {
 
         volume {
           name = "data"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
-            fs_type       = "ext4"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:privatebin"
-            lun           = 0
-            read_only     = false
+          nfs {
+            path   = "/mnt/main/privatebin"
+            server = "10.0.10.15"
           }
         }
       }

@@ -50,7 +50,8 @@ smtpd_sender_restrictions = permit_sasl_authenticated, permit_mynetworks, reject
 disable_vrfy_command = yes
 
 # Postscreen settings to drop zombies/open relays/spam early
-postscreen_dnsbl_action = enforce
+#postscreen_dnsbl_action = enforce
+postscreen_dnsbl_action = ignore
 postscreen_dnsbl_sites = zen.spamhaus.org*2
         bl.mailspike.net
         b.barracudacentral.org*2
