@@ -271,6 +271,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
               }
             }
           }
+          env {
+            name  = "UPLOAD_LIMIT"
+            value = "300M"
+          }
         }
       }
     }
@@ -304,6 +308,7 @@ resource "kubernetes_ingress_v1" "phpmyadmin" {
       # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
       "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
       "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "50m"
     }
   }
   spec {
