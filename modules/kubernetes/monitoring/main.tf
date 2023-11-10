@@ -34,7 +34,7 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   }
 }
 
-resource "kubernetes_persistent_volume" "example" {
+resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
   metadata {
     name = "prometheus-iscsi-pv"
   }
@@ -44,12 +44,16 @@ resource "kubernetes_persistent_volume" "example" {
     }
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
-      iscsi {
-        fs_type       = "ext4"
-        iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:prometheus"
-        lun           = 0
-        target_portal = "iscsi.viktorbarzin.me:3260"
+      nfs {
+        path   = "/mnt/main/prometheus"
+        server = "10.0.10.15"
       }
+      # iscsi {
+      #   fs_type       = "ext4"
+      #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:prometheus"
+      #   lun           = 0
+      #   target_portal = "iscsi.viktorbarzin.me:3260"
+      # }
 
     }
     persistent_volume_reclaim_policy = "Retain"
