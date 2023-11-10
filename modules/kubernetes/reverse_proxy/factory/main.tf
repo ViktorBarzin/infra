@@ -54,6 +54,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       # Do not do hairpinning
       "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/auth" : null
       "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/start?rd=/redirect/$http_host$escaped_request_uri" : null
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "50m"
     }
   }
 
