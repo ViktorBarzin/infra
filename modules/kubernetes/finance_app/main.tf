@@ -141,22 +141,22 @@ resource "kubernetes_deployment" "finance_app" {
             name  = "GOCARDLESS_SECRET_KEY"
             value = var.gocardless_secret_key
           }
-          volume_mount {
-            name       = "data"
-            mount_path = "/data"
-            # sub_path   = ""
-          }
+          # volume_mount {
+          #   name       = "data"
+          #   mount_path = "/data"
+          #   # sub_path   = ""
+          # }
         }
-        volume {
-          name = "data"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.me:3260"
-            fs_type       = "ext4"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:finance-app"
-            lun           = 0
-            read_only     = false
-          }
-        }
+        # volume {
+        #   name = "data"
+        #   iscsi {
+        #     target_portal = "iscsi.viktorbarzin.me:3260"
+        #     fs_type       = "ext4"
+        #     iqn           = "iqn.2020-12.lan.viktorbarzin:storage:finance-app"
+        #     lun           = 0
+        #     read_only     = false
+        #   }
+        # }
       }
     }
   }
