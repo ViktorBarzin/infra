@@ -49,8 +49,11 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     annotations = {
       "nginx.ingress.kubernetes.io/backend-protocol" = "${var.backend_protocol}"
       "kubernetes.io/ingress.class"                  = "nginx"
-      "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "https://oauth2.viktorbarzin.me/oauth2/auth" : null
-      "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri" : null
+      # "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "https://oauth2.viktorbarzin.me/oauth2/auth" : null
+      # "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri" : null
+      # Do not do hairpinning
+      "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/auth" : null
+      "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/start?rd=/redirect/$http_host$escaped_request_uri" : null
     }
   }
 
