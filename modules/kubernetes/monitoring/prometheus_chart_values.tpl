@@ -146,7 +146,7 @@ serverFiles:
       - name: NodeLowFreeMemory
         rules:
           - alert: NodeLowFreeMemory
-            expr: node_memory_MemAvailable_bytes < 500000000
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.9
             for: 10m
             labels:
               severity: page
