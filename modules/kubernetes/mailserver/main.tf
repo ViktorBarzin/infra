@@ -354,12 +354,16 @@ resource "kubernetes_deployment" "mailserver" {
         }
         volume {
           name = "data"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:mailserver"
-            lun           = 0
-            fs_type       = "ext4"
+          nfs {
+            path   = "/mnt/main/mailserver"
+            server = "10.0.10.15"
           }
+          # iscsi {
+          #   target_portal = "iscsi.viktorbarzin.lan:3260"
+          #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:mailserver"
+          #   lun           = 0
+          #   fs_type       = "ext4"
+          # }
         }
         # volume {
         #   name = "user-patches"
