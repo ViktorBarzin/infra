@@ -104,13 +104,17 @@ resource "kubernetes_deployment" "hackmd" {
         }
         volume {
           name = "data"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
-            fs_type       = "ext4"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:hackmd"
-            lun           = 0
-            read_only     = false
+          nfs {
+            path   = "/mnt/main/hackmd"
+            server = "10.0.10.15"
           }
+          #   iscsi {
+          #     target_portal = "iscsi.viktorbarzin.lan:3260"
+          #     fs_type       = "ext4"
+          #     iqn           = "iqn.2020-12.lan.viktorbarzin:storage:hackmd"
+          #     lun           = 0
+          #     read_only     = false
+          #   }
         }
       }
     }
