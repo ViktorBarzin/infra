@@ -23,7 +23,7 @@ resource "kubernetes_deployment" "hackmd" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 3
     strategy {
       type = "Recreate"
     }
@@ -40,49 +40,49 @@ resource "kubernetes_deployment" "hackmd" {
         }
       }
       spec {
-        container {
-          image             = "postgres:11.6-alpine"
-          name              = "postgres"
-          image_pull_policy = "IfNotPresent"
-          env {
-            name  = "POSTGRES_USER"
-            value = "codimd"
-          }
-          env {
-            name  = "POSTGRES_PASSWORD"
-            value = var.hackmd_db_password
-          }
-          env {
-            name  = "POSTGRES_DB"
-            value = "codimd"
-          }
-          resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-          }
-          port {
-            container_port = 80
-          }
-          volume_mount {
-            name       = "data"
-            mount_path = "/var/lib/postgresql/data"
-            sub_path   = "postgres"
-          }
-        }
+        # container {
+        #   image             = "postgres:11.6-alpine"
+        #   name              = "postgres"
+        #   image_pull_policy = "IfNotPresent"
+        #   env {
+        #     name  = "POSTGRES_USER"
+        #     value = "codimd"
+        #   }
+        #   env {
+        #     name  = "POSTGRES_PASSWORD"
+        #     value = var.hackmd_db_password
+        #   }
+        #   env {
+        #     name  = "POSTGRES_DB"
+        #     value = "codimd"
+        #   }
+        #   resources {
+        #     limits = {
+        #       cpu    = "1"
+        #       memory = "1Gi"
+        #     }
+        #     requests = {
+        #       cpu    = "1"
+        #       memory = "1Gi"
+        #     }
+        #   }
+        #   port {
+        #     container_port = 80
+        #   }
+        # volume_mount {
+        #   name       = "data"
+        #   mount_path = "/var/lib/postgresql/data"
+        #   sub_path   = "postgres"
+        # }
+        # }
 
         container {
-          name              = "codumd"
-          image             = "nabo.codimd.dev/hackmdio/hackmd:latest"
-          image_pull_policy = "IfNotPresent"
+          name  = "codimd"
+          image = "hackmdio/hackmd"
           env {
-            name  = "CMD_DB_URL"
-            value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
+            name = "CMD_DB_URL"
+            # value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
+            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@mysql.dbaas.svc.cluster.local/codimd")
           }
           env {
             name  = "CMD_USECDN"
@@ -146,7 +146,10 @@ resource "kubernetes_ingress_v1" "hackmd" {
     name      = "hackmd-ingress"
     namespace = "hackmd"
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "kubernetes.io/ingress.class"                     = "nginx"
+      "nginx.ingress.kubernetes.io/affinity"            = "cookie"
+      "nginx.ingress.kubernetes.io/affinity-mode"       = "persistent"
+      "nginx.ingress.kubernetes.io/session-cookie-name" = "_sa_nginx"
     }
   }
 
