@@ -76,12 +76,16 @@ resource "kubernetes_deployment" "mysql" {
         }
         volume {
           name = "mysql-persistent-storage"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
-            lun           = 0
-            fs_type       = "ext4"
+          nfs {
+            path   = "/mnt/main/mysql"
+            server = "10.0.10.15"
           }
+          # iscsi {
+          #   target_portal = "iscsi.viktorbarzin.lan:3260"
+          #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
+          #   lun           = 0
+          #   fs_type       = "ext4"
+          # }
         }
       }
     }
