@@ -348,6 +348,12 @@ sections:
         url: https://send.viktorbarzin.me/
         target: newtab
         id: 9_1475_send
+      - &ref_33
+        title: Youtube Downloader
+        icon: si-youtube
+        url: https://yt.viktorbarzin.me
+        target: newtab
+        id: 10_1475_youbtubedownloader
     filteredItems:
       - *ref_23
       - *ref_24
@@ -359,6 +365,7 @@ sections:
       - *ref_30
       - *ref_31
       - *ref_32
+      - *ref_33
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -368,20 +375,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_33
+      - &ref_34
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_34
+      - &ref_35
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_33
       - *ref_34
+      - *ref_35
     icon: si-progress
