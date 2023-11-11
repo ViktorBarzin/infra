@@ -113,13 +113,17 @@ resource "kubernetes_deployment" "drone_server" {
         }
         volume {
           name = "data"
-          iscsi {
-            target_portal = "iscsi.viktorbarzin.lan:3260"
-            fs_type       = "ext4"
-            iqn           = "iqn.2020-12.lan.viktorbarzin:storage:drone"
-            lun           = 0
-            read_only     = false
+          nfs {
+            path   = "/mnt/main/drone"
+            server = "10.0.10.15"
           }
+          # iscsi {
+          #   target_portal = "iscsi.viktorbarzin.lan:3260"
+          #   fs_type       = "ext4"
+          #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:drone"
+          #   lun           = 0
+          #   read_only     = false
+          # }
         }
       }
     }
