@@ -327,3 +327,8 @@ module "redis" {
   source          = "./redis"
   tls_secret_name = var.tls_secret_name
 }
+
+module "ytdlp" {
+  source          = "./youtube_dl"
+  tls_secret_name = var.tls_secret_name
+}
