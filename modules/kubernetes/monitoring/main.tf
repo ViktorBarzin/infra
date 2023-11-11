@@ -163,12 +163,16 @@ resource "kubernetes_persistent_volume" "prometheus_grafana_pv" {
     }
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
-      iscsi {
-        target_portal = "iscsi.viktorbarzin.lan:3260"
-        iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:grafana"
-        lun           = 0
-        fs_type       = "ext4"
+      nfs {
+        path   = "/mnt/main/grafana"
+        server = "10.0.10.15"
       }
+      # iscsi {
+      #   target_portal = "iscsi.viktorbarzin.lan:3260"
+      #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:grafana"
+      #   lun           = 0
+      #   fs_type       = "ext4"
+      # }
     }
   }
 }
