@@ -22,6 +22,59 @@ module "tls_secret" {
 }
 
 
+resource "kubernetes_config_map" "mycnf" {
+  metadata {
+    name      = "mycnf"
+    namespace = "dbaas"
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+  data = {
+    "my.cnf" = <<-EOT
+    # For advice on how to change settings please see
+    # http://dev.mysql.com/doc/refman/8.2/en/server-configuration-defaults.html
+
+    [mysqld]
+    #
+    # Remove leading # and set to the amount of RAM for the most important data
+    # cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
+    # innodb_buffer_pool_size = 128M
+    #
+    # Remove leading # to turn on a very important data integrity option: logging
+    # changes to the binary log between backups.
+    # log_bin
+    #
+    # Remove leading # to set options mainly useful for reporting servers.
+    # The server defaults are faster for transactions and fast SELECTs.
+    # Adjust sizes as needed, experiment to find the optimal values.
+    # join_buffer_size = 128M
+    # sort_buffer_size = 2M
+    # read_rnd_buffer_size = 2M
+
+    # Remove leading # to revert to previous value for default_authentication_plugin,
+    # this will increase compatibility with older clients. For background, see:
+    # https://dev.mysql.com/doc/refman/8.2/en/server-system-variables.html#sysvar_default_authentication_plugin
+    # default-authentication-plugin=mysql_native_password
+    #skip-host-cache
+    skip-name-resolve
+    datadir=/var/lib/mysql
+    socket=/var/run/mysqld/mysqld.sock
+    secure-file-priv=/var/lib/mysql-files
+    user=mysql
+    #innodb_force_recovery = 6
+    #log_error_verbosity = 6 
+
+    pid-file=/var/run/mysqld/mysqld.pid
+    [client]
+    socket=/var/run/mysqld/mysqld.sock
+
+    !includedir /etc/mysql/conf.d/
+    EOT
+  }
+}
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
@@ -41,6 +94,9 @@ resource "kubernetes_deployment" "mysql" {
   metadata {
     name      = "mysql"
     namespace = "dbaas"
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
   spec {
     selector {
@@ -73,6 +129,11 @@ resource "kubernetes_deployment" "mysql" {
             name       = "mysql-persistent-storage"
             mount_path = "/var/lib/mysql"
           }
+          volume_mount {
+            name       = "mycnf"
+            mount_path = "/etc/my.cnf"
+            sub_path   = "my.cnf"
+          }
         }
         volume {
           name = "mysql-persistent-storage"
@@ -86,6 +147,15 @@ resource "kubernetes_deployment" "mysql" {
           #   lun           = 0
           #   fs_type       = "ext4"
           # }
+        }
+
+        volume {
+          name = "mycnf"
+
+          config_map {
+            name = "mycnf"
+          }
+
         }
       }
     }
