@@ -96,6 +96,12 @@ resource "kubernetes_deployment" "finance_app" {
           image             = "viktorbarzin/finance-app:latest"
           name              = "finance-app"
           image_pull_policy = "Always"
+          resources {
+            limits = {
+              cpu    = "2000m"
+              memory = "2Gi"
+            }
+          }
 
           env {
             name  = "ENVIRONMENT"
