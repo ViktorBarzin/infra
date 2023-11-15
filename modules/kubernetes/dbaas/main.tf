@@ -241,54 +241,54 @@ resource "kubernetes_deployment" "mysql" {
 #   }
 # }
 
-resource "kubernetes_secret" "cluster-password" {
-  metadata {
-    name      = "cluster-secret"
-    namespace = "dbaas"
-    annotations = {
-      "reloader.stakater.com/match" = "true"
-    }
-  }
-  type = "Opaque"
-  data = {
-    "ROOT_PASSWORD" = var.dbaas_root_password
-  }
-}
+# resource "kubernetes_secret" "cluster-password" {
+#   metadata {
+#     name      = "cluster-secret"
+#     namespace = "dbaas"
+#     annotations = {
+#       "reloader.stakater.com/match" = "true"
+#     }
+#   }
+#   type = "Opaque"
+#   data = {
+#     "ROOT_PASSWORD" = var.dbaas_root_password
+#   }
+# }
 
-resource "kubernetes_ingress_v1" "dbaas" {
-  metadata {
-    name      = "orchestrator-ingress"
-    namespace = "dbaas"
-    annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
-      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-    }
-  }
+# resource "kubernetes_ingress_v1" "dbaas" {
+#   metadata {
+#     name      = "orchestrator-ingress"
+#     namespace = "dbaas"
+#     annotations = {
+#       "kubernetes.io/ingress.class"                        = "nginx"
+#       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+#       "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+#     }
+#   }
 
-  spec {
-    tls {
-      hosts       = ["db.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "db.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "mysql-mysql-operator"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+#   spec {
+#     tls {
+#       hosts       = ["db.viktorbarzin.me"]
+#       secret_name = var.tls_secret_name
+#     }
+#     rule {
+#       host = "db.viktorbarzin.me"
+#       http {
+#         path {
+#           path = "/"
+#           backend {
+#             service {
+#               name = "mysql-mysql-operator"
+#               port {
+#                 number = 80
+#               }
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
 
 
 # PHPMyAdmin instance
