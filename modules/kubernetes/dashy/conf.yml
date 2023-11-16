@@ -353,7 +353,14 @@ sections:
         icon: si-youtube
         url: https://yt.viktorbarzin.me
         target: newtab
-        id: 10_1475_youbtubedownloader
+        id: 10_1475_youtubedownloader
+      - &ref_34
+        title: Photos
+        description: Immich
+        icon: si-googlephotos
+        url: https://photos.viktorbarzin.me
+        target: newtab
+        id: 11_1475_photos
     filteredItems:
       - *ref_23
       - *ref_24
@@ -366,6 +373,7 @@ sections:
       - *ref_31
       - *ref_32
       - *ref_33
+      - *ref_34
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -375,20 +383,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_34
+      - &ref_35
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_35
+      - &ref_36
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_34
       - *ref_35
+      - *ref_36
     icon: si-progress
