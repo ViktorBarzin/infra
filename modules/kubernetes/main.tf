@@ -43,6 +43,7 @@ variable "finance_app_gocardless_secret_key" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "immich_postgresql_password" {}
+variable "ingress_honeypotapikey" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -341,5 +342,6 @@ module "immich" {
 }
 
 module "nginx-ingress" {
-  source = "./nginx-ingress"
+  source         = "./nginx-ingress"
+  honeypotapikey = var.ingress_honeypotapikey
 }
