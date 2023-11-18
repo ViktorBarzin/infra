@@ -340,6 +340,6 @@ module "immich" {
   postgresql_password = var.immich_postgresql_password
 }
 
-# module "nginx-ingress" {
-#   source = "./nginx-ingress"
-# }
+module "nginx-ingress" {
+  source = "./nginx-ingress"
+}
