@@ -85,119 +85,119 @@ provider "helm" {
 }
 
 # Main module to init infra from
-module "pxe_server" {
-  source  = "./modules/create-vm"
-  vm_name = "pxe-server"
-  network = "dManagementVMs"
-  # provisioner_command = "${var.ansible_prefix} -t linux/pxe-server/add-distro"
-  provisioner_command = "# no provisioner needed #" # Noop until ubuntu autoinstall is setup
+# module "pxe_server" {
+#   source  = "./modules/create-vm"
+#   vm_name = "pxe-server"
+#   network = "dManagementVMs"
+#   # provisioner_command = "${var.ansible_prefix} -t linux/pxe-server/add-distro"
+#   provisioner_command = "# no provisioner needed #" # Noop until ubuntu autoinstall is setup
 
-  vsphere_password = var.vsphere_password
-  vsphere_user     = var.vsphere_user
-  vsphere_server   = var.vsphere_server
-  cdrom_path       = "ISO/ubuntu-server-20.04.1.iso"
-  vm_disk_size     = 50
-  vm_mac_address   = "00:50:56:87:4a:2d"
-}
+#   vsphere_password = var.vsphere_password
+#   vsphere_user     = var.vsphere_user
+#   vsphere_server   = var.vsphere_server
+#   cdrom_path       = "ISO/ubuntu-server-20.04.1.iso"
+#   vm_disk_size     = 50
+#   vm_mac_address   = "00:50:56:87:4a:2d"
+# }
 
-module "k8s_master" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-master"
-  vm_mac_address      = "00:50:56:b0:a1:39"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/master -e hostname=k8s-master"
+# module "k8s_master" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-master"
+#   vm_mac_address      = "00:50:56:b0:a1:39"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/master -e hostname=k8s-master"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
 
-}
-module "k8s_node1" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-node1"
-  vm_mac_address      = "00:50:56:b0:e0:c9"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node1 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# }
+# module "k8s_node1" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-node1"
+#   vm_mac_address      = "00:50:56:b0:e0:c9"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node1 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
 
-}
+# }
 
-module "k8s_node2" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-node2"
-  vm_mac_address      = "00:50:56:b0:a1:36"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node2 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# module "k8s_node2" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-node2"
+#   vm_mac_address      = "00:50:56:b0:a1:36"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node2 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
-}
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
+# }
 
-module "k8s_node3" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-node3"
-  vm_mac_address      = "00:50:56:b0:a1:37"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node3 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# module "k8s_node3" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-node3"
+#   vm_mac_address      = "00:50:56:b0:a1:37"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node3 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
-}
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
+# }
 
-module "k8s_node4" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-node4"
-  vm_mac_address      = "00:50:56:b0:a1:38"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node4 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# module "k8s_node4" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-node4"
+#   vm_mac_address      = "00:50:56:b0:a1:38"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node4 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
-}
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
+# }
 
-module "k8s_node5" {
-  source              = "./modules/create-vm"
-  vm_name             = "k8s-node5"
-  vm_mac_address      = "00:50:56:b0:a1:40"
-  network             = "dKubernetes"
-  provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node5 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# module "k8s_node5" {
+#   source              = "./modules/create-vm"
+#   vm_name             = "k8s-node5"
+#   vm_mac_address      = "00:50:56:b0:a1:40"
+#   network             = "dKubernetes"
+#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node5 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
 
-}
-module "devvm" {
-  source         = "./modules/create-vm"
-  vm_name        = "devvm"
-  vm_mac_address = "00:50:56:b0:a1:41"
-  network        = "dKubernetes"
-  # provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node5 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+# }
+# module "devvm" {
+#   source         = "./modules/create-vm"
+#   vm_name        = "devvm"
+#   vm_mac_address = "00:50:56:b0:a1:41"
+#   network        = "dKubernetes"
+#   # provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node5 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
 
-  vsphere_password      = var.vsphere_password
-  vsphere_user          = var.vsphere_user
-  vsphere_server        = var.vsphere_server
-  vsphere_datastore     = "r730-datastore"
-  vsphere_resource_pool = "R730"
-}
+#   vsphere_password      = var.vsphere_password
+#   vsphere_user          = var.vsphere_user
+#   vsphere_server        = var.vsphere_server
+#   vsphere_datastore     = "r730-datastore"
+#   vsphere_resource_pool = "R730"
+# }
 
 # resource "null_resource" "test" {
 #   provisioner "local-exec" {
