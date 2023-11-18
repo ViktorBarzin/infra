@@ -42,6 +42,7 @@ variable "finance_app_graphql_api_secret" {}
 variable "finance_app_gocardless_secret_key" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
+variable "immich_postgresql_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -332,3 +333,13 @@ module "ytdlp" {
   source          = "./youtube_dl"
   tls_secret_name = var.tls_secret_name
 }
+
+module "immich" {
+  source              = "./immich"
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.immich_postgresql_password
+}
+
+# module "nginx-ingress" {
+#   source = "./nginx-ingress"
+# }
