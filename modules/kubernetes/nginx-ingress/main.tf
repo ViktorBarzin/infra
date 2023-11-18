@@ -6,6 +6,9 @@
 #   ingress_class_is_default = false
 #   ingress_class_name       = "nginx-test"
 # }
+variable "honeypotapikey" {
+  default = null
+}
 resource "kubernetes_namespace" "ingress_nginx" {
   metadata {
     name = "ingress-nginx"
@@ -303,7 +306,22 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     }
   }
   data = {
-    allow-snippet-annotations = "true"
+    allow-snippet-annotations    = true
+    enable-modsecurity           = true
+    enable-owasp-modsecurity-crs = true
+    modsecurity-snippet : <<-EOT
+        SecRuleEngine On
+        ${var.honeypotapikey != null ? format("%s %s", "SecHttpBlKey", var.honeypotapikey) : ""}
+        SecAction "id:900500,\
+        phase:1,\
+        nolog,\
+        pass,\
+        t:none,\
+        setvar:tx.block_search_ip=0,\
+        setvar:tx.block_suspicious_ip=1,\
+        setvar:tx.block_harvester_ip=1,\
+        setvar:tx.block_spammer_ip=1"
+        EOT
   }
 }
 resource "kubernetes_service" "ingress_nginx_controller" {
@@ -377,6 +395,9 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
       "app.kubernetes.io/part-of"   = "ingress-nginx"
       "app.kubernetes.io/version"   = "1.8.2"
     }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
   spec {
     selector {
@@ -403,6 +424,12 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             secret_name = "ingress-nginx-admission"
           }
         }
+        # volume {
+        #   name = "modsecurity"
+        #   config_map {
+        #     name = "modsecurity"
+        #   }
+        # }
         container {
           name  = "controller"
           image = "registry.k8s.io/ingress-nginx/controller:v1.8.2@sha256:74834d3d25b336b62cabeb8bf7f1d788706e2cf1cfd64022de4137ade8881ff2"
@@ -453,6 +480,13 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             read_only  = true
             mount_path = "/usr/local/certificates/"
           }
+          # Not used atm
+          #   volume_mount {
+          #     name       = "modsecurity"
+          #     read_only  = true
+          #     mount_path = "/etc/nginx/modsecurity"
+          #     # sub_path   = "modsecurity.conf"
+          #   }
           liveness_probe {
             http_get {
               path   = "/healthz"
@@ -672,3 +706,17 @@ resource "kubernetes_ingress_class" "nginx" {
 #     admission_review_versions = ["v1"]
 #   }
 # }
+
+resource "kubernetes_config_map" "modsecurity" {
+  metadata {
+    name      = "modsecurity"
+    namespace = "ingress-nginx"
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+  data = {
+    "modsecurity.conf" = file("${path.module}/modsecurity.conf")
+  }
+}
