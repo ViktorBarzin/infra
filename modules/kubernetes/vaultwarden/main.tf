@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "smtp_password" {}
 
 resource "kubernetes_namespace" "vaultwarden" {
   metadata {
@@ -43,6 +44,30 @@ resource "kubernetes_deployment" "vaultwarden" {
           env {
             name  = "DOMAIN"
             value = "https://vaultwarden.viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_HOST"
+            value = "smtp.viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_FROM"
+            value = "vaultwarden@viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_PORT"
+            value = "587"
+          }
+          env {
+            name  = "SMTP_SECURITY"
+            value = "starttls"
+          }
+          env {
+            name  = "SMTP_USERNAME"
+            value = "vaultwarden@viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_PASSWORD"
+            value = var.smtp_password
           }
 
           port {

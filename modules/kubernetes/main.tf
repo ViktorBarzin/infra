@@ -44,6 +44,7 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
+variable "vaultwarden_smtp_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -312,6 +313,7 @@ module "dashy" {
 module "vaultwarden" {
   source          = "./vaultwarden"
   tls_secret_name = var.tls_secret_name
+  smtp_password = var.vaultwarden_smtp_password
 }
 
 module "reverse-proxy" {
