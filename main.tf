@@ -57,6 +57,7 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
+variable "vaultwarden_smtp_password" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -283,6 +284,8 @@ module "kubernetes_cluster" {
   immich_postgresql_password = var.immich_postgresql_password
 
   ingress_honeypotapikey = var.ingress_honeypotapikey
+
+  vaultwarden_smtp_password = var.vaultwarden_smtp_password
 }
 
 
