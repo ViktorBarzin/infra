@@ -308,7 +308,7 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
   data = {
     allow-snippet-annotations    = true
     enable-modsecurity           = true
-    enable-owasp-modsecurity-crs = true
+    enable-owasp-modsecurity-crs = false
     modsecurity-snippet : <<-EOT
         SecRuleEngine On
         ${var.honeypotapikey != null ? format("%s %s", "SecHttpBlKey", var.honeypotapikey) : ""}
