@@ -1,0 +1,128 @@
+## This chart relies on the common library chart from bjw-s
+## You can find it at https://github.com/bjw-s/helm-charts/tree/main/charts/library/common
+## Refer there for more detail about the supported values
+
+# These entries are shared between all the Immich components
+
+env:
+  # REDIS_HOSTNAME: '{{ printf "%s-redis-master" .Release.Name }}'
+  REDIS_HOSTNAME: "redis.redis.svc.cluster.local"
+  #   DB_HOSTNAME: "{{ .Release.Name }}-postgresql"
+  #   DB_USERNAME: "{{ .Values.postgresql.global.postgresql.auth.username }}"
+  #   DB_DATABASE_NAME: "{{ .Values.postgresql.global.postgresql.auth.database }}"
+  #   # -- You should provide your own secret outside of this helm-chart and use `postgresql.global.postgresql.auth.existingSecret` to provide credentials to the postgresql instance
+  #   DB_PASSWORD: "{{ .Values.postgresql.global.postgresql.auth.password }}"
+  # TYPESENSE_ENABLED: "{{ .Values.typesense.enabled }}"
+  TYPESENSE_ENABLED: "1"
+  #   TYPESENSE_API_KEY: "{{ .Values.typesense.env.TYPESENSE_API_KEY }}"
+  #   TYPESENSE_HOST: '{{ printf "%s-typesense" .Release.Name }}'
+  #   IMMICH_WEB_URL: '{{ printf "http://%s-web:3000" .Release.Name }}'
+  IMMICH_WEB_URL: "http://immich-web.immich.svc.cluster.local:3000"
+  #   IMMICH_SERVER_URL: '{{ printf "http://%s-server:3001" .Release.Name }}'
+  IMMICH_SERVER_URL: "http://immich-server.immich.svc.cluster.local:3001"
+  #   IMMICH_MACHINE_LEARNING_URL: '{{ printf "http://%s-machine-learning:3003" .Release.Name }}'
+  IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
+
+image:
+  tag: v1.87.0
+
+immich:
+  persistence:
+    # Main data store for all photos shared between different components.
+    library:
+      # Automatically creating the library volume is not supported by this chart
+      # You have to specify an existing PVC to use
+      existingClaim: immich
+
+# Dependencies
+
+postgresql:
+  enabled: true
+  global:
+    postgresql:
+      auth:
+        username: immich
+        database: immich
+        password: "${postgresql_password}"
+
+redis:
+  enabled: false
+  architecture: standalone
+  auth:
+    enabled: false
+
+typesense:
+  enabled: true
+  env:
+    TYPESENSE_DATA_DIR: /tsdata
+    TYPESENSE_API_KEY: typesense
+  persistence:
+    tsdata:
+      # Enabling typesense persistence is recommended to avoid slow reindexing
+      enabled: true
+      accessMode: ReadWriteOnce
+      size: 1Gi
+      # storageClass: storage-class
+  image:
+    repository: docker.io/typesense/typesense
+    tag: 0.24.0
+    pullPolicy: IfNotPresent
+
+# Immich components
+
+server:
+  enabled: true
+  image:
+    repository: ghcr.io/immich-app/immich-server
+    pullPolicy: IfNotPresent
+
+microservices:
+  enabled: true
+  env:
+    REVERSE_GEOCODING_DUMP_DIRECTORY: /geodata-cache
+  persistence:
+    geodata-cache:
+      enabled: true
+      size: 1Gi
+      # Optional: Set this to pvc to avoid downloading the geodata every start.
+      type: emptyDir
+      accessMode: ReadWriteMany
+      # storageClass: your-class
+  image:
+    repository: ghcr.io/immich-app/immich-server
+    pullPolicy: IfNotPresent
+
+machine-learning:
+  enabled: true
+  image:
+    repository: ghcr.io/immich-app/immich-machine-learning
+    pullPolicy: IfNotPresent
+  env:
+    TRANSFORMERS_CACHE: /cache
+  persistence:
+    cache:
+      enabled: true
+      size: 10Gi
+      # Optional: Set this to pvc to avoid downloading the ML models every start.
+      type: emptyDir
+      accessMode: ReadWriteMany
+      # storageClass: your-class
+
+web:
+  enabled: true
+  image:
+    repository: ghcr.io/immich-app/immich-web
+    pullPolicy: IfNotPresent
+  persistence:
+    library:
+      enabled: false
+
+proxy:
+  enabled: true
+  image:
+    repository: ghcr.io/immich-app/immich-proxy
+    pullPolicy: IfNotPresent
+
+  persistence:
+    library:
+      enabled: false
