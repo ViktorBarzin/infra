@@ -4,6 +4,8 @@ variable "dbaas_root_password" {}
 variable "cluster_master_service" {
   default = "mysql"
 }
+variable "postgresql_root_password" {}
+variable "pgadmin_password" {}
 variable "prod" {
   default = false
   type    = bool
@@ -403,7 +405,6 @@ resource "kubernetes_ingress_v1" "phpmyadmin" {
       }
     }
   }
-
 }
 
 
@@ -641,3 +642,200 @@ resource "kubernetes_ingress_v1" "phpmyadmin" {
 #             status: {}
 #   EOF
 # }
+
+resource "kubernetes_deployment" "postgres" {
+  metadata {
+    name      = "postgresql"
+    namespace = "dbaas"
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    selector {
+      match_labels = {
+        app = "postgresql"
+      }
+    }
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "postgresql"
+        }
+      }
+      spec {
+        container {
+          image = "postgres"
+          name  = "postgresql"
+          env {
+            name  = "POSTGRES_PASSWORD"
+            value = var.postgresql_root_password
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "root"
+          }
+          port {
+            container_port = 5432
+            protocol       = "TCP"
+            name           = "postgresql"
+          }
+          volume_mount {
+            name       = "postgresql-persistent-storage"
+            mount_path = "/var/lib/postgresql/data"
+          }
+          # volume_mount {
+          #   name       = "mycnf"
+          #   mount_path = "/etc/my.cnf"
+          #   sub_path   = "my.cnf"
+          # }
+        }
+        volume {
+          name = "postgresql-persistent-storage"
+          nfs {
+            path   = "/mnt/main/postgresql/data"
+            server = "10.0.10.15"
+          }
+        }
+        # volume {
+        #   name = "mycnf"
+
+        #   config_map {
+        #     name = "mycnf"
+        #   }
+        # }
+      }
+    }
+  }
+}
+resource "kubernetes_service" "postgresql" {
+  metadata {
+    name      = "postgresql"
+    namespace = "dbaas"
+  }
+  spec {
+    selector = {
+      "app" = "postgresql"
+    }
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+}
+
+#### PGADMIN
+
+resource "kubernetes_deployment" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = "dbaas"
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    selector {
+      match_labels = {
+        app = "pgadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "pgadmin"
+        }
+      }
+      spec {
+        container {
+          image = "dpage/pgadmin4"
+          name  = "pgadmin"
+          env {
+            name  = "PGADMIN_DEFAULT_EMAIL"
+            value = "me@viktorbarzin.me"
+          }
+          env {
+            name = "PGADMIN_DEFAULT_PASSWORD"
+            # Changed at startup
+            value = var.pgadmin_password
+          }
+          port {
+            container_port = 80
+            name           = "web"
+          }
+          volume_mount {
+            name       = "pgadmin"
+            mount_path = "/var/lib/pgadmin/"
+          }
+
+        }
+        volume {
+          name = "pgadmin"
+          # config_map {
+          #   name = "pgadmin-config"
+          # }
+          nfs {
+            path   = "/mnt/main/postgresql/pgadmin"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+resource "kubernetes_service" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = "dbaas"
+  }
+  spec {
+    selector = {
+      "app" = "pgadmin"
+    }
+    port {
+      name = "pgadmin"
+      port = 80
+    }
+  }
+}
+resource "kubernetes_ingress_v1" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = "dbaas"
+
+    annotations = {
+      "kubernetes.io/ingress.class" = "nginx"
+      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
+      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "50m"
+    }
+  }
+  spec {
+    tls {
+      hosts       = ["pgadmin.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "pgadmin.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "pgadmin"
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
