@@ -28,6 +28,8 @@ variable "bind_named_conf_options" {}
 variable "alertmanager_account_password" {}
 variable "wireguard_wg_0_key" {}
 variable "dbaas_root_password" {}
+variable "dbaas_postgresql_root_password" {}
+variable "dbaas_pgadmin_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
@@ -58,6 +60,8 @@ variable "headscale_config" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
 variable "vaultwarden_smtp_password" {}
+variable "resume_database_url" {}
+variable "resume_redis_url" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -264,7 +268,9 @@ module "kubernetes_cluster" {
   url_shortener_mysql_password      = var.url_shortener_mysql_password
 
   # dbaas
-  dbaas_root_password = var.dbaas_root_password
+  dbaas_root_password            = var.dbaas_root_password
+  dbaas_postgresql_root_password = var.dbaas_postgresql_root_password
+  dbaas_pgadmin_password         = var.dbaas_pgadmin_password
 
   # home-assistant
   home_assistant_configuration = var.home_assistant_configuration
@@ -286,6 +292,9 @@ module "kubernetes_cluster" {
   ingress_honeypotapikey = var.ingress_honeypotapikey
 
   vaultwarden_smtp_password = var.vaultwarden_smtp_password
+
+  resume_redis_url    = var.resume_redis_url
+  resume_database_url = var.resume_database_url
 }
 
 
