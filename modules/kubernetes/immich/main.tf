@@ -89,6 +89,7 @@ resource "helm_release" "immich" {
   repository = "https://immich-app.github.io/immich-charts"
   chart      = "immich"
   atomic     = true
+  version    = "0.2.0"
 
   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
@@ -117,9 +118,11 @@ resource "kubernetes_ingress_v1" "immich" {
           path = "/"
           backend {
             service {
-              name = "immich-proxy"
+              # name = "immich-proxy"
+              name = "immich-server" # after v1.88
               port {
-                number = 8080
+                # number = 8080
+                number = 3001
               }
             }
           }
@@ -150,9 +153,11 @@ resource "kubernetes_ingress_v1" "photos" {
           path = "/"
           backend {
             service {
-              name = "immich-proxy"
+              # name = "immich-proxy"
+              name = "immich-server" # after v1.88
               port {
-                number = 8080
+                # number = 8080
+                number = 3001
               }
             }
           }
