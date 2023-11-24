@@ -17,14 +17,15 @@ env:
   #   TYPESENSE_API_KEY: "{{ .Values.typesense.env.TYPESENSE_API_KEY }}"
   #   TYPESENSE_HOST: '{{ printf "%s-typesense" .Release.Name }}'
   #   IMMICH_WEB_URL: '{{ printf "http://%s-web:3000" .Release.Name }}'
-  IMMICH_WEB_URL: "http://immich-web.immich.svc.cluster.local:3000"
+  # IMMICH_WEB_URL: "http://immich-web.immich.svc.cluster.local:3000"
+  # IMMICH_WEB_URL: "http://immich-server.immich.svc.cluster.local:3001"
   #   IMMICH_SERVER_URL: '{{ printf "http://%s-server:3001" .Release.Name }}'
   IMMICH_SERVER_URL: "http://immich-server.immich.svc.cluster.local:3001"
   #   IMMICH_MACHINE_LEARNING_URL: '{{ printf "http://%s-machine-learning:3003" .Release.Name }}'
   IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.87.0
+  tag: v1.88.2
 
 immich:
   persistence:
