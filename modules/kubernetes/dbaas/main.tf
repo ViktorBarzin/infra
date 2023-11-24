@@ -241,19 +241,19 @@ resource "kubernetes_deployment" "mysql" {
 #   }
 # }
 
-# resource "kubernetes_secret" "cluster-password" {
-#   metadata {
-#     name      = "cluster-secret"
-#     namespace = "dbaas"
-#     annotations = {
-#       "reloader.stakater.com/match" = "true"
-#     }
-#   }
-#   type = "Opaque"
-#   data = {
-#     "ROOT_PASSWORD" = var.dbaas_root_password
-#   }
-# }
+resource "kubernetes_secret" "cluster-password" {
+  metadata {
+    name      = "cluster-secret"
+    namespace = "dbaas"
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  type = "Opaque"
+  data = {
+    "ROOT_PASSWORD" = var.dbaas_root_password
+  }
+}
 
 # resource "kubernetes_ingress_v1" "dbaas" {
 #   metadata {
