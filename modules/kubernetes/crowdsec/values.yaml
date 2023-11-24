@@ -22,28 +22,17 @@ lapi:
     # As it's a test, we don't want to share signals with CrowdSec, so disable the Online API.
     - name: DISABLE_ONLINE_API
       value: "true"
-  ingress:
-    enabled: true
-    annotations:
-      # we only want http to the backend so we need this annotation
-      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    # labels: {}
-    ingressClassName: "nginx"
-    host: "crowdsec.viktorbarzin.me" # crowdsec-api.example.com
-    tls:
-      - hosts:
-          - crowdsec.viktorbarzin.me
-        secretName: "tls-secret"
   dashboard:
-    # -- Enable Metabase Dashboard (by default disabled)
     enabled: true
-    annotations:
-      # metabase only supports http so we need this annotation
-      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    # labels: {}
-    ingressClassName: "nginx" # nginx
-    host: "crowdsec.viktorbarzin.me" # crowdsec-api.example.com
-    tls:
-      - hosts:
-          - crowdsec.viktorbarzin.me
-        secretName: "tls-secret"
+    ingress:
+      enabled: true
+      annotations:
+        nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+        nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
+        nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      ingressClassName: "nginx"
+      host: "crowdsec.viktorbarzin.me"
+      tls:
+        - hosts:
+            - crowdsec.viktorbarzin.me
+          secretName: "tls-secret"
