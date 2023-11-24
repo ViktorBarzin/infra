@@ -313,7 +313,7 @@ module "dashy" {
 module "vaultwarden" {
   source          = "./vaultwarden"
   tls_secret_name = var.tls_secret_name
-  smtp_password = var.vaultwarden_smtp_password
+  smtp_password   = var.vaultwarden_smtp_password
 }
 
 module "reverse-proxy" {
@@ -346,4 +346,9 @@ module "immich" {
 module "nginx-ingress" {
   source         = "./nginx-ingress"
   honeypotapikey = var.ingress_honeypotapikey
+}
+
+module "crowdsec" {
+  source          = "./crowdsec"
+  tls_secret_name = var.tls_secret_name
 }
