@@ -13,16 +13,16 @@ agent:
   # Those are ENV variables
   env:
     # As it's a test, we don't want to share signals with CrowdSec so disable the Online API.
-    - name: DISABLE_ONLINE_API
-      value: "true"
+    # - name: DISABLE_ONLINE_API
+    #   value: "true"
     # As we are running Nginx, we want to install the Nginx collection
     - name: COLLECTIONS
       value: "crowdsecurity/nginx"
 lapi:
   env:
     # As it's a test, we don't want to share signals with CrowdSec, so disable the Online API.
-    - name: DISABLE_ONLINE_API
-      value: "true"
+    # - name: DISABLE_ONLINE_API
+    #   value: "true"
   dashboard:
     enabled: true
     ingress:
