@@ -59,6 +59,9 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
+variable "ingress_crowdsec_api_key" {}
+variable "ingress_crowdsec_captcha_secret_key" {}
+variable "ingress_crowdsec_captcha_site_key" {}
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
@@ -289,7 +292,10 @@ module "kubernetes_cluster" {
 
   immich_postgresql_password = var.immich_postgresql_password
 
-  ingress_honeypotapikey = var.ingress_honeypotapikey
+  ingress_honeypotapikey              = var.ingress_honeypotapikey
+  ingress_crowdsec_api_key            = var.ingress_crowdsec_api_key
+  ingress_crowdsec_captcha_secret_key = var.ingress_crowdsec_captcha_secret_key
+  ingress_crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 
   vaultwarden_smtp_password = var.vaultwarden_smtp_password
 

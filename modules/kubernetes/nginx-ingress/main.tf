@@ -9,6 +9,9 @@
 variable "honeypotapikey" {
   default = null
 }
+variable "crowdsec_api_key" {}
+variable "crowdsec_captcha_secret_key" {}
+variable "crowdsec_captcha_site_key" {}
 resource "kubernetes_namespace" "ingress_nginx" {
   metadata {
     name = "ingress-nginx"
@@ -322,6 +325,12 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
         setvar:tx.block_harvester_ip=1,\
         setvar:tx.block_spammer_ip=1"
         EOT
+    plugins          = "crowdsec"
+    lua-shared-dicts = "crowdsec_cache: 50m"
+    server-snippet : <<-EOT
+    lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
+    resolver local=on ipv6=off;
+    EOT
   }
 }
 resource "kubernetes_service" "ingress_nginx_controller" {
@@ -430,10 +439,73 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
         #     name = "modsecurity"
         #   }
         # }
+
+        ## Crowdsec
+        init_container {
+          name  = "init-clone-crowdsec-bouncer"
+          image = "crowdsecurity/lua-bouncer-plugin"
+          env {
+            name  = "API_URL"
+            value = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
+          }
+          env {
+            name  = "API_KEY"
+            value = var.crowdsec_api_key
+          }
+          env {
+            name  = "CAPTCHA_PROVIDER"
+            value = "recaptcha"
+          }
+          env {
+            name  = "BOUNCING_ON_TYPE"
+            value = "all"
+          }
+          env {
+            name  = "SECRET_KEY"
+            value = var.crowdsec_captcha_secret_key
+          }
+          env {
+            name  = "SITE_KEY"
+            value = var.crowdsec_captcha_site_key
+          }
+
+          env {
+            name  = "DISABLE_RUN"
+            value = "true"
+          }
+          env {
+            name  = "BAN_TEMPLATE_PATH"
+            value = "/etc/nginx/lua/plugins/crowdsec/templates/ban.html"
+          }
+          env {
+            name  = "CAPTCHA_TEMPLATE_PATH"
+            value = "/etc/nginx/lua/plugins/crowdsec/templates/captcha.html"
+          }
+          env {
+            name  = "BOUNCER_CONFIG"
+            value = "/crowdsec/crowdsec-bouncer.conf"
+          }
+          command = ["sh", "-c", "sh /docker_start.sh; mkdir -p /lua_plugins/crowdsec/; cp -r /crowdsec /lua_plugins/; chown -R 101:101 /lua_plugins/"]
+          volume_mount {
+            name       = "crowdsec"
+            mount_path = "/lua_plugins"
+          }
+        }
+        # Share bouncer config
+        volume {
+          name = "crowdsec"
+          empty_dir {
+          }
+        }
         container {
           name  = "controller"
           image = "registry.k8s.io/ingress-nginx/controller:v1.8.2@sha256:74834d3d25b336b62cabeb8bf7f1d788706e2cf1cfd64022de4137ade8881ff2"
           args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key"]
+          volume_mount {
+            name       = "crowdsec"
+            mount_path = "/etc/nginx/lua/plugins/crowdsec"
+            sub_path   = "crowdsec"
+          }
           port {
             name           = "http"
             container_port = 80
