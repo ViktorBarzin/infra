@@ -287,6 +287,11 @@ serverFiles:
               summary: New tailscale client registered
 
 extraScrapeConfigs: |
+  - job_name: 'crowdsec'
+    static_configs:
+        - targets:
+          - "crowdsec-service.crowdsec.svc.cluster.local:6060"
+    metrics_path: '/metrics'
   - job_name: 'snmp-idrac'
     static_configs:
         - targets:
