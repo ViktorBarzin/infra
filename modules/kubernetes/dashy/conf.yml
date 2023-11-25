@@ -261,6 +261,13 @@ sections:
         icon: si-homeassistant
         url: http://ha2.viktorbarzin.lan:8123/lovelace/default_view
         id: 5_1364_homeassistantlondon
+      - &ref_23
+        title: Crowdsec Dashboard
+        icon: si-crowdsource
+        url: >-
+          https://crowdsec.viktorbarzin.me/public/dashboard/8f6226be-d4dc-45f1-bacf-a4584f71dcb0
+        target: newtab
+        id: 6_1364_crowdsecdashboard
     filteredItems:
       - *ref_17
       - *ref_18
@@ -268,6 +275,7 @@ sections:
       - *ref_20
       - *ref_21
       - *ref_22
+      - *ref_23
     icon: si-adminer
   - name: Public Services
     displayData:
@@ -277,7 +285,7 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_23
+      - &ref_24
         title: City Guesser
         description: Geolocator Game
         icon: hl-openmaptiles
@@ -285,7 +293,7 @@ sections:
         target: newtab
         statusCheck: false
         id: 0_1475_cityguesser
-      - &ref_24
+      - &ref_25
         title: Excalidraw
         description: Collaborative Hand Drawing Tool
         icon: hl-excalidraw-light
@@ -293,68 +301,68 @@ sections:
         target: newtab
         statusCheck: false
         id: 1_1475_excalidraw
-      - &ref_25
+      - &ref_26
         title: Formula 1 Stream
         icon: si-f1
         url: http://f1.viktorbarzin.me/
         statusCheck: false
         id: 2_1475_formulastream
-      - &ref_26
+      - &ref_27
         title: HackMD
         description: Collaborative Markdown Document Editing
         icon: si-hackclub
         url: https://hackmd.viktorbarzin.me/
         statusCheck: false
         id: 3_1475_hackmd
-      - &ref_27
+      - &ref_28
         title: Activate Windows (KMS)
         description: How to activate Windows Machines
         icon: si-windows95
         url: https://kms.viktorbarzin.me/
         statusCheck: false
         id: 4_1475_activatewindowskms
-      - &ref_28
+      - &ref_29
         title: PrivateBin
         description: E2E Encrypted Pastebin
         icon: si-pastebin
         url: https://pb.viktorbarzin.me/
         statusCheck: false
         id: 5_1475_privatebin
-      - &ref_29
+      - &ref_30
         title: Blog
         description: Personal Blog
         icon: si-rss
         url: https://viktorbarzin.me/
         statusCheck: false
         id: 6_1475_blog
-      - &ref_30
+      - &ref_31
         title: Setup VPN (Tailscale)
         description: "URL to set in app config: https://headscale.viktorbarzin.me"
         icon: si-wireguard
         url: https://github.com/juanfont/headscale/blob/main/docs/iOS-client.md
         target: newtab
         id: 7_1475_setupvpntailscale
-      - &ref_31
+      - &ref_32
         title: Vaultwarden
         description: Self-hosted Bitwarden server (Password Manager)
         icon: si-bitwarden
         url: https://vaultwarden.viktorbarzin.me
         target: newtab
         id: 8_1475_vaultwarden
-      - &ref_32
+      - &ref_33
         title: Send
         description: Share files
         icon: si-libreoffice
         url: https://send.viktorbarzin.me/
         target: newtab
         id: 9_1475_send
-      - &ref_33
+      - &ref_34
         title: Youtube Downloader
         icon: si-youtube
         url: https://yt.viktorbarzin.me
         target: newtab
         id: 10_1475_youtubedownloader
-      - &ref_34
+      - &ref_35
         title: Photos
         description: Immich
         icon: si-googlephotos
@@ -362,7 +370,6 @@ sections:
         target: newtab
         id: 11_1475_photos
     filteredItems:
-      - *ref_23
       - *ref_24
       - *ref_25
       - *ref_26
@@ -374,6 +381,7 @@ sections:
       - *ref_32
       - *ref_33
       - *ref_34
+      - *ref_35
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -383,20 +391,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_35
+      - &ref_36
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_36
+      - &ref_37
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_35
       - *ref_36
+      - *ref_37
     icon: si-progress
