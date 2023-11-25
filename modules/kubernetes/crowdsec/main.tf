@@ -66,7 +66,6 @@ resource "helm_release" "crowdsec" {
   chart      = "crowdsec"
 
   values = [templatefile("${path.module}/values.yaml", {})]
-  #   values = [templatefile("${path.module}/rowdsec-ingress-bouncer.yaml", {})]
 }
 
 # resource "kubernetes_ingress_v1" "metabase" {

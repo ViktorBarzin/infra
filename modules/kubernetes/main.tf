@@ -46,6 +46,9 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
+variable "ingress_crowdsec_api_key" {}
+variable "ingress_crowdsec_captcha_secret_key" {}
+variable "ingress_crowdsec_captcha_site_key" {}
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
@@ -76,7 +79,7 @@ module "dbaas" {
   tls_secret_name          = var.tls_secret_name
   dbaas_root_password      = var.dbaas_root_password
   postgresql_root_password = var.dbaas_postgresql_root_password
-  pgadmin_password = var.dbaas_pgadmin_password
+  pgadmin_password         = var.dbaas_pgadmin_password
 }
 
 module "descheduler" {
@@ -350,8 +353,11 @@ module "immich" {
 }
 
 module "nginx-ingress" {
-  source         = "./nginx-ingress"
-  honeypotapikey = var.ingress_honeypotapikey
+  source                      = "./nginx-ingress"
+  honeypotapikey              = var.ingress_honeypotapikey
+  crowdsec_api_key            = var.ingress_crowdsec_api_key
+  crowdsec_captcha_secret_key = var.ingress_crowdsec_captcha_secret_key
+  crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 }
 
 module "crowdsec" {
