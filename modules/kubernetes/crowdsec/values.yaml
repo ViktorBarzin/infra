@@ -37,3 +37,7 @@ lapi:
         - hosts:
             - crowdsec.viktorbarzin.me
           secretName: "tls-secret"
+  metrics:
+    enabled: true
+  strategy:
+    type: RollingUpdate
