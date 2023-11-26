@@ -329,7 +329,7 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     lua-shared-dicts = "crowdsec_cache: 50m"
     server-snippet : <<-EOT
     lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
-    resolver local=on ipv6=off;
+    #resolver local=on ipv6=off valid=600s;
     EOT
   }
 }
