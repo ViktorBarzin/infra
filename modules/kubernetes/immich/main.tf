@@ -82,6 +82,7 @@ resource "kubernetes_persistent_volume_claim" "immich" {
   }
 }
 
+# If you're having issuewith typesens container exiting prematurely, increase liveliness check
 resource "helm_release" "immich" {
   namespace = "immich"
   name      = "immich"
