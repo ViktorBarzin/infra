@@ -33,6 +33,7 @@ module "nas" {
   port             = 5001
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  max_body_size    = "0m"
 }
 
 # https://files.viktorbarzin.me/
@@ -45,6 +46,7 @@ module "nas-files" {
   backend_protocol = "HTTPS"
   protected        = false # allow anyone to download files
   ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
+  max_body_size    = "0m"
 }
 
 # https://idrac.viktorbarzin.me/
@@ -75,6 +77,7 @@ module "truenas" {
   external_name   = "truenas.viktorbarzin.lan"
   port            = 80
   tls_secret_name = var.tls_secret_name
+  max_body_size   = "0m"
 }
 
 # https://r730.viktorbarzin.me/
@@ -95,6 +98,7 @@ module "esxi" {
   port             = 443
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  max_body_size    = "0" # unlimited
 }
 
 # https://valchedrym.viktorbarzin.me/
