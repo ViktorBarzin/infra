@@ -92,6 +92,52 @@ provider "helm" {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
+# provider "proxmox" {
+#   endpoint = "https://10.0.10.105:8006/api2/json"
+#   username = "root@pam"
+#   password = "to-change"
+#   insecure = true
+#   tmp_dir  = "/var/tmp"
+# }
+
+# resource "proxmox_virtual_environment_network_linux_vlan" "vlan1" {
+#   node_name = "pve"
+#   name      = "ens160.99"
+
+#   comment = "VLAN 99"
+# }
+# provider "proxmox" {
+#   pm_debug   = true
+#   pm_api_url = "https://10.0.10.105:8006/api2/json"
+#   # pm_user             = "root"
+#   # pm_password         = "wizard"
+#   pm_tls_insecure     = true
+#   pm_api_token_secret = "af5e99b1-db75-4e3a-b585-b6114005fcec"
+#   pm_api_token_id     = "root@pam!terraform"
+# }
+
+# resource "proxmox_vm_qemu" "k8s-master-pve" {
+#   name        = "test"
+#   target_node = "pve"
+#   # iso         = "ubuntu-22.04.3-live-server-amd64.iso"
+#   iso      = "local:iso/ubuntu-22.04.3-live-server-amd64.iso"
+#   agent    = 1
+#   os_type  = "ubuntu"
+#   cores    = 4
+#   sockets  = 1
+#   cpu      = "host"
+#   memory   = 2048
+#   scsihw   = "virtio-scsi-pci"
+#   bootdisk = "scsi0"
+#   disk {
+#     slot = 0
+#     # set disk size here. leave it small for testing because expanding the disk takes time.
+#     size     = "10G"
+#     type     = "scsi"
+#     storage  = "local-lvm"
+#     iothread = 0
+#   }
+# }
 
 # Main module to init infra from
 # module "pxe_server" {
