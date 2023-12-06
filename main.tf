@@ -106,15 +106,7 @@ provider "helm" {
 
 #   comment = "VLAN 99"
 # }
-# provider "proxmox" {
-#   pm_debug   = true
-#   pm_api_url = "https://10.0.10.105:8006/api2/json"
-#   # pm_user             = "root"
-#   # pm_password         = "wizard"
-#   pm_tls_insecure     = true
-#   pm_api_token_secret = "af5e99b1-db75-4e3a-b585-b6114005fcec"
-#   pm_api_token_id     = "root@pam!terraform"
-# }
+
 
 # resource "proxmox_vm_qemu" "k8s-master-pve" {
 #   name        = "test"
