@@ -147,3 +147,12 @@ module "ha-sofia" {
   port            = 8123
   tls_secret_name = var.tls_secret_name
 }
+
+# https://ha-london.viktorbarzin.me/
+module "ha-london" {
+  source          = "./factory"
+  name            = "ha-london"
+  external_name   = "ha-london.viktorbarzin.lan"
+  port            = 8123
+  tls_secret_name = var.tls_secret_name
+}
