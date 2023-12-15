@@ -138,3 +138,12 @@ module "server-switch" {
   port            = 80
   tls_secret_name = var.tls_secret_name
 }
+
+# https://ha-sofia.viktorbarzin.me/
+module "ha-sofia" {
+  source          = "./factory"
+  name            = "ha-sofia"
+  external_name   = "ha-sofia.viktorbarzin.lan"
+  port            = 8123
+  tls_secret_name = var.tls_secret_name
+}
