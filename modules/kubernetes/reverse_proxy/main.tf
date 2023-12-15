@@ -13,6 +13,7 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "reverse-proxy"
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://pfsense.viktorbarzin.me/
@@ -23,6 +24,7 @@ module "pfsense" {
   tls_secret_name  = var.tls_secret_name
   port             = 443
   backend_protocol = "HTTPS"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://nas.viktorbarzin.me/
@@ -34,6 +36,7 @@ module "nas" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   max_body_size    = "0m"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://files.viktorbarzin.me/
@@ -47,6 +50,7 @@ module "nas-files" {
   protected        = false # allow anyone to download files
   ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
   max_body_size    = "0m"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://idrac.viktorbarzin.me/
@@ -57,6 +61,7 @@ module "idrac" {
   port             = 443
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # Can either listen on https or http; can't do both :/
@@ -68,6 +73,7 @@ module "tp-link-gateway" {
   port             = 443
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://truenas.viktorbarzin.me/
@@ -78,6 +84,7 @@ module "truenas" {
   port            = 80
   tls_secret_name = var.tls_secret_name
   max_body_size   = "0m"
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://r730.viktorbarzin.me/
@@ -88,6 +95,7 @@ module "r730" {
   port             = 443
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://esxi.viktorbarzin.me/
@@ -99,6 +107,7 @@ module "esxi" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   max_body_size    = "0" # unlimited
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://valchedrym.viktorbarzin.me/
@@ -109,6 +118,7 @@ module "valchedrym" {
   port             = 20123
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
+  depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://ip150.viktorbarzin.me/
@@ -119,6 +129,8 @@ module "valchedrym-ip150" {
   external_name   = "valchedrym.ddns.net"
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  protected       = false
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://mladost3.viktorbarzin.me/
@@ -128,6 +140,7 @@ module "mladost3" {
   external_name   = "mladost3.ddns.net"
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://server-switch.viktorbarzin.me/
@@ -137,6 +150,7 @@ module "server-switch" {
   external_name   = "server-switch.viktorbarzin.lan"
   port            = 80
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://ha-sofia.viktorbarzin.me/
@@ -146,6 +160,7 @@ module "ha-sofia" {
   external_name   = "ha-sofia.viktorbarzin.lan"
   port            = 8123
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://ha-london.viktorbarzin.me/
@@ -155,4 +170,5 @@ module "ha-london" {
   external_name   = "ha-london.viktorbarzin.lan"
   port            = 8123
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
 }
