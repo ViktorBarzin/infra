@@ -151,7 +151,7 @@ sections:
       - &ref_11
         title: Valchedram Alarm IP150
         icon: 📷
-        url: https://ip150.viktorbarzin.me/
+        url: http://ip150.viktorbarzin.me:5080/
         target: newtab
         id: 1_1567_valchedramalarmip
       - &ref_12
