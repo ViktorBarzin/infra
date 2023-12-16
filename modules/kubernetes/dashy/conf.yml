@@ -151,7 +151,7 @@ sections:
       - &ref_11
         title: Valchedram Video System
         icon: 📷
-        url: http://ip150.viktorbarzin.me:5080/
+        url: http://valchedrym-video.viktorbarzin.me:5080/
         target: newtab
         id: 1_1567_valchedramalarmip
       - &ref_12
