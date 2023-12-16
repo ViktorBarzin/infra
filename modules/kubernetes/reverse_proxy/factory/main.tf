@@ -22,6 +22,14 @@ variable "max_body_size" {
   type    = string
   default = "50m"
 }
+variable "use_proxy_protocol" {
+  type    = bool
+  default = true
+}
+variable "proxy_timeout" {
+  type    = number
+  default = 60
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -59,6 +67,11 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/auth" : null
       # "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "http://oauth2.oauth2.svc.cluster.local/oauth2/start?rd=/redirect/$http_host$escaped_request_uri" : null
       "nginx.ingress.kubernetes.io/proxy-body-size" : var.max_body_size
+      "nginx.ingress.kubernetes.io/use-proxy-protocol" : var.use_proxy_protocol
+      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : var.proxy_timeout
+      "nginx.ingress.kubernetes.io/proxy-send-timeout" : var.proxy_timeout
+      "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
+
     }
   }
 
