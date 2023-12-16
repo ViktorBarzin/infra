@@ -173,5 +173,6 @@ module "ha-london" {
   external_name   = "ha-london.viktorbarzin.lan"
   port            = 8123
   tls_secret_name = var.tls_secret_name
+  proxy_timeout   = 360
   depends_on      = [kubernetes_namespace.reverse-proxy]
 }

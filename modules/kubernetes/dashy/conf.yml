@@ -149,7 +149,7 @@ sections:
         target: newtab
         id: 0_1567_valchedrymopenwrt
       - &ref_11
-        title: Valchedram Alarm IP150
+        title: Valchedram Video System
         icon: 📷
         url: http://ip150.viktorbarzin.me:5080/
         target: newtab
