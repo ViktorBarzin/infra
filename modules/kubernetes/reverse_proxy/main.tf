@@ -117,20 +117,22 @@ module "valchedrym" {
   external_name    = "valchedrym.viktorbarzin.lan"
   port             = 20123
   tls_secret_name  = var.tls_secret_name
-  backend_protocol = "HTTPS"
+  backend_protocol = "HTTP"
   depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://ip150.viktorbarzin.me/
 # Does not seem to load? - works when auth is down
 module "valchedrym-ip150" {
-  source          = "./factory"
-  name            = "ip150"
-  external_name   = "valchedrym.ddns.net"
-  port            = 8080
-  tls_secret_name = var.tls_secret_name
-  protected       = false
-  depends_on      = [kubernetes_namespace.reverse-proxy]
+  source             = "./factory"
+  name               = "ip150"
+  external_name      = "valchedrym.ddns.net"
+  port               = 5081 // HTTPS port; 5080 is HTTP if needed
+  backend_protocol   = "HTTPS"
+  use_proxy_protocol = false
+  tls_secret_name    = var.tls_secret_name
+  protected          = false
+  depends_on         = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://mladost3.viktorbarzin.me/
