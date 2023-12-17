@@ -58,65 +58,58 @@ sections:
       hideForGuests: false
     items:
       - &ref_0
-        title: Uptime Kuma
-        description: Internal Uptime Monitoring
-        icon: si-uptimekuma
-        url: https://uptime.viktorbarzin.me/status/cluster-internal
-        target: newtab
-        id: 0_496_uptimekuma
-      - &ref_1
         title: ESXi R730 (Server)
         description: R730 esxi UI
         icon: si-vmware
         url: https://esxi.viktorbarzin.me/ui/#/login
         target: newtab
-        id: 1_496_esxirserver
-      - &ref_2
+        id: 0_496_esxirserver
+      - &ref_1
         title: PFsense (Firewall)
         description: Firewall
         icon: si-pfsense
         url: https://pfsense.viktorbarzin.me
         target: newtab
-        id: 2_496_pfsensefirewall
-      - &ref_3
+        id: 1_496_pfsensefirewall
+      - &ref_2
         title: iDRAC
         description: ""
         icon: si-dell
         url: https://idrac.viktorbarzin.me/
         target: newtab
-        id: 3_496_idrac
-      - &ref_4
+        id: 2_496_idrac
+      - &ref_3
         title: TP-Link Gateway Router
         icon: hl-asus-router
         url: https://gw.viktorbarzin.me/webpages/login.html
-        id: 4_496_tplinkgatewayrouter
-      - &ref_5
+        id: 3_496_tplinkgatewayrouter
+      - &ref_4
         title: Home Assistant London
         description: Home Assistant London Deployment
         icon: si-homeassistant
         url: http://ha-london.viktorbarzin.me/
         target: newtab
-        id: 5_496_homeassistantlondon
-      - &ref_6
+        id: 4_496_homeassistantlondon
+      - &ref_5
         title: NAS
         description: ""
         icon: si-synology
         url: https://nas.viktorbarzin.me/
-        id: 6_496_nas
-      - &ref_7
+        id: 5_496_nas
+      - &ref_6
         title: Server Switch
         description: TP-Link Extension Switch
         icon: 🔀
         url: http://192.168.1.6/
         target: newtab
-        id: 7_496_serverswitch
-      - &ref_8
+        id: 6_496_serverswitch
+      - &ref_7
         title: Home Assistant Sofia
         description: Home Assistant Sofia Deployment
         icon: si-homeassistant
         url: http://ha-sofia.viktorbarzin.me/
         target: newtab
-        id: 8_496_homeassistantsofia
+        id: 7_496_homeassistantsofia
     filteredItems:
       - *ref_0
       - *ref_1
@@ -126,7 +119,6 @@ sections:
       - *ref_5
       - *ref_6
       - *ref_7
-      - *ref_8
   - name: Valchedrym Infra
     displayData:
       sortBy: default
@@ -135,28 +127,28 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_9
+      - &ref_8
         title: Valchedrym OpenWRT
         icon: si-openwrt
         url: https://valchedrym.viktorbarzin.me/
         target: newtab
         id: 0_1567_valchedrymopenwrt
-      - &ref_10
+      - &ref_9
         title: Valchedram Video System
         icon: 📷
         url: http://valchedrym-video.viktorbarzin.me:5080/
         target: newtab
         id: 1_1567_valchedramvideosystem
-      - &ref_11
+      - &ref_10
         title: Mladost 3 Router
         icon: si-ghostery
         url: https://mladost3.viktorbarzin.me/
         target: newtab
         id: 2_1567_mladostrouter
     filteredItems:
+      - *ref_8
       - *ref_9
       - *ref_10
-      - *ref_11
     icon: 🐶
   - name: Monitoring
     icon: hl-grafana
@@ -167,13 +159,20 @@ sections:
       hideForGuests: false
       cols: 2
     items:
+      - &ref_11
+        title: Uptime Kuma
+        description: Internal Uptime Monitoring
+        icon: si-uptimekuma
+        url: https://uptime.viktorbarzin.me/status/cluster-internal
+        target: newtab
+        id: 0_1062_uptimekuma
       - &ref_12
         title: iDRAC Grafana
         icon: si-dell
         url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
         target: newtab
         statusCheckAcceptCodes: "400"
-        id: 0_1062_idracgrafana
+        id: 1_1062_idracgrafana
       - &ref_13
         title: Kubernetes Cluster Nodes
         description: Kubernetes Nodes Stats
@@ -181,35 +180,36 @@ sections:
         url: https://grafana.viktorbarzin.me/d/xfpJB9FGz/node-exporter?orgId=1
         target: newtab
         statusCheckAcceptCodes: "400"
-        id: 1_1062_kubernetesclusternodes
+        id: 2_1062_kubernetesclusternodes
       - &ref_14
         title: OpenWRT (London)
         icon: si-openwrt
         url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
         target: newtab
         statusCheckAcceptCodes: "400"
-        id: 2_1062_openwrtlondon
+        id: 3_1062_openwrtlondon
       - &ref_15
         title: Prometheus
         icon: si-prometheus
         url: https://prometheus.viktorbarzin.me/
         statusCheck: false
         statusCheckAcceptCodes: "400"
-        id: 3_1062_prometheus
+        id: 4_1062_prometheus
       - &ref_16
         title: Alert Manager
         icon: si-protractor
         url: https://alertmanager.viktorbarzin.me/
         target: newtab
-        id: 4_1062_alertmanager
+        id: 5_1062_alertmanager
       - &ref_17
         title: External Monitoring
         description: Hetrix report
         icon: si-amp
         url: https://wl.hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/
         target: modal
-        id: 5_1062_externalmonitoring
+        id: 6_1062_externalmonitoring
     filteredItems:
+      - *ref_11
       - *ref_12
       - *ref_13
       - *ref_14
