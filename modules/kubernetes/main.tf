@@ -372,3 +372,8 @@ module "crowdsec" {
 #   redis_url       = var.resume_redis_url
 #   database_url    = var.resume_database_url
 # }
+
+module "uptime-kuma" {
+  source          = "./uptime-kuma"
+  tls_secret_name = var.tls_secret_name
+}
