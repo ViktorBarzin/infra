@@ -111,25 +111,12 @@ sections:
         target: newtab
         id: 7_496_serverswitch
       - &ref_8
-        title: Redis
-        description: Redis
-        icon: si-redis
-        url: https://redis.viktorbarzin.me/
-        target: newtab
-        id: 8_496_redis
-      - &ref_9
-        title: Truenas
-        description: Network Storage VM
-        icon: si-truenas
-        url: http://truenas.viktorbarzin.me/ui/dashboard
-        id: 9_496_truenas
-      - &ref_10
         title: Home Assistant Sofia
         description: Home Assistant Sofia Deployment
         icon: si-homeassistant
         url: http://ha-sofia.viktorbarzin.me/
         target: newtab
-        id: 10_496_homeassistantsofia
+        id: 8_496_homeassistantsofia
     filteredItems:
       - *ref_0
       - *ref_1
@@ -140,8 +127,6 @@ sections:
       - *ref_6
       - *ref_7
       - *ref_8
-      - *ref_9
-      - *ref_10
   - name: Valchedrym Infra
     displayData:
       sortBy: default
@@ -150,28 +135,28 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_11
+      - &ref_9
         title: Valchedrym OpenWRT
         icon: si-openwrt
         url: https://valchedrym.viktorbarzin.me/
         target: newtab
         id: 0_1567_valchedrymopenwrt
-      - &ref_12
+      - &ref_10
         title: Valchedram Video System
         icon: 📷
         url: http://valchedrym-video.viktorbarzin.me:5080/
         target: newtab
         id: 1_1567_valchedramvideosystem
-      - &ref_13
+      - &ref_11
         title: Mladost 3 Router
         icon: si-ghostery
         url: https://mladost3.viktorbarzin.me/
         target: newtab
         id: 2_1567_mladostrouter
     filteredItems:
+      - *ref_9
+      - *ref_10
       - *ref_11
-      - *ref_12
-      - *ref_13
     icon: 🐶
   - name: Monitoring
     icon: hl-grafana
@@ -182,14 +167,14 @@ sections:
       hideForGuests: false
       cols: 2
     items:
-      - &ref_14
+      - &ref_12
         title: iDRAC Grafana
         icon: si-dell
         url: https://grafana.viktorbarzin.me/d/O19gr0jZk/idrac-host-stats
         target: newtab
         statusCheckAcceptCodes: "400"
         id: 0_1062_idracgrafana
-      - &ref_15
+      - &ref_13
         title: Kubernetes Cluster Nodes
         description: Kubernetes Nodes Stats
         icon: hl-kubernetes
@@ -197,27 +182,27 @@ sections:
         target: newtab
         statusCheckAcceptCodes: "400"
         id: 1_1062_kubernetesclusternodes
-      - &ref_16
+      - &ref_14
         title: OpenWRT (London)
         icon: si-openwrt
         url: https://grafana.viktorbarzin.me/d/fLi0yXAWk/openwrt?orgId=1
         target: newtab
         statusCheckAcceptCodes: "400"
         id: 2_1062_openwrtlondon
-      - &ref_17
+      - &ref_15
         title: Prometheus
         icon: si-prometheus
         url: https://prometheus.viktorbarzin.me/
         statusCheck: false
         statusCheckAcceptCodes: "400"
         id: 3_1062_prometheus
-      - &ref_18
+      - &ref_16
         title: Alert Manager
         icon: si-protractor
         url: https://alertmanager.viktorbarzin.me/
         target: newtab
         id: 4_1062_alertmanager
-      - &ref_19
+      - &ref_17
         title: External Monitoring
         description: Hetrix report
         icon: si-amp
@@ -225,12 +210,12 @@ sections:
         target: modal
         id: 5_1062_externalmonitoring
     filteredItems:
+      - *ref_12
+      - *ref_13
       - *ref_14
       - *ref_15
       - *ref_16
       - *ref_17
-      - *ref_18
-      - *ref_19
   - name: Infra Services
     displayData:
       sortBy: default
@@ -239,7 +224,7 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_20
+      - &ref_18
         title: PhpMyAdmin
         description: Admin UI for the DB Cluster
         icon: si-phpmyadmin
@@ -248,14 +233,14 @@ sections:
         target: newtab
         statusCheck: false
         id: 0_1364_phpmyadmin
-      - &ref_21
+      - &ref_19
         title: Drone CI
         description: CI/CD Service
         icon: si-drone
         url: https://drone.viktorbarzin.me/
         target: newtab
         id: 1_1364_droneci
-      - &ref_22
+      - &ref_20
         title: DNS Server
         description: Technitium
         icon: hl-azure-dns
@@ -264,7 +249,7 @@ sections:
         statusCheck: false
         statusCheckAcceptCodes: "400"
         id: 2_1364_dnsserver
-      - &ref_23
+      - &ref_21
         title: Headscale (VPN) UI
         icon: si-wireguard
         url: https://headscale.viktorbarzin.me/manager
@@ -272,7 +257,7 @@ sections:
         statusCheck: false
         statusCheckAcceptCodes: "400"
         id: 3_1364_headscalevpnui
-      - &ref_24
+      - &ref_22
         title: URL Shorterner
         description: Shlink
         icon: si-curl
@@ -280,26 +265,35 @@ sections:
         statusCheck: false
         statusCheckAcceptCodes: "400"
         id: 4_1364_urlshorterner
-      - &ref_25
-        title: Home Assistant London
-        icon: si-homeassistant
-        url: http://ha2.viktorbarzin.lan:8123/lovelace/default_view
-        id: 5_1364_homeassistantlondon
-      - &ref_26
+      - &ref_23
         title: Crowdsec Dashboard
         icon: si-crowdsource
         url: >-
           https://crowdsec.viktorbarzin.me/public/dashboard/8f6226be-d4dc-45f1-bacf-a4584f71dcb0
         target: newtab
-        id: 6_1364_crowdsecdashboard
+        id: 5_1364_crowdsecdashboard
+      - &ref_24
+        title: Redis
+        description: Redis
+        icon: si-redis
+        url: https://redis.viktorbarzin.me/
+        target: newtab
+        id: 6_1364_redis
+      - &ref_25
+        title: Truenas
+        description: Network Storage VM
+        icon: si-truenas
+        url: http://truenas.viktorbarzin.me/ui/dashboard
+        id: 7_1364_truenas
     filteredItems:
+      - *ref_18
+      - *ref_19
       - *ref_20
       - *ref_21
       - *ref_22
       - *ref_23
       - *ref_24
       - *ref_25
-      - *ref_26
     icon: si-adminer
   - name: Public Services
     displayData:
@@ -309,7 +303,7 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_27
+      - &ref_26
         title: City Guesser
         description: Geolocator Game
         icon: hl-openmaptiles
@@ -317,7 +311,7 @@ sections:
         target: newtab
         statusCheck: false
         id: 0_1475_cityguesser
-      - &ref_28
+      - &ref_27
         title: Excalidraw
         description: Collaborative Hand Drawing Tool
         icon: hl-excalidraw-light
@@ -325,68 +319,68 @@ sections:
         target: newtab
         statusCheck: false
         id: 1_1475_excalidraw
-      - &ref_29
+      - &ref_28
         title: Formula 1 Stream
         icon: si-f1
         url: http://f1.viktorbarzin.me/
         statusCheck: false
         id: 2_1475_formulastream
-      - &ref_30
+      - &ref_29
         title: HackMD
         description: Collaborative Markdown Document Editing
         icon: si-hackclub
         url: https://hackmd.viktorbarzin.me/
         statusCheck: false
         id: 3_1475_hackmd
-      - &ref_31
+      - &ref_30
         title: Activate Windows (KMS)
         description: How to activate Windows Machines
         icon: si-windows95
         url: https://kms.viktorbarzin.me/
         statusCheck: false
         id: 4_1475_activatewindowskms
-      - &ref_32
+      - &ref_31
         title: PrivateBin
         description: E2E Encrypted Pastebin
         icon: si-pastebin
         url: https://pb.viktorbarzin.me/
         statusCheck: false
         id: 5_1475_privatebin
-      - &ref_33
+      - &ref_32
         title: Blog
         description: Personal Blog
         icon: si-rss
         url: https://viktorbarzin.me/
         statusCheck: false
         id: 6_1475_blog
-      - &ref_34
+      - &ref_33
         title: Setup VPN (Tailscale)
         description: "URL to set in app config: https://headscale.viktorbarzin.me"
         icon: si-wireguard
         url: https://github.com/juanfont/headscale/blob/main/docs/iOS-client.md
         target: newtab
         id: 7_1475_setupvpntailscale
-      - &ref_35
+      - &ref_34
         title: Vaultwarden
         description: Self-hosted Bitwarden server (Password Manager)
         icon: si-bitwarden
         url: https://vaultwarden.viktorbarzin.me
         target: newtab
         id: 8_1475_vaultwarden
-      - &ref_36
+      - &ref_35
         title: Send
         description: Share files
         icon: si-libreoffice
         url: https://send.viktorbarzin.me/
         target: newtab
         id: 9_1475_send
-      - &ref_37
+      - &ref_36
         title: Youtube Downloader
         icon: si-youtube
         url: https://yt.viktorbarzin.me
         target: newtab
         id: 10_1475_youtubedownloader
-      - &ref_38
+      - &ref_37
         title: Photos
         description: Immich
         icon: si-googlephotos
@@ -394,6 +388,7 @@ sections:
         target: newtab
         id: 11_1475_photos
     filteredItems:
+      - *ref_26
       - *ref_27
       - *ref_28
       - *ref_29
@@ -405,7 +400,6 @@ sections:
       - *ref_35
       - *ref_36
       - *ref_37
-      - *ref_38
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -415,20 +409,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_39
+      - &ref_38
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_40
+      - &ref_39
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
+      - *ref_38
       - *ref_39
-      - *ref_40
     icon: si-progress
