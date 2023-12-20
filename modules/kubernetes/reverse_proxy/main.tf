@@ -115,8 +115,8 @@ module "valchedrym" {
   source           = "./factory"
   name             = "valchedrym"
   external_name    = "valchedrym.viktorbarzin.lan"
-  port             = 20123
   tls_secret_name  = var.tls_secret_name
+  port             = 80
   backend_protocol = "HTTP"
   depends_on       = [kubernetes_namespace.reverse-proxy]
 }
