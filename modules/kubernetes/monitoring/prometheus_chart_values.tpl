@@ -66,6 +66,7 @@ server:
   retention: "12w" # ~100GB storage
   strategy:
     type: Recreate
+  baseURL: "https://prometheus.viktorbarzin.me"
   ingress:
     enabled: "true"
     annotations:
