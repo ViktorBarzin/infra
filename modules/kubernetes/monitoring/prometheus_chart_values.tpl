@@ -2,13 +2,14 @@
 # all values - https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus/values.yaml
 alertmanager:
   persistentVolume:
-    enabled: false
+    enabled: true
+    existingClaim: alertmanager-pvc
     #existingClaim: alertmanager-iscsi-pvc
     # storageClass: rook-cephfs
   strategy:
     type: Recreate
   ingress:
-    enabled: "true"
+    enabled: true
     annotations:
       kubernetes.io/ingress.class: nginx
       nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -23,7 +24,16 @@ alertmanager:
         hosts:
           - "alertmanager.viktorbarzin.me"
     hosts:
-      - "alertmanager.viktorbarzin.me"
+      # - alertmanager.viktorbarzin.me
+      - host: alertmanager.viktorbarzin.me
+        paths:
+          - path: /
+            pathType: Prefix
+            serviceName: prometheus-server
+            servicePort: 80
+  # web.external-url seems to be hardcoded, edited deployment manually
+  # extraArgs:
+  #   web.external-url: "https://prometheus.viktorbarzin.me"
 alertmanagerFiles:
   alertmanager.yml:
     global:
@@ -68,7 +78,7 @@ server:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
   ingress:
-    enabled: "true"
+    enabled: true
     annotations:
       kubernetes.io/ingress.class: nginx
       nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
