@@ -68,7 +68,8 @@ resource "helm_release" "prometheus" {
 
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
-  version    = "15.0.2"
+  # version    = "15.0.2"
+  version = "25.8.2"
 
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url })]
 }
@@ -173,6 +174,24 @@ resource "kubernetes_persistent_volume" "prometheus_grafana_pv" {
       #   lun           = 0
       #   fs_type       = "ext4"
       # }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume" "alertmanager_pv" {
+  metadata {
+    name = "alertmanager-pv"
+  }
+  spec {
+    capacity = {
+      "storage" = "2Gi"
+    }
+    access_modes = ["ReadWriteOnce"]
+    persistent_volume_source {
+      nfs {
+        path   = "/mnt/main/alertmanager"
+        server = "10.0.10.15"
+      }
     }
   }
 }
