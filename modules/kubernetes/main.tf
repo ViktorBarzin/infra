@@ -377,3 +377,8 @@ module "uptime-kuma" {
   source          = "./uptime-kuma"
   tls_secret_name = var.tls_secret_name
 }
+
+module "calibre" {
+  source          = "./calibre"
+  tls_secret_name = var.tls_secret_name
+}
