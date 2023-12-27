@@ -13,7 +13,7 @@ env:
   #   # -- You should provide your own secret outside of this helm-chart and use `postgresql.global.postgresql.auth.existingSecret` to provide credentials to the postgresql instance
   #   DB_PASSWORD: "{{ .Values.postgresql.global.postgresql.auth.password }}"
   # TYPESENSE_ENABLED: "{{ .Values.typesense.enabled }}"
-  TYPESENSE_ENABLED: "1"
+  # TYPESENSE_ENABLED: "1"
   #   TYPESENSE_API_KEY: "{{ .Values.typesense.env.TYPESENSE_API_KEY }}"
   #   TYPESENSE_HOST: '{{ printf "%s-typesense" .Release.Name }}'
   #   IMMICH_WEB_URL: '{{ printf "http://%s-web:3000" .Release.Name }}'
@@ -25,7 +25,7 @@ env:
   IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.88.2
+  tag: v1.91.4
 
 immich:
   persistence:
@@ -39,6 +39,9 @@ immich:
 
 postgresql:
   enabled: true
+  image:
+    repository: tensorchord/pgvecto-rs
+    tag: pg14-v0.1.11
   global:
     postgresql:
       auth:
@@ -51,23 +54,6 @@ redis:
   architecture: standalone
   auth:
     enabled: false
-
-typesense:
-  enabled: true
-  env:
-    TYPESENSE_DATA_DIR: /tsdata
-    TYPESENSE_API_KEY: typesense
-  persistence:
-    tsdata:
-      # Enabling typesense persistence is recommended to avoid slow reindexing
-      enabled: true
-      accessMode: ReadWriteOnce
-      size: 1Gi
-      # storageClass: storage-class
-  image:
-    repository: docker.io/typesense/typesense
-    tag: 0.24.0
-    pullPolicy: IfNotPresent
 
 # Immich components
 
@@ -107,23 +93,3 @@ machine-learning:
       # Optional: Set this to pvc to avoid downloading the ML models every start.
       type: emptyDir
       accessMode: ReadWriteMany
-      # storageClass: your-class
-
-web:
-  enabled: true
-  image:
-    repository: ghcr.io/immich-app/immich-web
-    pullPolicy: IfNotPresent
-  persistence:
-    library:
-      enabled: false
-
-proxy:
-  enabled: true
-  image:
-    repository: ghcr.io/immich-app/immich-proxy
-    pullPolicy: IfNotPresent
-
-  persistence:
-    library:
-      enabled: false
