@@ -395,6 +395,15 @@ sections:
         url: https://photos.viktorbarzin.me
         target: newtab
         id: 11_1475_photos
+      - &ref_39
+        title: Audiobookshelf
+        description: >-
+          Audiobook shelf. For iOS, install app from
+          https://url.viktorbarzin.me/audiobookshelf
+        icon: si-audible
+        url: https://audiobookshelf.viktorbarzin.me/
+        target: newtab
+        id: 12_1475_audiobookshelf
     filteredItems:
       - *ref_27
       - *ref_28
@@ -408,6 +417,7 @@ sections:
       - *ref_36
       - *ref_37
       - *ref_38
+      - *ref_39
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -417,20 +427,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_39
+      - &ref_40
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_40
+      - &ref_41
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_39
       - *ref_40
+      - *ref_41
     icon: si-progress
