@@ -43,10 +43,6 @@ resource "kubernetes_deployment" "jellyfin" {
         container {
           image = "jellyfin/jellyfin"
           name  = "jellyfin"
-          env {
-            name  = "DOCKER_MODS"
-            value = "linuxserver/mods:universal-jellyfin"
-          }
 
           port {
             container_port = 8096
