@@ -387,3 +387,8 @@ module "jellyfin" {
   source          = "./jellyfin"
   tls_secret_name = var.tls_secret_name
 }
+
+module "audiobookshelf" {
+  source          = "./audiobookshelf"
+  tls_secret_name = var.tls_secret_name
+}
