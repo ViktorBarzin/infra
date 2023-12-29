@@ -126,7 +126,7 @@ resource "kubernetes_ingress_v1" "audiobookshelf" {
     namespace = "audiobookshelf"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
     }
   }
 
