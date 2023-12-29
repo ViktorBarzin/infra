@@ -383,10 +383,11 @@ module "calibre" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "jellyfin" {
-  source          = "./jellyfin"
-  tls_secret_name = var.tls_secret_name
-}
+# Audiobooks are served using audiobookshelf; still looking for a usecawe for JF
+# module "jellyfin" {
+#   source          = "./jellyfin"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "audiobookshelf" {
   source          = "./audiobookshelf"
