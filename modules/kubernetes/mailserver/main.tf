@@ -2,7 +2,7 @@ variable "tls_secret_name" {}
 variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
-variable "sasl_passwd" {}
+variable "sasl_passwd" {} # For sendgrid i.e relayhost
 
 resource "kubernetes_namespace" "mailserver" {
   metadata {
@@ -43,6 +43,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     POSTFIX_MESSAGE_SIZE_LIMIT             = 1024 * 1024 * 200 # 200 MB
     POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
     TLS_LEVEL                              = "intermediate"
+    SPOOF_PROTECTION                       = "1"
     SSL_TYPE                               = "manual"
     SSL_CERT_PATH                          = "/tmp/ssl/tls.crt"
     SSL_KEY_PATH                           = "/tmp/ssl/tls.key"
@@ -185,12 +186,12 @@ resource "kubernetes_deployment" "mailserver" {
             sub_path   = "postfix-accounts.cf"
             read_only  = true
           }
-          # volume_mount {
-          #   name       = "config"
-          #   mount_path = "/tmp/docker-mailserver/postfix-main.cf"
-          #   sub_path   = "postfix-main.cf"
-          #   read_only  = true
-          # }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/postfix-main.cf"
+            sub_path   = "postfix-main.cf"
+            read_only  = true
+          }
           volume_mount {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/postfix-virtual.cf"

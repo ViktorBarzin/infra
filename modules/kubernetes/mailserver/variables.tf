@@ -1,4 +1,17 @@
+# this is appended and merged to the main postfix.cf
+# see defaults - https://github.com/docker-mailserver/docker-mailserver/blob/master/target/postfix/main.cf
 variable "postfix_cf" {
+  default = <<EOT
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl/passwd
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous
+smtp_tls_security_level = encrypt
+header_size_limit = 4096000
+relayhost = [smtp.sendgrid.net]:587
+EOT
+}
+variable "postfix_cf_reference_DO_NOT_USE" {
   default = <<EOT
 # See /usr/share/postfix/main.cf.dist for a commented, more complete version
 
