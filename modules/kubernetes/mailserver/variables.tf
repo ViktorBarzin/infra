@@ -12,7 +12,7 @@ readme_directory = no
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 mydestination = $myhostname, localhost.$mydomain, localhost
-mynetworks = 127.0.0.0/8 [::1]/128 [fe80::]/64 10.47.0.11/32
+mynetworks = 127.0.0.0/8 [::1]/128 [fe80::]/64 
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all
@@ -43,10 +43,13 @@ smtp_tls_CApath = /etc/ssl/certs
 smtpd_helo_required = yes
 smtpd_delay_reject = yes
 smtpd_helo_restrictions = permit_mynetworks, reject_invalid_helo_hostname, permit
-smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
-smtpd_recipient_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_unauth_destination, reject_unauth_pipelining, reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname, reject_unknown_recipient_domain, reject_rbl_client bl.spamcop.net
+#smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+#smtpd_relay_restrictions = reject_sender_login_mismatch permit_sasl_authenticated permit_mynetworks defer_unauth_destination
+smtpd_relay_restrictions = reject_sender_login_mismatch permit_sasl_authenticated permit_mynetworks defer_unauth_destination
+smtpd_recipient_restrictions = permit_sasl_authenticated, reject_unauth_destination, reject_unauth_pipelining, reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname, reject_unknown_recipient_domain, reject_rbl_client bl.spamcop.net, permit_mynetworks
 smtpd_client_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination, reject_unauth_pipelining
-smtpd_sender_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_unknown_sender_domain
+#smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated, permit_mynetworks, reject_unknown_sender_domain 
+smtpd_sender_restrictions = reject_sender_login_mismatch, reject_authenticated_sender_login_mismatch,  reject_unknown_sender_domain, permit_sasl_authenticated, permit_mynetworks
 disable_vrfy_command = yes
 
 # Postscreen settings to drop zombies/open relays/spam early
@@ -70,10 +73,14 @@ postscreen_bare_newline_action = enforce
 # SASL
 smtpd_sasl_auth_enable = no
 #smtpd_sasl_auth_enable = yes
-#smtpd_sasl_path = /var/spool/postfix/private/auth
+##smtpd_sasl_path = /var/spool/postfix/private/auth
+#smtpd_sasl_path = /var/spool/postfix/private/smtpd
+##smtpd_sasl_type = dovecot
 #smtpd_sasl_type = dovecot
+##smtpd_sasl_security_options = noanonymous
 #smtpd_sasl_security_options = noanonymous
-#smtpd_sasl_local_domain = $mydomain
+##smtpd_sasl_local_domain = $mydomain
+##broken_sasl_auth_clients = yes
 #broken_sasl_auth_clients = yes
 
 # SMTP configuration

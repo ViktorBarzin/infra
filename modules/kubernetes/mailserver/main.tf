@@ -2,9 +2,7 @@ variable "tls_secret_name" {}
 variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
-variable "sasl_passwd" {
-  default = ""
-}
+variable "sasl_passwd" {}
 
 resource "kubernetes_namespace" "mailserver" {
   metadata {
@@ -25,6 +23,9 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     labels = {
       app = "mailserver"
     }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
   }
 
   data = {
@@ -33,6 +34,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     ENABLE_FAIL2BAN     = "0"
     ENABLE_FETCHMAIL    = "0"
     ENABLE_POSTGREY     = "0"
+    ENABLE_SASLAUTHD    = "0"
     ENABLE_SPAMASSASSIN = "0"
     ENABLE_SRS          = "1"
     FETCHMAIL_POLL      = "120"
