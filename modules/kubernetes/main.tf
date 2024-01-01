@@ -393,3 +393,8 @@ module "audiobookshelf" {
   source          = "./audiobookshelf"
   tls_secret_name = var.tls_secret_name
 }
+
+module "frigate" {
+  source          = "./frigate"
+  tls_secret_name = var.tls_secret_name
+}
