@@ -1,4 +1,3 @@
-
 variable "tls_secret_name" {}
 
 resource "kubernetes_namespace" "audiobookshelf" {
