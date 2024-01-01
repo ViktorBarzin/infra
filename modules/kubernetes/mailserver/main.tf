@@ -47,11 +47,6 @@ resource "kubernetes_config_map" "mailserver_env_config" {
   }
 }
 
-locals {
-  postfix_accounts_cf = join("\n", [for user, pass in var.mailserver_accounts : "${user}|${bcrypt(pass, 6)}"])
-  #   postfix_accounts_cf = join("\n", [for user, pass in var.mailserver_accounts : format("%s%s%s", user, "|{SHA512-CRYPT}$6$$", sha512(pass))])  # Does not work :/
-}
-
 resource "kubernetes_config_map" "mailserver_config" {
   metadata {
     name      = "mailserver.config"
@@ -67,7 +62,7 @@ resource "kubernetes_config_map" "mailserver_config" {
 
   data = {
     # Actual mail settings
-    "postfix-accounts.cf" = local.postfix_accounts_cf
+    "postfix-accounts.cf" = join("\n", [for user, pass in var.mailserver_accounts : "${user}|${bcrypt(pass, 6)}"])
     "postfix-main.cf"     = var.postfix_cf
     "postfix-virtual.cf"  = format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt"))
 
