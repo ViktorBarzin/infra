@@ -29,21 +29,23 @@ resource "kubernetes_config_map" "mailserver_env_config" {
   }
 
   data = {
-    DMS_DEBUG           = "0"
-    ENABLE_CLAMAV       = "0"
-    ENABLE_FAIL2BAN     = "0"
-    ENABLE_FETCHMAIL    = "0"
-    ENABLE_POSTGREY     = "0"
-    ENABLE_SASLAUTHD    = "0"
-    ENABLE_SPAMASSASSIN = "0"
-    ENABLE_SRS          = "1"
-    FETCHMAIL_POLL      = "120"
-    ONE_DIR             = "1"
-    OVERRIDE_HOSTNAME   = "mail.viktorbarzin.me"
-    TLS_LEVEL           = "intermediate"
-    SSL_TYPE            = "manual"
-    SSL_CERT_PATH       = "/tmp/ssl/tls.crt"
-    SSL_KEY_PATH        = "/tmp/ssl/tls.key"
+    DMS_DEBUG                              = "0"
+    ENABLE_CLAMAV                          = "0"
+    ENABLE_FAIL2BAN                        = "0"
+    ENABLE_FETCHMAIL                       = "0"
+    ENABLE_POSTGREY                        = "0"
+    ENABLE_SASLAUTHD                       = "0"
+    ENABLE_SPAMASSASSIN                    = "0"
+    ENABLE_SRS                             = "1"
+    FETCHMAIL_POLL                         = "120"
+    ONE_DIR                                = "1"
+    OVERRIDE_HOSTNAME                      = "mail.viktorbarzin.me"
+    POSTFIX_MESSAGE_SIZE_LIMIT             = 1024 * 1024 * 200 # 200 MB
+    POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
+    TLS_LEVEL                              = "intermediate"
+    SSL_TYPE                               = "manual"
+    SSL_CERT_PATH                          = "/tmp/ssl/tls.crt"
+    SSL_KEY_PATH                           = "/tmp/ssl/tls.key"
   }
 }
 
@@ -183,12 +185,12 @@ resource "kubernetes_deployment" "mailserver" {
             sub_path   = "postfix-accounts.cf"
             read_only  = true
           }
-          volume_mount {
-            name       = "config"
-            mount_path = "/tmp/docker-mailserver/postfix-main.cf"
-            sub_path   = "postfix-main.cf"
-            read_only  = true
-          }
+          # volume_mount {
+          #   name       = "config"
+          #   mount_path = "/tmp/docker-mailserver/postfix-main.cf"
+          #   sub_path   = "postfix-main.cf"
+          #   read_only  = true
+          # }
           volume_mount {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/postfix-virtual.cf"
