@@ -176,3 +176,15 @@ module "ha-london" {
   proxy_timeout   = 360
   depends_on      = [kubernetes_namespace.reverse-proxy]
 }
+
+# https://london.viktorbarzin.me/
+module "london" {
+  source           = "./factory"
+  name             = "london"
+  external_name    = "openwrt-london.viktorbarzin.lan"
+  port             = 443
+  tls_secret_name  = var.tls_secret_name
+  backend_protocol = "HTTPS"
+  protected        = true
+  depends_on       = [kubernetes_namespace.reverse-proxy]
+}
