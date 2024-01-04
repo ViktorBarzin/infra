@@ -65,6 +65,7 @@ variable "ingress_crowdsec_captcha_site_key" {}
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
+variable "frigate_valchedrym_camera_credentials" { default = "" }
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -339,6 +340,8 @@ module "kubernetes_cluster" {
 
   resume_redis_url    = var.resume_redis_url
   resume_database_url = var.resume_database_url
+
+  frigate_valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 }
 
 
