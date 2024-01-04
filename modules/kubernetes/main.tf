@@ -52,6 +52,7 @@ variable "ingress_crowdsec_captcha_site_key" {}
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
+variable "frigate_valchedrym_camera_credentials" { default = "" }
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -395,6 +396,7 @@ module "audiobookshelf" {
 }
 
 module "frigate" {
-  source          = "./frigate"
-  tls_secret_name = var.tls_secret_name
+  source                        = "./frigate"
+  tls_secret_name               = var.tls_secret_name
+  valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 }

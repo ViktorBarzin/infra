@@ -1,4 +1,9 @@
 variable "tls_secret_name" {}
+variable "valchedrym_camera_credentials" {
+  // in the format:
+  // username:password
+  default = ""
+}
 
 resource "kubernetes_namespace" "frigate" {
   metadata {
@@ -30,22 +35,54 @@ resource "kubernetes_config_map" "config" {
     mqtt:
         enabled: False
     cameras:
+        # Temp disabled until valchedrym is back up
         valchedrym-cam-1: 
-            ffmpeg:
-                inputs:
-                    - path: rtsp://admin:R7CjHKNAzSPztinF@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
-            detect:
-                enabled: False # <---- disable detection until you have a working camera feed
-                width: 704 # <---- update for your camera's resolution
-                height: 576 # <---- update for your camera's resolution
+           enabled: false
+           ffmpeg:
+               inputs:
+                   - path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
+           detect:
+               enabled: False # <---- disable detection until you have a working camera feed
+               width: 704 # <---- update for your camera's resolution
+               height: 576 # <---- update for your camera's resolution
         valchedrym-cam-2: 
+           enabled: false
+           ffmpeg:
+               inputs:
+                   - path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+           detect:
+               enabled: False # <---- disable detection until you have a working camera feed
+               width: 704 # <---- update for your camera's resolution
+               height: 576 # <---- update for your camera's resolution
+        london-ipcam:
+            enabled: true
             ffmpeg:
                 inputs:
-                    - path: rtsp://admin:R7CjHKNAzSPztinF@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+                    - path: rtsp://192.168.2.2:8554/london_cam # <----- The stream you want to use for detection
+                      roles:
+                        - rtmp
+                        - record
+                        - detect
             detect:
-                enabled: False # <---- disable detection until you have a working camera feed
-                width: 704 # <---- update for your camera's resolution
-                height: 576 # <---- update for your camera's resolution
+                enabled: True
+                width: 1280
+                height: 720
+            record:
+                enabled: False # Not needed for this camera but keeping for reference
+                events:
+                  retain:
+                    default: 10
+            objects:
+              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
+              track:
+                - person
+                - shoe
+                - handbag
+                - wine glass
+                - knife
+                - pizza
+                - laptop
+                - book
     EOT
   }
   # Password hashes are different each time and avoid changing secret constantly. 
@@ -110,6 +147,14 @@ resource "kubernetes_deployment" "frigate" {
             mount_path = "/config/config.yml"
             sub_path   = "config.yml"
           }
+          volume_mount {
+            name       = "media"
+            mount_path = "/media/frigate"
+          }
+          volume_mount {
+            name       = "dshm"
+            mount_path = "/dev/shm"
+          }
         }
         volume {
           name = "config"
@@ -117,13 +162,20 @@ resource "kubernetes_deployment" "frigate" {
             name = "config"
           }
         }
-        # volume {
-        #   name = "audiobooks"
-        #   nfs {
-        #     path   = "/mnt/main/frigate/audiobooks"
-        #     server = "10.0.10.15"
-        #   }
-        # }
+        volume {
+          name = "dshm"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "1Gi"
+          }
+        }
+        volume {
+          name = "media"
+          nfs {
+            path   = "/mnt/main/frigate"
+            server = "10.0.10.15"
+          }
+        }
       }
     }
   }
