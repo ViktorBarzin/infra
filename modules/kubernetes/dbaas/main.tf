@@ -143,12 +143,6 @@ resource "kubernetes_deployment" "mysql" {
             path   = "/mnt/main/mysql"
             server = "10.0.10.15"
           }
-          # iscsi {
-          #   target_portal = "iscsi.viktorbarzin.lan:3260"
-          #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
-          #   lun           = 0
-          #   fs_type       = "ext4"
-          # }
         }
 
         volume {
@@ -158,6 +152,63 @@ resource "kubernetes_deployment" "mysql" {
             name = "mycnf"
           }
 
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_cron_job_v1" "mysql-backup" {
+  metadata {
+    name      = "mysql-backup"
+    namespace = "dbaas"
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 */6 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "mysql-backup"
+              image = "mysql"
+              # TODO: would be nice to rotate at some point... Current size is 11MB so not really needed atm
+              command = ["/bin/sh", "-c", <<-EOT
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                mysqldump --all-databases -u root -p${var.dbaas_root_password} --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
+
+                # Rotate - delete last log file
+                cd /backup
+                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+              EOT
+              ]
+              # To restore (from outside of the cluster):
+              # run kubectl port-forward to pod e.g.:
+              # > kb port-forward mysql-647cfd4969-46rmw --address 0.0.0.0 3307:3306
+              # run mysql import (and specify non-localhost address to avoid using unix socket):
+              # > mysql -u root -p --host 10.0.10.104 --port 3307 < /mnt/nfs/2024_01_06_13_54.sql
+              volume_mount {
+                name       = "mysql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "mysql-backup"
+              nfs {
+                path   = "/mnt/main/mysql-backup"
+                server = "10.0.10.15"
+              }
+            }
+          }
         }
       }
     }
