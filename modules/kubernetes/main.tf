@@ -400,3 +400,10 @@ module "frigate" {
   tls_secret_name               = var.tls_secret_name
   valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 }
+
+# TODO: Currently very unstable and half of the functionality does not work:
+# notifications, import from todoist, email
+# module "vikunja" {
+#   source          = "./vikunja"
+#   tls_secret_name = var.tls_secret_name
+# }
