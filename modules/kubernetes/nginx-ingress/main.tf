@@ -325,9 +325,9 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
         setvar:tx.block_harvester_ip=1,\
         setvar:tx.block_spammer_ip=1"
         EOT
-    # plugins          = "crowdsec"
+    # plugins = "crowdsec"
     plugins          = ""
-    lua-shared-dicts = "crowdsec_cache: 50m"
+    lua-shared-dicts = "crowdsec_cache: 500m"
     server-snippet : <<-EOT
     lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
     #resolver local=on ipv6=off valid=600s;
