@@ -57,6 +57,7 @@ variable "finance_app_graphql_api_secret" {}
 variable "finance_app_gocardless_secret_key" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
+variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
@@ -328,6 +329,7 @@ module "kubernetes_cluster" {
   finance_app_gocardless_secret_id       = var.finance_app_gocardless_secret_id
 
   headscale_config = var.headscale_config
+  headscale_acl    = var.headscale_acl
 
   immich_postgresql_password = var.immich_postgresql_password
 
