@@ -1,6 +1,7 @@
 
 variable "tls_secret_name" {}
 variable "headscale_config" {}
+variable "headscale_acl" {}
 
 resource "kubernetes_namespace" "headscale" {
   metadata {
@@ -74,6 +75,10 @@ resource "kubernetes_deployment" "headscale" {
             items {
               key  = "config.yaml"
               path = "config.yaml"
+            }
+            items {
+              key  = "acl.yaml"
+              path = "acl.yaml"
             }
           }
         }
@@ -226,5 +231,6 @@ resource "kubernetes_config_map" "headscale-config" {
 
   data = {
     "config.yaml" = var.headscale_config
+    "acl.yaml"    = var.headscale_acl
   }
 }

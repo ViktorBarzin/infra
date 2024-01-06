@@ -44,6 +44,7 @@ variable "finance_app_graphql_api_secret" {}
 variable "finance_app_gocardless_secret_key" {}
 variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
+variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
 variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
@@ -303,6 +304,7 @@ module "headscale" {
   source           = "./headscale"
   tls_secret_name  = var.tls_secret_name
   headscale_config = var.headscale_config
+  headscale_acl = var.headscale_acl
 }
 
 # module "metrics_api" {
@@ -407,3 +409,8 @@ module "frigate" {
 #   source          = "./vikunja"
 #   tls_secret_name = var.tls_secret_name
 # }
+
+module "cloudflared" {
+  source          = "./cloudflared"
+  tls_secret_name = var.tls_secret_name
+}
