@@ -27,6 +27,7 @@ namespaces_to_not_visualize = {
     "headscale", "hackmd", "finance-app", "drone", "dbaas", "crowdsec",
     "cloudflared", "city-guesser"
 }
+# docs for lib - https://diagrams.mingrammer.com/docs/nodes/k8s
 
 
 def border_router(
