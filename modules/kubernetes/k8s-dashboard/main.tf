@@ -44,6 +44,17 @@ module "tls_secret" {
 #   depends_on = [kubernetes_namespace.kubernetes-dashboard]
 # }
 
+resource "kubernetes_secret" "dashboard-token" {
+  metadata {
+    name      = "dashboard-secret"
+    namespace = "kubernetes-dashboard"
+    annotations = {
+      "kubernetes.io/service-account.name" : "kubernetes-dashboard"
+    }
+  }
+  type = "kubernetes.io/service-account-token"
+}
+
 resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
   metadata {
     name      = "kubernetes-dashboard"
