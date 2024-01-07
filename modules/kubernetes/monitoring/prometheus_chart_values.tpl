@@ -67,6 +67,7 @@ server:
   # Enable me to delete metrics
   extraFlags:
     #  - "web.enable-admin-api"
+    - "web.enable-lifecycle"
     - "storage.tsdb.allow-overlapping-blocks"
     # - "storage.tsdb.retention.size=1GB"
   persistentVolume:
@@ -298,6 +299,25 @@ serverFiles:
               summary: New tailscale client registered
 
 extraScrapeConfigs: |
+  - job_name: 'istiod'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - istio-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: istiod;http-monitoring
+  - job_name: 'envoy-stats'
+    metrics_path: /stats/prometheus
+    kubernetes_sd_configs:
+    - role: pod
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: '.*-envoy-prom'
+
   - job_name: 'crowdsec'
     static_configs:
         - targets:
