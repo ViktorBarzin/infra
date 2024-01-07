@@ -304,7 +304,7 @@ module "headscale" {
   source           = "./headscale"
   tls_secret_name  = var.tls_secret_name
   headscale_config = var.headscale_config
-  headscale_acl = var.headscale_acl
+  headscale_acl    = var.headscale_acl
 }
 
 # module "metrics_api" {
@@ -412,5 +412,10 @@ module "frigate" {
 
 module "cloudflared" {
   source          = "./cloudflared"
+  tls_secret_name = var.tls_secret_name
+}
+
+module "istio" {
+  source          = "./istio"
   tls_secret_name = var.tls_secret_name
 }
