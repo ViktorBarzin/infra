@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "audiobookshelf" {
   metadata {
     name = "audiobookshelf"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
