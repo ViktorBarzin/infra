@@ -183,12 +183,12 @@ module "oauth" {
   depends_on = [null_resource.core_services]
 }
 
-module "openid_help_page" {
-  source          = "./openid_help_page"
-  tls_secret_name = var.tls_secret_name
+# module "openid_help_page" {
+#   source          = "./openid_help_page"
+#   tls_secret_name = var.tls_secret_name
 
-  depends_on = [null_resource.core_services]
-}
+#   depends_on = [null_resource.core_services]
+# }
 
 # module "pihole" {
 #   source       = "./pihole"
