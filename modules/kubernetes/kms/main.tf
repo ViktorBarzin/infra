@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "kms" {
   metadata {
     name = "kms"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
