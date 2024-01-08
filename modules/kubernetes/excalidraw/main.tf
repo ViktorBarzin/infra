@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "finance_app" {
   metadata {
     name = "excalidraw"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
