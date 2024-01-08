@@ -262,12 +262,12 @@ module "wireguard" {
   firewall_sh     = var.wireguard_firewall_sh
 }
 
-module "home_assistant" {
-  source                         = "./home_assistant"
-  tls_secret_name                = var.tls_secret_name
-  client_certificate_secret_name = var.client_certificate_secret_name
-  configuration_yaml             = var.home_assistant_configuration
-}
+# module "home_assistant" {
+#   source                         = "./home_assistant"
+#   tls_secret_name                = var.tls_secret_name
+#   client_certificate_secret_name = var.client_certificate_secret_name
+#   configuration_yaml             = var.home_assistant_configuration
+# }
 
 module "finance_app" {
   source                     = "./finance_app"
