@@ -4,6 +4,9 @@ variable "hackmd_db_password" {}
 resource "kubernetes_namespace" "hackmd" {
   metadata {
     name = "hackmd"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
@@ -25,7 +28,7 @@ resource "kubernetes_deployment" "hackmd" {
   spec {
     replicas = 3
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate" # DB is external so we can roll
     }
     selector {
       match_labels = {
