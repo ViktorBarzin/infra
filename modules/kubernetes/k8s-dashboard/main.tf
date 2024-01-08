@@ -19,6 +19,14 @@ resource "random_password" "csrf_token" {
 #     "--auto-generate-certificates",
 #     "--token-ttl=0"
 #   ])
+resource "kubernetes_namespace" "k8s-dashboard" {
+  metadata {
+    name = "kubernetes-dashboard"
+    labels = {
+      "istio-injection" : "enabled"
+    }
+  }
+}
 # }
 
 module "tls_secret" {
