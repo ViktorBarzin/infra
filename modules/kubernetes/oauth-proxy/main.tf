@@ -5,6 +5,10 @@
 resource "kubernetes_namespace" "oauth2" {
   metadata {
     name = "oauth2"
+    # cookie seems to be not set and auth fails
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 variable "tls_secret_name" {
