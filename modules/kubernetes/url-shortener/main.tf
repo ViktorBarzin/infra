@@ -15,6 +15,9 @@ variable "domain" {
 resource "kubernetes_namespace" "shlink" {
   metadata {
     name = "url"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
