@@ -13,9 +13,10 @@ variable "gocardless_secret_id" {}
 resource "kubernetes_namespace" "finance_app" {
   metadata {
     name = "finance-app"
-    labels = {
-      "istio-injection" : "enabled"
-    }
+    # TLS MiTM fails connecting to auth0
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
