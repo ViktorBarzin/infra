@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
     name = "f1-stream"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
