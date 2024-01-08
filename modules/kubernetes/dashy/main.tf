@@ -10,6 +10,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "dashy" {
   metadata {
     name = "dashy"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
