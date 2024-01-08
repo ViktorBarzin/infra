@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "privatebin" {
   metadata {
     name = "privatebin"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
