@@ -21,6 +21,8 @@ resource "kubernetes_deployment" "headscale" {
     namespace = "headscale"
     labels = {
       app = "headscale"
+      # scare to try but probably non-http will fail
+      # "istio-injection" : "enabled"
     }
 
     annotations = {
