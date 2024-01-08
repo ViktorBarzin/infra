@@ -18,6 +18,7 @@ resource "kubernetes_namespace" "ingress_nginx" {
     labels = {
       "app.kubernetes.io/instance" = "ingress-nginx"
       "app.kubernetes.io/name"     = "ingress-nginx"
+      # "istio-injection" : "enabled"
     }
   }
 }
