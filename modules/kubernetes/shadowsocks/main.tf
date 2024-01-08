@@ -6,6 +6,10 @@ variable "method" {
 resource "kubernetes_namespace" "mailserver" {
   metadata {
     name = "shadowsocks"
+    # TLS termination seems iffy - I get pfsense MiTM-ing
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
