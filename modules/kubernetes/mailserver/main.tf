@@ -7,6 +7,10 @@ variable "sasl_passwd" {} # For sendgrid i.e relayhost
 resource "kubernetes_namespace" "mailserver" {
   metadata {
     name = "mailserver"
+    # connecting via localhost does not seem to work?
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
