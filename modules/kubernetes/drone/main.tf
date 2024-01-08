@@ -15,6 +15,9 @@ variable "allowed_users" {
 resource "kubernetes_namespace" "drone" {
   metadata {
     name = "drone"
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
