@@ -3,6 +3,10 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "technitium" {
   metadata {
     name = "technitium"
+    # stale cache error when trying to resolve
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
