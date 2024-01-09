@@ -8,6 +8,9 @@ variable "valchedrym_camera_credentials" {
 resource "kubernetes_namespace" "frigate" {
   metadata {
     name = "frigate"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
