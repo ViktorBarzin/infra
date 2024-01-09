@@ -67,7 +67,7 @@ resource "kubernetes_config_map" "config" {
                         - record
                         - detect
             detect:
-                enabled: True
+                enabled: False
                 width: 1280
                 height: 720
             record:
