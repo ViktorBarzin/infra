@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "ytdlp" {
   metadata {
     name = "ytdlp"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
