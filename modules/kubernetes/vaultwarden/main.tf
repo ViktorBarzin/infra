@@ -4,6 +4,9 @@ variable "smtp_password" {}
 resource "kubernetes_namespace" "vaultwarden" {
   metadata {
     name = "vaultwarden"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
