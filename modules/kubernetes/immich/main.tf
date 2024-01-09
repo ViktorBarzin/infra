@@ -10,6 +10,10 @@ module "tls_secret" {
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
+    # Container comms are broken - seems due to tls
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
