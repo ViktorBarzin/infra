@@ -3,6 +3,9 @@ variable "tls_secret_name" {}
 resource "kubernetes_namespace" "send" {
   metadata {
     name = "send"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
