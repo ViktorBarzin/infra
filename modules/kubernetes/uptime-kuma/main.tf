@@ -9,6 +9,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
+    labels = {
+      "istio-injection" : "enabled"
+    }
   }
 }
 
