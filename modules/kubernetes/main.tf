@@ -419,3 +419,13 @@ module "istio" {
   source          = "./istio"
   tls_secret_name = var.tls_secret_name
 }
+
+# module "authelia" {
+#   source          = "./authelia"
+#   tls_secret_name = var.tls_secret_name
+# }
+
+# module "discount-bandit" {
+#   source          = "./discount-bandit"
+#   tls_secret_name = var.tls_secret_name
+# }
