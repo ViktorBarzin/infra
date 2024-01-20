@@ -151,7 +151,7 @@ resource "kubernetes_deployment" "mailserver" {
       spec {
         container {
           name              = "docker-mailserver"
-          image             = "docker.io/mailserver/docker-mailserver:13.2.0"
+          image             = "docker.io/mailserver/docker-mailserver:13.3.0"
           image_pull_policy = "IfNotPresent"
           security_context {
             capabilities {
