@@ -429,3 +429,8 @@ module "istio" {
 #   source          = "./discount-bandit"
 #   tls_secret_name = var.tls_secret_name
 # }
+
+module "metrics-server" {
+  source          = "./metrics-server"
+  tls_secret_name = var.tls_secret_name
+}
