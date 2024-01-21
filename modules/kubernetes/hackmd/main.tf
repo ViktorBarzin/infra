@@ -26,7 +26,7 @@ resource "kubernetes_deployment" "hackmd" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     strategy {
       type = "RollingUpdate" # DB is external so we can roll
     }
