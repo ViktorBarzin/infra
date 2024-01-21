@@ -9,9 +9,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
-    labels = {
-      "istio-injection" : "enabled"
-    }
+    # labels = {
+    #   "istio-injection" : "enabled"
+    # }
   }
 }
 
@@ -28,6 +28,9 @@ resource "kubernetes_deployment" "uptime-kuma" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "uptime-kuma"
