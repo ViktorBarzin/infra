@@ -11,8 +11,10 @@ resource "kubernetes_cron_job_v1" "update-public-ip" {
     namespace = "default"
   }
   spec {
-    schedule           = "*/5 * * * *"
-    concurrency_policy = "Forbid"
+    schedule                      = "*/5 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
     job_template {
       metadata {
         name = "update-public-ip"
