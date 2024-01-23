@@ -195,30 +195,32 @@ func run() error {
 			return nil
 		}
 		// Send notification as glue records can't be modified programatically for godaddy :/
-		err = notifyForIPChange(publicDNSIp, dynamicDNSIp)
-		if err != nil {
-			return errors.Wrapf(err, "failed to notify for ip change. this must succeed otherwise the glue records won't be updated")
-		}
+		defer notifyForIPChange(publicDNSIp, dynamicDNSIp)
 		// setup git repo
-		gitFs, err := NewGitFS(repository)
-		if err != nil {
-			return errors.Wrapf(err, "failed to initialize git fs")
-		}
-		worktree, err := gitFs.repo.Worktree()
-		if err != nil {
-			return errors.Wrapf(err, "failed to get worktree")
-		}
-		err = updatePublicIP(gitFs, publicDNSIp, dynamicDNSIp)
-		if err != nil {
-			return fmt.Errorf("failed to update public ip: %w", err)
-		}
-		// // commit changes
-		if _, err = worktree.Commit("Update public ip and ns records", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
-			return errors.Wrapf(err, "failed to commit")
-		}
-		if err = gitFs.Push(); err != nil {
-			return errors.Wrapf(err, "failed to push changes")
-		}
+		// Old, code-as-infra based approach
+		// gitFs, err := NewGitFS(repository)
+		// if err != nil {
+		// 	return errors.Wrapf(err, "failed to initialize git fs")
+		// }
+		// worktree, err := gitFs.repo.Worktree()
+		// if err != nil {
+		// 	return errors.Wrapf(err, "failed to get worktree")
+		// }
+		// err = updatePublicIP(gitFs, publicDNSIp, dynamicDNSIp)
+		// if err != nil {
+		// 	return fmt.Errorf("failed to update public ip: %w", err)
+		// }
+		// // // commit changes
+		// if _, err = worktree.Commit("Update public ip and ns records", &git.CommitOptions{All: true, Author: &object.Signature{Name: "Webhook Handler Bot"}}); err != nil {
+		// 	return errors.Wrapf(err, "failed to commit")
+		// }
+		// if err = gitFs.Push(); err != nil {
+		// 	return errors.Wrapf(err, "failed to push changes")
+		// }
+		username := os.Getenv("TECHNITIUM_USERNAME")
+		password := os.Getenv("TECHNITIUM_PASSWORD")
+		// dynamicDNSIp = net.ParseIP("6.9.6.9")
+		return UpdatePublicIPViaTechnitiumAPI(dynamicDNSIp, username, password)
 	default:
 		err = errors.New(fmt.Sprintf("unsupported use case: %s", *useCase))
 	}
