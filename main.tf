@@ -44,6 +44,8 @@ variable "webhook_handler_fb_verify_token" {}
 variable "webhook_handler_fb_page_token" {}
 variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
+variable "technitium_username" {}
+variable "technitium_password" {}
 variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
 variable "monitoring_idrac_username" {}
@@ -344,6 +346,10 @@ module "kubernetes_cluster" {
   resume_database_url = var.resume_database_url
 
   frigate_valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
+
+  // updating technitium records
+  technitium_username = var.technitium_username
+  technitium_password = var.technitium_password
 }
 
 

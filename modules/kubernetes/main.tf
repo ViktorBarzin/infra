@@ -33,6 +33,8 @@ variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
 variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
+variable "technitium_username" {}
+variable "technitium_password" {}
 variable "idrac_username" {}
 variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
@@ -285,9 +287,11 @@ module "excalidraw" {
 }
 
 module "infra-maintenance" {
-  source    = "./infra-maintenance"
-  git_user  = var.webhook_handler_git_user
-  git_token = var.webhook_handler_git_token
+  source              = "./infra-maintenance"
+  git_user            = var.webhook_handler_git_user
+  git_token           = var.webhook_handler_git_token
+  technitium_username = var.technitium_username
+  technitium_password = var.technitium_password
 }
 
 module "travel_blog" {
