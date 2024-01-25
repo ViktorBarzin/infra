@@ -43,7 +43,8 @@ resource "kubernetes_config_map" "config" {
            enabled: true
            ffmpeg:
                inputs:
-                   - path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
+                   #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
+                   - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/101 # <----- The stream you want to use for detection
            detect:
                enabled: True # <---- disable detection until you have a working camera feed
                width: 704 # <---- update for your camera's resolution
@@ -62,7 +63,8 @@ resource "kubernetes_config_map" "config" {
            enabled: true
            ffmpeg:
                inputs:
-                   - path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+                   #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+                   - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/201 # <----- The stream you want to use for detection
            detect:
                enabled: False # <---- disable detection until you have a working camera feed
                width: 704 # <---- update for your camera's resolution
