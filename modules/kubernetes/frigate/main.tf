@@ -78,7 +78,7 @@ resource "kubernetes_config_map" "config" {
                - dog
                - horse
         london-ipcam:
-            enabled: true
+            enabled: false
             ffmpeg:
                 inputs:
                     - path: rtsp://192.168.2.2:8554/london_cam # <----- The stream you want to use for detection
