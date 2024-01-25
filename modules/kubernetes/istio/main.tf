@@ -79,37 +79,38 @@ resource "kubernetes_secret" "kiali-token" {
   type = "kubernetes.io/service-account-token"
 }
 
-resource "kubernetes_ingress_v1" "kiali" {
-  metadata {
-    name      = "kiali"
-    namespace = "istio-system"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
+# Gets auto removed. revisit after finishing power consmption analysis
+# resource "kubernetes_ingress_v1" "kiali" {
+#   metadata {
+#     name      = "kiali"
+#     namespace = "istio-system"
+#     annotations = {
+#       "kubernetes.io/ingress.class" = "nginx"
+#       "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
+#       "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+#     }
+#   }
 
-  spec {
-    tls {
-      hosts       = ["kiali.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "kiali.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "kiali"
-              port {
-                number = 20001
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+#   spec {
+#     tls {
+#       hosts       = ["kiali.viktorbarzin.me"]
+#       secret_name = var.tls_secret_name
+#     }
+#     rule {
+#       host = "kiali.viktorbarzin.me"
+#       http {
+#         path {
+#           path = "/"
+#           backend {
+#             service {
+#               name = "kiali"
+#               port {
+#                 number = 20001
+#               }
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
