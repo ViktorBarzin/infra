@@ -124,11 +124,11 @@ module "valchedrym" {
 # https://ip150.viktorbarzin.me/
 # Server has funky behaviour based on headers; works on some browrsers not others...
 # module "valchedrym-ip150" {
-#   source        = "./factory"
-#   name          = "ip150"
-#   external_name = "valchedrym.ddns.net"
-#   # port               = 5081 // HTTPS port; 5080 is HTTP if needed
-#   port               = 5080 // HTTPS port; 5080 is HTTP if needed
+#   source = "./factory"
+#   name   = "ip150"
+#   # external_name = "valchedrym.ddns.net"
+#   external_name      = "192.168.0.10"
+#   port               = 80
 #   backend_protocol   = "HTTP"
 #   use_proxy_protocol = false
 #   tls_secret_name    = var.tls_secret_name
