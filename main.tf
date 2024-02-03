@@ -69,6 +69,7 @@ variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
+variable "paperless_db_password" {}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -350,6 +351,8 @@ module "kubernetes_cluster" {
   // updating technitium records
   technitium_username = var.technitium_username
   technitium_password = var.technitium_password
+
+  paperless_db_password = var.paperless_db_password
 }
 
 
