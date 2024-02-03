@@ -56,6 +56,7 @@ variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
+variable "paperless_db_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -437,4 +438,10 @@ module "istio" {
 module "metrics-server" {
   source          = "./metrics-server"
   tls_secret_name = var.tls_secret_name
+}
+
+module "paperless-ngx" {
+  source          = "./paperless-ngx"
+  tls_secret_name = var.tls_secret_name
+  db_password     = var.paperless_db_password
 }
