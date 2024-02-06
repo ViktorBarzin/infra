@@ -87,6 +87,10 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_MEDIA_ROOT"
             value = "../data"
           }
+          env {
+            name  = "PAPERLESS_OCR_USER_ARGS"
+            value = "{\"invalidate_digital_signatures\": true}"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
