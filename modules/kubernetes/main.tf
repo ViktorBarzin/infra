@@ -445,3 +445,8 @@ module "paperless-ngx" {
   tls_secret_name = var.tls_secret_name
   db_password     = var.paperless_db_password
 }
+
+module "jsoncrack" {
+  source          = "./jsoncrack"
+  tls_secret_name = var.tls_secret_name
+}
