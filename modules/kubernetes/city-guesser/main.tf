@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "city-guesser" {
   metadata {
     name = "city-guesser"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

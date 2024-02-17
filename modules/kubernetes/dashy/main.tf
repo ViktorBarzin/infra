@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "dashy" {
   metadata {
     name = "dashy"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

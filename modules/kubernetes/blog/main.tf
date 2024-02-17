@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "website" {
   metadata {
     name = "website"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

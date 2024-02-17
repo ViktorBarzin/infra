@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "privatebin" {
   metadata {
     name = "privatebin"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

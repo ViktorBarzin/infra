@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "kms" {
   metadata {
     name = "kms"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }
