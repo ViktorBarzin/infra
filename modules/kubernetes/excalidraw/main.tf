@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "finance_app" {
   metadata {
     name = "excalidraw"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "vaultwarden" {
   metadata {
     name = "vaultwarden"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

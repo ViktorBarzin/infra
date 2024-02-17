@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "travel-blog" {
   metadata {
     name = "travel-blog"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

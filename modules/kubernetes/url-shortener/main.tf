@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "shlink" {
   metadata {
     name = "url"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

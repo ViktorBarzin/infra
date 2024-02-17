@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "f1-stream" {
   metadata {
     name = "f1-stream"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

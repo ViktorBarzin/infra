@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "ytdlp" {
   metadata {
     name = "ytdlp"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }
