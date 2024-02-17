@@ -415,10 +415,10 @@ module "frigate" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
-module "cloudflared" {
-  source          = "./cloudflared"
-  tls_secret_name = var.tls_secret_name
-}
+# module "cloudflared" {
+#   source          = "./cloudflared"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "istio" {
   source          = "./istio"
