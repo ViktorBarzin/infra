@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "jsoncrack" {
   metadata {
     name = "jsoncrack"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

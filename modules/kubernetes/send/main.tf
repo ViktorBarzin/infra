@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "send" {
   metadata {
     name = "send"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

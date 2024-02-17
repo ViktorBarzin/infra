@@ -4,7 +4,7 @@ resource "kubernetes_namespace" "authelia" {
   metadata {
     name = "authelia"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

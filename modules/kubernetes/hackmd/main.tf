@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "hackmd" {
   metadata {
     name = "hackmd"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }

@@ -23,7 +23,7 @@ resource "kubernetes_namespace" "k8s-dashboard" {
   metadata {
     name = "kubernetes-dashboard"
     labels = {
-      "istio-injection" : "enabled"
+      "istio-injection" : "disabled"
     }
   }
 }
