@@ -129,7 +129,7 @@ resource "kubernetes_deployment" "frigate" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Temporarily disabled
     strategy {
       type = "Recreate"
     }
