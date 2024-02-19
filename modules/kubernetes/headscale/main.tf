@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image   = "headscale/headscale:latest"
+          image   = "headscale/headscale:0.22"
           name    = "headscale"
           command = ["headscale", "serve"]
           port {
@@ -150,13 +150,15 @@ resource "kubernetes_ingress_v1" "headscale" {
     namespace = "headscale"
     annotations = {
       // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
-      "kubernetes.io/ingress.class" = "nginx"
+      "kubernetes.io/ingress.class"              = "nginx"
+      "nginx.ingress.kubernetes.io/ssl-redirect" = false # Disable SSL redirection for this Ingress
+
     }
   }
 
   spec {
     tls {
-      hosts       = ["headscale-ui.viktorbarzin.me"]
+      hosts       = ["headscale.viktorbarzin.me"]
       secret_name = var.tls_secret_name
     }
     rule {
