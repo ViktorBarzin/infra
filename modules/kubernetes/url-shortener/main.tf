@@ -130,16 +130,16 @@ resource "kubernetes_deployment" "shlink" {
           #   name  = "DB_PASSWORD"
           #   value = var.mysql_password
           # }
-          resources {
-            limits = {
-              cpu    = "0.5"
-              memory = "512Mi"
-            }
-            requests = {
-              cpu    = "250m"
-              memory = "50Mi"
-            }
-          }
+          # resources {
+          #   limits = {
+          #     cpu    = "0.5"
+          #     memory = "512Mi"
+          #   }
+          #   requests = {
+          #     cpu    = "250m"
+          #     memory = "50Mi"
+          #   }
+          # }
           port {
             container_port = 8080
           }
