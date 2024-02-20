@@ -420,10 +420,10 @@ module "frigate" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
-module "istio" {
-  source          = "./istio"
-  tls_secret_name = var.tls_secret_name
-}
+# module "istio" {
+#   source          = "./istio"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 # module "authelia" {
 #   source          = "./authelia"
