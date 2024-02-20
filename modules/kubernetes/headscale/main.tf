@@ -92,11 +92,22 @@ resource "kubernetes_deployment" "headscale" {
             server = "10.0.10.15"
           }
         }
+        # container {
+        #   image = "simcu/headscale-ui:0.1.4"
+        #   name  = "headscale-ui"
+        #   port {
+        #     container_port = 80
+        #   }
+        # }
         container {
-          image = "simcu/headscale-ui"
+          image = "ghcr.io/gurucomputing/headscale-ui:latest"
           name  = "headscale-ui"
           port {
             container_port = 80
+          }
+          env {
+            name  = "HTTP_PORT"
+            value = "80"
           }
         }
       }
@@ -165,7 +176,7 @@ resource "kubernetes_ingress_v1" "headscale" {
       host = "headscale.viktorbarzin.me"
       http {
         path {
-          path = "/manager"
+          path = "/web"
           backend {
             service {
               name = "headscale"
