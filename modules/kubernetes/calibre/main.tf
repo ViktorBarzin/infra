@@ -134,6 +134,22 @@ resource "kubernetes_ingress_v1" "calibre" {
         }
       }
     }
+    rule {
+      host = "books.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "calibre"
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
