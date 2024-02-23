@@ -76,8 +76,8 @@ resource "kubernetes_deployment" "paperless-ngx" {
             value = var.db_password
           }
           env {
-            name  = "PAPERLESS_URL"
-            value = "https://paperless-ngx.viktorbarzin.me"
+            name  = "PAPERLESS_CSRF_TRUSTED_ORIGINS"
+            value = "https://paperless-ngx.viktorbarzin.me,https://pdf.viktorbarzin.me"
           }
           env {
             name  = "PAPERLESS_DEBUG"
@@ -152,6 +152,22 @@ resource "kubernetes_ingress_v1" "paperless-ngx" {
     }
     rule {
       host = "paperless-ngx.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "paperless-ngx"
+              port {
+                number = 8000
+              }
+            }
+          }
+        }
+      }
+    }
+    rule {
+      host = "pdf.viktorbarzin.me"
       http {
         path {
           path = "/"
