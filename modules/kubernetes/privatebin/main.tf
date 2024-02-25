@@ -46,16 +46,6 @@ resource "kubernetes_deployment" "privatebin" {
           image             = "privatebin/nginx-fpm-alpine"
           name              = "privatebin"
           image_pull_policy = "IfNotPresent"
-          resources {
-            limits = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-            requests = {
-              cpu    = "1"
-              memory = "1Gi"
-            }
-          }
           port {
             container_port = 8080
           }
