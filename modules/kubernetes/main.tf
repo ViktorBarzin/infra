@@ -312,11 +312,6 @@ module "headscale" {
   headscale_acl    = var.headscale_acl
 }
 
-# module "metrics_api" {
-#   source          = "./metrics_api"
-#   tls_secret_name = var.tls_secret_name
-# }
-
 module "dashy" {
   source          = "./dashy"
   tls_secret_name = var.tls_secret_name
@@ -448,5 +443,10 @@ module "paperless-ngx" {
 
 module "jsoncrack" {
   source          = "./jsoncrack"
+  tls_secret_name = var.tls_secret_name
+}
+
+module "servarr" {
+  source          = "./servarr"
   tls_secret_name = var.tls_secret_name
 }
