@@ -103,11 +103,15 @@ resource "kubernetes_deployment" "headscale" {
           image = "ghcr.io/gurucomputing/headscale-ui:latest"
           name  = "headscale-ui"
           port {
-            container_port = 80
+            container_port = 8081
           }
           env {
             name  = "HTTP_PORT"
-            value = "80"
+            value = "8081"
+          }
+          env {
+            name  = "HTTPS_PORT"
+            value = "8082"
           }
         }
       }
@@ -143,9 +147,10 @@ resource "kubernetes_service" "headscale" {
       protocol = "TCP"
     }
     port {
-      name     = "headscale-ui"
-      port     = "80"
-      protocol = "TCP"
+      name        = "headscale-ui"
+      port        = "80"
+      target_port = 8081
+      protocol    = "TCP"
     }
     port {
       name     = "metrics"
