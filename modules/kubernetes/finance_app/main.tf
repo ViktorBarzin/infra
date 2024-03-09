@@ -255,9 +255,9 @@ resource "kubernetes_ingress_v1" "finance_app" {
       "kubernetes.io/ingress.class" = "nginx"
       #"nginx.ingress.kubernetes.io/auth-url"= "https://oauth-provider/auth"
       #"nginx.ingress.kubernetes.io/auth-signin"= "https://oauth-provider/sign_in?rd=$request_uri"
-      # "nginx.ingress.kubernetes.io/proxy-connect-timeout" = "60s"
-      # "nginx.ingress.kubernetes.io/proxy-send-timeout"    = "60s"
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" = "600s"
+      "nginx.ingress.kubernetes.io/proxy-connect-timeout" = "600"
+      "nginx.ingress.kubernetes.io/proxy-send-timeout"    = "600"
+      "nginx.ingress.kubernetes.io/proxy-read-timeout"    = "600"
     }
   }
 
