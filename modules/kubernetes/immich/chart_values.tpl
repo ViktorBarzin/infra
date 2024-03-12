@@ -25,7 +25,7 @@ env:
   IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.91.4
+  tag: v1.98.2
 
 immich:
   persistence:
@@ -41,7 +41,7 @@ postgresql:
   enabled: true
   image:
     repository: tensorchord/pgvecto-rs
-    tag: pg14-v0.1.11
+    tag: pg14-v0.2.0
   global:
     postgresql:
       auth:
