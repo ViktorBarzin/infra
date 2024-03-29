@@ -367,7 +367,8 @@ extraScrapeConfigs: |
     static_configs:
         - targets:
           #- "home.viktorbarzin.lan:9100"
-          - "10.0.20.100:9100"
+          #- "10.0.20.100:9100"
+          - "192.168.2.1:9100"
     metrics_path: '/metrics'
     relabel_configs:
       - source_labels: [__address__]
