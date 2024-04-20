@@ -19,103 +19,106 @@ module "tls_secret" {
   namespace       = "frigate"
   tls_secret_name = var.tls_secret_name
 }
-resource "kubernetes_config_map" "config" {
-  metadata {
-    name      = "config"
-    namespace = "frigate"
 
-    labels = {
-      app = "frigate"
-    }
-    annotations = {
-      "reloader.stakater.com/match" = "true"
-    }
-  }
+## Disabled as config is now in data volume
+#
+# resource "kubernetes_config_map" "config" {
+#   metadata {
+#     name      = "config"
+#     namespace = "frigate"
 
-  data = {
-    # Actual mail settings
-    "config.yml" = <<-EOT
-    mqtt:
-        enabled: False
-    cameras:
-        # Temp disabled until valchedrym is back up
-        valchedrym-cam-1: 
-           enabled: true
-           ffmpeg:
-               inputs:
-                   #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
-                   - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/101 # <----- The stream you want to use for detection
-           detect:
-               enabled: True # <---- disable detection until you have a working camera feed
-               width: 704 # <---- update for your camera's resolution
-               height: 576 # <---- update for your camera's resolution
-           objects:
-             # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-             track:
-               - person
-               - bicycle
-               - car
-               - bird
-               - cat
-               - dog
-               - horse
-        valchedrym-cam-2: 
-           enabled: true
-           ffmpeg:
-               inputs:
-                   #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
-                   - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/201 # <----- The stream you want to use for detection
-           detect:
-               enabled: True # <---- disable detection until you have a working camera feed
-               width: 704 # <---- update for your camera's resolution
-               height: 576 # <---- update for your camera's resolution
-           objects:
-             # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-             track:
-               - person
-               - bicycle
-               - car
-               - bird
-               - cat
-               - dog
-               - horse
-        london-ipcam:
-            enabled: false
-            ffmpeg:
-                inputs:
-                    - path: rtsp://192.168.2.2:8554/london_cam # <----- The stream you want to use for detection
-                      roles:
-                        - rtmp
-                        - record
-                        - detect
-            detect:
-                enabled: False
-                width: 1280
-                height: 720
-            record:
-                enabled: False # Not needed for this camera but keeping for reference
-                events:
-                  retain:
-                    default: 10
-            objects:
-              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-              track:
-                - person
-                - shoe
-                - handbag
-                - wine glass
-                - knife
-                - pizza
-                - laptop
-                - book
-    EOT
-  }
-  # Password hashes are different each time and avoid changing secret constantly. 
-  # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
-  lifecycle {
-    ignore_changes = [data["postfix-accounts.cf"]]
-  }
-}
+#     labels = {
+#       app = "frigate"
+#     }
+#     annotations = {
+#       "reloader.stakater.com/match" = "true"
+#     }
+#   }
+
+#   data = {
+#     # Actual mail settings
+#     "config.yml" = <<-EOT
+#     mqtt:
+#         enabled: False
+#     cameras:
+#         # Temp disabled until valchedrym is back up
+#         valchedrym-cam-1: 
+#            enabled: true
+#            ffmpeg:
+#                inputs:
+#                    #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
+#                    - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/101 # <----- The stream you want to use for detection
+#            detect:
+#                enabled: True # <---- disable detection until you have a working camera feed
+#                width: 704 # <---- update for your camera's resolution
+#                height: 576 # <---- update for your camera's resolution
+#            objects:
+#              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
+#              track:
+#                - person
+#                - bicycle
+#                - car
+#                - bird
+#                - cat
+#                - dog
+#                - horse
+#         valchedrym-cam-2: 
+#            enabled: true
+#            ffmpeg:
+#                inputs:
+#                    #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+#                    - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/201 # <----- The stream you want to use for detection
+#            detect:
+#                enabled: True # <---- disable detection until you have a working camera feed
+#                width: 704 # <---- update for your camera's resolution
+#                height: 576 # <---- update for your camera's resolution
+#            objects:
+#              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
+#              track:
+#                - person
+#                - bicycle
+#                - car
+#                - bird
+#                - cat
+#                - dog
+#                - horse
+#         london-ipcam:
+#             enabled: false
+#             ffmpeg:
+#                 inputs:
+#                     - path: rtsp://192.168.2.2:8554/london_cam # <----- The stream you want to use for detection
+#                       roles:
+#                         - rtmp
+#                         - record
+#                         - detect
+#             detect:
+#                 enabled: False
+#                 width: 1280
+#                 height: 720
+#             record:
+#                 enabled: False # Not needed for this camera but keeping for reference
+#                 events:
+#                   retain:
+#                     default: 10
+#             objects:
+#               # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
+#               track:
+#                 - person
+#                 - shoe
+#                 - handbag
+#                 - wine glass
+#                 - knife
+#                 - pizza
+#                 - laptop
+#                 - book
+#     EOT
+#   }
+#   # Password hashes are different each time and avoid changing secret constantly. 
+#   # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
+#   lifecycle {
+#     ignore_changes = [data["postfix-accounts.cf"]]
+#   }
+# }
 
 resource "kubernetes_deployment" "frigate" {
   metadata {
@@ -129,7 +132,7 @@ resource "kubernetes_deployment" "frigate" {
     }
   }
   spec {
-    replicas = 0 # Temporarily disabled
+    replicas = 0 # Temporarily disabled due to high power consumption
     strategy {
       type = "Recreate"
     }
@@ -169,8 +172,9 @@ resource "kubernetes_deployment" "frigate" {
           }
           volume_mount {
             name       = "config"
-            mount_path = "/config/config.yml"
-            sub_path   = "config.yml"
+            mount_path = "/config"
+            # mount_path = "/config/config.yml"
+            # sub_path   = "config.yml"
           }
           volume_mount {
             name       = "media"
@@ -183,8 +187,12 @@ resource "kubernetes_deployment" "frigate" {
         }
         volume {
           name = "config"
-          config_map {
-            name = "config"
+          # config_map {
+          #   name = "config"
+          # }
+          nfs {
+            path   = "/mnt/main/frigate"
+            server = "10.0.10.15"
           }
         }
         volume {
