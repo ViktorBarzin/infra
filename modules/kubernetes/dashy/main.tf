@@ -61,7 +61,7 @@ resource "kubernetes_deployment" "dashy" {
           name  = "dashy"
 
           port {
-            container_port = 80
+            container_port = 8080
           }
           volume_mount {
             name       = "config"
@@ -93,8 +93,9 @@ resource "kubernetes_service" "dashy" {
       app = "dashy"
     }
     port {
-      name = "http"
-      port = "80"
+      name        = "http"
+      port        = 80
+      target_port = 8080
     }
   }
 }
