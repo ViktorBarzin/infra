@@ -450,3 +450,8 @@ module "servarr" {
   source          = "./servarr"
   tls_secret_name = var.tls_secret_name
 }
+
+module "dnscat2" {
+  source = "./dnscat2"
+  # tls_secret_name = var.tls_secret_name
+}

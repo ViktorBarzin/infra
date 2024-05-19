@@ -35,7 +35,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
   data = {
     DMS_DEBUG                              = "0"
     ENABLE_CLAMAV                          = "0"
-    ENABLE_FAIL2BAN                        = "0"
+    ENABLE_FAIL2BAN                        = "1"
     ENABLE_FETCHMAIL                       = "0"
     ENABLE_POSTGREY                        = "0"
     ENABLE_SASLAUTHD                       = "0"
