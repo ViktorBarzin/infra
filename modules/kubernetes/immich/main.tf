@@ -109,6 +109,13 @@ resource "kubernetes_ingress_v1" "immich" {
       # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
       # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
       "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
+      "nginx.ingress.kubernetes.io/affinity" : "cookie"
+      "nginx.ingress.kubernetes.io/affinity-mode" : "persistent"
+      "nginx.ingress.kubernetes.io/session-cookie-change-on-failure" : true
+      "nginx.ingress.kubernetes.io/session-cookie-expires" : 172800
+      "nginx.ingress.kubernetes.io/session-cookie-max-age" : 172800
+      "nginx.ingress.kubernetes.io/session-cookie-name" : "STICKY_SESSION"
+      "nginx.ingress.kubernetes.io/use-regex" : false
     }
   }
 
