@@ -411,6 +411,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
     }
   }
   spec {
+    replicas = 1
     selector {
       match_labels = {
         "app.kubernetes.io/component" = "controller"
