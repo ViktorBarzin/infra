@@ -455,3 +455,8 @@ module "servarr" {
 #   source = "./dnscat2"
 #   # tls_secret_name = var.tls_secret_name
 # }
+
+module "ollama" {
+  source          = "./ollama"
+  tls_secret_name = var.tls_secret_name
+}
