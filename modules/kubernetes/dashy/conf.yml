@@ -1,52 +1,13 @@
-appConfig:
-  theme: dashy-docs
-  language: en
-  layout: auto
-  iconSize: large
-  startingView: default
-  defaultOpeningMethod: newtab
-  statusCheck: false
-  statusCheckInterval: 0
-  faviconApi: allesedv
-  routingMode: history
-  enableMultiTasking: false
-  widgetsAlwaysUseProxy: false
-  webSearch:
-    disableWebSearch: true
-    searchEngine: duckduckgo
-    openingMethod: newtab
-    searchBangs: {}
-  enableFontAwesome: true
-  enableMaterialDesignIcons: true
-  hideComponents:
-    hideHeading: true
-    hideNav: true
-    hideSearch: true
-    hideSettings: true
-    hideFooter: true
-  auth:
-    enableGuestAccess: false
-    users: []
-    enableKeycloak: false
-  showSplashScreen: false
-  preventWriteToDisk: false
-  preventLocalSave: false
-  disableConfiguration: false
-  disableConfigurationForNonAdmin: false
-  allowConfigEdit: true
-  enableServiceWorker: false
-  disableContextMenu: false
-  disableUpdateChecks: false
-  disableSmartSort: false
-  enableErrorReporting: false
 pageInfo:
-  title: Viktor Barzin's home lab
-  description: Dashboard with the most important services
+  title: Dashy
+  description: Welcome to your new dashboard!
   navLinks:
     - title: GitHub
-      path: https://github.com/ViktorBarzin
-      target: newtab
-  footerText: ""
+      path: https://github.com/Lissy93/dashy
+    - title: Documentation
+      path: https://dashy.to/docs
+appConfig:
+  theme: dashy-docs
 sections:
   - name: Infra
     icon: si-databricks
@@ -419,6 +380,13 @@ sections:
         url: https://audiobookshelf.viktorbarzin.me/
         target: newtab
         id: 12_1475_audiobookshelf
+      - &ref_42
+        title: Ollama
+        description: Self-hosted ChatGPT (using llama3)
+        icon: si-openai
+        url: https://ollama.viktorbarzin.me/
+        target: newtab
+        id: 13_1475_ollama
     filteredItems:
       - *ref_29
       - *ref_30
@@ -433,6 +401,7 @@ sections:
       - *ref_39
       - *ref_40
       - *ref_41
+      - *ref_42
     icon: si-sublimetext
   - name: Under Construction
     displayData:
@@ -442,20 +411,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_42
+      - &ref_43
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_43
+      - &ref_44
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
     filteredItems:
-      - *ref_42
       - *ref_43
+      - *ref_44
     icon: si-progress
