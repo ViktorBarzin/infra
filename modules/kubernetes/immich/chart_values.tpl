@@ -25,7 +25,7 @@ env:
   IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.105.1
+  tag: v1.106.4
 
 immich:
   persistence:
@@ -59,22 +59,6 @@ redis:
 
 server:
   enabled: true
-  image:
-    repository: ghcr.io/immich-app/immich-server
-    pullPolicy: IfNotPresent
-
-microservices:
-  enabled: true
-  env:
-    REVERSE_GEOCODING_DUMP_DIRECTORY: /geodata-cache
-  persistence:
-    geodata-cache:
-      enabled: true
-      size: 1Gi
-      # Optional: Set this to pvc to avoid downloading the geodata every start.
-      type: emptyDir
-      accessMode: ReadWriteMany
-      # storageClass: your-class
   image:
     repository: ghcr.io/immich-app/immich-server
     pullPolicy: IfNotPresent

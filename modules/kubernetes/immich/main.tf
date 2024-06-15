@@ -94,8 +94,7 @@ resource "helm_release" "immich" {
   repository = "https://immich-app.github.io/immich-charts"
   chart      = "immich"
   atomic     = true
-  # version    = "0.2.0"
-  version = "0.4.0"
+  version    = "0.7.0"
 
   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
