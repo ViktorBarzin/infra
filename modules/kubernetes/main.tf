@@ -460,3 +460,8 @@ module "ollama" {
   source          = "./ollama"
   tls_secret_name = var.tls_secret_name
 }
+
+module "ntfy" {
+  source          = "./ntfy"
+  tls_secret_name = var.tls_secret_name
+}
