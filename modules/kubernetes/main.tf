@@ -465,3 +465,8 @@ module "ntfy" {
   source          = "./ntfy"
   tls_secret_name = var.tls_secret_name
 }
+
+module "cyberchef" {
+  source          = "./cyberchef"
+  tls_secret_name = var.tls_secret_name
+}
