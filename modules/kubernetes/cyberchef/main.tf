@@ -84,11 +84,11 @@ resource "kubernetes_ingress_v1" "cyberchef" {
 
   spec {
     tls {
-      hosts       = ["cf.viktorbarzin.me"]
+      hosts       = ["cc.viktorbarzin.me"]
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "cf.viktorbarzin.me"
+      host = "cc.viktorbarzin.me"
       http {
         path {
           path = "/"
