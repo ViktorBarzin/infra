@@ -7,7 +7,9 @@ pageInfo:
     - title: Documentation
       path: https://dashy.to/docs
 appConfig:
-  theme: dashy-docs
+  theme: material
+  layout: auto
+  iconSize: large
 sections:
   - name: Infra
     icon: si-databricks
@@ -121,12 +123,12 @@ sections:
         url: https://uptime.viktorbarzin.me/status/valchedrym
         target: newtab
         id: 3_1567_valchedrymservicesuptime
+    icon: 🐶
     filteredItems:
       - *ref_9
       - *ref_10
       - *ref_11
       - *ref_12
-    icon: 🐶
   - name: Monitoring
     icon: hl-grafana
     displayData:
@@ -269,6 +271,7 @@ sections:
         icon: si-truenas
         url: http://truenas.viktorbarzin.me/ui/dashboard
         id: 7_1364_truenas
+    icon: si-adminer
     filteredItems:
       - *ref_21
       - *ref_22
@@ -278,7 +281,6 @@ sections:
       - *ref_26
       - *ref_27
       - *ref_28
-    icon: si-adminer
   - name: Public Services
     displayData:
       sortBy: alphabetical
@@ -367,7 +369,7 @@ sections:
       - &ref_40
         title: Photos
         description: Immich
-        icon: si-googlephotos
+        icon: si-immich
         url: https://photos.viktorbarzin.me
         target: newtab
         id: 11_1475_photos
@@ -387,6 +389,14 @@ sections:
         url: https://ollama.viktorbarzin.me/
         target: newtab
         id: 13_1475_ollama
+      - &ref_43
+        title: Paperless-ngx
+        description: Document index
+        icon: hl-paperless-ngx
+        url: https://pdf.viktorbarzin.me/
+        target: newtab
+        id: 14_1475_paperlessngx
+    icon: si-sublimetext
     filteredItems:
       - *ref_29
       - *ref_30
@@ -402,7 +412,7 @@ sections:
       - *ref_40
       - *ref_41
       - *ref_42
-    icon: si-sublimetext
+      - *ref_43
   - name: Under Construction
     displayData:
       sortBy: alphabetical
@@ -411,20 +421,20 @@ sections:
       collapsed: false
       hideForGuests: false
     items:
-      - &ref_43
+      - &ref_44
         title: Travel Blog
         icon: si-hugo
         url: https://travel.viktorbarzin.me/
         target: newtab
         statusCheck: false
         id: 0_1833_travelblog
-      - &ref_44
+      - &ref_45
         title: Personal Finance App
         icon: si-abstract
         url: https://finance.viktorbarzin.me/transaction
         statusCheck: false
         id: 1_1833_personalfinanceapp
-    filteredItems:
-      - *ref_43
-      - *ref_44
     icon: si-progress
+    filteredItems:
+      - *ref_44
+      - *ref_45

@@ -65,7 +65,7 @@ resource "kubernetes_deployment" "dashy" {
           }
           volume_mount {
             name       = "config"
-            mount_path = "/app/public/"
+            mount_path = "/app/user-data/"
           }
         }
         volume {
