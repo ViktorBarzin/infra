@@ -133,7 +133,7 @@ resource "kubernetes_ingress_v1" "immich" {
       # "nginx.ingress.kubernetes.io/session-cookie-max-age" : 172800
       # "nginx.ingress.kubernetes.io/session-cookie-name" : "STICKY_SESSION"
       # "nginx.ingress.kubernetes.io/use-regex" : false
-      # "nginx.org/websocket-services" : "immich-server"
+      "nginx.org/websocket-services" : "immich-server"
     }
   }
 
