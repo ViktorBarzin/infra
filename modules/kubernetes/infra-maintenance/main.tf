@@ -63,3 +63,80 @@ resource "kubernetes_cron_job_v1" "update-public-ip" {
     }
   }
 }
+
+# backup etcd
+resource "kubernetes_cron_job_v1" "backup-etcd" {
+  metadata {
+    name      = "backup-etcd"
+    namespace = "default"
+  }
+  spec {
+    schedule                      = "0 0 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {
+        name = "backup-etcd"
+      }
+      spec {
+        template {
+          metadata {
+            name = "backup-etcd"
+          }
+          spec {
+            node_name           = "k8s-master"
+            priority_class_name = "system-cluster-critical"
+            host_network        = true
+            container {
+              name    = "backup-etcd"
+              image   = "k8s.gcr.io/etcd-amd64:3.3.15"
+              command = ["/bin/sh"]
+              args    = ["-c", "etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt --key=/etc/kubernetes/pki/etcd/healthcheck-client.key snapshot save /backup/etcd-snapshot-$(date +%Y_%m_%d_%H:%M:%S_%Z).db"]
+              env {
+                name  = "ETCDCTL_API"
+                value = "3"
+              }
+              volume_mount {
+                mount_path = "/backup"
+                name       = "backup"
+              }
+              volume_mount {
+                mount_path = "/etc/kubernetes/pki/etcd"
+                name       = "etcd-certs"
+                read_only  = true
+              }
+            }
+            container {
+              name    = "backup-purge"
+              image   = "busybox:1.31.1"
+              command = ["/bin/sh"]
+              args    = ["-c", "find /backup -type f -mtime +30 -name '*.db' -exec rm -- '{}' \\;"]
+
+              volume_mount {
+                mount_path = "/backup"
+                name       = "backup"
+              }
+            }
+
+            volume {
+              name = "backup"
+              nfs {
+                path   = "/mnt/main/etcd-backup"
+                server = "10.0.10.15"
+              }
+            }
+            volume {
+              name = "etcd-certs"
+              host_path {
+                path = "/etc/kubernetes/pki/etcd"
+                type = "DirectoryOrCreate"
+              }
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+}
