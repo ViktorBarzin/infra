@@ -40,19 +40,19 @@ resource "kubernetes_service_account" "ingress_nginx" {
 # Jobs create a cert and modify this secret. This is problematic as TF recreates it every time
 # Instead, on each fresh install, uncomment this, get nginx working and comment it.
 # Also rm from state: tf state rm module.kubernetes_cluster.module.nginx-ingress.kubernetes_service_account.ingress_nginx_admission 
-# resource "kubernetes_service_account" "ingress_nginx_admission" {
-#   metadata {
-#     name      = "ingress-nginx-admission"
-#     namespace = "ingress-nginx"
-#     labels = {
-#       "app.kubernetes.io/component" = "admission-webhook"
-#       "app.kubernetes.io/instance"  = "ingress-nginx"
-#       "app.kubernetes.io/name"      = "ingress-nginx"
-#       "app.kubernetes.io/part-of"   = "ingress-nginx"
-#       "app.kubernetes.io/version"   = "1.8.2"
-#     }
-#   }
-# }
+resource "kubernetes_service_account" "ingress_nginx_admission" {
+  metadata {
+    name      = "ingress-nginx-admission"
+    namespace = "ingress-nginx"
+    labels = {
+      "app.kubernetes.io/component" = "admission-webhook"
+      "app.kubernetes.io/instance"  = "ingress-nginx"
+      "app.kubernetes.io/name"      = "ingress-nginx"
+      "app.kubernetes.io/part-of"   = "ingress-nginx"
+      "app.kubernetes.io/version"   = "1.8.2"
+    }
+  }
+}
 resource "kubernetes_role" "ingress_nginx" {
   metadata {
     name      = "ingress-nginx"
