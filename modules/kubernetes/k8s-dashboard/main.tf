@@ -19,6 +19,7 @@ resource "random_password" "csrf_token" {
 #     "--auto-generate-certificates",
 #     "--token-ttl=0"
 #   ])
+# }
 resource "kubernetes_namespace" "k8s-dashboard" {
   metadata {
     name = "kubernetes-dashboard"
@@ -33,6 +34,18 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "kubernetes-dashboard"
   tls_secret_name = var.tls_secret_name
+}
+
+resource "helm_release" "kubernetes-dashboard" {
+  namespace = "kubernetes-dashboard"
+  name      = "kubernetes-dashboard"
+
+  repository = "https://kubernetes.github.io/dashboard/"
+  chart      = "kubernetes-dashboard"
+  atomic     = true
+  # version    = "0.7.0"
+
+  # values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
 
 # # locals {
@@ -52,25 +65,25 @@ module "tls_secret" {
 #   depends_on = [kubernetes_namespace.kubernetes-dashboard]
 # }
 
-resource "kubernetes_secret" "dashboard-token" {
-  metadata {
-    name      = "dashboard-secret"
-    namespace = "kubernetes-dashboard"
-    annotations = {
-      "kubernetes.io/service-account.name" : "kubernetes-dashboard"
-    }
-  }
-  type = "kubernetes.io/service-account-token"
-}
+# resource "kubernetes_secret" "dashboard-token" {
+#   metadata {
+#     name      = "dashboard-secret"
+#     namespace = "kubernetes-dashboard"
+#     annotations = {
+#       "kubernetes.io/service-account.name" : "kubernetes-dashboard"
+#     }
+#   }
+#   type = "kubernetes.io/service-account-token"
+# }
 
 resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
   metadata {
     name      = "kubernetes-dashboard"
     namespace = "kubernetes-dashboard"
     annotations = {
-      "kubernetes.io/ingress.class"                    = "nginx"
-      "nginx.ingress.kubernetes.io/backend-protocol"   = "HTTPS"
-      "nginx.ingress.kubernetes.io/force-ssl-redirect" = "true"
+      "kubernetes.io/ingress.class"                  = "nginx"
+      "nginx.ingress.kubernetes.io/backend-protocol" = "HTTPS"
+      # "nginx.ingress.kubernetes.io/force-ssl-redirect" = "true"
       # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
       # "nginx.ingress.kubernetes.io/auth-tls-secret"        = var.client_certificate_secret_name
 
@@ -91,7 +104,7 @@ resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
           path = "/"
           backend {
             service {
-              name = "kubernetes-dashboard"
+              name = "kubernetes-dashboard-kong-proxy"
               port {
                 number = 443
               }
@@ -102,6 +115,15 @@ resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
     }
   }
   # depends_on = [module.dashboard]
+}
+
+# create token with
+# kb create token --duration=0s kubernetes-dashboard
+resource "kubernetes_service_account" "kubernetes-dashboard" {
+  metadata {
+    name      = "kubernetes-dashboard"
+    namespace = "kubernetes-dashboard"
+  }
 }
 
 # Give cluster-admin permissions to dashboard
@@ -121,39 +143,6 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
   }
   # depends_on = [module.dashboard]
 }
-
-# resource "kubernetes_ingress_v1" "oauth" {
-#   metadata {
-#     name      = "kubernetes-dashboard"
-#     namespace = "oauth"
-#     annotations = {
-#       "kubernetes.io/ingress.class"                    = "nginx"
-#       "nginx.ingress.kubernetes.io/force-ssl-redirect" = "true"
-
-#     }
-#   }
-
-#   spec {
-#     tls {
-#       hosts       = ["k8s.viktorbarzin.me"]
-#       secret_name = var.tls_secret_name
-#     }
-#     rule {
-#       host = "k8s.viktorbarzin.me"
-#       http {
-#         path {
-#           path = "/oauth2"
-#           backend {
-#             service_name = "oauth-proxy"
-#             service_port = "80"
-#           }
-#         }
-#       }
-#     }
-#   }
-#   depends_on = [module.dashboard]
-# }
-
 
 ## Readonly RBAC
 resource "kubernetes_cluster_role" "kubernetes-dashboard-viewonly" {
