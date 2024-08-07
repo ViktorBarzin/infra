@@ -214,6 +214,7 @@ resource "helm_release" "grafana" {
   namespace        = "monitoring"
   create_namespace = true
   name             = "grafana"
+  atomic           = true
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"

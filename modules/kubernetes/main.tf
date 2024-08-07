@@ -124,11 +124,6 @@ module "hackmd" {
   depends_on = [null_resource.core_services]
 }
 
-# TODO
-# module "ingress-nginx" {
-#   source = "./ingress-nginx"
-# }
-
 # module "kafka" {
 #   source                         = "./kafka"
 #   client_certificate_secret_name = var.client_certificate_secret_name
@@ -363,10 +358,10 @@ module "nginx-ingress" {
   crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 }
 
-module "crowdsec" {
-  source          = "./crowdsec"
-  tls_secret_name = var.tls_secret_name
-}
+# module "crowdsec" {
+#   source          = "./crowdsec"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 # Seems like it needs S3 even if pg is local...
 # module "resume" {
@@ -430,10 +425,10 @@ module "cloudflared" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
-module "metrics-server" {
-  source          = "./metrics-server"
-  tls_secret_name = var.tls_secret_name
-}
+# module "metrics-server" {
+#   source          = "./metrics-server"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "paperless-ngx" {
   source          = "./paperless-ngx"
@@ -446,10 +441,10 @@ module "jsoncrack" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "servarr" {
-  source          = "./servarr"
-  tls_secret_name = var.tls_secret_name
-}
+# module "servarr" {
+#   source          = "./servarr"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 # module "dnscat2" {
 #   source = "./dnscat2"
