@@ -86,11 +86,11 @@ service:
   #   myLabel: myValue
 
   port: 80
-  nodePort: 30091
+  #nodePort: 30091
   # clusterIP:
 
 ingress:
-  enabled: false
+  enabled: true
 
   annotations: {}
   # annotations:
