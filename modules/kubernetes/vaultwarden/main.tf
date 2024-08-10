@@ -42,12 +42,16 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.30.5"
+          image = "vaultwarden/server:1.31.0"
           name  = "vaultwarden"
           env {
             name  = "DOMAIN"
             value = "https://vaultwarden.viktorbarzin.me"
           }
+          # env {
+          #   name  = "ADMIN_TOKEN"
+          #   value = ""
+          # }
           env {
             name  = "SMTP_HOST"
             value = "smtp.viktorbarzin.me"
