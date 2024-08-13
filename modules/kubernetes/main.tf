@@ -465,3 +465,8 @@ module "cyberchef" {
   source          = "./cyberchef"
   tls_secret_name = var.tls_secret_name
 }
+
+module "diun" {
+  source          = "./diun"
+  tls_secret_name = var.tls_secret_name
+}
