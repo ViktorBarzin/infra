@@ -38,6 +38,9 @@ resource "kubernetes_deployment" "audiobookshelf" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           app = "audiobookshelf"
         }

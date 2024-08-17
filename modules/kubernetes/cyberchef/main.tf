@@ -34,6 +34,9 @@ resource "kubernetes_deployment" "cyberchef" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           app = "cyberchef"
         }

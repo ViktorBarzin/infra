@@ -38,6 +38,9 @@ resource "kubernetes_deployment" "uptime-kuma" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           app = "uptime-kuma"
         }
