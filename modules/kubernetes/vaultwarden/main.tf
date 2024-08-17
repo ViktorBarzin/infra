@@ -36,13 +36,16 @@ resource "kubernetes_deployment" "vaultwarden" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           app = "vaultwarden"
         }
       }
       spec {
         container {
-          image = "vaultwarden/server:1.31.0"
+          image = "vaultwarden/server:1.32.0"
           name  = "vaultwarden"
           env {
             name  = "DOMAIN"

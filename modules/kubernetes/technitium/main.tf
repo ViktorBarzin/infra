@@ -37,6 +37,9 @@ resource "kubernetes_deployment" "technitium" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           app = "technitium"
         }

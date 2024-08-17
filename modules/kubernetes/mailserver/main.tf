@@ -142,6 +142,9 @@ resource "kubernetes_deployment" "mailserver" {
     }
     template {
       metadata {
+        annotations = {
+          "diun.enable" = "true"
+        }
         labels = {
           "app"  = "mailserver"
           "role" = "mail"
