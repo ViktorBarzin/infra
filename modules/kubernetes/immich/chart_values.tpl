@@ -3,6 +3,9 @@
 ## Refer there for more detail about the supported values
 
 # These entries are shared between all the Immich components
+defaultPodOptions:
+  annotations:
+    diun.enable: "true"
 
 env:
   # REDIS_HOSTNAME: '{{ printf "%s-redis-master" .Release.Name }}'
@@ -25,7 +28,7 @@ env:
   IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.111.0
+  tag: v1.112.1
 
 immich:
   persistence:
