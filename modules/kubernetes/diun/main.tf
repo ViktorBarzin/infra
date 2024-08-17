@@ -15,6 +15,21 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_config_map" "docker-config" {
+  metadata {
+    name      = "docker-config"
+    namespace = "diun"
+
+    labels = {
+      app = "diun"
+    }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+}
+
 resource "kubernetes_service_account" "diun" {
   metadata {
     name      = "diun"
@@ -90,7 +105,7 @@ resource "kubernetes_deployment" "diun" {
           }
           env {
             name  = "DIUN_WATCH_SCHEDULE"
-            value = "* * * * *"
+            value = "0 */6 * * *"
           }
           env {
             name  = "DIUN_WATCH_JITTER"
@@ -101,18 +116,39 @@ resource "kubernetes_deployment" "diun" {
             value = "true"
           }
 
-          # volume_mount {
-          #   name       = "data"
-          #   mount_path = "/data"
+          // ntfy settings
+          env {
+            name  = "DIUN_NOTIF_NTFY_ENDPOINT"
+            value = "https://ntfy.viktorbarzin.me"
+          }
+          env {
+            name  = "DIUN_NOTIF_NTFY_TOPIC"
+            value = "diun-updates"
+          }
+          env {
+            name  = "LOG_LEVEL"
+            value = "debug"
+          }
+          # env {
+          #   name  = "DIUN_WATCH_FIRSTCHECKNOTIF"
+          #   value = "true"
           # }
+          env {
+            name  = "DIUN_NOTIF_NTFY_TIMEOUT"
+            value = "10s"
+          }
+          volume_mount {
+            name       = "docker-config"
+            mount_path = "/root/.docker/config.json"
+            sub_path   = "config.json"
+          }
         }
-        # volume {
-        #   name = "data"
-        #   nfs {
-        #     path   = "/mnt/main/diun"
-        #     server = "10.0.10.15"
-        #   }
-        # }
+        volume {
+          name = "docker-config"
+          config_map {
+            name = "docker-config"
+          }
+        }
       }
     }
   }
