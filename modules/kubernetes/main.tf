@@ -57,6 +57,8 @@ variable "resume_database_url" {}
 variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
+variable "diun_nfty_token" {}
+variable "docker_config" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -468,5 +470,12 @@ module "cyberchef" {
 
 module "diun" {
   source          = "./diun"
+  tls_secret_name = var.tls_secret_name
+  diun_nfty_token = var.diun_nfty_token
+  docker_config   = var.docker_config
+}
+
+module "meshcentral" {
+  source          = "./meshcentral"
   tls_secret_name = var.tls_secret_name
 }
