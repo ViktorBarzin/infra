@@ -74,7 +74,7 @@ server:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
     # storageClass: rook-cephfs
-  retention: "8w" # ~70GB storage
+  retention: "4w"
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
