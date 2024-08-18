@@ -1,4 +1,6 @@
 variable "tls_secret_name" {}
+variable "diun_nfty_token" {}
+variable "docker_config" {}
 
 resource "kubernetes_namespace" "diun" {
   metadata {
@@ -28,6 +30,9 @@ resource "kubernetes_config_map" "docker-config" {
     }
   }
 
+  data = {
+    "config.json" = var.docker_config
+  }
 }
 
 resource "kubernetes_service_account" "diun" {
@@ -124,6 +129,10 @@ resource "kubernetes_deployment" "diun" {
           env {
             name  = "DIUN_NOTIF_NTFY_TOPIC"
             value = "diun-updates"
+          }
+          env {
+            name  = "DIUN_NOTIF_NTFY_TOKEN"
+            value = var.diun_nfty_token
           }
           env {
             name  = "LOG_LEVEL"
