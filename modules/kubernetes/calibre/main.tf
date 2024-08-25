@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "calibre" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/calibre-web:latest"
+          image = "lscr.io/linuxserver/calibre-web:0.6.23"
           name  = "calibre"
           env {
             name  = "PUID"
