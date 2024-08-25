@@ -8,6 +8,9 @@ smtp_sasl_password_maps = hash:/etc/postfix/sasl/passwd
 smtp_sasl_security_options = noanonymous
 smtp_sasl_tls_security_options = noanonymous
 smtp_tls_security_level = encrypt
+smtpd_tls_cert_file=/tmp/ssl/tls.crt
+smtpd_tls_key_file=/tmp/ssl/tls.key
+smtpd_use_tls=yes
 header_size_limit = 4096000
 
 # Debug mail tls
