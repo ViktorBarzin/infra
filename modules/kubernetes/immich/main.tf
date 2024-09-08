@@ -112,7 +112,7 @@ resource "kubernetes_ingress_v1" "immich" {
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : "600s",
       "nginx.ingress.kubernetes.io/proxy-send-timeout" : "600s",
       "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "600s"
-      "nginx.ingress.kubernetes.io/client-max-body-size" : "2G"
+      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
       "nginx.ingress.kubernetes.io/proxy-body-size" : "2G",
       "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
       "nginx.ingress.kubernetes.io/proxy-max-temp-file-size" : "4096m"
