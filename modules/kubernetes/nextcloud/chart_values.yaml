@@ -1,0 +1,47 @@
+# ingress:
+#   enabled: true
+#   annotations:
+#     "kubernetes.io/ingress.class": "nginx"
+#   nginx.ingress.kubernetes.io/proxy-body-size: 4G
+#   #  kubernetes.io/tls-acme: "true"
+#   #  cert-manager.io/cluster-issuer: letsencrypt-prod
+#   #  # Keep this in sync with the README.md:
+#   #  nginx.ingress.kubernetes.io/server-snippet: |-
+#   #    server_tokens off;
+#   #    proxy_hide_header X-Powered-By;
+#   #    rewrite ^/.well-known/webfinger /index.php/.well-known/webfinger last;
+#   #    rewrite ^/.well-known/nodeinfo /index.php/.well-known/nodeinfo last;
+#   #    rewrite ^/.well-known/host-meta /public.php?service=host-meta last;
+#   #    rewrite ^/.well-known/host-meta.json /public.php?service=host-meta-json;
+#   #    location = /.well-known/carddav {
+#   #      return 301 $scheme://$host/remote.php/dav;
+#   #    }
+#   #    location = /.well-known/caldav {
+#   #      return 301 $scheme://$host/remote.php/dav;
+#   #    }
+#   #    location = /robots.txt {
+#   #      allow all;
+#   #      log_not_found off;
+#   #      access_log off;
+#   #    }
+#   #    location ~ ^/(?:build|tests|config|lib|3rdparty|templates|data)/ {
+#   #      deny all;
+#   #    }
+#   #    location ~ ^/(?:autotest|occ|issue|indie|db_|console) {
+#   #      deny all;
+#   #    }
+#   tls:
+#     - secretName: "${tls_secret_name}"
+#       hosts:
+#         - nextcloud.viktorbarzin.me
+#   labels: {}
+#   path: /
+#   pathType: Prefix
+
+nextcloud:
+  host: nextcloud.viktorbarin.me
+  trustedDomains:
+    - nextcloud.viktorbarin.me
+  extraEnv:
+    - name: TRUSTED_PROXIES
+      value: "127.0.0.1,10.0.0.0/8"
