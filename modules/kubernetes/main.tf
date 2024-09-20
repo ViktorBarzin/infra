@@ -479,3 +479,12 @@ module "meshcentral" {
   source          = "./meshcentral"
   tls_secret_name = var.tls_secret_name
 }
+# module "netbox" {
+#   source          = "./netbox"
+#   tls_secret_name = var.tls_secret_name
+# }
+
+# module "nextcloud" {
+#   source          = "./nextcloud"
+#   tls_secret_name = var.tls_secret_name
+# }
