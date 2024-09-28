@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "db_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -24,7 +25,8 @@ resource "helm_release" "nextcloud" {
   atomic     = true
   #   version    = "0.7.0"
 
-  values = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name })]
+  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.db_password })]
+  timeout = 6000
 }
 
 # resource "kubernetes_config_map" "config" {
@@ -114,14 +116,48 @@ resource "helm_release" "nextcloud" {
 #   }
 # }
 
+resource "kubernetes_persistent_volume" "nextcloud-data-pv" {
+  metadata {
+    name = "nextcloud-data-pv"
+  }
+  spec {
+    capacity = {
+      "storage" = "100Gi"
+    }
+    access_modes = ["ReadWriteOnce"]
+    persistent_volume_source {
+      nfs {
+        path   = "/mnt/main/nextcloud"
+        server = "10.0.10.15"
+      }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume_claim" "nextcloud-data-pvc" {
+  metadata {
+    name      = "nextcloud-data-pvc"
+    namespace = "nextcloud"
+  }
+  spec {
+    access_modes = ["ReadWriteOnce"]
+    resources {
+      requests = {
+        "storage" = "100Gi"
+      }
+    }
+    volume_name = "nextcloud-data-pv"
+  }
+}
+
 resource "kubernetes_ingress_v1" "nextcloud" {
   metadata {
     name      = "nextcloud-ingress"
     namespace = "nextcloud"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
+      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
     }
   }
 
