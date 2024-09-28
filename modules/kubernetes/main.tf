@@ -59,6 +59,7 @@ variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
 variable "docker_config" {}
+variable "nextcloud_db_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -484,7 +485,8 @@ module "meshcentral" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
-# module "nextcloud" {
-#   source          = "./nextcloud"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "nextcloud" {
+  source          = "./nextcloud"
+  tls_secret_name = var.tls_secret_name
+  db_password     = var.nextcloud_db_password
+}

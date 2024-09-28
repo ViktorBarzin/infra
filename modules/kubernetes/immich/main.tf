@@ -109,17 +109,18 @@ resource "kubernetes_ingress_v1" "immich" {
       # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
 
       # WARNING: When changing any of the below settings, ensure that large file uploads continue working
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" : "600s",
-      "nginx.ingress.kubernetes.io/proxy-send-timeout" : "600s",
-      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "600s"
+      "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000",
+      "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000",
+      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "6000"
       "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "10G",
-      "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
-      "nginx.ingress.kubernetes.io/proxy-max-temp-file-size" : "4096m"
-      "nginx.ingress.kubernetes.io/proxy-request-buffering" : "off"
-      "nginx.ingress.kubernetes.io/client-body-buffer-size" : "2G"
-      "nginx.ingress.kubernetes.io/proxy-buffer-size" : "16k"
-      "nginx.ingress.kubernetes.io/proxy-buffers-number" : "8"
+      # "nginx.ingress.kubernetes.io/proxy-body-size" : "5G",
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+      # "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
+      # "nginx.ingress.kubernetes.io/proxy-max-temp-file-size" : "4096m"
+      # "nginx.ingress.kubernetes.io/proxy-request-buffering" : "off"
+      # "nginx.ingress.kubernetes.io/client-body-buffer-size" : "5G"
+      # "nginx.ingress.kubernetes.io/proxy-buffer-size" : "16k"
+      # "nginx.ingress.kubernetes.io/proxy-buffers-number" : "8"
 
 
       # "nginx.ingress.kubernetes.io/client-body-buffer-size" : "5000m"
