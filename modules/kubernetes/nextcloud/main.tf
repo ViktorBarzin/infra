@@ -156,6 +156,8 @@ resource "kubernetes_ingress_v1" "nextcloud" {
     namespace = "nextcloud"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
+      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
       # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
       # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
     }
