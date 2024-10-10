@@ -361,10 +361,10 @@ module "nginx-ingress" {
   crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 }
 
-# module "crowdsec" {
-#   source          = "./crowdsec"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "crowdsec" {
+  source          = "./crowdsec"
+  tls_secret_name = var.tls_secret_name
+}
 
 # Seems like it needs S3 even if pg is local...
 # module "resume" {
