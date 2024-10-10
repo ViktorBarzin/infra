@@ -142,6 +142,7 @@ resource "kubernetes_ingress_v1" "paperless-ngx" {
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
       "nginx.ingress.kubernetes.io/proxy-body-size" : "100000m"
+      # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
       # "nginx.ingress.kubernetes.io/limit-rpm": "5"
     }
   }
