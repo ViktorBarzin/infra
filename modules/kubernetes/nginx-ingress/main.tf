@@ -310,7 +310,9 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     }
   }
   data = {
-    allow-snippet-annotations    = true
+    allow-snippet-annotations = true
+    # limit-req-status-code        = 429
+    # limit-conn-status-code       = 429
     enable-modsecurity           = true
     enable-owasp-modsecurity-crs = false
     modsecurity-snippet : <<-EOT
@@ -326,9 +328,9 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
         setvar:tx.block_harvester_ip=1,\
         setvar:tx.block_spammer_ip=1"
         EOT
-    # plugins = "crowdsec"
-    plugins          = ""
-    lua-shared-dicts = "crowdsec_cache: 500m"
+    plugins = "crowdsec"
+    # plugins          = ""
+    lua-shared-dicts = "crowdsec_cache: 50m"
     server-snippet : <<-EOT
     lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
     #resolver local=on ipv6=off valid=600s;
@@ -365,7 +367,8 @@ resource "kubernetes_service" "ingress_nginx_controller" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
     }
-    type = "LoadBalancer"
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local" // see https://metallb.universe.tf/usage/
     # ip_families = ["IPv4"]
   }
 }
@@ -452,6 +455,8 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             value = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
           }
           env {
+            // if you can't connect with bouncer not found, regenerate api key with:
+            // "cscli bouncers add nginx" on the lapi
             name  = "API_KEY"
             value = var.crowdsec_api_key
           }
@@ -488,7 +493,9 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             name  = "BOUNCER_CONFIG"
             value = "/crowdsec/crowdsec-bouncer.conf"
           }
-          command = ["sh", "-c", "sh /docker_start.sh; mkdir -p /lua_plugins/crowdsec/; cp -r /crowdsec /lua_plugins/; chown -R 101:101 /lua_plugins/"]
+          # command = ["sh", "-c", "sh /docker_start.sh; mkdir -p /lua_plugins/crowdsec/; cp -r /crowdsec /lua_plugins/; chown -R 101:101 /lua_plugins/"]
+          command = ["sh", "-c", "sh /docker_start.sh; mkdir -p /lua_plugins/crowdsec/; cp -R /crowdsec/* /lua_plugins/crowdsec/"]
+
           volume_mount {
             name       = "crowdsec"
             mount_path = "/lua_plugins"
