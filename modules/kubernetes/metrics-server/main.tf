@@ -26,7 +26,7 @@ resource "helm_release" "metrics-server" {
   repository = "https://kubernetes-sigs.github.io/metrics-server/"
   chart      = "metrics-server"
 
-  #   values = [templatefile("${path.module}/values.yaml", {})]
+  values = [templatefile("${path.module}/values.yaml", {})]
 
   depends_on = [kubernetes_namespace.metrics-server]
 }
