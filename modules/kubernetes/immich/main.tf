@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "postgresql_password" {}
+variable "homepage_token" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -94,7 +95,9 @@ resource "helm_release" "immich" {
   repository = "https://immich-app.github.io/immich-charts"
   chart      = "immich"
   atomic     = true
-  version    = "0.7.0"
+  version    = "0.8.1"
+  # version = "0.7.2"
+  timeout = 6000
 
   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
@@ -135,6 +138,15 @@ resource "kubernetes_ingress_v1" "immich" {
       # "nginx.ingress.kubernetes.io/session-cookie-name" : "STICKY_SESSION"
       # "nginx.ingress.kubernetes.io/use-regex" : false
       "nginx.org/websocket-services" : "immich-server"
+
+      "gethomepage.dev/enabled"      = "true"
+      "gethomepage.dev/description"  = "Photos library"
+      "gethomepage.dev/icon"         = "immich.png"
+      "gethomepage.dev/name"         = "Immich"
+      "gethomepage.dev/widget.type"  = "immich"
+      "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
+      "gethomepage.dev/pod-selector" = ""
+      "gethomepage.dev/widget.key"   = var.homepage_token
     }
   }
 
@@ -155,6 +167,7 @@ resource "kubernetes_ingress_v1" "immich" {
               port {
                 # number = 8080
                 number = 3001
+                # number = 2283
               }
             }
           }

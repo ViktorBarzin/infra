@@ -60,6 +60,7 @@ variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
 variable "docker_config" {}
 variable "nextcloud_db_password" {}
+variable "homepage_credentials" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -351,6 +352,7 @@ module "immich" {
   source              = "./immich"
   tls_secret_name     = var.tls_secret_name
   postgresql_password = var.immich_postgresql_password
+  homepage_token      = var.homepage_credentials["immich"]["token"]
 }
 
 module "nginx-ingress" {
@@ -362,8 +364,10 @@ module "nginx-ingress" {
 }
 
 module "crowdsec" {
-  source          = "./crowdsec"
-  tls_secret_name = var.tls_secret_name
+  source            = "./crowdsec"
+  tls_secret_name   = var.tls_secret_name
+  homepage_username = var.homepage_credentials["crowdsec"]["username"]
+  homepage_password = var.homepage_credentials["crowdsec"]["password"]
 }
 
 # Seems like it needs S3 even if pg is local...
@@ -380,8 +384,10 @@ module "uptime-kuma" {
 }
 
 module "calibre" {
-  source          = "./calibre"
-  tls_secret_name = var.tls_secret_name
+  source            = "./calibre"
+  tls_secret_name   = var.tls_secret_name
+  homepage_username = var.homepage_credentials["calibre-web"]["username"]
+  homepage_password = var.homepage_credentials["calibre-web"]["password"]
 }
 
 # Audiobooks are served using audiobookshelf; still looking for a usecawe for JF
@@ -428,15 +434,18 @@ module "cloudflared" {
 #   tls_secret_name = var.tls_secret_name
 # }
 
-# module "metrics-server" {
-#   source          = "./metrics-server"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "metrics-server" {
+  source          = "./metrics-server"
+  tls_secret_name = var.tls_secret_name
+}
 
 module "paperless-ngx" {
   source          = "./paperless-ngx"
   tls_secret_name = var.tls_secret_name
   db_password     = var.paperless_db_password
+  # homepage_token  = var.homepage_credentials["paperless-ngx"]["token"]
+  homepage_username = var.homepage_credentials["paperless-ngx"]["username"]
+  homepage_password = var.homepage_credentials["paperless-ngx"]["password"]
 }
 
 module "jsoncrack" {
@@ -489,4 +498,9 @@ module "nextcloud" {
   source          = "./nextcloud"
   tls_secret_name = var.tls_secret_name
   db_password     = var.nextcloud_db_password
+}
+
+module "homepage" {
+  source          = "./homepage"
+  tls_secret_name = var.tls_secret_name
 }
