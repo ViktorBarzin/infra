@@ -73,6 +73,9 @@ variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
 variable "docker_config" {}
 variable "nextcloud_db_password" {}
+variable "homepage_credentials" {
+  type = map(any)
+}
 
 variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
@@ -361,6 +364,7 @@ module "kubernetes_cluster" {
   docker_config   = var.docker_config
 
   nextcloud_db_password = var.nextcloud_db_password
+  homepage_credentials  = var.homepage_credentials
 }
 
 
