@@ -29,6 +29,8 @@ env:
 
 image:
   tag: v1.116.2
+  # tag: v1.117.0 # not working
+  # tag: v1.118.1
 
 immich:
   persistence:
