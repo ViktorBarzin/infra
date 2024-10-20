@@ -2,6 +2,8 @@
 # outside of K8S but would be nice to use the Nginx-ingress
 
 variable "tls_secret_name" {}
+variable "truenas_homepage_token" {}
+variable "pfsense_homepage_token" {}
 
 resource "kubernetes_namespace" "reverse-proxy" {
   metadata {
@@ -24,7 +26,24 @@ module "pfsense" {
   tls_secret_name  = var.tls_secret_name
   port             = 443
   backend_protocol = "HTTPS"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+
+  extra_annotations = {
+    "gethomepage.dev/enabled" : "true"
+    "gethomepage.dev/description" : "Cluster Firewall"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "pfsense.png"
+    "gethomepage.dev/name" : "pFsense"
+    "gethomepage.dev/widget.type" : "pfsense"
+    "gethomepage.dev/widget.version" : "2"
+    "gethomepage.dev/widget.url" : "https://10.0.20.1"
+    # "gethomepage.dev/widget.token"    = var.homepage_token
+    "gethomepage.dev/widget.username" : "admin"
+    "gethomepage.dev/widget.password" : var.pfsense_homepage_token
+    "gethomepage.dev/widget.fields" = "[\"load\", \"memory\", \"wanStatus\", \"disk\"]"
+    "gethomepage.dev/widget.wan"    = "vmx0"
+    # "gethomepage.dev/pod-selector" : ""
+  }
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://nas.viktorbarzin.me/
@@ -84,7 +103,20 @@ module "truenas" {
   port            = 80
   tls_secret_name = var.tls_secret_name
   max_body_size   = "0m"
-  depends_on      = [kubernetes_namespace.reverse-proxy]
+
+  extra_annotations = {
+    "gethomepage.dev/enabled" : "true"
+    "gethomepage.dev/description" : "TrueNAS"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "truenas.png"
+    "gethomepage.dev/name" : "TrueNAS"
+    "gethomepage.dev/widget.type" : "truenas"
+    "gethomepage.dev/widget.url" : "https://truenas.viktorbarzin.lan"
+    "gethomepage.dev/widget.key" : var.truenas_homepage_token
+    # "gethomepage.dev/widget.enablePools" : "true"
+    # "gethomepage.dev/pod-selector" : ""
+  }
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://r730.viktorbarzin.me/
@@ -187,4 +219,17 @@ module "london" {
   backend_protocol = "HTTPS"
   protected        = true
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = {
+    "gethomepage.dev/enabled" : "false"
+    "gethomepage.dev/description" : "OpenWRT London"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "openwrt.png"
+    "gethomepage.dev/name" : "OpenWRT London"
+    "gethomepage.dev/widget.type" : "openwrt"
+    "gethomepage.dev/widget.url" : "https://100.64.0.14"
+    # "gethomepage.dev/widget.token"    = var.homepage_token
+    "gethomepage.dev/widget.username" : "homepage"
+    "gethomepage.dev/widget.password" : "" # add later as Flint2's openwrt is a little odd
+    "gethomepage.dev/pod-selector" : ""
+  }
 }

@@ -329,8 +329,10 @@ module "vaultwarden" {
 }
 
 module "reverse-proxy" {
-  source          = "./reverse_proxy"
-  tls_secret_name = var.tls_secret_name
+  source                 = "./reverse_proxy"
+  tls_secret_name        = var.tls_secret_name
+  truenas_homepage_token = var.homepage_credentials["reverse_proxy"]["truenas_token"]
+  pfsense_homepage_token = var.homepage_credentials["reverse_proxy"]["pfsense_token"]
 }
 
 # Selfhosted Firefox send
