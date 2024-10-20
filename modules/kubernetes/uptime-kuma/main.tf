@@ -97,6 +97,16 @@ resource "kubernetes_ingress_v1" "uptime-kuma" {
       "nginx.ingress.kubernetes.io/affinity"            = "cookie"
       "nginx.ingress.kubernetes.io/affinity-mode"       = "persistent"
       "nginx.ingress.kubernetes.io/session-cookie-name" = "_sa_nginx"
+
+      "gethomepage.dev/enabled"     = "true"
+      "gethomepage.dev/description" = "Uptime monitor"
+      # gethomepage.dev/group: Media
+      "gethomepage.dev/icon" : "uptime-kuma.png"
+      "gethomepage.dev/name"         = "Uptime Kuma"
+      "gethomepage.dev/widget.type"  = "uptimekuma"
+      "gethomepage.dev/widget.url"   = "https://uptime.viktorbarzin.me"
+      "gethomepage.dev/widget.slug"  = "cluster-internal"
+      "gethomepage.dev/pod-selector" = ""
     }
   }
 
