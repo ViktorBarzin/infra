@@ -1,5 +1,9 @@
 variable "tls_secret_name" {}
 variable "db_password" {}
+# variable "homepage_token" {}
+variable "homepage_username" {}
+variable "homepage_password" {}
+
 
 resource "kubernetes_namespace" "paperless-ngx" {
   metadata {
@@ -144,6 +148,21 @@ resource "kubernetes_ingress_v1" "paperless-ngx" {
       "nginx.ingress.kubernetes.io/proxy-body-size" : "100000m"
       # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
       # "nginx.ingress.kubernetes.io/limit-rpm": "5"
+
+      "gethomepage.dev/enabled"     = "true"
+      "gethomepage.dev/description" = "Document library"
+      # gethomepage.dev/group: Media
+      "gethomepage.dev/icon" : "paperless-ngx.png"
+      "gethomepage.dev/name"        = "Paperless-ngx"
+      "gethomepage.dev/widget.type" = "paperlessngx"
+      "gethomepage.dev/widget.url"  = "https://pdf.viktorbarzin.me"
+      # "gethomepage.dev/widget.token"    = var.homepage_token
+      "gethomepage.dev/widget.username" = var.homepage_username
+      "gethomepage.dev/widget.password" = var.homepage_password
+      "gethomepage.dev/widget.fields"   = "[\"total\"]"
+      "gethomepage.dev/pod-selector"    = ""
+      # gethomepage.dev/weight: 10 # optional
+      # gethomepage.dev/instance: "public" # optional
     }
   }
 

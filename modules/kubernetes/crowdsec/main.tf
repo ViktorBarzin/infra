@@ -1,4 +1,6 @@
 variable "tls_secret_name" {}
+variable "homepage_username" {}
+variable "homepage_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -65,7 +67,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values = [templatefile("${path.module}/values.yaml", {})]
+  values = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password })]
 }
 
 # resource "kubernetes_ingress_v1" "metabase" {
