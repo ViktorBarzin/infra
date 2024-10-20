@@ -719,7 +719,7 @@ resource "kubernetes_deployment" "postgres" {
       }
       spec {
         container {
-          image = "postgres"
+          image = "postgres:16.4-bullseye"
           name  = "postgresql"
           env {
             name  = "POSTGRES_PASSWORD"
