@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "homepage_token" {}
 
 resource "kubernetes_namespace" "technitium" {
   metadata {
@@ -168,6 +169,19 @@ resource "kubernetes_ingress_v1" "technitium" {
       # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
       "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
       "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+
+      "gethomepage.dev/enabled"     = "true"
+      "gethomepage.dev/description" = "Internal DNS Server and Recursive Resolver"
+      # gethomepage.dev/group: Media
+      "gethomepage.dev/icon" : "technitium.png"
+      "gethomepage.dev/name"        = "Technitium"
+      "gethomepage.dev/widget.type" = "technitium"
+      "gethomepage.dev/widget.url"  = "http://technitium-web.technitium.svc.cluster.local:5380"
+      "gethomepage.dev/widget.key"  = var.homepage_token
+
+      "gethomepage.dev/widget.range"  = "LastWeek"
+      "gethomepage.dev/widget.fields" = "[\"totalQueries\", \"totalCached\", \"totalBlocked\", \"totalRecursive\"]"
+      "gethomepage.dev/pod-selector"  = ""
     }
   }
 

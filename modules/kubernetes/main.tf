@@ -302,6 +302,7 @@ module "travel_blog" {
 module "technitium" {
   source          = "./technitium"
   tls_secret_name = var.tls_secret_name
+  homepage_token  = var.homepage_credentials["technitium"]["token"]
 }
 
 module "headscale" {
