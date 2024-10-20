@@ -1,4 +1,10 @@
 variable "tls_secret_name" {}
+variable "homepage_username" {
+  default = ""
+}
+variable "homepage_password" {
+  default = ""
+}
 
 resource "kubernetes_namespace" "calibre" {
   metadata {
@@ -113,6 +119,19 @@ resource "kubernetes_ingress_v1" "calibre" {
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
       "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
+
+      "gethomepage.dev/enabled"     = "true"
+      "gethomepage.dev/description" = "Book library"
+      # gethomepage.dev/group: Media
+      "gethomepage.dev/icon" : "calibre-web.png"
+      "gethomepage.dev/name"            = "Calibre"
+      "gethomepage.dev/widget.type"     = "calibreweb"
+      "gethomepage.dev/widget.url"      = "https://calibre.viktorbarzin.me"
+      "gethomepage.dev/widget.username" = var.homepage_username
+      "gethomepage.dev/widget.password" = var.homepage_password
+      "gethomepage.dev/pod-selector"    = ""
+      # gethomepage.dev/weight: 10 # optional
+      # gethomepage.dev/instance: "public" # optional
     }
   }
 

@@ -89,6 +89,14 @@ server:
       # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
       nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
       nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/description: "Prometheus"
+      gethomepage.dev/icon: "prometheus.png"
+      gethomepage.dev/name: "Prometheus"
+      gethomepage.dev/widget.type: "prometheus"
+      gethomepage.dev/widget.url: "http://prometheus-server.monitoring.svc.cluster.local:80"
+      gethomepage.dev/pod-selector: ""
     tls:
       - secretName: "tls-secret"
         hosts:

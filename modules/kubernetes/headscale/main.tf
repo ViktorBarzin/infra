@@ -100,10 +100,12 @@ resource "kubernetes_deployment" "headscale" {
         #   }
         # }
         container {
-          image = "ghcr.io/gurucomputing/headscale-ui:latest"
+          # image = "ghcr.io/gurucomputing/headscale-ui:latest"
+          image = "ghcr.io/tale/headplane:0.3.2"
           name  = "headscale-ui"
           port {
-            container_port = 8081
+            # container_port = 8081
+            container_port = 3000
           }
           env {
             name  = "HTTP_PORT"
@@ -112,6 +114,18 @@ resource "kubernetes_deployment" "headscale" {
           env {
             name  = "HTTPS_PORT"
             value = "8082"
+          }
+          env {
+            name  = "HEADSCALE_URL"
+            value = "http://localhost:8080"
+          }
+          env {
+            name  = "COOKIE_SECRET"
+            value = "kekekekke"
+          }
+          env {
+            name  = "ROOT_API_KEY"
+            value = "kekekekeke"
           }
         }
       }
@@ -147,9 +161,10 @@ resource "kubernetes_service" "headscale" {
       protocol = "TCP"
     }
     port {
-      name        = "headscale-ui"
-      port        = "80"
-      target_port = 8081
+      name = "headscale-ui"
+      port = "80"
+      # target_port = 8081
+      target_port = 3000
       protocol    = "TCP"
     }
     port {
@@ -181,7 +196,8 @@ resource "kubernetes_ingress_v1" "headscale" {
       host = "headscale.viktorbarzin.me"
       http {
         path {
-          path = "/web"
+          # path = "/web"
+          path = "/admin"
           backend {
             service {
               name = "headscale"

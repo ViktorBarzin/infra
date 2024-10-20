@@ -30,6 +30,9 @@ variable "proxy_timeout" {
   type    = number
   default = 60
 }
+variable "extra_annotations" {
+  default = {}
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -58,7 +61,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
   metadata {
     name      = var.name
     namespace = var.namespace
-    annotations = {
+    annotations = merge({
       "nginx.ingress.kubernetes.io/backend-protocol" = "${var.backend_protocol}"
       "kubernetes.io/ingress.class"                  = "nginx"
       # "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "https://oauth2.viktorbarzin.me/oauth2/auth" : null
@@ -72,7 +75,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/proxy-send-timeout" : var.proxy_timeout
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
 
-    }
+    }, var.extra_annotations)
   }
 
   spec {
