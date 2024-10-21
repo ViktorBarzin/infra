@@ -331,6 +331,12 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     plugins = "crowdsec"
     # plugins          = ""
     lua-shared-dicts = "crowdsec_cache: 50m"
+    http-snippet : <<-EOT
+      proxy_cache_path /tmp/nginx-cache levels=1:2 keys_zone=static-cache:2m max_size=100m inactive=7d use_temp_path=off;
+      proxy_cache_key $scheme$proxy_host$request_uri;
+      proxy_cache_lock on;
+      proxy_cache_use_stale updating;
+    EOT
     server-snippet : <<-EOT
     lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
     #resolver local=on ipv6=off valid=600s;
@@ -415,6 +421,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
   }
   spec {
     replicas = 3
+
     selector {
       match_labels = {
         "app.kubernetes.io/component" = "controller"
@@ -430,6 +437,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           "app.kubernetes.io/name"      = "ingress-nginx"
           "app.kubernetes.io/part-of"   = "ingress-nginx"
           "app.kubernetes.io/version"   = "1.8.2"
+          "app"                         = "ingress-nginx"
         }
       }
       spec {
@@ -459,6 +467,10 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             // "cscli bouncers add nginx" on the lapi
             name  = "API_KEY"
             value = var.crowdsec_api_key
+          }
+          env {
+            name  = "MODE"
+            value = "stream"
           }
           env {
             name  = "CAPTCHA_PROVIDER"
@@ -622,8 +634,10 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
       type = "RollingUpdate"
       rolling_update {
         max_unavailable = "1"
+        max_surge       = "2"
       }
     }
+
     revision_history_limit = 10
   }
 }
