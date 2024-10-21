@@ -147,6 +147,18 @@ resource "kubernetes_ingress_v1" "immich" {
       "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
       "gethomepage.dev/pod-selector" = ""
       "gethomepage.dev/widget.key"   = var.homepage_token
+
+      # location ~* \.(png|jpg|jpeg|gif|webp|svg)$ {
+      #   expires 1M;
+      #   add_header Cache-Control "public, max-age=31536000, immutable";
+      # }
+      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
+        proxy_cache static-cache;
+        proxy_cache_valid 404 1m;
+        proxy_cache_use_stale error timeout updating http_404 http_500 http_502 http_503 http_504;
+        proxy_cache_bypass $http_x_purge;
+        add_header X-Cache-Status $upstream_cache_status;
+        EOF
     }
   }
 
