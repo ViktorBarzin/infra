@@ -472,27 +472,28 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             name  = "MODE"
             value = "stream"
           }
+          # env {
+          #   name  = "CAPTCHA_PROVIDER"
+          #   value = "recaptcha"
+          # }
           env {
-            name  = "CAPTCHA_PROVIDER"
-            value = "recaptcha"
+            name = "BOUNCING_ON_TYPE"
+            # value = "all"
+            value = "ban"
           }
-          env {
-            name  = "BOUNCING_ON_TYPE"
-            value = "all"
-          }
-          env {
-            name  = "SECRET_KEY"
-            value = var.crowdsec_captcha_secret_key
-          }
-          env {
-            name  = "SITE_KEY"
-            value = var.crowdsec_captcha_site_key
-          }
+          # env {
+          #   name  = "SECRET_KEY"
+          #   value = var.crowdsec_captcha_secret_key
+          # }
+          # env {
+          #   name  = "SITE_KEY"
+          #   value = var.crowdsec_captcha_site_key
+          # }
 
-          env {
-            name  = "DISABLE_RUN"
-            value = "true"
-          }
+          # env {
+          #   name  = "DISABLE_RUN"
+          #   value = "true"
+          # }
           env {
             name  = "BAN_TEMPLATE_PATH"
             value = "/etc/nginx/lua/plugins/crowdsec/templates/ban.html"
