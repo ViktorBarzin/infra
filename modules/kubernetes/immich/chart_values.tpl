@@ -23,14 +23,15 @@ env:
   # IMMICH_WEB_URL: "http://immich-web.immich.svc.cluster.local:3000"
   # IMMICH_WEB_URL: "http://immich-server.immich.svc.cluster.local:3001"
   #   IMMICH_SERVER_URL: '{{ printf "http://%s-server:3001" .Release.Name }}'
-  IMMICH_SERVER_URL: "http://immich-server.immich.svc.cluster.local:3001"
+  # IMMICH_SERVER_URL: "http://immich-server.immich.svc.cluster.local:3001"
+  # IMMICH_SERVER_URL: "http://immich-server.immich.svc.cluster.local:2283"
   #   IMMICH_MACHINE_LEARNING_URL: '{{ printf "http://%s-machine-learning:3003" .Release.Name }}'
-  IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
+  # IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
   tag: v1.116.2
   # tag: v1.117.0 # not working
-  # tag: v1.118.1
+  # tag: v1.118.0
 
 immich:
   persistence:
