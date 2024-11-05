@@ -507,3 +507,8 @@ module "homepage" {
   source          = "./homepage"
   tls_secret_name = var.tls_secret_name
 }
+
+module "matrix" {
+  source          = "./matrix"
+  tls_secret_name = var.tls_secret_name
+}
