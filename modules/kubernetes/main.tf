@@ -61,6 +61,8 @@ variable "diun_nfty_token" {}
 variable "docker_config" {}
 variable "nextcloud_db_password" {}
 variable "homepage_credentials" {}
+variable "authentik_secret_key" {}
+variable "authentik_postgres_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -511,4 +513,11 @@ module "homepage" {
 module "matrix" {
   source          = "./matrix"
   tls_secret_name = var.tls_secret_name
+}
+
+module "authentik" {
+  source            = "./authentik"
+  tls_secret_name   = var.tls_secret_name
+  secret_key        = var.authentik_secret_key
+  postgres_password = var.authentik_postgres_password
 }
