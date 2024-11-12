@@ -1,0 +1,18 @@
+authentik:
+  secret_key: "${secret_key}"
+  # This sends anonymous usage-data, stack traces on errors and
+  # performance data to authentik.error-reporting.a7k.io, and is fully opt-in
+  error_reporting:
+    enabled: true
+  postgresql:
+    host: postgresql.dbaas.svc.cluster.local
+    user: authentik
+    password: ${postgres_password}
+  redis:
+    host: redis.redis.svc.cluster.local
+
+server:
+  ingress:
+    enabled: false
+    # hosts:
+    #   - authentik.viktorbarzin.me
