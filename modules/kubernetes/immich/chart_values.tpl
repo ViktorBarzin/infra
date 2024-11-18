@@ -29,9 +29,9 @@ env:
   # IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.116.2
+  # tag: v1.116.2
   # tag: v1.117.0 # not working
-  # tag: v1.118.0
+  tag: v1.119.1
 
 immich:
   persistence:
