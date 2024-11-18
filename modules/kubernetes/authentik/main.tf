@@ -58,6 +58,18 @@ resource "kubernetes_ingress_v1" "authentik" {
             }
           }
         }
+        path {
+          path      = "/outpost.goauthentik.io"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = "ak-outpost-authentik-embedded-outpost"
+              port {
+                number = 9000
+              }
+            }
+          }
+        }
       }
     }
   }
