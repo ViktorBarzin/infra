@@ -458,10 +458,10 @@ module "jsoncrack" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "servarr" {
-#   source          = "./servarr"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "servarr" {
+  source          = "./servarr"
+  tls_secret_name = var.tls_secret_name
+}
 
 # module "dnscat2" {
 #   source = "./dnscat2"
@@ -522,7 +522,3 @@ module "authentik" {
   postgres_password = var.authentik_postgres_password
 }
 
-# module "qbittorrent" {
-#   source          = "./qbittorrent"
-#   tls_secret_name = var.tls_secret_name
-# }
