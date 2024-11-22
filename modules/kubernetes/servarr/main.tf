@@ -15,7 +15,7 @@ module "qbittorrent" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "flaresolverr" {
-#   source          = "./flaresolverr"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "flaresolverr" {
+  source          = "./flaresolverr"
+  tls_secret_name = var.tls_secret_name
+}
