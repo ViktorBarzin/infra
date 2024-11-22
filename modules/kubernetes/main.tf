@@ -521,3 +521,8 @@ module "authentik" {
   secret_key        = var.authentik_secret_key
   postgres_password = var.authentik_postgres_password
 }
+
+# module "qbittorrent" {
+#   source          = "./qbittorrent"
+#   tls_secret_name = var.tls_secret_name
+# }
