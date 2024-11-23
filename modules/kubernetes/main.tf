@@ -63,6 +63,9 @@ variable "nextcloud_db_password" {}
 variable "homepage_credentials" {}
 variable "authentik_secret_key" {}
 variable "authentik_postgres_password" {}
+variable "linkwarden_postgresql_password" {}
+variable "linkwarden_authentik_client_id" {}
+variable "linkwarden_authentik_client_secret" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -522,3 +525,10 @@ module "authentik" {
   postgres_password = var.authentik_postgres_password
 }
 
+module "linkwarden" {
+  source                  = "./linkwarden"
+  tls_secret_name         = var.tls_secret_name
+  postgresql_password     = var.linkwarden_postgresql_password
+  authentik_client_id     = var.linkwarden_authentik_client_id
+  authentik_client_secret = var.linkwarden_authentik_client_secret
+}

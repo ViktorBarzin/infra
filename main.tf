@@ -83,6 +83,9 @@ variable "ansible_prefix" {
   default     = "ANSIBLE_VAULT_PASSWORD_FILE=~/.ansible/vault_pass.txt ansible-playbook -i playbook/hosts.yaml playbook/linux.yml -t linux/initial_setup"
   description = "Provisioner command"
 }
+variable "linkwarden_postgresql_password" {}
+variable "linkwarden_authentik_client_id" {}
+variable "linkwarden_authentik_client_secret" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -370,6 +373,10 @@ module "kubernetes_cluster" {
 
   authentik_secret_key        = var.authentik_secret_key
   authentik_postgres_password = var.authentik_postgres_password
+
+  linkwarden_postgresql_password     = var.linkwarden_postgresql_password
+  linkwarden_authentik_client_id     = var.linkwarden_authentik_client_id
+  linkwarden_authentik_client_secret = var.linkwarden_authentik_client_secret
 }
 
 
