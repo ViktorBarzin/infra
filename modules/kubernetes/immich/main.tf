@@ -95,7 +95,7 @@ resource "helm_release" "immich" {
   repository = "https://immich-app.github.io/immich-charts"
   chart      = "immich"
   atomic     = true
-  version    = "0.8.1"
+  version    = "0.8.4"
   # version = "0.7.2"
   timeout = 6000
 
@@ -178,8 +178,8 @@ resource "kubernetes_ingress_v1" "immich" {
               name = "immich-server" # after v1.88
               port {
                 # number = 8080
-                number = 3001
-                # number = 2283
+                # number = 3001
+                number = 2283
               }
             }
           }
