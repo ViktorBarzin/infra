@@ -223,3 +223,55 @@ resource "kubernetes_ingress_v1" "photos" {
     }
   }
 }
+
+
+resource "kubernetes_cron_job_v1" "postgresql-backup" {
+  metadata {
+    name      = "postgresql-backup"
+    namespace = "immich"
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 */6 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup"
+              image = "postgres:16.4-bullseye"
+              command = ["/bin/sh", "-c", <<-EOT
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                PGPASSWORD=${var.postgresql_password} pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
+
+                # Rotate - delete last log file
+                cd /backup
+                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              nfs {
+                path   = "/mnt/main/immich/data-immich-postgresql"
+                server = "10.0.10.15"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
