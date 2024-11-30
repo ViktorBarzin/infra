@@ -232,3 +232,12 @@ module "london" {
     "gethomepage.dev/pod-selector" : ""
   }
 }
+module "pi-lights" {
+  source          = "./factory"
+  name            = "pi"
+  external_name   = "ha-london.viktorbarzin.lan"
+  port            = 5000
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  depends_on      = [kubernetes_namespace.reverse-proxy]
+}
