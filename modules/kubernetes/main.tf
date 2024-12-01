@@ -532,3 +532,8 @@ module "linkwarden" {
   authentik_client_id     = var.linkwarden_authentik_client_id
   authentik_client_secret = var.linkwarden_authentik_client_secret
 }
+
+module "actualbudget" {
+  source          = "./actualbudget"
+  tls_secret_name = var.tls_secret_name
+}
