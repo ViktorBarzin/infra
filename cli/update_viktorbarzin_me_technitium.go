@@ -57,8 +57,13 @@ func UpdatePublicIPViaTechnitiumAPI(newIp net.IP, username string, password stri
 	if err != nil {
 		return errors.Wrap(err, "failed to get technitium token")
 	}
-	for _, ns := range []string{"ns1", "ns2"} {
-		nsRecordName := ns + ".viktorbarzin.me"
+	for _, ns := range []string{"ns1", "ns2", "@"} {
+		nsRecordName := ""
+		if ns == "@" {
+			nsRecordName = "viktorbarzin.me."
+		} else {
+			nsRecordName = ns + ".viktorbarzin.me"
+		}
 		currIpStr, err := getRecordValue(token, nsRecordName, "A")
 		if err != nil {
 			return errors.Wrap(err, "failed to get A record for ns server")
