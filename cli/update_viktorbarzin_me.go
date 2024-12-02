@@ -84,7 +84,7 @@ func notifyForIPChange(oldIP, newIP net.IP) error {
 	// Notify if dyndns ip is different to public
 	// Currently send a message to Viktor via the webhook handler
 	const url = "https://webhook.viktorbarzin.me/fb/message-viktor"
-	body := []byte(fmt.Sprintf("Public IP (%s) is different than dynamic dns IP (%s). Job is running to update infra bind. As it stands GoDaddy does not provide an API to update glue records so please manually update the hostnames in the Godaddy UI to use the new IP: %s", oldIP.String(), newIP.String(), newIP.String()))
+	body := []byte(fmt.Sprintf("Public IP (%s) is different than dynamic dns IP (%s). Job is running to update infra bind. As it stands Spaceship.com does not provide an API to update glue records so please manually update the hostnames in the Spaceship.com UI to use the new IP: %s", oldIP.String(), newIP.String(), newIP.String()))
 
 	// Send the HTTP request
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
