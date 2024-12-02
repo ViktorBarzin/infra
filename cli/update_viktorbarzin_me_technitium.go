@@ -48,9 +48,9 @@ type UpdateRecordResponse struct {
 	ErrorMessage string `json:"errorMessage"`
 }
 
-// const TECHNITIUM_HOST = "technitium-web.technitium"
+const TECHNITIUM_HOST = "technitium-web.technitium"
 
-const TECHNITIUM_HOST = "localhost"
+// const TECHNITIUM_HOST = "localhost"
 
 func UpdatePublicIPViaTechnitiumAPI(newIp net.IP, username string, password string) error {
 	token, err := createTechnitiumToken(username, password)
