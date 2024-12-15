@@ -241,3 +241,15 @@ module "pi-lights" {
   protected       = true
   depends_on      = [kubernetes_namespace.reverse-proxy]
 }
+
+# module "ups" { # .NET app doesn't work well behind host
+#   source           = "./factory"
+#   name             = "ups"
+#   external_name    = "ups.viktorbarzin.lan"
+#   backend_protocol = "HTTPS"
+#   port             = 443
+#   tls_secret_name  = var.tls_secret_name
+#   # protected        = true
+#   protected  = false
+#   depends_on = [kubernetes_namespace.reverse-proxy]
+# }
