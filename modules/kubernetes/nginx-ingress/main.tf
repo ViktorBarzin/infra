@@ -343,6 +343,16 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     EOT
   }
 }
+
+resource "kubernetes_config_map" "udp_services" {
+  metadata {
+    name      = "udp-services"
+    namespace = "ingress-nginx"
+  }
+  data = {
+    53 : "technitium/technitium-dns:53"
+  }
+}
 resource "kubernetes_service" "ingress_nginx_controller" {
   metadata {
     name      = "ingress-nginx-controller"
@@ -367,6 +377,12 @@ resource "kubernetes_service" "ingress_nginx_controller" {
       protocol    = "TCP"
       port        = 443
       target_port = "https"
+    }
+    port {
+      name        = "dns"
+      protocol    = "UDP"
+      port        = 53
+      target_port = "dns"
     }
     selector = {
       "app.kubernetes.io/component" = "controller"
@@ -523,7 +539,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
         container {
           name  = "controller"
           image = "registry.k8s.io/ingress-nginx/controller:v1.10.1@sha256:e24f39d3eed6bcc239a56f20098878845f62baa34b9f2be2fd2c38ce9fb0f29e"
-          args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key"]
+          args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key", "--udp-services-configmap", "ingress-nginx/udp-services"]
           volume_mount {
             name       = "crowdsec"
             mount_path = "/etc/nginx/lua/plugins/crowdsec"
@@ -538,6 +554,11 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             name           = "https"
             container_port = 443
             protocol       = "TCP"
+          }
+          port {
+            name           = "dns"
+            container_port = 53
+            protocol       = "UDP"
           }
           port {
             name           = "webhook"
