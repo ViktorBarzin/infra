@@ -396,3 +396,23 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'openwrt_$${1}'
+  - job_name: 'snmp-ups'
+    params:
+      module: [huawei]
+    static_configs:
+        - targets:
+          - "ups.viktorbarzin.lan:161"
+    metrics_path: '/snmp'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'snmp-exporter.monitoring.svc.cluster.local:9116'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'ups_$${1}'
