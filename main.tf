@@ -108,6 +108,8 @@ provider "helm" {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
+# TODO: add DEFCON levels
+
 # provider "proxmox" {
 #   endpoint = "https://10.0.10.105:8006/api2/json"
 #   username = "root@pam"
