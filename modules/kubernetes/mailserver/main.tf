@@ -326,7 +326,21 @@ resource "kubernetes_deployment" "mailserver" {
           }
           env {
             name  = "ROUNDCUBEMAIL_SMTP_SERVER"
-            value = "tls://smtp.viktorbarzin.me"
+            value = "tls://127.0.0.1" # running in same pod
+            # value = "tls://smtp.viktorbarzin.me"
+            # value = "tls://mailserver.mailserver.svc.cluster.local"
+          }
+          env {
+            name  = "ROUNDCUBEMAIL_SMTP_DEBUG"
+            value = "true"
+          }
+          env {
+            name  = "ROUNDCUBEMAIL_DEBUG_LEVEL"
+            value = "2"
+          }
+          env {
+            name  = "ROUNDCUBEMAIL_LOG_DRIVER"
+            value = "file"
           }
           port {
             name           = "web"
