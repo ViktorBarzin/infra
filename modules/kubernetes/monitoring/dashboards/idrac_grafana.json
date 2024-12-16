@@ -1,0 +1,2000 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "$$hashKey": "object:208",
+                "builtIn": 1,
+                "datasource": {
+                    "type": "datasource",
+                    "uid": "grafana"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "description": "SNMP Based Dashboard to Monitor Dell Hosts via iDRAC - by ilovepancakes95",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "gnetId": 12106,
+    "graphTooltip": 0,
+    "id": 16,
+    "links": [],
+    "panels": [
+        {
+            "collapsed": false,
+            "datasource": {
+                "uid": "${DS_PROMETHEUS-01}"
+            },
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 182,
+            "panels": [],
+            "targets": [
+                {
+                    "datasource": {
+                        "uid": "${DS_PROMETHEUS-01}"
+                    },
+                    "refId": "A"
+                }
+            ],
+            "title": "iDRAC Summary",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "gridPos": {
+                "h": 2,
+                "w": 2,
+                "x": 0,
+                "y": 1
+            },
+            "id": 8,
+            "maxDataPoints": 100,
+            "options": {
+                "code": {
+                    "language": "plaintext",
+                    "showLineNumbers": false,
+                    "showMiniMap": false
+                },
+                "content": "GCFSDN2",
+                "mode": "markdown"
+            },
+            "pluginVersion": "11.1.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "expr": "",
+                    "format": "table",
+                    "groupBy": [],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "query": "SELECT \"system-servicetag\" FROM /^$idrac_host$/ WHERE (\"system-name\" =~ /^$idrac_host$/) AND $timeFilter",
+                    "rawQuery": false,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "system-servicetag"
+                                ],
+                                "type": "field"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Service Tag",
+            "type": "text"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "1": {
+                                    "text": "Other"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "2": {
+                                    "text": "Unknown"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "3": {
+                                    "text": "OK"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "4": {
+                                    "text": "Non-Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "5": {
+                                    "text": "Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "6": {
+                                    "text": "Non-Recoverable Fail"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "none"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 2,
+                "w": 2,
+                "x": 2,
+                "y": 1
+            },
+            "id": 406,
+            "maxDataPoints": 100,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "horizontal",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
+            },
+            "pluginVersion": "11.1.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_system_processor_total_threads",
+                    "groupBy": [],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "query": "SELECT \"power-state\" FROM \"esxi-01-idrac\" WHERE $timeFilter",
+                    "range": true,
+                    "rawQuery": false,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "memory-status"
+                                ],
+                                "type": "field"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Total Threads",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "1": {
+                                    "text": "Other"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "2": {
+                                    "text": "Unknown"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "3": {
+                                    "text": "OK"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "4": {
+                                    "text": "Non-Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "5": {
+                                    "text": "Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "6": {
+                                    "text": "Non-Recoverable Fail"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "decmbytes"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 2,
+                "w": 2,
+                "x": 4,
+                "y": 1
+            },
+            "id": 407,
+            "maxDataPoints": 100,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "horizontal",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
+            },
+            "pluginVersion": "11.1.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(r730_idrac_redfish_system_memory_capacity)",
+                    "groupBy": [],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "query": "SELECT \"power-state\" FROM \"esxi-01-idrac\" WHERE $timeFilter",
+                    "range": true,
+                    "rawQuery": false,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "temp-status"
+                                ],
+                                "type": "field"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Total Memory",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "1": {
+                                    "text": "Other"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "2": {
+                                    "text": "Unknown"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "3": {
+                                    "text": "OK"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "4": {
+                                    "text": "Non-Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "5": {
+                                    "text": "Critical Fail"
+                                }
+                            },
+                            "type": "value"
+                        },
+                        {
+                            "options": {
+                                "6": {
+                                    "text": "Non-Recoverable Fail"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "bytes"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 2,
+                "w": 2,
+                "x": 6,
+                "y": 1
+            },
+            "id": 405,
+            "maxDataPoints": 100,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "horizontal",
+                "percentChangeColorMode": "standard",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
+            },
+            "pluginVersion": "11.1.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(r730_idrac_redfish_system_storage_volume_capacity)",
+                    "groupBy": [],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "query": "SELECT \"power-state\" FROM \"esxi-01-idrac\" WHERE $timeFilter",
+                    "range": true,
+                    "rawQuery": false,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "storage-status"
+                                ],
+                                "type": "field"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Total Storage",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "decimals": 0,
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 70
+                            },
+                            {
+                                "color": "red",
+                                "value": 84
+                            }
+                        ]
+                    },
+                    "unit": "celsius"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "CPU 1 Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "CPU 2 Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(90, 161, 80)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 8,
+                "x": 8,
+                "y": 1
+            },
+            "id": 35,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "CPU 1 Temp",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_temperature_celsius{sensor=\"CPU1 Temp\"}",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "cpu1-temp"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            },
+                            {
+                                "params": [
+                                    " / 10"
+                                ],
+                                "type": "math"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "CPU Temp",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 1600
+                            },
+                            {
+                                "color": "red",
+                                "value": 1974
+                            }
+                        ]
+                    },
+                    "unit": "watt"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "System Watts"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 8,
+                "x": 16,
+                "y": 1
+            },
+            "id": 147,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "lastNotNull",
+                        "max",
+                        "min"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "System Watts",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_power_average_consumed_watts",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "system-watts"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "System Watts",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "RPM",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "decimals": 0,
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 720
+                            },
+                            {
+                                "color": "transparent",
+                                "value": 960
+                            }
+                        ]
+                    },
+                    "unit": "none"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 3
+            },
+            "id": 70,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "Fan 1",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "avg(r730_idrac_redfish_chassis_fan_rpm)",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan1-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                },
+                {
+                    "alias": "Fan 2",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "refId": "B",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan2-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                },
+                {
+                    "alias": "Fan 3",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "refId": "C",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan3-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                },
+                {
+                    "alias": "Fan 4",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "refId": "D",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan4-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                },
+                {
+                    "alias": "Fan 5",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "refId": "E",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan5-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                },
+                {
+                    "alias": "Fan 6",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "refId": "F",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "fan6-speed"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Average Fan Speed",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "decimals": 0,
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 42
+                            },
+                            {
+                                "color": "red",
+                                "value": 47
+                            }
+                        ]
+                    },
+                    "unit": "celsius"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Exhaust Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(90, 161, 80)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Inlet Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 8,
+                "x": 8,
+                "y": 8
+            },
+            "id": 52,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "Inlet Temp",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_temperature_celsius{sensor=\"System Board Inlet Temp\"}",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "inlet-temp"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            },
+                            {
+                                "params": [
+                                    " / 10"
+                                ],
+                                "type": "math"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Air Temp",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "decimals": 0,
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 42
+                            },
+                            {
+                                "color": "red",
+                                "value": 47
+                            }
+                        ]
+                    },
+                    "unit": "celsius"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Exhaust Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(90, 161, 80)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Inlet Temp"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 7,
+                "w": 8,
+                "x": 16,
+                "y": 8
+            },
+            "id": 651,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "Inlet Temp",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_temperature_celsius{sensor=\"System Board Exhaust Temp\"}",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "inlet-temp"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            },
+                            {
+                                "params": [
+                                    " / 10"
+                                ],
+                                "type": "math"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "System Board Exhaust Temp",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 1600
+                            },
+                            {
+                                "color": "red",
+                                "value": 1974
+                            }
+                        ]
+                    },
+                    "unit": "watt"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "System Watts"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "__systemRef": "hideSeriesFrom",
+                        "matcher": {
+                            "id": "byNames",
+                            "options": {
+                                "mode": "exclude",
+                                "names": [
+                                    "r730_idrac_redfish_chassis_power_voltage_volts{chassis_id=\"System.Embedded.1\", instance=\"192.168.1.4\", job=\"redfish-idrac\", power_voltage=\"PS2 Voltage 2\", power_voltage_id=\"iDRAC.Embedded.1#PS2Voltage\", resource=\"power_voltage\"}"
+                                ],
+                                "prefix": "All except:",
+                                "readOnly": true
+                            }
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.hideFrom",
+                                "value": {
+                                    "legend": false,
+                                    "tooltip": false,
+                                    "viz": true
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 0,
+                "y": 11
+            },
+            "id": 652,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "lastNotNull",
+                        "max",
+                        "min"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "System Watts",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_power_voltage_volts{power_voltage=~\"PS2 Voltage.*\"}",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "system-watts"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Input Voltage",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "links": [],
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "transparent",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 1600
+                            },
+                            {
+                                "color": "red",
+                                "value": 1974
+                            }
+                        ]
+                    },
+                    "unit": "watt"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "System Watts"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "rgb(91, 151, 235)",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 8,
+                "x": 0,
+                "y": 17
+            },
+            "id": 653,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "lastNotNull",
+                        "max",
+                        "min"
+                    ],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "7.3.5",
+            "targets": [
+                {
+                    "alias": "System Watts",
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "r730_idrac_redfish_chassis_power_voltage_volts{power_voltage=~\"PS1 Voltage.*\"}",
+                    "groupBy": [
+                        {
+                            "params": [
+                                "$__interval"
+                            ],
+                            "type": "time"
+                        },
+                        {
+                            "params": [
+                                "none"
+                            ],
+                            "type": "fill"
+                        }
+                    ],
+                    "interval": "",
+                    "legendFormat": "",
+                    "measurement": "idrac-hosts",
+                    "orderByTime": "ASC",
+                    "policy": "default",
+                    "range": true,
+                    "refId": "A",
+                    "resultFormat": "time_series",
+                    "select": [
+                        [
+                            {
+                                "params": [
+                                    "system-watts"
+                                ],
+                                "type": "field"
+                            },
+                            {
+                                "params": [],
+                                "type": "mean"
+                            }
+                        ]
+                    ],
+                    "tags": [
+                        {
+                            "key": "system-name",
+                            "operator": "=~",
+                            "value": "/^$idrac_host$/"
+                        }
+                    ]
+                }
+            ],
+            "title": "Input Voltage (UPS power supply)",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "",
+    "schemaVersion": 39,
+    "tags": [
+        "idrac",
+        "telegraf",
+        "snmp"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-3h",
+        "to": "now"
+    },
+    "timepicker": {
+        "hidden": false,
+        "refresh_intervals": [
+            "5s",
+            "10s",
+            "30s",
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "1h",
+            "2h",
+            "1d"
+        ]
+    },
+    "timezone": "",
+    "title": "iDRAC - Host Stats",
+    "uid": "O19gr0jZk",
+    "version": 4,
+    "weekStart": ""
+}
