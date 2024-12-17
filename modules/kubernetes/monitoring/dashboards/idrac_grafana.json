@@ -1675,7 +1675,7 @@
                             }
                         ]
                     },
-                    "unit": "watt"
+                    "unit": "volt"
                 },
                 "overrides": [
                     {
@@ -1816,6 +1816,8 @@
                         "axisColorMode": "text",
                         "axisLabel": "",
                         "axisPlacement": "auto",
+                        "axisSoftMax": 240,
+                        "axisSoftMin": 220,
                         "barAlignment": 0,
                         "drawStyle": "line",
                         "fillOpacity": 10,
@@ -1861,7 +1863,7 @@
                             }
                         ]
                     },
-                    "unit": "watt"
+                    "unit": "volt"
                 },
                 "overrides": [
                     {
@@ -1995,6 +1997,6 @@
     "timezone": "",
     "title": "iDRAC - Host Stats",
     "uid": "O19gr0jZk",
-    "version": 5,
+    "version": 6,
     "weekStart": ""
 }
