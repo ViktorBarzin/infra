@@ -1963,7 +1963,7 @@
             "type": "timeseries"
         }
     ],
-    "refresh": "",
+    "refresh": "1m",
     "schemaVersion": 39,
     "tags": [
         "idrac",
@@ -1995,6 +1995,6 @@
     "timezone": "",
     "title": "iDRAC - Host Stats",
     "uid": "O19gr0jZk",
-    "version": 4,
+    "version": 5,
     "weekStart": ""
 }
