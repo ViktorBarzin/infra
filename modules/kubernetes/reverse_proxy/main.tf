@@ -252,4 +252,8 @@ module "pi-lights" {
 #   # protected        = true
 #   protected  = false
 #   depends_on = [kubernetes_namespace.reverse-proxy]
+#   extra_annotations = {
+#     "nginx.ingress.kubernetes.io/upstream-vhost" : "",
+#     # "nginx.ingress.kubernetes.io/proxy-set-header" : "Host: <>",
+#   }
 # }
