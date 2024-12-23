@@ -66,6 +66,15 @@ variable "authentik_postgres_password" {}
 variable "linkwarden_postgresql_password" {}
 variable "linkwarden_authentik_client_id" {}
 variable "linkwarden_authentik_client_secret" {}
+variable "cloudflare_tunnel_token" {}
+variable "cloudflare_api_key" {}
+variable "cloudflare_email" {}
+variable "cloudflare_account_id" {}
+variable "cloudflare_zone_id" {}
+variable "cloudflare_tunnel_id" {}
+variable "public_ip" {}
+variable "cloudflare_proxied_names" {}
+variable "cloudflare_non_proxied_names" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -425,6 +434,16 @@ module "frigate" {
 module "cloudflared" {
   source          = "./cloudflared"
   tls_secret_name = var.tls_secret_name
+
+  cloudflare_api_key           = var.cloudflare_api_key
+  cloudflare_email             = var.cloudflare_email
+  cloudflare_account_id        = var.cloudflare_account_id
+  cloudflare_zone_id           = var.cloudflare_zone_id
+  cloudflare_tunnel_id         = var.cloudflare_tunnel_id
+  public_ip                    = var.public_ip
+  cloudflare_proxied_names     = var.cloudflare_proxied_names
+  cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
+  cloudflare_tunnel_token      = var.cloudflare_tunnel_token
 }
 
 # module "istio" {
