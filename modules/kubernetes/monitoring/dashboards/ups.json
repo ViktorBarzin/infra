@@ -517,15 +517,27 @@
           },
           "mappings": [],
           "thresholds": {
-            "mode": "percentage",
+            "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "dark-red",
+                "value": 200
+              },
+              {
+                "color": "orange",
+                "value": 210
+              },
+              {
+                "color": "green",
+                "value": 220
               }
             ]
           },
-          "unit": "amp"
+          "unit": "volt"
         },
         "overrides": []
       },
@@ -535,7 +547,7 @@
         "x": 18,
         "y": 0
       },
-      "id": 4,
+      "id": 17,
       "options": {
         "minVizHeight": 75,
         "minVizWidth": 75,
@@ -560,7 +572,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "ups_upsBatteryCurrent / 1000000000",
+          "expr": "ups_upsInputVoltage",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,
@@ -570,7 +582,7 @@
           "useBackend": false
         }
       ],
-      "title": "Battery Current",
+      "title": "Input Voltage",
       "type": "gauge"
     },
     {
@@ -693,7 +705,7 @@
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 200
               }
             ]
           },
@@ -1043,9 +1055,77 @@
       ],
       "title": "Output Current",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "amp"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 3,
+        "x": 21,
+        "y": 21
+      },
+      "id": 4,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "ups_upsBatteryCurrent / 1000000000",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Battery Current",
+      "type": "gauge"
     }
   ],
-  "refresh": "auto",
+  "refresh": "5s",
   "schemaVersion": 39,
   "tags": [],
   "templating": {
@@ -1059,6 +1139,6 @@
   "timezone": "browser",
   "title": "Huawei UPS 2000",
   "uid": "ee70yskqw5u68f",
-  "version": 11,
+  "version": 15,
   "weekStart": ""
 }
