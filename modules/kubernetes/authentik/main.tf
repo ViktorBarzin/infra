@@ -22,7 +22,7 @@ resource "helm_release" "authentik" {
 
   repository = "https://charts.goauthentik.io/"
   chart      = "authentik"
-  version    = "2024.10.4"
+  version    = "2024.12.0"
   atomic     = true
   timeout    = 6000
 
