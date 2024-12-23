@@ -74,7 +74,7 @@ server:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
     # storageClass: rook-cephfs
-  retention: "4w"
+  retention: "12w"
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
@@ -149,6 +149,15 @@ serverFiles:
   #           targets: "alertmanager.viktorbarzin.lan"
   alerting_rules.yml:
     groups:
+      - name: LowVoltage
+        rules:
+          - alert: LowVoltage
+            expr: ups_upsInputVoltage < 205
+            for: 1m
+            labels:
+              severity: page
+            annotations:
+              summary: Low input voltage
       - name: NodeDown
         rules:
           - alert: NodeDown
