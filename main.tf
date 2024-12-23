@@ -86,6 +86,15 @@ variable "ansible_prefix" {
 variable "linkwarden_postgresql_password" {}
 variable "linkwarden_authentik_client_id" {}
 variable "linkwarden_authentik_client_secret" {}
+variable "cloudflare_api_key" {}
+variable "cloudflare_email" {}
+variable "cloudflare_account_id" {}
+variable "cloudflare_zone_id" {}
+variable "cloudflare_tunnel_id" {}
+variable "public_ip" {}
+variable "cloudflare_proxied_names" {}
+variable "cloudflare_non_proxied_names" {}
+variable "cloudflare_tunnel_token" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -379,6 +388,17 @@ module "kubernetes_cluster" {
   linkwarden_postgresql_password     = var.linkwarden_postgresql_password
   linkwarden_authentik_client_id     = var.linkwarden_authentik_client_id
   linkwarden_authentik_client_secret = var.linkwarden_authentik_client_secret
+
+  # Cloudflare credentials
+  cloudflare_api_key           = var.cloudflare_api_key
+  cloudflare_email             = var.cloudflare_email
+  cloudflare_account_id        = var.cloudflare_account_id
+  cloudflare_zone_id           = var.cloudflare_zone_id
+  cloudflare_tunnel_id         = var.cloudflare_tunnel_id
+  public_ip                    = var.public_ip
+  cloudflare_proxied_names     = var.cloudflare_proxied_names
+  cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
+  cloudflare_tunnel_token      = var.cloudflare_tunnel_token
 }
 
 

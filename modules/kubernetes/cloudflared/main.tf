@@ -1,4 +1,7 @@
+# Contents for cloudflare tunnel
+
 variable "tls_secret_name" {}
+variable "cloudflare_tunnel_token" {}
 resource "kubernetes_namespace" "cloudflared" {
   metadata {
     name = "cloudflared"
@@ -40,8 +43,14 @@ resource "kubernetes_deployment" "cloudflared" {
       }
       spec {
         container {
-          image = "wisdomsky/cloudflared-web:latest"
-          name  = "cloudflared"
+          # image = "wisdomsky/cloudflared-web:latest"
+          image   = "cloudflare/cloudflared"
+          name    = "cloudflared"
+          command = ["cloudflared", "tunnel", "run"]
+          env {
+            name  = "TUNNEL_TOKEN"
+            value = var.cloudflare_tunnel_token
+          }
 
           port {
             container_port = 14333
@@ -108,4 +117,3 @@ resource "kubernetes_ingress_v1" "cloudflared" {
     }
   }
 }
-
