@@ -80,3 +80,14 @@ resource "cloudflare_record" "non_proxied_dns_record" {
   type    = "A"
   zone_id = var.cloudflare_zone_id
 }
+
+
+resource "cloudflare_record" "mail" {
+  content  = "mail.viktorbarzin.me"
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "MX"
+  priority = 1
+  zone_id  = var.cloudflare_zone_id
+}
