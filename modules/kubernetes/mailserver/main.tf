@@ -319,7 +319,7 @@ resource "kubernetes_deployment" "mailserver" {
 
         container {
           name  = "roundcube"
-          image = "roundcube/roundcubemail"
+          image = "roundcube/roundcubemail:1.6.9-apache"
           env {
             name  = "ROUNDCUBEMAIL_DEFAULT_HOST"
             value = "127.0.0.1" # running in same pod
@@ -327,6 +327,8 @@ resource "kubernetes_deployment" "mailserver" {
           env {
             name  = "ROUNDCUBEMAIL_SMTP_SERVER"
             value = "tls://127.0.0.1" # running in same pod
+            # value = "ssl://127.0.0.1" # running in same pod
+            # value = "tls://mailserver.mailserver.svc.cluster.local" # running in same pod
             # value = "tls://smtp.viktorbarzin.me"
             # value = "tls://mailserver.mailserver.svc.cluster.local"
           }
@@ -336,11 +338,12 @@ resource "kubernetes_deployment" "mailserver" {
           }
           env {
             name  = "ROUNDCUBEMAIL_DEBUG_LEVEL"
-            value = "2"
+            value = "6"
           }
           env {
-            name  = "ROUNDCUBEMAIL_LOG_DRIVER"
-            value = "file"
+            name = "ROUNDCUBEMAIL_LOG_DRIVER"
+            # value = "file"
+            value = "syslog"
           }
           port {
             name           = "web"
