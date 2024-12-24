@@ -97,6 +97,7 @@ resource "kubernetes_ingress_v1" "uptime-kuma" {
       "nginx.ingress.kubernetes.io/affinity"            = "cookie"
       "nginx.ingress.kubernetes.io/affinity-mode"       = "persistent"
       "nginx.ingress.kubernetes.io/session-cookie-name" = "_sa_nginx"
+      "nginx.org/websocket-services"                    = "uptime-kuma"
 
       "gethomepage.dev/enabled"     = "true"
       "gethomepage.dev/description" = "Uptime monitor"
