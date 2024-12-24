@@ -72,7 +72,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
 
       "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx" : null
       "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri" : null
-      "nginx.ingress.kubernetes.io/auth-response-headers" : var.protected ? "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid" : null
+      # "nginx.ingress.kubernetes.io/auth-response-headers" : var.protected ? "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid" : null
       "nginx.ingress.kubernetes.io/auth-snippet" : var.protected ? "proxy_set_header X-Forwarded-Host $http_host;" : null
 
       "nginx.ingress.kubernetes.io/proxy-body-size" : var.max_body_size

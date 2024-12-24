@@ -93,6 +93,7 @@ module "tp-link-gateway" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  protected        = true
 }
 
 # https://truenas.viktorbarzin.me/
