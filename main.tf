@@ -71,6 +71,7 @@ variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
+variable "diun_slack_url" {}
 variable "docker_config" {}
 variable "nextcloud_db_password" {}
 variable "homepage_credentials" {
@@ -377,7 +378,7 @@ module "kubernetes_cluster" {
   paperless_db_password = var.paperless_db_password
 
   diun_nfty_token = var.diun_nfty_token
-  docker_config   = var.docker_config
+  diun_slack_url  = var.diun_slack_url
 
   nextcloud_db_password = var.nextcloud_db_password
   homepage_credentials  = var.homepage_credentials

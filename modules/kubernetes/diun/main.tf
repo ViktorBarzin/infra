@@ -1,6 +1,6 @@
 variable "tls_secret_name" {}
 variable "diun_nfty_token" {}
-variable "docker_config" {}
+variable "diun_slack_url" {}
 
 resource "kubernetes_namespace" "diun" {
   metadata {
@@ -15,24 +15,6 @@ module "tls_secret" {
   source          = "../setup_tls_secret"
   namespace       = "diun"
   tls_secret_name = var.tls_secret_name
-}
-
-resource "kubernetes_config_map" "docker-config" {
-  metadata {
-    name      = "docker-config"
-    namespace = "diun"
-
-    labels = {
-      app = "diun"
-    }
-    annotations = {
-      "reloader.stakater.com/match" = "true"
-    }
-  }
-
-  data = {
-    "config.json" = var.docker_config
-  }
 }
 
 resource "kubernetes_service_account" "diun" {
@@ -122,41 +104,34 @@ resource "kubernetes_deployment" "diun" {
           }
 
           // ntfy settings
-          env {
-            name  = "DIUN_NOTIF_NTFY_ENDPOINT"
-            value = "https://ntfy.viktorbarzin.me"
-          }
+          # env { // disabled as if this fails, no other notifications are sent
+          #   name  = "DIUN_NOTIF_NTFY_ENDPOINT"
+          #   value = "https://ntfy.viktorbarzin.me"
+          # }
           env {
             name  = "DIUN_NOTIF_NTFY_TOPIC"
             value = "diun-updates"
           }
+          # env {
+          #   name  = "DIUN_NOTIF_NTFY_TOKEN"
+          #   value = var.diun_nfty_token
+          # }
           env {
-            name  = "DIUN_NOTIF_NTFY_TOKEN"
-            value = var.diun_nfty_token
+            name  = "DIUN_NOTIF_SLACK_WEBHOOKURL"
+            value = var.diun_slack_url
           }
           env {
             name  = "LOG_LEVEL"
-            value = "debug"
+            value = "info"
+          }
+          env {
+            name  = "DIUN_WATCH_FIRSTCHECKNOTIF"
+            value = "true"
           }
           # env {
-          #   name  = "DIUN_WATCH_FIRSTCHECKNOTIF"
-          #   value = "true"
+          #   name  = "DIUN_NOTIF_NTFY_TIMEOUT"
+          #   value = "10s"
           # }
-          env {
-            name  = "DIUN_NOTIF_NTFY_TIMEOUT"
-            value = "10s"
-          }
-          volume_mount {
-            name       = "docker-config"
-            mount_path = "/root/.docker/config.json"
-            sub_path   = "config.json"
-          }
-        }
-        volume {
-          name = "docker-config"
-          config_map {
-            name = "docker-config"
-          }
         }
       }
     }

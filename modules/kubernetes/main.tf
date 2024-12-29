@@ -58,7 +58,7 @@ variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
-variable "docker_config" {}
+variable "diun_slack_url" {}
 variable "nextcloud_db_password" {}
 variable "homepage_credentials" {}
 variable "authentik_secret_key" {}
@@ -509,7 +509,7 @@ module "diun" {
   source          = "./diun"
   tls_secret_name = var.tls_secret_name
   diun_nfty_token = var.diun_nfty_token
-  docker_config   = var.docker_config
+  diun_slack_url  = var.diun_slack_url
 }
 
 module "meshcentral" {
