@@ -1,5 +1,8 @@
 variable "tls_secret_name" {}
 variable "name" {}
+variable "tag" {
+  default = "latest"
+}
 
 resource "kubernetes_deployment" "actualbudget" {
   metadata {
@@ -30,7 +33,7 @@ resource "kubernetes_deployment" "actualbudget" {
       }
       spec {
         container {
-          image = "actualbudget/actual-server:latest"
+          image = "actualbudget/actual-server:${var.tag}"
           name  = "actualbudget"
 
           port {
