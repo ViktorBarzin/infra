@@ -27,6 +27,7 @@ module "tls_secret" {
 module "viktor" {
   source          = "./factory"
   name            = "viktor"
+  tag             = "edge"
   tls_secret_name = var.tls_secret_name
 }
 
