@@ -42,7 +42,7 @@ resource "kubernetes_deployment" "ytdlp" {
       }
       spec {
         container {
-          image = "tzahi12345/youtubedl-material:nightly-2024-03-12"
+          image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
           # resources {
           #   limits = {
