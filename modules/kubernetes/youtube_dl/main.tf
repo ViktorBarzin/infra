@@ -23,6 +23,9 @@ resource "kubernetes_deployment" "ytdlp" {
     labels = {
       app = "ytdlp"
     }
+    annotations = {
+      "diun.enable" = "true"
+    }
   }
   spec {
     # strategy {
@@ -98,14 +101,9 @@ resource "kubernetes_service" "ytdlp" {
     labels = {
       "app" = "ytdlp"
     }
-    # annotations = {
-    #   "metallb.universe.tf/allow-shared-ip" : "shared"
-    # }
   }
 
   spec {
-    # type                    = "LoadBalancer"
-    # external_traffic_policy = "Cluster"
     selector = {
       app = "ytdlp"
     }
@@ -124,6 +122,8 @@ resource "kubernetes_ingress_v1" "ytdlp" {
     annotations = {
       "kubernetes.io/ingress.class"          = "nginx"
       "nginx.ingress.kubernetes.io/affinity" = "cookie"
+      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
       # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
       # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
       # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
