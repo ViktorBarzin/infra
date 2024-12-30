@@ -97,6 +97,7 @@ variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "cloudflare_tunnel_token" {}
 variable "owntracks_credentials" {}
+variable "dawarich_database_password" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -403,6 +404,8 @@ module "kubernetes_cluster" {
   cloudflare_tunnel_token      = var.cloudflare_tunnel_token
 
   owntracks_credentials = var.owntracks_credentials
+
+  dawarich_database_password = var.dawarich_database_password
 }
 
 

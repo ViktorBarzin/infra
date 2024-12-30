@@ -76,6 +76,7 @@ variable "public_ip" {}
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "owntracks_credentials" {}
+variable "dawarich_database_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -562,4 +563,10 @@ module "owntracks" {
   source                = "./owntracks"
   tls_secret_name       = var.tls_secret_name
   owntracks_credentials = var.owntracks_credentials
+}
+
+module "dawarich" {
+  source            = "./dawarich"
+  tls_secret_name   = var.tls_secret_name
+  database_password = var.dawarich_database_password
 }
