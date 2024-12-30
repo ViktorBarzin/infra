@@ -96,6 +96,7 @@ variable "public_ip" {}
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "cloudflare_tunnel_token" {}
+variable "owntracks_credentials" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -400,6 +401,8 @@ module "kubernetes_cluster" {
   cloudflare_proxied_names     = var.cloudflare_proxied_names
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
   cloudflare_tunnel_token      = var.cloudflare_tunnel_token
+
+  owntracks_credentials = var.owntracks_credentials
 }
 
 
