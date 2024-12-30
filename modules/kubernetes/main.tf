@@ -75,6 +75,7 @@ variable "cloudflare_tunnel_id" {}
 variable "public_ip" {}
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
+variable "owntracks_credentials" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -555,4 +556,10 @@ module "linkwarden" {
 module "actualbudget" {
   source          = "./actualbudget"
   tls_secret_name = var.tls_secret_name
+}
+
+module "owntracks" {
+  source                = "./owntracks"
+  tls_secret_name       = var.tls_secret_name
+  owntracks_credentials = var.owntracks_credentials
 }
