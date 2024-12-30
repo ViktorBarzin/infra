@@ -102,16 +102,38 @@ resource "kubernetes_deployment" "diun" {
             name  = "DIUN_PROVIDERS_KUBERNETES"
             value = "true"
           }
+          # env {
+          #   name  = "DIUN_DEFAULTS_EXCLUDETAGS"
+          #   value = "^.*nightly.*$"
+          # }
+          # env {
+          #   name  = "DIUN_DEFAULTS_INCLUDETAGS"
+          #   value = "^\\d+\\.\\d+\\.\\d+$"
+          # }
+          env {
+            name  = "DIUN_DEFAULTS_WATCHREPO"
+            value = "true"
+            # value = "false"
+          }
+          env {
+            name  = "DIUN_DEFAULTS_MAXTAGS"
+            value = "3"
+          }
+          env {
+            name  = "DIUN_DEFAULTS_SORTTAGS"
+            value = "reverse"
+          }
+          # DIUN_PROVIDERS_KUBERNETES_WATCHBYDEFAULT = "true" ??
 
           // ntfy settings
           # env { // disabled as if this fails, no other notifications are sent
           #   name  = "DIUN_NOTIF_NTFY_ENDPOINT"
           #   value = "https://ntfy.viktorbarzin.me"
           # }
-          env {
-            name  = "DIUN_NOTIF_NTFY_TOPIC"
-            value = "diun-updates"
-          }
+          # env {
+          #   name  = "DIUN_NOTIF_NTFY_TOPIC"
+          #   value = "diun-updates"
+          # }
           # env {
           #   name  = "DIUN_NOTIF_NTFY_TOKEN"
           #   value = var.diun_nfty_token
@@ -121,17 +143,29 @@ resource "kubernetes_deployment" "diun" {
             value = var.diun_slack_url
           }
           env {
-            name  = "LOG_LEVEL"
-            value = "info"
+            name = "LOG_LEVEL"
+            # value = "info"
+            value = "debug"
           }
-          env {
-            name  = "DIUN_WATCH_FIRSTCHECKNOTIF"
-            value = "true"
-          }
+          # env {
+          #   name  = "DIUN_WATCH_FIRSTCHECKNOTIF"
+          #   value = "true"  # send notfication on start; subsequent checks check for newer versions and is what you need
+          # }
           # env {
           #   name  = "DIUN_NOTIF_NTFY_TIMEOUT"
           #   value = "10s"
           # }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            path   = "/mnt/main/diun"
+            server = "10.0.10.15"
+          }
         }
       }
     }

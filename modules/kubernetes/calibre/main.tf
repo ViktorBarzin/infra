@@ -45,7 +45,8 @@ resource "kubernetes_deployment" "calibre" {
     template {
       metadata {
         annotations = {
-          "diun.enable" = "true"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
         labels = {
           app = "calibre"

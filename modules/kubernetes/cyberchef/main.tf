@@ -34,16 +34,13 @@ resource "kubernetes_deployment" "cyberchef" {
     }
     template {
       metadata {
-        annotations = {
-          "diun.enable" = "true"
-        }
         labels = {
           app = "cyberchef"
         }
       }
       spec {
         container {
-          image = "mpepping/cyberchef"
+          image = "mpepping/cyberchef:latest"
           name  = "cyberchef"
 
           port {

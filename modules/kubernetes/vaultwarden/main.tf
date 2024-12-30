@@ -37,15 +37,16 @@ resource "kubernetes_deployment" "vaultwarden" {
     template {
       metadata {
         annotations = {
-          "diun.enable" = "true"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
         labels = {
-          app = "vaultwarden"
+          "app" = "vaultwarden"
         }
       }
       spec {
         container {
-          image = "vaultwarden/server:1.32.0"
+          image = "vaultwarden/server:1.32.7"
           name  = "vaultwarden"
           env {
             name  = "DOMAIN"
@@ -57,7 +58,7 @@ resource "kubernetes_deployment" "vaultwarden" {
           # }
           env {
             name  = "SMTP_HOST"
-            value = "smtp.viktorbarzin.me"
+            value = "mail.viktorbarzin.me"
           }
           env {
             name  = "SMTP_FROM"
