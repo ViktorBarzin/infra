@@ -37,6 +37,9 @@ resource "kubernetes_secret" "basic_auth" {
   }
 
   type = "Opaque"
+  lifecycle {
+    ignore_changes = [data]
+  }
 }
 
 resource "kubernetes_deployment" "owntracks" {
@@ -87,6 +90,10 @@ resource "kubernetes_deployment" "owntracks" {
           volume_mount {
             name       = "data"
             mount_path = "/store"
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/config"
           }
         }
         volume {
