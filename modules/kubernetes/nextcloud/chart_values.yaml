@@ -45,3 +45,7 @@ startupProbe:
   timeoutSeconds: 5
   failureThreshold: 30
   successThreshold: 1
+
+podAnnotations:
+  diun.enable: "true"
+  diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"

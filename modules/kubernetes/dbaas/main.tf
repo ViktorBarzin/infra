@@ -114,10 +114,14 @@ resource "kubernetes_deployment" "mysql" {
         labels = {
           app = "mysql"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+        }
       }
       spec {
         container {
-          image = "mysql"
+          image = "mysql:9.1.0"
           name  = "mysql"
           env {
             name  = "MYSQL_ROOT_PASSWORD"
@@ -720,11 +724,16 @@ resource "kubernetes_deployment" "postgres" {
         labels = {
           app = "postgresql"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?-bullseye$"
+        }
       }
       spec {
         container {
           image = "postgres:16.4-bullseye"
-          name  = "postgresql"
+          # image = "postgres:17.2-bullseye" # needs pg_upgrade to data dir
+          name = "postgresql"
           env {
             name  = "POSTGRES_PASSWORD"
             value = var.postgresql_root_password

@@ -46,10 +46,14 @@ resource "kubernetes_deployment" "paperless-ngx" {
         labels = {
           app = "paperless-ngx"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+        }
       }
       spec {
         container {
-          image = "paperlessngx/paperless-ngx:2.9"
+          image = "paperlessngx/paperless-ngx:2.13.5"
           name  = "paperless-ngx"
           env {
             name  = "PAPERLESS_REDIS"

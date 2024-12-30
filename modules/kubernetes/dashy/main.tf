@@ -52,7 +52,7 @@ resource "kubernetes_deployment" "dashy" {
     template {
       metadata {
         annotations = {
-          "diun.enable" = "true"
+          # "diun.enable" = "true"
         }
         labels = {
           app = "dashy"
