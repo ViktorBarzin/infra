@@ -42,6 +42,10 @@ resource "kubernetes_deployment" "meshcentral" {
         labels = {
           app = "meshcentral"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$,latest"
+        }
       }
       spec {
 

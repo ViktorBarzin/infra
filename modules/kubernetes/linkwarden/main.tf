@@ -44,6 +44,10 @@ resource "kubernetes_deployment" "linkwarden" {
         labels = {
           app = "linkwarden"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "latest"
+        }
       }
       spec {
         container {

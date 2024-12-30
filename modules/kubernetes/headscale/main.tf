@@ -44,10 +44,14 @@ resource "kubernetes_deployment" "headscale" {
         labels = {
           app = "headscale"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+        }
       }
       spec {
         container {
-          image   = "headscale/headscale:0.22"
+          image   = "headscale/headscale:0.23.0"
           name    = "headscale"
           command = ["headscale", "serve"]
           port {
