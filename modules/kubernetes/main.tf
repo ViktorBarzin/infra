@@ -191,15 +191,15 @@ module "monitoring" {
   depends_on = [null_resource.core_services]
 }
 
-module "oauth" {
-  source                     = "./oauth-proxy"
-  tls_secret_name            = var.tls_secret_name
-  oauth2_proxy_client_id     = var.oauth2_proxy_client_id
-  oauth2_proxy_client_secret = var.oauth2_proxy_client_secret
-  authenticated_emails       = var.oauth2_proxy_authenticated_emails
+# module "oauth" {
+#   source                     = "./oauth-proxy"
+#   tls_secret_name            = var.tls_secret_name
+#   oauth2_proxy_client_id     = var.oauth2_proxy_client_id
+#   oauth2_proxy_client_secret = var.oauth2_proxy_client_secret
+#   authenticated_emails       = var.oauth2_proxy_authenticated_emails
 
-  depends_on = [null_resource.core_services]
-}
+#   depends_on = [null_resource.core_services]
+# }
 
 # module "openid_help_page" {
 #   source          = "./openid_help_page"
