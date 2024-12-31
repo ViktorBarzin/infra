@@ -17,8 +17,12 @@ alertmanager:
       # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
       # Create the secret containing the trusted ca certificates
       # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
-      nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
-      nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      # nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
+      # nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-url: "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
+      nginx.ingress.kubernetes.io/auth-signin: "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
+      nginx.ingress.kubernetes.io/auth-snippet: "proxy_set_header X-Forwarded-Host $http_host;"
     tls:
       - secretName: "tls-secret"
         hosts:
@@ -31,6 +35,34 @@ alertmanager:
             pathType: Prefix
             serviceName: prometheus-server
             servicePort: 80
+  config:
+    enabled: true
+    global:
+      smtp_from: "alertmanager@viktorbarzin.me"
+      # smtp_smarthost: "smtp.viktorbarzin.me:587"
+      smtp_smarthost: "mailserver.mailserver.svc.cluster.local:587"
+      smtp_auth_username: "alertmanager@viktorbarzin.me"
+      smtp_auth_password: "${alertmanager_mail_pass}"
+      smtp_require_tls: true
+      slack_api_url: "${alertmanager_slack_api_url}"
+    templates:
+      - "/etc/alertmanager/template/*.tmpl"
+    route:
+      group_by: ["alertname"]
+      group_wait: 3s
+      group_interval: 5s
+      repeat_interval: 1h
+      receiver: ALL
+    receivers:
+      - name: ALL
+        # email_configs:
+        #   - to: "me@viktorbarzin.me"
+        #     send_resolved: true
+        #     tls_config:
+        #       insecure_skip_verify: true
+        slack_configs:
+          - send_resolved: true
+            channel: "#general"
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
@@ -110,7 +142,7 @@ server:
   alertmanagers:
     - static_configs:
         - targets:
-            - "prometheus-alertmanager.monitoring.svc.cluster.local"
+            - "prometheus-alertmanager.monitoring.svc.cluster.local:9093"
           # - "alertmanager.viktorbarzin.me"
       tls_config:
         insecure_skip_verify: true
@@ -214,7 +246,7 @@ serverFiles:
       - name: HighPowerUsage
         rules:
           - alert: HighPowerUsage
-            expr: (max(r730_idrac_amperageProbeReading) or on() vector(0)) > 112
+            expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) > 127
             for: 60m
             labels:
               severity: page
@@ -238,6 +270,16 @@ serverFiles:
               severity: page
             annotations:
               summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
+      - name: IngressSuccessRateDrop
+        rules:
+          - alert: IngressSuccessRateDrop
+            expr: (sum(rate(nginx_ingress_controller_requests{status!~"[4-5].*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)) < 0.95
+            # for: 10m
+            for: 1m # DEBUG
+            labels:
+              severity: page
+            annotations:
+              summary: Ingress {{ $labels.ingress }} success rate dropped below 95% - {{ $value }}%.
       - name: OpenWRT High Memory Usage
         rules:
           - alert: OpenWRT High Memory Usage
