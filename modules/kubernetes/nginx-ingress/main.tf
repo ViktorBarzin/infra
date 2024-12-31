@@ -436,7 +436,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
 
     selector {
       match_labels = {
@@ -456,6 +456,9 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           "app"                         = "ingress-nginx"
         }
         annotations = {
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = 10254
+
           "diun.enable"       = "true"
           "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
         }
@@ -568,6 +571,11 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           port {
             name           = "webhook"
             container_port = 8443
+            protocol       = "TCP"
+          }
+          port {
+            name           = "metrics"
+            container_port = 10254
             protocol       = "TCP"
           }
           env {
