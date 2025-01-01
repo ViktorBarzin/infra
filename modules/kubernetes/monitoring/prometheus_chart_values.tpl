@@ -45,12 +45,13 @@ alertmanager:
       smtp_auth_password: "${alertmanager_mail_pass}"
       smtp_require_tls: true
       slack_api_url: "${alertmanager_slack_api_url}"
-    templates:
-      - "/etc/alertmanager/template/*.tmpl"
+    # templates:
+    #   - "/etc/alertmanager/template/*.tmpl"
     route:
-      group_by: ["alertname"]
-      group_wait: 3s
-      group_interval: 5s
+      # group_by: ["alertname"]
+      group_by: [] # disable grouping
+      # group_wait: 3s
+      # group_interval: 5s
       repeat_interval: 1h
       receiver: ALL
     receivers:
@@ -63,38 +64,10 @@ alertmanager:
         slack_configs:
           - send_resolved: true
             channel: "#general"
+            text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
-alertmanagerFiles:
-  alertmanager.yml:
-    global:
-      smtp_from: "alertmanager@viktorbarzin.me"
-      # smtp_smarthost: "smtp.viktorbarzin.me:587"
-      smtp_smarthost: "mailserver.mailserver.svc.cluster.local:587"
-      smtp_auth_username: "alertmanager@viktorbarzin.me"
-      smtp_auth_password: "${alertmanager_mail_pass}"
-      smtp_require_tls: true
-      slack_api_url: "${alertmanager_slack_api_url}"
-    templates:
-      - "/etc/alertmanager/template/*.tmpl"
-    route:
-      group_by: ["alertname"]
-      group_wait: 3s
-      group_interval: 5s
-      repeat_interval: 1h
-      receiver: ALL
-    receivers:
-      - name: ALL
-        # email_configs:
-        #   - to: "me@viktorbarzin.me"
-        #     send_resolved: true
-        #     tls_config:
-        #       insecure_skip_verify: true
-        slack_configs:
-          - send_resolved: true
-            channel: "#general"
-
 server:
   # Enable me to delete metrics
   extraFlags:
@@ -181,7 +154,7 @@ serverFiles:
   #           targets: "alertmanager.viktorbarzin.lan"
   alerting_rules.yml:
     groups:
-      - name: LowVoltage
+      - name: Cluster
         rules:
           - alert: LowVoltage
             expr: ups_upsInputVoltage < 205
@@ -189,9 +162,7 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: Low input voltage
-      - name: NodeDown
-        rules:
+              summary: "Low input voltage - {{ $value }}"
           - alert: NodeDown
             expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
             for: 1m
@@ -199,8 +170,6 @@ serverFiles:
               severity: page
             annotations:
               summary: Node {{$labels.instance}} down.
-      - name: NodeHighCPUUsage
-        rules:
           - alert: NodeHighCPUUsage
             expr: node_load1 > 2
             for: 10m
@@ -208,8 +177,6 @@ serverFiles:
               severity: page
             annotations:
               summary: "High CPU usage on node. Node load: {{ $value }}"
-      - name: NodeLowFreeMemory
-        rules:
           - alert: NodeLowFreeMemory
             expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.9
             for: 10m
@@ -217,17 +184,15 @@ serverFiles:
               severity: page
             annotations:
               summary: "Low free memory on node. Node load: {{ $value }}"
-      # - name: PodStuckNotReady
-      #   rules:
-      #   - alert: PodStuckNotReady
-      #     expr: kube_pod_status_ready{condition="true"} == 0
-      #     for: 5m
-      #     labels:
-      #       severity: page
-      #     annotations:
-      #       summary: Pod stuck not ready.
-      - name: ReadyPodsInDeploymentLessThanSpec
-        rules:
+          # - name: PodStuckNotReady
+          #   rules:
+          #   - alert: PodStuckNotReady
+          #     expr: kube_pod_status_ready{condition="true"} == 0
+          #     for: 5m
+          #     labels:
+          #       severity: page
+          #     annotations:
+          #       summary: Pod stuck not ready.
           - alert: ReadyPodsInDeploymentLessThanSpec
             expr: kube_deployment_status_replicas_available - on(namespace, deployment) kube_deployment_spec_replicas < 0
             for: 10m
@@ -235,16 +200,12 @@ serverFiles:
               severity: page
             annotations:
               summary: Number of ready pods in deployment is less than what is defined in spec.
-      - name: PowerOutage
-        rules:
           - alert: PowerOutage
             expr: r730_idrac_powerSupplyCurrentInputVoltage < 200
             labels:
               severity: page
             annotations:
               summary: Power voltage on a power supply is critically low indicating power outage.
-      - name: HighPowerUsage
-        rules:
           - alert: HighPowerUsage
             expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) > 127
             for: 60m
@@ -252,8 +213,6 @@ serverFiles:
               severity: page
             annotations:
               summary: "High Power usage. Baseline is 112W. Current reading: {{$value}}"
-      - name: NoNodeLoadData
-        rules:
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
@@ -261,27 +220,27 @@ serverFiles:
               severity: page
             annotations:
               summary: No node load data. Can signal that prometheus is not scraping
-      - name: NoiDRACData
-        rules:
           - alert: NoiDRACData
-            expr: (max(r730_idrac_amperageProbeReading) or on() vector(0)) == 0
+            expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) == 0
             for: 10m
             labels:
               severity: page
             annotations:
               summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
-      - name: IngressSuccessRateDrop
-        rules:
-          - alert: IngressSuccessRateDrop
-            expr: (sum(rate(nginx_ingress_controller_requests{status!~"[4-5].*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)) < 0.95
-            # for: 10m
-            for: 1m # DEBUG
+          - alert: HighIngressPermissionErrors
+            expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
+            for: 10m
             labels:
               severity: page
             annotations:
-              summary: Ingress {{ $labels.ingress }} success rate dropped below 95% - {{ $value }}%.
-      - name: OpenWRT High Memory Usage
-        rules:
+              summary: "High permission error rate for {{ $labels.ingress }}: {{ $value }}%."
+          - alert: HighIngressServerErrors
+            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "High server failiure rate for {{ $labels.ingress }}: {{ $value }}%."
           - alert: OpenWRT High Memory Usage
             expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
             for: 10m
@@ -289,8 +248,6 @@ serverFiles:
               severity: page
             annotations:
               summary: OpenWRT high memory usage. Can cause services getting stuck.
-      - name: Mailserver Down
-        rules:
           - alert: Mail server has no replicas available
             expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
             for: 10m
@@ -298,8 +255,6 @@ serverFiles:
               severity: page
             annotations:
               summary: Mail server has no available replicas. This means mail may not be received.
-      - name: Hackmd Down
-        rules:
           - alert: Hackmd has no replicas available
             expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
             for: 1m
@@ -307,8 +262,6 @@ serverFiles:
               severity: page
             annotations:
               summary: Hackmd has no available replicas.
-      - name: Privatebin Down
-        rules:
           - alert: Privatebin has no replicas available
             expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
             for: 10m
@@ -316,17 +269,15 @@ serverFiles:
               severity: page
             annotations:
               summary: Privatebin has no available replicas.
-      - name: London OpenWRT Down
-        rules:
-          - alert: OpenWRT client unreachable
-            expr: (openwrt_node_openwrt_info or on() vector(0)) == 0
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: London OpenWRT router unreachable through VPN
-      - name: London OpenWRT High System Load
-        rules:
+          # - name: London OpenWRT Down
+          #   rules:
+          #     - alert: OpenWRT client unreachable
+          #       expr: (openwrt_node_openwrt_info or on() vector(0)) == 0
+          #       for: 10m
+          #       labels:
+          #         severity: page
+          #       annotations:
+          #         summary: London OpenWRT router unreachable through VPN
           - alert: OpenWRT high system load
             expr: openwrt_node_load1 > 0.9
             for: 15m
@@ -334,8 +285,6 @@ serverFiles:
               severity: page
             annotations:
               summary: High system load on OpenWRT
-      - name: Finance app webhook exceptions
-        rules:
           - alert: Finance app webhook exceptions
             expr: changes(webhook_failure_total[5m]) >= 1
             for: 1m
@@ -343,8 +292,6 @@ serverFiles:
               severity: page
             annotations:
               summary: Finance app webhook exceptions
-      - name: Finance app unhandled exceptions
-        rules:
           - alert: Finance app unhandled exceptions
             expr: changes(flask_http_request_exceptions_total[5m]) >= 1
             for: 1m
@@ -352,8 +299,6 @@ serverFiles:
               severity: page
             annotations:
               summary: Finance app unhandled exceptions
-      - name: New Tailscale client
-        rules:
           - alert: New Tailscale client
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             labels:
