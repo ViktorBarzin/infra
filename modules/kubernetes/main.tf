@@ -272,13 +272,13 @@ module "webhook_handler" {
   depends_on = [null_resource.core_services]
 }
 
-module "wireguard" {
-  source          = "./wireguard"
-  tls_secret_name = var.tls_secret_name
-  wg_0_conf       = var.wireguard_wg_0_conf
-  wg_0_key        = var.wireguard_wg_0_key
-  firewall_sh     = var.wireguard_firewall_sh
-}
+# module "wireguard" {
+#   source          = "./wireguard"
+#   tls_secret_name = var.tls_secret_name
+#   wg_0_conf       = var.wireguard_wg_0_conf
+#   wg_0_key        = var.wireguard_wg_0_key
+#   firewall_sh     = var.wireguard_firewall_sh
+# }
 
 # module "home_assistant" {
 #   source                         = "./home_assistant"
