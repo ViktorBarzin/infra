@@ -64,7 +64,9 @@ alertmanager:
         slack_configs:
           - send_resolved: true
             channel: "#general"
-            text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
+            title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+            text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+            # text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
@@ -176,14 +178,14 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "High CPU usage on node. Node load: {{ $value }}"
+              summary: "High CPU usage on {{ $labels.node }} - {{ $value }}"
           - alert: NodeLowFreeMemory
             expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.9
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: "Low free memory on node. Node load: {{ $value }}"
+              summary: "Low free memory on {{ $labels.node }} - {{ $value }}"
           # - name: PodStuckNotReady
           #   rules:
           #   - alert: PodStuckNotReady
@@ -199,20 +201,20 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: Number of ready pods in deployment is less than what is defined in spec.
+              summary: Number of ready pods in {{ $labels.deployment }} is less than what is defined in spec.
           - alert: PowerOutage
-            expr: r730_idrac_powerSupplyCurrentInputVoltage < 200
+            expr: ups_upsInputVoltage < 150
             labels:
               severity: page
             annotations:
-              summary: Power voltage on a power supply is critically low indicating power outage.
+              summary: Power voltage on a power supply is {{ $value }} indicating power outage.
           - alert: HighPowerUsage
-            expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) > 127
+            expr: (max_over_time(r730_idrac_redfish_chassis_power_average_consumed_watts[20m])) > 127
             for: 60m
             labels:
               severity: page
             annotations:
-              summary: "High Power usage. Baseline is 112W. Current reading: {{$value}}"
+              summary: "High server power usage - {{$value}} watts"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
@@ -241,34 +243,34 @@ serverFiles:
               severity: page
             annotations:
               summary: "High server failiure rate for {{ $labels.ingress }}: {{ $value }}%."
-          - alert: OpenWRT High Memory Usage
-            expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: OpenWRT high memory usage. Can cause services getting stuck.
-          - alert: Mail server has no replicas available
-            expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: Mail server has no available replicas. This means mail may not be received.
-          - alert: Hackmd has no replicas available
-            expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
-            for: 1m
-            labels:
-              severity: page
-            annotations:
-              summary: Hackmd has no available replicas.
-          - alert: Privatebin has no replicas available
-            expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: Privatebin has no available replicas.
+          # - alert: OpenWRT High Memory Usage
+          #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
+          #   for: 10m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: OpenWRT high memory usage. Can cause services getting stuck.
+          # - alert: Mail server has no replicas available
+          #   expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
+          #   for: 10m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: Mail server has no available replicas. This means mail may not be received.
+          # - alert: Hackmd has no replicas available
+          #   expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
+          #   for: 1m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: Hackmd has no available replicas.
+          # - alert: Privatebin has no replicas available
+          #   expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
+          #   for: 10m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: Privatebin has no available replicas.
           # - name: London OpenWRT Down
           #   rules:
           #     - alert: OpenWRT client unreachable
@@ -278,27 +280,27 @@ serverFiles:
           #         severity: page
           #       annotations:
           #         summary: London OpenWRT router unreachable through VPN
-          - alert: OpenWRT high system load
-            expr: openwrt_node_load1 > 0.9
-            for: 15m
-            labels:
-              severity: page
-            annotations:
-              summary: High system load on OpenWRT
-          - alert: Finance app webhook exceptions
-            expr: changes(webhook_failure_total[5m]) >= 1
-            for: 1m
-            labels:
-              severity: page
-            annotations:
-              summary: Finance app webhook exceptions
-          - alert: Finance app unhandled exceptions
-            expr: changes(flask_http_request_exceptions_total[5m]) >= 1
-            for: 1m
-            labels:
-              severity: page
-            annotations:
-              summary: Finance app unhandled exceptions
+          # - alert: OpenWRT high system load
+          #   expr: openwrt_node_load1 > 0.9
+          #   for: 15m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: High system load on OpenWRT
+          # - alert: Finance app webhook exceptions
+          #   expr: changes(webhook_failure_total[5m]) >= 1
+          #   for: 1m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: Finance app webhook exceptions
+          # - alert: Finance app unhandled exceptions
+          #   expr: changes(flask_http_request_exceptions_total[5m]) >= 1
+          #   for: 1m
+          #   labels:
+          #     severity: page
+          #   annotations:
+          #     summary: Finance app unhandled exceptions
           - alert: New Tailscale client
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             labels:
