@@ -50,8 +50,8 @@ alertmanager:
     route:
       # group_by: ["alertname"]
       group_by: [] # disable grouping
-      # group_wait: 3s
-      # group_interval: 5s
+      group_wait: 3s
+      group_interval: 5s # how long to wait before sending new alert for the same group
       repeat_interval: 1h
       receiver: ALL
     receivers:
@@ -64,7 +64,7 @@ alertmanager:
         slack_configs:
           - send_resolved: true
             channel: "#general"
-            title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+            title: "{{ range .Alerts }}[{{ toUpper .Status }}]{{ .Annotations.summary }}\n{{ end }}"
             text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
             # text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
   # web.external-url seems to be hardcoded, edited deployment manually
