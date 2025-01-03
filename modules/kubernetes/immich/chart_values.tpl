@@ -74,6 +74,9 @@ machine-learning:
     pullPolicy: IfNotPresent
   env:
     TRANSFORMERS_CACHE: /cache
+    # MACHINE_LEARNING_PRELOAD__CLIP:  immich-app/ViT-H-14-378-quickgelu__dfn5b # too big(?)
+    # MACHINE_LEARNING_PRELOAD__CLIP: immich-app/ViT-L-16-SigLIP-384__webli # too big(?)
+    MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-32__openai # too big(?)
   persistence:
     cache:
       enabled: true
