@@ -328,8 +328,8 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
         setvar:tx.block_harvester_ip=1,\
         setvar:tx.block_spammer_ip=1"
         EOT
-    # plugins = "crowdsec"
-    plugins          = ""
+    plugins = "crowdsec"
+    # plugins          = ""
     lua-shared-dicts = "crowdsec_cache: 50m"
     http-snippet : <<-EOT
       proxy_cache_path /tmp/nginx-cache levels=1:2 keys_zone=static-cache:2m max_size=100m inactive=7d use_temp_path=off;
@@ -341,6 +341,15 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     lua_ssl_trusted_certificate "/etc/ssl/certs/ca-certificates.crt"; # Captcha
     #resolver local=on ipv6=off valid=600s;
     EOT
+    # first own works
+    # log-format-upstream : <<-EOT
+    # $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" "$http_cf_connecting_ip" "$http_cf_ray" "$http_x_forwarded_for" "$host";
+    # EOT
+
+    # ketpt do debug why it's invalid syntax lol
+    # log-format-upstream : <<-EOT 
+    # $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" "$http_cf_connecting_ip" "$http_cf_ray" "$http_x_forwarded_for" "$host";
+    # EOT
   }
 }
 
