@@ -43,8 +43,11 @@ resource "kubernetes_deployment" "dawarich" {
           app = "dawarich"
         }
         annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "latest"
+          "diun.enable"          = "true"
+          "diun.include_tags"    = "latest"
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/path"   = "/metrics"
+          "prometheus.io/port"   = 9394
         }
       }
       spec {
@@ -55,6 +58,10 @@ resource "kubernetes_deployment" "dawarich" {
           port {
             name           = "http"
             container_port = 3000
+          }
+          port {
+            name           = "prometheus"
+            container_port = 9394
           }
           command = ["dev-entrypoint.sh"]
           args    = ["bin/dev"]
@@ -97,6 +104,18 @@ resource "kubernetes_deployment" "dawarich" {
           env {
             name  = "APPLICATION_HOSTS"
             value = "dawarich.viktorbarzin.me"
+          }
+          env {
+            name  = "PROMETHEUS_EXPORTER_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "PROMETHEUS_EXPORTER_PORT"
+            value = "9394"
+          }
+          env {
+            name  = "PROMETHEUS_EXPORTER_HOST"
+            value = "0.0.0.0"
           }
 
           #   volume_mount {
@@ -149,6 +168,14 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "APPLICATION_HOST"
             value = "dawarich.viktorbarzin.me"
           }
+          env {
+            name  = "PROMETHEUS_EXPORTER_ENABLED"
+            value = "false"
+          }
+          env {
+            name  = "PROMETHEUS_EXPORTER_HOST"
+            value = "dawarich.dawarich"
+          }
 
           #   volume_mount {
           #     name       = "watched"
@@ -183,7 +210,7 @@ resource "kubernetes_service" "dawarich" {
     }
     port {
       name        = "http"
-      port        = 443
+      port        = 80
       target_port = 3000
       protocol    = "TCP"
     }
@@ -216,7 +243,7 @@ resource "kubernetes_ingress_v1" "dawarich" {
             service {
               name = "dawarich"
               port {
-                number = 443
+                number = 80
               }
             }
           }
