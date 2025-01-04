@@ -63,7 +63,7 @@ alertmanager:
         #       insecure_skip_verify: true
         slack_configs:
           - send_resolved: true
-            channel: "#general"
+            channel: "#alerts"
             title: "{{ range .Alerts }}[{{ toUpper .Status }}]{{ .Annotations.summary }}\n{{ end }}"
             text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
             # text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
@@ -174,7 +174,7 @@ serverFiles:
               summary: Node {{$labels.instance}} down.
           - alert: NodeHighCPUUsage
             expr: node_load1 > 2
-            for: 10m
+            for: 20m
             labels:
               severity: page
             annotations:
