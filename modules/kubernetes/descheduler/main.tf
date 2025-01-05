@@ -21,7 +21,7 @@ resource "kubernetes_cluster_role" "descheduler" {
   rule {
     api_groups = [""]
     resources  = ["namespaces"]
-    verbs      = ["get", "list"]
+    verbs      = ["get", "list", "watch"]
   }
   rule {
     api_groups = [""]
@@ -37,6 +37,16 @@ resource "kubernetes_cluster_role" "descheduler" {
     api_groups = [""]
     resources  = ["scheduling.k8s.io"]
     verbs      = ["get", "watch", "list"]
+  }
+  rule {
+    api_groups = ["scheduling.k8s.io"]
+    resources  = ["priorityclasses"]
+    verbs      = ["get", "list", "watch"]
+  }
+  rule {
+    api_groups = ["policy"]
+    resources  = ["poddisruptionbudgets"]
+    verbs      = ["get", "list", "watch"]
   }
 }
 
@@ -70,47 +80,68 @@ resource "kubernetes_config_map" "policy" {
     name      = "policy-configmap"
   }
   data = {
+    # "policy.yaml" = <<-EOF
+    #   apiVersion: "descheduler/v1alpha1"
+    #   maxNoOfPodsToEvictPerNode: 20
+    #   kind: "DeschedulerPolicy"
+    #   strategies:
+    #     "RemoveDuplicates":
+    #       enabled: true
+    #     "RemovePodsViolatingInterPodAntiAffinity":
+    #       enabled: true
+    #     "LowNodeUtilization":
+    #       enabled: true
+    #       params:
+    #         nodeResourceUtilizationThresholds:
+    #           thresholds:
+    #             "cpu" : 50
+    #             "memory": 30
+    #             "pods": 20
+    #           targetThresholds:
+    #             "cpu" : 70
+    #             "memory": 30
+    #             "pods": 50
+    #     "HighNodeUtilization":
+    #       enabled: true
+    #       params:
+    #         nodeResourceUtilizationThresholds:
+    #           thresholds:
+    #             "cpu" : 20
+    #             "memory": 80
+    #             "pods": 20
+    #     "PodLifeTime":
+    #       enabled: true
+    #       params:
+    #         podLifeTime:
+    #           maxPodLifeTimeSeconds: 604800
+    #         namespaces:
+    #           exclude:
+    #           - "monitoring"
+    #           - "kube-system"
+    # EOF
     "policy.yaml" = <<-EOF
-      apiVersion: "descheduler/v1alpha1"
-      maxNoOfPodsToEvictPerNode: 20
+      capiVersion: "descheduler/v1alpha2"
       kind: "DeschedulerPolicy"
-      strategies:
-        "RemoveDuplicates":
-          enabled: true
-        "RemovePodsViolatingInterPodAntiAffinity":
-          enabled: true
-        "LowNodeUtilization":
-          enabled: true
-          params:
-            nodeResourceUtilizationThresholds:
-              thresholds:
-                "cpu" : 50
-                "memory": 30
-                "pods": 20
-              targetThresholds:
-                "cpu" : 70
-                "memory": 30
-                "pods": 50
-        "HighNodeUtilization":
-          enabled: true
-          params:
-            nodeResourceUtilizationThresholds:
+      profiles:
+        - name: ProfileName
+          pluginConfig:
+          - name: "LowNodeUtilization"
+            args:
               thresholds:
                 "cpu" : 20
-                "memory": 80
+                "memory": 20
                 "pods": 20
-        "PodLifeTime":
-          enabled: true
-          params:
-            podLifeTime:
-              maxPodLifeTimeSeconds: 604800
-            namespaces:
-              exclude:
-              - "bind"
-              - "monitoring"
-              - "kube-system"
-              - "wireguard"
-    EOF
+              targetThresholds:
+                "cpu" : 20
+                "memory": 20
+                "pods": 20
+              metricsUtilization:
+                metricsServer: true
+          plugins:
+            balance:
+              enabled:
+                - "LowNodeUtilization"
+      EOF
   }
 }
 
@@ -135,7 +166,7 @@ resource "kubernetes_cron_job_v1" "descheduler" {
             priority_class_name = "system-cluster-critical"
             container {
               name  = "descheduler"
-              image = "k8s.gcr.io/descheduler/descheduler:v0.20.0"
+              image = "k8s.gcr.io/descheduler/descheduler:v0.28.0"
               volume_mount {
                 mount_path = "/policy-dir"
                 name       = "policy-volume"
