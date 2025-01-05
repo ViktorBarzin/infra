@@ -51,7 +51,8 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image   = "headscale/headscale:0.23.0"
+          image = "headscale/headscale:0.23.0"
+          # image   = "headscale/headscale:0.23.0-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
           port {
@@ -187,6 +188,7 @@ resource "kubernetes_ingress_v1" "headscale" {
       // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
       "kubernetes.io/ingress.class"              = "nginx"
       "nginx.ingress.kubernetes.io/ssl-redirect" = false # Disable SSL redirection for this Ingress
+      "nginx.org/websocket-services"             = "headscale"
 
     }
   }
