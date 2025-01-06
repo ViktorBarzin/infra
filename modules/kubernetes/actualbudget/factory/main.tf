@@ -17,6 +17,9 @@ resource "kubernetes_deployment" "actualbudget" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "actualbudget-${var.name}"
