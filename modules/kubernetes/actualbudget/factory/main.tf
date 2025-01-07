@@ -28,7 +28,7 @@ resource "kubernetes_deployment" "actualbudget" {
     template {
       metadata {
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false" # daily updates; pretty noisy
           "diun.include_tags" = "^${var.tag}$"
         }
         labels = {
