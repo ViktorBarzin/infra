@@ -133,7 +133,7 @@ deschedulerPolicy:
         - name: RemovePodsViolatingTopologySpreadConstraint
         - name: LowNodeUtilization
           args:
-            namespaces:
+            evictableNamespaces:
               exclude:
                 - "dbaas" # let's not meddle with the dbs
             thresholds:
