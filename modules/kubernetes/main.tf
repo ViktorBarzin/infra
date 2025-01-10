@@ -570,3 +570,8 @@ module "dawarich" {
   tls_secret_name   = var.tls_secret_name
   database_password = var.dawarich_database_password
 }
+
+module "changedetection" {
+  source          = "./changedetection"
+  tls_secret_name = var.tls_secret_name
+}
