@@ -63,7 +63,7 @@ resource "kubernetes_deployment" "dawarich" {
             name           = "prometheus"
             container_port = 9394
           }
-          command = ["dev-entrypoint.sh"]
+          command = ["web-entrypoint.sh"]
           args    = ["bin/dev"]
           env {
             name  = "REDIS_URL"
@@ -126,7 +126,7 @@ resource "kubernetes_deployment" "dawarich" {
         container {
           image   = "freikin/dawarich:latest"
           name    = "dawarich-sidekiq"
-          command = ["dev-entrypoint.sh"]
+          command = ["sidekiq-entrypoint.sh"]
           args    = ["sidekiq"]
           env {
             name  = "REDIS_URL"
