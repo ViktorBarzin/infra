@@ -1,5 +1,13 @@
 
-variable "name" { type = string } // must match service name; translates to host
+variable "name" { type = string }
+variable "service_name" {
+  type    = string
+  default = null # defaults to name
+}
+variable "host" {
+  type    = string
+  default = null
+}
 variable "namespace" { type = string }
 variable "external_name" {
   type    = string
@@ -87,7 +95,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "${var.name}.viktorbarzin.me"
+      host = "${var.host != null ? var.host : var.name}.viktorbarzin.me"
       http {
         dynamic "path" {
           # for_each = { for pr in var.ingress_path : pr => pr }
@@ -98,7 +106,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
             backend {
               service {
 
-                name = var.name
+                name = var.service_name != null ? var.service_name : var.name
                 port {
                   number = var.port
                 }

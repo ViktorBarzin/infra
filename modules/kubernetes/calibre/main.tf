@@ -113,66 +113,26 @@ resource "kubernetes_service" "calibre" {
     }
   }
 }
-resource "kubernetes_ingress_v1" "calibre" {
-  metadata {
-    name      = "calibre"
-    namespace = "calibre"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
 
-      "gethomepage.dev/enabled"     = "true"
-      "gethomepage.dev/description" = "Book library"
-      # gethomepage.dev/group: Media
-      "gethomepage.dev/icon" : "calibre-web.png"
-      "gethomepage.dev/name"            = "Calibre"
-      "gethomepage.dev/widget.type"     = "calibreweb"
-      "gethomepage.dev/widget.url"      = "https://calibre.viktorbarzin.me"
-      "gethomepage.dev/widget.username" = var.homepage_username
-      "gethomepage.dev/widget.password" = var.homepage_password
-      "gethomepage.dev/pod-selector"    = ""
-      # gethomepage.dev/weight: 10 # optional
-      # gethomepage.dev/instance: "public" # optional
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "calibre"
+  name            = "calibre"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
 
-  spec {
-    tls {
-      hosts       = ["calibre.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "calibre.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "calibre"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-    rule {
-      host = "books.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "calibre"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+    "gethomepage.dev/enabled"     = "true"
+    "gethomepage.dev/description" = "Book library"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "calibre-web.png"
+    "gethomepage.dev/name"            = "Calibre"
+    "gethomepage.dev/widget.type"     = "calibreweb"
+    "gethomepage.dev/widget.url"      = "https://calibre.viktorbarzin.me"
+    "gethomepage.dev/widget.username" = var.homepage_username
+    "gethomepage.dev/widget.password" = var.homepage_password
+    "gethomepage.dev/pod-selector"    = ""
+    # gethomepage.dev/weight: 10 # optional
+    # gethomepage.dev/instance: "public" # optional
   }
 }
-

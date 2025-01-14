@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "cyberchef" {
 
 resource "kubernetes_service" "cyberchef" {
   metadata {
-    name      = "cyberchef"
+    name      = "cc"
     namespace = "cyberchef"
     labels = {
       "app" = "cyberchef"
@@ -73,36 +73,10 @@ resource "kubernetes_service" "cyberchef" {
   }
 }
 
-resource "kubernetes_ingress_v1" "cyberchef" {
-  metadata {
-    name      = "cyberchef"
-    namespace = "cyberchef"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
 
-  spec {
-    tls {
-      hosts       = ["cc.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "cc.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "cyberchef"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "cyberchef"
+  name            = "cc"
+  tls_secret_name = var.tls_secret_name
 }
-

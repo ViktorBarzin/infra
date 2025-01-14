@@ -76,50 +76,17 @@ resource "helm_release" "kubernetes-dashboard" {
 #   type = "kubernetes.io/service-account-token"
 # }
 
-resource "kubernetes_ingress_v1" "kubernetes-dashboard" {
-  metadata {
-    name      = "kubernetes-dashboard"
-    namespace = "kubernetes-dashboard"
-    annotations = {
-      "kubernetes.io/ingress.class"                  = "nginx"
-      "nginx.ingress.kubernetes.io/backend-protocol" = "HTTPS"
-      # "nginx.ingress.kubernetes.io/force-ssl-redirect" = "true"
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = var.client_certificate_secret_name
 
-      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-      "nginx.ingress.kubernetes.io/auth-url" : "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
-      "nginx.ingress.kubernetes.io/auth-signin" : "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
-
-      "nginx.ingress.kubernetes.io/auth-response-headers" : "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
-      "nginx.ingress.kubernetes.io/auth-snippet" : "proxy_set_header X-Forwarded-Host $http_host;"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["k8s.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "k8s.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "kubernetes-dashboard-kong-proxy"
-              port {
-                number = 443
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  # depends_on = [module.dashboard]
+module "ingress" {
+  source           = "../ingress_factory"
+  namespace        = "kubernetes-dashboard"
+  name             = "kubernetes-dashboard"
+  service_name     = "kubernetes-dashboard-kong-proxy"
+  host             = "k8s"
+  tls_secret_name  = var.tls_secret_name
+  protected        = true
+  backend_protocol = "HTTPS"
+  port             = 443
 }
 
 # create token with

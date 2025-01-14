@@ -115,42 +115,14 @@ resource "kubernetes_service" "ytdlp" {
     }
   }
 }
-resource "kubernetes_ingress_v1" "ytdlp" {
-  metadata {
-    name      = "ytdlp-ingress"
-    namespace = "ytdlp"
-    annotations = {
-      "kubernetes.io/ingress.class"          = "nginx"
-      "nginx.ingress.kubernetes.io/affinity" = "cookie"
-      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["yt.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "yt.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "ytdlp"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "ytdlp"
+  name            = "ytdlp"
+  tls_secret_name = var.tls_secret_name
+  host            = "yt"
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
   }
 }
