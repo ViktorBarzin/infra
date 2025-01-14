@@ -91,7 +91,7 @@ resource "kubernetes_deployment" "kms-web-page" {
 
 resource "kubernetes_service" "kms-web-page" {
   metadata {
-    name      = "kms-web-page"
+    name      = "kms"
     namespace = "kms"
     labels = {
       "app" = "kms-web-page"
@@ -109,37 +109,11 @@ resource "kubernetes_service" "kms-web-page" {
   }
 }
 
-resource "kubernetes_ingress_v1" "kms-web-page" {
-  metadata {
-    name      = "kms-web-page"
-    namespace = "kms"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["kms.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "kms.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "kms-web-page"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "kms"
+  name            = "kms"
+  tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "windows_kms" {

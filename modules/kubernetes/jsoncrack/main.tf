@@ -50,7 +50,7 @@ resource "kubernetes_deployment" "jsoncrack" {
 
 resource "kubernetes_service" "jsoncrack" {
   metadata {
-    name      = "jsoncrack"
+    name      = "json"
     namespace = "jsoncrack"
     labels = {
       "app" = "jsoncrack"
@@ -70,37 +70,9 @@ resource "kubernetes_service" "jsoncrack" {
   }
 }
 
-
-resource "kubernetes_ingress_v1" "jsoncrack" {
-  metadata {
-    name      = "jsoncrack"
-    namespace = "jsoncrack"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "100000m"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["json.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "json.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "jsoncrack"
-              port {
-                number = 8080
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "jsoncrack"
+  name            = "json"
+  tls_secret_name = var.tls_secret_name
 }

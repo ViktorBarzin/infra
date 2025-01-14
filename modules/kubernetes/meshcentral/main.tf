@@ -132,46 +132,16 @@ resource "kubernetes_service" "meshcentral" {
     }
     port {
       name     = "https"
-      port     = "443"
+      port     = 443
       protocol = "TCP"
     }
   }
 }
 
-resource "kubernetes_ingress_v1" "meshcentral" {
-  metadata {
-    name      = "meshcentral"
-    namespace = "meshcentral"
-    annotations = {
-      "kubernetes.io/ingress.class"          = "nginx"
-      "nginx.ingress.kubernetes.io/affinity" = "cookie"
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" : "600s",
-      "nginx.ingress.kubernetes.io/proxy-send-timeout" : "600s",
-      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "600s"
-      # "nginx.ingress.kubernetes.io/backend-protocol" = "HTTPS"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["meshcentral.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "meshcentral.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "meshcentral"
-              port {
-                number = 443
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "meshcentral"
+  name            = "meshcentral"
+  tls_secret_name = var.tls_secret_name
+  port            = 443
 }

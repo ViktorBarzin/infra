@@ -88,51 +88,10 @@ resource "kubernetes_service" "privatebin" {
   }
 }
 
-resource "kubernetes_ingress_v1" "privatebin" {
-  metadata {
-    name      = "privatebin-ingress"
-    namespace = "privatebin"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["privatebin.viktorbarzin.me", "pb.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "privatebin.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "privatebin"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-    rule {
-      host = "pb.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "privatebin"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "privatebin"
+  name            = "privatebin"
+  host            = "pb"
+  tls_secret_name = var.tls_secret_name
 }

@@ -131,38 +131,15 @@ resource "kubernetes_service" "owntracks" {
   }
 }
 
-resource "kubernetes_ingress_v1" "owntracks" {
-  metadata {
-    name      = "owntracks"
-    namespace = "owntracks"
-    annotations = {
-      "kubernetes.io/ingress.class"             = "nginx"
-      "nginx.ingress.kubernetes.io/auth-type"   = "basic" # support only basic auth; can't use authentik
-      "nginx.ingress.kubernetes.io/auth-secret" = kubernetes_secret.basic_auth.metadata[0].name
-      "nginx.ingress.kubernetes.io/auth-realm"  = "Authentication Required"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["owntracks.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "owntracks.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "owntracks"
-              port {
-                number = 443
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "owntracks"
+  name            = "owntracks"
+  tls_secret_name = var.tls_secret_name
+  port            = 443
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/auth-type"   = "basic" # support only basic auth; can't use authentik
+    "nginx.ingress.kubernetes.io/auth-secret" = kubernetes_secret.basic_auth.metadata[0].name
+    "nginx.ingress.kubernetes.io/auth-realm"  = "Authentication Required"
   }
 }

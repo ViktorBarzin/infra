@@ -89,36 +89,9 @@ resource "kubernetes_service" "matrix" {
   }
 }
 
-resource "kubernetes_ingress_v1" "matrix" {
-  metadata {
-    name      = "matrix"
-    namespace = "matrix"
-
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["matrix.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "matrix.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "matrix"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "matrix"
+  name            = "matrix"
+  tls_secret_name = var.tls_secret_name
 }

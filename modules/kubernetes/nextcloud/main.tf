@@ -150,40 +150,14 @@ resource "kubernetes_persistent_volume_claim" "nextcloud-data-pvc" {
   }
 }
 
-resource "kubernetes_ingress_v1" "nextcloud" {
-  metadata {
-    name      = "nextcloud-ingress"
-    namespace = "nextcloud"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["nextcloud.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "nextcloud.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "nextcloud"
-              port {
-                number = 8080
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "nextcloud"
+  name            = "nextcloud"
+  tls_secret_name = var.tls_secret_name
+  port            = 8080
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
   }
 }
-

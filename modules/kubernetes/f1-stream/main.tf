@@ -56,7 +56,7 @@ resource "kubernetes_deployment" "f1-stream" {
 
 resource "kubernetes_service" "f1-stream" {
   metadata {
-    name      = "f1-stream"
+    name      = "f1"
     namespace = "f1-stream"
     labels = {
       "app" = "f1-stream"
@@ -80,38 +80,13 @@ module "tls_secret" {
 }
 
 
-resource "kubernetes_ingress_v1" "f1-stream" {
-  metadata {
-    name      = "f1-ingress"
-    namespace = "f1-stream"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/force-ssl-redirect" : "false"
-      "nginx.ingress.kubernetes.io/ssl-redirect" : "false"
-      # "nginx.ingress.kubernetes.io/temporal-redirect" : "http://f1.viktorbarzin.me"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["f1.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "f1.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "f1-stream"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "f1-stream"
+  name            = "f1"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/force-ssl-redirect" : "false"
+    "nginx.ingress.kubernetes.io/ssl-redirect" : "false"
   }
 }

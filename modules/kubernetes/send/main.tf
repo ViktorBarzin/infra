@@ -106,35 +106,14 @@ resource "kubernetes_service" "send" {
     }
   }
 }
-resource "kubernetes_ingress_v1" "send" {
-  metadata {
-    name      = "send"
-    namespace = "send"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["send.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "send.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "send"
-              port {
-                number = 1443
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "send"
+  name            = "send"
+  tls_secret_name = var.tls_secret_name
+  port            = 1443
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
   }
 }

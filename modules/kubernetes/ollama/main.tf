@@ -128,36 +128,10 @@ resource "kubernetes_service" "ollama-ui" {
   }
 }
 
-
-resource "kubernetes_ingress_v1" "ollama-ui" {
-  metadata {
-    name      = "ollama"
-    namespace = "ollama"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["ollama.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "ollama.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "ollama-ui"
-              port {
-                number = 8080
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "ollama"
+  name            = "ollama"
+  tls_secret_name = var.tls_secret_name
+  port            = 8080
 }

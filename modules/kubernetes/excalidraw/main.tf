@@ -51,9 +51,9 @@ resource "kubernetes_deployment" "excalidraw" {
   }
 }
 
-resource "kubernetes_service" "finance_app" {
+resource "kubernetes_service" "draw" {
   metadata {
-    name      = "excalidraw"
+    name      = "draw"
     namespace = "excalidraw"
     labels = {
       app = "excalidraw"
@@ -71,52 +71,10 @@ resource "kubernetes_service" "finance_app" {
   }
 }
 
-
-resource "kubernetes_ingress_v1" "finance_app" {
-  metadata {
-    name      = "excalidraw"
-    namespace = "excalidraw"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["excalidraw.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "excalidraw.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "excalidraw"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-    rule {
-      host = "draw.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "excalidraw"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "excalidraw"
+  name            = "draw"
+  tls_secret_name = var.tls_secret_name
 }
+

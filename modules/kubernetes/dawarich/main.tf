@@ -216,39 +216,9 @@ resource "kubernetes_service" "dawarich" {
     }
   }
 }
-
-resource "kubernetes_ingress_v1" "dawarich" {
-  metadata {
-    name      = "dawarich"
-    namespace = "dawarich"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      #   "nginx.ingress.kubernetes.io/auth-type"   = "basic" # support only basic auth; can't use authentik
-      #   "nginx.ingress.kubernetes.io/auth-secret" = kubernetes_secret.basic_auth.metadata[0].name
-      #   "nginx.ingress.kubernetes.io/auth-realm"  = "Authentication Required"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["dawarich.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "dawarich.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "dawarich"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "dawarich"
+  name            = "dawarich"
+  tls_secret_name = var.tls_secret_name
 }

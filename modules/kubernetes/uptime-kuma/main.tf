@@ -89,49 +89,22 @@ resource "kubernetes_service" "uptime-kuma" {
     }
   }
 }
-resource "kubernetes_ingress_v1" "uptime-kuma" {
-  metadata {
-    name      = "uptime-kuma"
-    namespace = "uptime-kuma"
-    annotations = {
-      "kubernetes.io/ingress.class"                     = "nginx"
-      "nginx.ingress.kubernetes.io/affinity"            = "cookie"
-      "nginx.ingress.kubernetes.io/affinity-mode"       = "persistent"
-      "nginx.ingress.kubernetes.io/session-cookie-name" = "_sa_nginx"
-      "nginx.org/websocket-services"                    = "uptime-kuma"
-
-      "gethomepage.dev/enabled"     = "true"
-      "gethomepage.dev/description" = "Uptime monitor"
-      # gethomepage.dev/group: Media
-      "gethomepage.dev/icon" : "uptime-kuma.png"
-      "gethomepage.dev/name"         = "Uptime Kuma"
-      "gethomepage.dev/widget.type"  = "uptimekuma"
-      "gethomepage.dev/widget.url"   = "https://uptime.viktorbarzin.me"
-      "gethomepage.dev/widget.slug"  = "cluster-internal"
-      "gethomepage.dev/pod-selector" = ""
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["uptime.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "uptime.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "uptime-kuma"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "uptime-kuma"
+  name            = "uptime"
+  tls_secret_name = var.tls_secret_name
+  service_name    = "uptime-kuma"
+  extra_annotations = {
+    "nginx.org/websocket-services" = "uptime-kuma"
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/description"  = "Uptime monitor"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "uptime-kuma.png"
+    "gethomepage.dev/name"         = "Uptime Kuma"
+    "gethomepage.dev/widget.type"  = "uptimekuma"
+    "gethomepage.dev/widget.url"   = "https://uptime.viktorbarzin.me"
+    "gethomepage.dev/widget.slug"  = "cluster-internal"
+    "gethomepage.dev/pod-selector" = ""
   }
 }

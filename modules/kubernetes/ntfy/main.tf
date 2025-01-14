@@ -119,38 +119,10 @@ resource "kubernetes_service" "ntfy" {
   }
 }
 
-resource "kubernetes_ingress_v1" "ntfy" {
-  metadata {
-    name      = "ntfy"
-    namespace = "ntfy"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      #   "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      #   "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["ntfy.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "ntfy.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "ntfy"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "ntfy"
+  name            = "ntfy"
+  tls_secret_name = var.tls_secret_name
 }
 

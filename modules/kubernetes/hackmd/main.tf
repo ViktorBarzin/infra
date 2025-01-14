@@ -143,39 +143,12 @@ resource "kubernetes_service" "hackmd" {
     }
   }
 }
-
-resource "kubernetes_ingress_v1" "hackmd" {
-  metadata {
-    name      = "hackmd-ingress"
-    namespace = "hackmd"
-    annotations = {
-      "kubernetes.io/ingress.class"                     = "nginx"
-      "nginx.ingress.kubernetes.io/affinity"            = "cookie"
-      "nginx.ingress.kubernetes.io/affinity-mode"       = "persistent"
-      "nginx.ingress.kubernetes.io/session-cookie-name" = "_sa_nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["hackmd.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "hackmd.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "hackmd"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "hackmd"
+  name            = "hackmd"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
   }
 }

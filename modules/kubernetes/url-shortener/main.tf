@@ -170,44 +170,22 @@ resource "kubernetes_service" "shlink" {
   }
 }
 
-resource "kubernetes_ingress_v1" "shlink" {
-  metadata {
-    name      = "shlink-ingress"
-    namespace = "url"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "url"
+  name            = "url"
+  service_name    = "shlink"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
           more_set_headers "Host: $host";
           more_set_headers "X-Real-IP: $remote_addr";
           more_set_headers "X-Forwarded-For: $proxy_add_x_forwarded_for";
           more_set_headers "X-Forwarded-Proto: $scheme";
         EOF
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["url.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "url.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "shlink"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }
+
 
 # Shlink web client
 
@@ -309,39 +287,11 @@ resource "kubernetes_service" "shlink-web" {
   }
 }
 
-resource "kubernetes_ingress_v1" "shlink-web" {
-  metadata {
-    name      = "shlink-web-ingress"
-    namespace = "url"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-      "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["shlink.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "shlink.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "shlink-web"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress-web" {
+  source          = "../ingress_factory"
+  namespace       = "url"
+  name            = "shlink"
+  service_name    = "shlink-web"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }

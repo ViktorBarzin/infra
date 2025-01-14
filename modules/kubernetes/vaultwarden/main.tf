@@ -122,40 +122,9 @@ resource "kubernetes_service" "vaultwarden" {
   }
 }
 
-resource "kubernetes_ingress_v1" "vaultwarden" {
-  metadata {
-    name      = "vaultwarden"
-    namespace = "vaultwarden"
-    annotations = {
-      "kubernetes.io/ingress.class"          = "nginx"
-      "nginx.ingress.kubernetes.io/affinity" = "cookie"
-      # "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      # "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-      #   "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      #   "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["vaultwarden.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "vaultwarden.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "vaultwarden"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "vaultwarden"
+  name            = "vaultwarden"
+  tls_secret_name = var.tls_secret_name
 }

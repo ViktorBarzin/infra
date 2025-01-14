@@ -153,40 +153,14 @@ resource "kubernetes_service" "drone" {
   }
 }
 
-resource "kubernetes_ingress_v1" "drone" {
-  metadata {
-    name      = "drone-ingress"
-    namespace = "drone"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      //"nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      //"nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["drone.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "drone.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "drone"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "drone"
+  name            = "drone"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }
+
 
 # Setup drone runner
 resource "kubernetes_cluster_role" "drone" {
