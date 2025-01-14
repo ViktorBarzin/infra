@@ -103,38 +103,11 @@ resource "kubernetes_service" "dashy" {
   }
 }
 
-resource "kubernetes_ingress_v1" "dashy" {
-  metadata {
-    name      = "dashy-ingress"
-    namespace = "dashy"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["dashy.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "dashy.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "dashy"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "dashy"
+  name            = "dashy"
+  tls_secret_name = var.tls_secret_name
+  protected       = true # hidden as we use homepage now
 }
 

@@ -62,7 +62,7 @@ resource "kubernetes_deployment" "actualbudget" {
 
 resource "kubernetes_service" "actualbudget" {
   metadata {
-    name      = "actualbudget-${var.name}"
+    name      = "budget-${var.name}"
     namespace = "actualbudget"
     labels = {
       app = "actualbudget-${var.name}"
@@ -81,43 +81,13 @@ resource "kubernetes_service" "actualbudget" {
   }
 }
 
-resource "kubernetes_ingress_v1" "actualbudget" {
-  metadata {
-    name      = "actualbudget-ingress-${var.name}"
-    namespace = "actualbudget"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-      # "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-      # "nginx.ingress.kubernetes.io/auth-url" : "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
-      # "nginx.ingress.kubernetes.io/auth-signin" : "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
-      # "nginx.ingress.kubernetes.io/auth-response-headers" : "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
-      # "nginx.ingress.kubernetes.io/auth-snippet" : "proxy_set_header X-Forwarded-Host $http_host;"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["budget-${var.name}.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "budget-${var.name}.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "actualbudget-${var.name}"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../../ingress_factory"
+  namespace       = "actualbudget"
+  name            = "budget-${var.name}"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
   }
 }

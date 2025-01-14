@@ -122,37 +122,14 @@ resource "kubernetes_service" "audiobookshelf" {
   }
 }
 
-resource "kubernetes_ingress_v1" "audiobookshelf" {
-  metadata {
-    name      = "audiobookshelf"
-    namespace = "audiobookshelf"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["audiobookshelf.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "audiobookshelf.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "audiobookshelf"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "audiobookshelf"
+  name            = "audiobookshelf"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
   }
 }
 

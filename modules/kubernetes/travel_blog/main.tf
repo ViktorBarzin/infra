@@ -105,35 +105,10 @@ resource "kubernetes_service" "travel-blog" {
   }
 }
 
-resource "kubernetes_ingress_v1" "travel-blog" {
-  metadata {
-    name      = "travel-blog-ingress"
-    namespace = "travel-blog"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["travel.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "travel.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "travel-blog"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "travel-blog"
+  name            = "travel"
+  tls_secret_name = var.tls_secret_name
+  service_name    = "travel-blog"
 }

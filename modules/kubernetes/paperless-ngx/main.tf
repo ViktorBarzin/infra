@@ -142,70 +142,33 @@ resource "kubernetes_service" "paperless-ngx" {
   }
 }
 
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "paperless-ngx"
+  name            = "paperless-ngx"
+  service_name    = "paperless-ngx"
+  host            = "pdf"
+  tls_secret_name = var.tls_secret_name
+  port            = 8000
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
+    # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
+    # "nginx.ingress.kubernetes.io/limit-rpm": "5"
 
-resource "kubernetes_ingress_v1" "paperless-ngx" {
-  metadata {
-    name      = "paperless-ngx"
-    namespace = "paperless-ngx"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "100000m"
-      # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
-      # "nginx.ingress.kubernetes.io/limit-rpm": "5"
-
-      "gethomepage.dev/enabled"     = "true"
-      "gethomepage.dev/description" = "Document library"
-      # gethomepage.dev/group: Media
-      "gethomepage.dev/icon" : "paperless-ngx.png"
-      "gethomepage.dev/name"        = "Paperless-ngx"
-      "gethomepage.dev/widget.type" = "paperlessngx"
-      "gethomepage.dev/widget.url"  = "https://pdf.viktorbarzin.me"
-      # "gethomepage.dev/widget.token"    = var.homepage_token
-      "gethomepage.dev/widget.username" = var.homepage_username
-      "gethomepage.dev/widget.password" = var.homepage_password
-      "gethomepage.dev/widget.fields"   = "[\"total\"]"
-      "gethomepage.dev/pod-selector"    = ""
-      # gethomepage.dev/weight: 10 # optional
-      # gethomepage.dev/instance: "public" # optional
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["paperless-ngx.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "paperless-ngx.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "paperless-ngx"
-              port {
-                number = 8000
-              }
-            }
-          }
-        }
-      }
-    }
-    rule {
-      host = "pdf.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "paperless-ngx"
-              port {
-                number = 8000
-              }
-            }
-          }
-        }
-      }
-    }
+    "gethomepage.dev/enabled"     = "true"
+    "gethomepage.dev/description" = "Document library"
+    # gethomepage.dev/group: Media
+    "gethomepage.dev/icon" : "paperless-ngx.png"
+    "gethomepage.dev/name"        = "Paperless-ngx"
+    "gethomepage.dev/widget.type" = "paperlessngx"
+    "gethomepage.dev/widget.url"  = "https://pdf.viktorbarzin.me"
+    # "gethomepage.dev/widget.token"    = var.homepage_token
+    "gethomepage.dev/widget.username" = var.homepage_username
+    "gethomepage.dev/widget.password" = var.homepage_password
+    "gethomepage.dev/widget.fields"   = "[\"total\"]"
+    "gethomepage.dev/pod-selector"    = ""
+    # gethomepage.dev/weight: 10 # optional
+    # gethomepage.dev/instance: "public" # optional
   }
 }
+

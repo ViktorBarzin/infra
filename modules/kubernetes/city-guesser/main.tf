@@ -107,40 +107,12 @@ resource "kubernetes_service" "city-guesser" {
 #   }
 # }
 
-resource "kubernetes_ingress_v1" "city-guesser" {
-  metadata {
-    name      = "city-guesser-ingress"
-    namespace = "city-guesser"
-    annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      # "nginx.ingress.kubernetes.io/auth-url"              = "https://$host/oauth2/auth"
-      # "nginx.ingress.kubernetes.io/auth-signin"           = "https://$host/oauth2/start?rd=$escaped_request_uri"
-      # "nginx.ingress.kubernetes.io/auth-response-headers" = "X-Auth-Request-User,X-Auth-Request-Email"
-    }
-  }
-
-  spec {
-    tls {
-      hosts       = ["city-guesser.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "city-guesser.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "city-guesser"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "city-guesser"
+  name            = "city-guesser"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }
 
 # resource "kubernetes_ingress_v1" "city-guesser-oauth" {
