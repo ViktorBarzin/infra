@@ -98,6 +98,7 @@ variable "cloudflare_non_proxied_names" {}
 variable "cloudflare_tunnel_token" {}
 variable "owntracks_credentials" {}
 variable "dawarich_database_password" {}
+variable "tandoor_database_password" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -406,6 +407,9 @@ module "kubernetes_cluster" {
   owntracks_credentials = var.owntracks_credentials
 
   dawarich_database_password = var.dawarich_database_password
+
+  tandoor_database_password = var.tandoor_database_password
+  tandoor_email_password    = var.mailserver_accounts["info@viktorbarzin.me"]
 }
 
 

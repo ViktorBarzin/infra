@@ -77,6 +77,8 @@ variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "owntracks_credentials" {}
 variable "dawarich_database_password" {}
+variable "tandoor_database_password" {}
+variable "tandoor_email_password" {}
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
@@ -574,4 +576,10 @@ module "dawarich" {
 module "changedetection" {
   source          = "./changedetection"
   tls_secret_name = var.tls_secret_name
+}
+module "tandoor" {
+  source                    = "./tandoor"
+  tls_secret_name           = var.tls_secret_name
+  tandoor_database_password = var.tandoor_database_password
+  tandoor_email_password    = var.tandoor_email_password
 }
