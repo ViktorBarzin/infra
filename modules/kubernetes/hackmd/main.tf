@@ -85,7 +85,7 @@ resource "kubernetes_deployment" "hackmd" {
           env {
             name = "CMD_DB_URL"
             # value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
-            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@mysql.dbaas.svc.cluster.local/codimd")
+            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@mysql.dbaas/codimd")
           }
           env {
             name  = "CMD_USECDN"
