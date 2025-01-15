@@ -5,11 +5,11 @@ authentik:
   error_reporting:
     enabled: true
   postgresql:
-    host: postgresql.dbaas.svc.cluster.local
+    host: postgresql.dbaas
     user: authentik
     password: ${postgres_password}
   redis:
-    host: redis.redis.svc.cluster.local
+    host: redis.redis
 
 server:
   ingress:

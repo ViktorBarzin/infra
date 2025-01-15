@@ -67,7 +67,7 @@ resource "kubernetes_deployment" "dawarich" {
           args    = ["bin/dev"]
           env {
             name  = "REDIS_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://redis.redis:6379/0"
           }
           env {
             name  = "DATABASE_HOST"
