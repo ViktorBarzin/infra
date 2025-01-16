@@ -85,6 +85,18 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/proxy-connect-timeout" : var.proxy_timeout
       "nginx.ingress.kubernetes.io/proxy-send-timeout" : var.proxy_timeout
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
+      "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
+
+      # DDOS protection
+      "nginx.ingress.kubernetes.io/limit-connections" : 5
+      "nginx.ingress.kubernetes.io/limit-rps" : 2
+      "nginx.ingress.kubernetes.io/limit-rpm" : 5
+      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 10
+      "nginx.ingress.kubernetes.io/limit-rate-after" : 10
+      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
+        limit_req_status 429;
+        limit_conn_status 429;
+      EOF
 
     }, var.extra_annotations)
   }
