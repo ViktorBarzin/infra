@@ -488,6 +488,5 @@ module "ingress" {
   name            = "mail"
   service_name    = "mailserver"
   tls_secret_name = var.tls_secret_name
-  protected       = true
 }
 
