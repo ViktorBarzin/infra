@@ -33,9 +33,10 @@ resource "kubernetes_config_map" "mailserver_env_config" {
   }
 
   data = {
-    DMS_DEBUG                              = "0"
+    DMS_DEBUG = "0"
+    # LOG_LEVEL                              = "debug"
     ENABLE_CLAMAV                          = "0"
-    ENABLE_FAIL2BAN                        = "1"
+    ENABLE_FAIL2BAN                        = "0"
     ENABLE_FETCHMAIL                       = "0"
     ENABLE_POSTGREY                        = "0"
     ENABLE_SASLAUTHD                       = "0"
@@ -46,12 +47,12 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     OVERRIDE_HOSTNAME                      = "mail.viktorbarzin.me"
     POSTFIX_MESSAGE_SIZE_LIMIT             = 1024 * 1024 * 200 # 200 MB
     POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
-    TLS_LEVEL                              = "intermediate"
-    DEFAULT_RELAY_HOST                     = "[smtp.sendgrid.net]:587"
-    SPOOF_PROTECTION                       = "1"
-    SSL_TYPE                               = "manual"
-    SSL_CERT_PATH                          = "/tmp/ssl/tls.crt"
-    SSL_KEY_PATH                           = "/tmp/ssl/tls.key"
+    # TLS_LEVEL                              = "intermediate"
+    DEFAULT_RELAY_HOST = "[smtp.sendgrid.net]:587"
+    SPOOF_PROTECTION   = "1"
+    SSL_TYPE           = "manual"
+    SSL_CERT_PATH      = "/tmp/ssl/tls.crt"
+    SSL_KEY_PATH       = "/tmp/ssl/tls.key"
   }
 }
 
@@ -218,12 +219,12 @@ resource "kubernetes_deployment" "mailserver" {
             sub_path   = "fetchmail.cf"
             read_only  = true
           }
-          volume_mount {
-            name       = "config"
-            mount_path = "/tmp/docker-mailserver/dovecot.cf"
-            sub_path   = "dovecot.cf"
-            read_only  = true
-          }
+          # volume_mount {
+          #   name       = "config"
+          #   mount_path = "/tmp/docker-mailserver/dovecot.cf"
+          #   sub_path   = "dovecot.cf"
+          #   read_only  = true
+          # }
           # volume_mount {
           #   name       = "user-patches"
           #   mount_path = "/tmp/user-patches.sh"
@@ -297,11 +298,6 @@ resource "kubernetes_deployment" "mailserver" {
           port {
             name           = "smtp-auth"
             container_port = 587
-            protocol       = "TCP"
-          }
-          port {
-            name           = "imap"
-            container_port = 143
             protocol       = "TCP"
           }
           port {
@@ -458,13 +454,6 @@ resource "kubernetes_service" "mailserver" {
       protocol    = "TCP"
       port        = 587
       target_port = "smtp-auth"
-    }
-
-    port {
-      name        = "imap"
-      protocol    = "TCP"
-      port        = 143
-      target_port = "imap"
     }
 
     port {
