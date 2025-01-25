@@ -49,6 +49,7 @@ resource "kubernetes_deployment" "technitium" {
       }
       spec {
         node_name = "k8s-node1" # Horrible hack but only way I found to preserve client ip
+        # if moved, update the corefile for coredns as that's forwarding queries for viktorbarzin.lan
         container {
           image = "technitium/dns-server:latest"
           name  = "technitium"
