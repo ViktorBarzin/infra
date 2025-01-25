@@ -121,7 +121,7 @@ resource "kubernetes_deployment" "mysql" {
       }
       spec {
         container {
-          image = "mysql:9.1.0"
+          image = "mysql:9.2.0"
           name  = "mysql"
           env {
             name  = "MYSQL_ROOT_PASSWORD"
