@@ -179,15 +179,15 @@ module "mladost3" {
   depends_on      = [kubernetes_namespace.reverse-proxy]
 }
 
-# https://server-switch.viktorbarzin.me/
-module "server-switch" {
-  source          = "./factory"
-  name            = "server-switch"
-  external_name   = "server-switch.viktorbarzin.lan"
-  port            = 80
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.reverse-proxy]
-}
+# # https://server-switch.viktorbarzin.me/
+# module "server-switch" {
+#   source          = "./factory"
+#   name            = "server-switch"
+#   external_name   = "server-switch.viktorbarzin.lan"
+#   port            = 80
+#   tls_secret_name = var.tls_secret_name
+#   depends_on      = [kubernetes_namespace.reverse-proxy]
+# }
 
 # https://ha-sofia.viktorbarzin.me/
 module "ha-sofia" {
