@@ -317,8 +317,9 @@ resource "kubernetes_deployment" "mailserver" {
           name  = "roundcube"
           image = "roundcube/roundcubemail:1.6.9-apache"
           env {
-            name  = "ROUNDCUBEMAIL_DEFAULT_HOST"
-            value = "ssl://127.0.0.1" # running in same pod
+            name = "ROUNDCUBEMAIL_DEFAULT_HOST"
+            # value = "ssl://127.0.0.1" # running in same pod
+            value = "tls://127.0.0.1" # running in same pod
           }
           env {
             name  = "ROUNDCUBEMAIL_SMTP_SERVER"
