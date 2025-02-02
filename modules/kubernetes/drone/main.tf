@@ -158,7 +158,7 @@ module "ingress" {
   namespace       = "drone"
   name            = "drone"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  # protected       = true
 }
 
 
