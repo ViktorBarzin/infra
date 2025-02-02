@@ -159,6 +159,9 @@ module "ingress" {
         proxy_cache_bypass $http_x_purge;
         add_header X-Cache-Status $upstream_cache_status;
         EOF
+    "nginx.ingress.kubernetes.io/limit-connections" : 0
+    "nginx.ingress.kubernetes.io/limit-rps" : 0
+    "nginx.ingress.kubernetes.io/limit-rpm" : 0
   }
 }
 
