@@ -25,14 +25,15 @@ cat << EOF > $certbot_auth
 curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
-    -d '{
-      "comment": "Domain verification record",
-      "content": "$CERTBOT_VALIDATION",
-      "name": "_acme-challenge.$CERTBOT_DOMAIN",
-      "proxied": false,
-      "ttl": 60,
-      "type": "TXT"
-    }' 
+    -d "{
+      \"comment\": \"Domain verification record\",
+      \"content\": \"$CERTBOT_VALIDATION\",
+      \"name\": \"_acme-challenge.$CERTBOT_DOMAIN\",
+      \"proxied\": false,
+      \"ttl\": 60,
+      \"type\": \"TXT\"
+    }"
+
 
 # Sleep to make sure the change has time to propagate from primary to secondary name servers
 sleep 25
