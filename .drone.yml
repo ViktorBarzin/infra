@@ -93,7 +93,8 @@ steps:
     commands:
       - "apk update && apk add git certbot expect curl gzip"
       # Install terraform cli
-      - "curl https://releases.hashicorp.com/terraform/0.14.6/terraform_0.14.6_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
+      # - "curl https://releases.hashicorp.com/terraform/0.14.6/terraform_0.14.6_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
+      - "curl https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
       - "terraform init"
       - "./modules/kubernetes/setup_tls_secret/renew2.sh"
   - name: Commit updated certificates
