@@ -699,7 +699,7 @@ resource "kubernetes_deployment" "postgres" {
       }
       spec {
         container {
-          image = "postgres:16.4-bullseye"
+          image = "postgis/postgis:16-master"
           # image = "postgres:17.2-bullseye" # needs pg_upgrade to data dir
           name = "postgresql"
           env {
