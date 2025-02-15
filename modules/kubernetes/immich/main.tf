@@ -218,3 +218,118 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 }
 
 # POWER TOOLS
+
+# resource "kubernetes_deployment" "powertools" {
+#   metadata {
+#     name      = "immich-powertools"
+#     namespace = "immich"
+#     labels = {
+#       app = "immich-powertools"
+#     }
+#     annotations = {
+#       "reloader.stakater.com/search" = "true"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     strategy {
+#       type = "Recreate"
+#     }
+#     selector {
+#       match_labels = {
+#         app = "immich-powertools"
+#       }
+#     }
+#     template {
+#       metadata {
+#         labels = {
+#           app = "immich-powertools"
+#         }
+#         annotations = {
+#           "diun.enable"       = "true"
+#           "diun.include_tags" = "latest"
+#         }
+#       }
+#       spec {
+
+#         container {
+#           image = "ghcr.io/varun-raj/immich-power-tools:latest"
+#           name  = "owntracks"
+#           port {
+#             name           = "http"
+#             container_port = 3000
+#           }
+#           env {
+#             name  = "IMMICH_API_KEY"
+#             value = "<change me>"
+#           }
+#           env {
+#             name = "IMMICH_URL"
+#             value = "http://immich-server.immich.svc.cluster.local"
+#           }
+#           env {
+#             name  = "EXTERNAL_IMMICH_URL"
+#             value = "https://immich.viktorbarzin.me"
+#           }
+#           env {
+#             name  = "DB_USERNAME"
+#             value = "immich"
+#           }
+#           env {
+#             name  = "DB_PASSWORD"
+#             value = var.postgresql_password
+#           }
+#           env {
+#             name = "DB_HOST"
+#             value = "immich-postgresql.immich.svc.cluster.local"
+#           }
+#           # env {
+#           #   name  = "DB_PORT"
+#           #   value = "5432"
+#           # }
+#           env {
+#             name  = "DB_DATABASE_NAME"
+#             value = "immich"
+#           }
+#           env {
+#             name  = "NODE_ENV"
+#             value = "development"
+#           }
+
+#         }
+#       }
+#     }
+#   }
+# }
+
+
+# resource "kubernetes_service" "powertools" {
+#   metadata {
+#     name      = "immich-powertools"
+#     namespace = "immich"
+#     labels = {
+#       "app" = "immich-powertools"
+#     }
+#   }
+
+#   spec {
+#     selector = {
+#       app = "immich-powertools"
+#     }
+#     port {
+#       name        = "http"
+#       port        = 80
+#       target_port = 3000
+#       protocol    = "TCP"
+#     }
+#   }
+# }
+
+# module "ingress-powertools" {
+#   source          = "../ingress_factory"
+#   namespace       = "immich"
+#   name            = "immich-powertools"
+#   tls_secret_name = var.tls_secret_name
+#   protected       = true
+# }
+
