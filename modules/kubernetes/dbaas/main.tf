@@ -115,7 +115,7 @@ resource "kubernetes_deployment" "mysql" {
           app = "mysql"
         }
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false"
           "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
       }
