@@ -14,10 +14,25 @@ echo "Creating $certbot_auth"
 cat << EOF > $certbot_auth
 #!/usr/bin/env sh
 # Generate API token from DNS web console
-API_TOKEN="$technitium_token"
 
 # Create challenge TXT record
-curl "http://technitium-web.technitium.svc.cluster.local:5380/api/zones/records/add?token=\$API_TOKEN&domain=_acme-challenge.\$CERTBOT_DOMAIN&type=TXT&ttl=60&text=\$CERTBOT_VALIDATION"
+
+# TECHNITIUM
+#API_TOKEN="$technitium_token"
+# curl "http://technitium-web.technitium.svc.cluster.local:5380/api/zones/records/add?token=\$API_TOKEN&domain=_acme-challenge.\$CERTBOT_DOMAIN&type=TXT&ttl=60&text=\$CERTBOT_VALIDATION"
+
+# CLOUDFLARE
+curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
+    -d '{
+      "comment": "Domain verification record",
+      "content": "$CERTBOT_VALIDATION",
+      "name": "_acme-challenge.$CERTBOT_DOMAIN",
+      "proxied": false,
+      "ttl": 60,
+      "type": "TXT"
+    }' 
 
 # Sleep to make sure the change has time to propagate from primary to secondary name servers
 sleep 25
@@ -31,10 +46,19 @@ echo "Creating $certbot_cleanup"
 cat << EOF > $certbot_cleanup
 #!/usr/bin/env sh
 # Generate API token from DNS web console
-API_TOKEN="$technitium_token"
 
 # Delete challenge TXT record
-curl "http://technitium-web.technitium.svc.cluster.local:5380/api/zones/records/delete?token=\$API_TOKEN&domain=_acme-challenge.\$CERTBOT_DOMAIN&type=TXT&text=\$CERTBOT_VALIDATION"
+
+# TECHNIUM
+#API_TOKEN="$technitium_token"
+#curl "http://technitium-web.technitium.svc.cluster.local:5380/api/zones/records/delete?token=\$API_TOKEN&domain=_acme-challenge.\$CERTBOT_DOMAIN&type=TXT&text=\$CERTBOT_VALIDATION"
+
+# CLOUDFLARE
+record_id=$(curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records -H "Authorization: Bearer $CLOUDFLARE_TOKEN" | jq -r '.result[] | select(.name | contains("acme")) | .id')
+curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$record_id \
+    -X DELETE \
+    -H "Authorization: Bearer $CLOUDFLARE_TOKEN"
+
 EOF
 
 chmod 700 $certbot_cleanup
