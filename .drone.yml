@@ -95,7 +95,7 @@ steps:
       CLOUDFLARE_ZONE_ID:
         from_secret: CLOUDFLARE_ZONE_ID
     commands:
-      - "apk update && apk add git certbot expect curl gzip wget"
+      - "apk update && apk add git certbot expect curl gzip wget jq"
       # Install terraform cli
       # - "curl https://releases.hashicorp.com/terraform/0.14.6/terraform_0.14.6_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
       # - "curl https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"

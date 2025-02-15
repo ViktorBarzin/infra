@@ -26,7 +26,7 @@ curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records 
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
     -d "{
-      \"comment\": \"Domain verification record\",
+      \"comment\": \"certbot temporary challenge\",
       \"content\": \"$CERTBOT_VALIDATION\",
       \"name\": \"_acme-challenge.viktorbarzin.me\",
       \"proxied\": false,
