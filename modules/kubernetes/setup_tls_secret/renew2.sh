@@ -27,8 +27,8 @@ curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records 
     -H "Authorization: Bearer $CLOUDFLARE_TOKEN" \
     -d "{
       \"comment\": \"certbot temporary challenge\",
-      \"content\": \"$CERTBOT_VALIDATION\",
-      \"name\": \"_acme-challenge.viktorbarzin.me\",
+      \"content\": \"\$CERTBOT_VALIDATION\",
+      \"name\": \"_acme-challenge.\$CERTBOT_DOMAIN\",
       \"proxied\": false,
       \"ttl\": 60,
       \"type\": \"TXT\"
@@ -55,10 +55,11 @@ cat << EOF > $certbot_cleanup
 #curl "http://technitium-web.technitium.svc.cluster.local:5380/api/zones/records/delete?token=\$API_TOKEN&domain=_acme-challenge.\$CERTBOT_DOMAIN&type=TXT&text=\$CERTBOT_VALIDATION"
 
 # CLOUDFLARE
-record_id=$(curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records -H "Authorization: Bearer $CLOUDFLARE_TOKEN" | jq -r '.result[] | select(.name | contains("acme")) | .id')
-curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$record_id \
-    -X DELETE \
-    -H "Authorization: Bearer $CLOUDFLARE_TOKEN"
+curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records -H "Authorization: Bearer $CLOUDFLARE_TOKEN" | jq -r '.result[] | select(.name | contains("acme")) | .id' | while read -r record_id; do
+    curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/\$record_id \
+        -X DELETE \
+        -H "Authorization: Bearer $CLOUDFLARE_TOKEN"
+done
 
 EOF
 
