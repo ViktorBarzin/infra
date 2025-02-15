@@ -693,7 +693,7 @@ resource "kubernetes_deployment" "postgres" {
           app = "postgresql"
         }
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false"
           "diun.include_tags" = "^\\d+(?:\\.\\d+)?-bullseye$"
         }
       }
