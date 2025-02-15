@@ -28,7 +28,7 @@ curl https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records 
     -d "{
       \"comment\": \"Domain verification record\",
       \"content\": \"$CERTBOT_VALIDATION\",
-      \"name\": \"_acme-challenge.$CERTBOT_DOMAIN\",
+      \"name\": \"_acme-challenge.viktorbarzin.me\",
       \"proxied\": false,
       \"ttl\": 60,
       \"type\": \"TXT\"
