@@ -160,7 +160,7 @@ serverFiles:
         rules:
           - alert: LowVoltage
             expr: ups_upsInputVoltage < 205
-            for: 1m
+            for: 10m
             labels:
               severity: page
             annotations:
