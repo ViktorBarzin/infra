@@ -98,6 +98,7 @@ steps:
       - "apk update && apk add git certbot expect curl gzip wget jq"
       # Install terraform cli
       # - "curl https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
+      - "echo hehehehehehehe"
       - "wget -O terraform_1.10.3_linux_amd64.zip https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip && unzip -o terraform_1.10.3_linux_amd64.zip && mv terraform /usr/local/bin/ && chmod 775 /usr/local/bin/terraform"
       - "/usr/local/bin/terraform init"
       - "./modules/kubernetes/setup_tls_secret/renew2.sh"
