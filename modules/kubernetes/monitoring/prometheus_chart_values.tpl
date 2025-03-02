@@ -165,6 +165,20 @@ serverFiles:
               severity: page
             annotations:
               summary: "Low input voltage - {{ $value }}"
+          - alert: OnBattery
+            expr: ups_upsSecondsOnBattery > 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "UPS on battery for {{ $value }} seconds"
+          - alert: LowUPBattery
+            expr: ups_upsEstimatedMinutesRemaining < 25
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "UPS battery running out - {{ $value }} minutes remaining"
           - alert: NodeDown
             expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
             for: 1m
