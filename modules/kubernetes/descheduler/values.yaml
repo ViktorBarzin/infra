@@ -146,6 +146,17 @@ deschedulerPolicy:
               pods: 30
             metricsUtilization:
               metricsServer: true
+        - name: PodLifeTime
+          args:
+            maxPodLifeTimeSeconds: 604800
+            namespaces:
+              exclude:
+                - "dbaas" # let's not meddle with the dbs
+                - "kube-system"
+                - "calico-system"
+                - "calico-apiserver"
+                - "metallb-system"
+                - "monitoring"
       plugins:
         balance:
           enabled:
@@ -158,6 +169,7 @@ deschedulerPolicy:
             - RemovePodsViolatingNodeTaints
             - RemovePodsViolatingNodeAffinity
             - RemovePodsViolatingInterPodAntiAffinity
+            - PodLifeTime
 
 priorityClassName: system-cluster-critical
 
