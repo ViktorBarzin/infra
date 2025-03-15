@@ -36,6 +36,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     DMS_DEBUG = "0"
     # LOG_LEVEL                              = "debug"
     ENABLE_CLAMAV                          = "0"
+    ENABLE_AMAVIS                          = "0"
     ENABLE_FAIL2BAN                        = "0"
     ENABLE_FETCHMAIL                       = "0"
     ENABLE_POSTGREY                        = "0"
@@ -161,7 +162,7 @@ resource "kubernetes_deployment" "mailserver" {
       spec {
         container {
           name              = "docker-mailserver"
-          image             = "docker.io/mailserver/docker-mailserver:14.0.0"
+          image             = "docker.io/mailserver/docker-mailserver:15.0.0"
           image_pull_policy = "IfNotPresent"
           security_context {
             capabilities {
