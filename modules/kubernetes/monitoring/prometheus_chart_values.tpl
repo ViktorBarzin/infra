@@ -238,20 +238,20 @@ serverFiles:
               summary: No node load data. Can signal that prometheus is not scraping
           - alert: NoiDRACData
             expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) == 0
-            for: 10m
+            for: 30m
             labels:
               severity: page
             annotations:
               summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
           - alert: HighIngressPermissionErrors
-            expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
-            for: 10m
+            expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
+            for: 20m
             labels:
               severity: page
             annotations:
               summary: "High permission error rate for {{ $labels.ingress }}: {{ $value }}%."
           - alert: HighIngressServerErrors
-            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
+            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100)  > 10
             for: 20m
             labels:
               severity: page
