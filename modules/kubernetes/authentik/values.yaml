@@ -12,6 +12,7 @@ authentik:
     host: redis.redis
 
 server:
+  replicas: 3
   ingress:
     enabled: false
     # hosts:
@@ -21,3 +22,6 @@ server:
     diun.include_tags: "^202[0-9].[0-9]+.*$" # no need to annotate the worker as it uses the same image
 global:
   addPrometheusAnnotations: true
+
+worker:
+  replicas: 3
