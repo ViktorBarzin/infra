@@ -19,6 +19,7 @@ agent:
     - name: COLLECTIONS
       value: "crowdsecurity/nginx"
 lapi:
+  replicas: 3
   env:
     # As it's a test, we don't want to share signals with CrowdSec, so disable the Online API.
     # - name: DISABLE_ONLINE_API
