@@ -209,13 +209,13 @@ serverFiles:
           #       severity: page
           #     annotations:
           #       summary: Pod stuck not ready.
-          - alert: ReadyPodsInDeploymentLessThanSpec
-            expr: kube_deployment_status_replicas_available - on(namespace, deployment) kube_deployment_spec_replicas < 0
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: Number of ready pods in {{ $labels.deployment }} is less than what is defined in spec.
+          #- alert: ReadyPodsInDeploymentLessThanSpec
+          #  expr: kube_deployment_status_replicas_available - on(namespace, deployment) kube_deployment_spec_replicas < 0
+          #  for: 10m
+          #  labels:
+          #    severity: page
+          #  annotations:
+          #    summary: Number of ready pods in {{ $labels.deployment }} is less than what is defined in spec.
           - alert: PowerOutage
             expr: ups_upsInputVoltage < 150
             labels:
