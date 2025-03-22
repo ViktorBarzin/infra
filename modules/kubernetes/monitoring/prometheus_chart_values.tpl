@@ -173,7 +173,7 @@ serverFiles:
             annotations:
               summary: "UPS on battery for {{ $value }} seconds"
           - alert: LowUPBattery
-            expr: ups_upsEstimatedMinutesRemaining < 25
+            expr: ups_upsEstimatedMinutesRemaining < 25 and on(instance) ups_upsInputVoltage < 150
             for: 1m
             labels:
               severity: critical
