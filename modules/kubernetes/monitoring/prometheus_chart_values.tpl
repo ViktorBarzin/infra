@@ -428,3 +428,14 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'ups_$${1}'
+  - job_name: 'registry'
+    static_configs:
+        - targets:
+          - "192.168.1.10:5001"
+    metrics_path: '/metrics'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'registry_$${1}' 
