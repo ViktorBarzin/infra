@@ -35,5 +35,6 @@ module "viktor" {
 module "anca" {
   source          = "./factory"
   name            = "anca"
+  tag             = "edge"
   tls_secret_name = var.tls_secret_name
 }
