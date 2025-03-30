@@ -43,8 +43,8 @@ resource "kubernetes_deployment" "dawarich" {
           app = "dawarich"
         }
         annotations = {
-          "diun.enable"          = "true"
-          "diun.include_tags"    = "latest"
+          # "diun.enable"          = "true"
+          # "diun.include_tags"    = "latest"
           "prometheus.io/scrape" = "true"
           "prometheus.io/path"   = "/metrics"
           "prometheus.io/port"   = 9394
@@ -117,6 +117,11 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "PROMETHEUS_EXPORTER_HOST"
             value = "0.0.0.0"
           }
+          env {
+            name  = "PHOTON_API_HOST"
+            value = "photon.dawarich"
+          }
+
 
           #   volume_mount {
           #     name       = "watched"
@@ -176,23 +181,74 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "PROMETHEUS_EXPORTER_HOST"
             value = "dawarich.dawarich"
           }
+          env {
+            name  = "PHOTON_API_HOST"
+            value = "photon.dawarich"
+          }
 
           #   volume_mount {
           #     name       = "watched"
           #     mount_path = "/var/app/tmp/imports/watched"
           #   }
         }
-        volume {
-          name = "watched"
-          nfs {
-            path   = "/mnt/main/dawarich"
-            server = "10.0.10.15"
-          }
-        }
       }
     }
   }
 }
+
+
+resource "kubernetes_deployment" "photon" {
+  metadata {
+    name      = "photon"
+    namespace = "dawarich"
+    labels = {
+      app = "photon"
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "photon"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "photon"
+        }
+      }
+      spec {
+
+        container {
+          image = "thomasnordquist/photon-geocoder:latest"
+          name  = "photon"
+          port {
+            name           = "tcp"
+            container_port = 2322
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/photon/photon_data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            path   = "/mnt/main/photon"
+            server = "10.0.10.15"
+          }
+        }
+      }
+
+    }
+  }
+}
+
 
 
 resource "kubernetes_service" "dawarich" {
@@ -212,6 +268,28 @@ resource "kubernetes_service" "dawarich" {
       name        = "http"
       port        = 80
       target_port = 3000
+      protocol    = "TCP"
+    }
+  }
+}
+
+resource "kubernetes_service" "photon" {
+  metadata {
+    name      = "photon"
+    namespace = "dawarich"
+    labels = {
+      "app" = "photon"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "photon"
+    }
+    port {
+      name        = "http"
+      port        = 2322
+      target_port = 2322
       protocol    = "TCP"
     }
   }
