@@ -875,7 +875,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 
                 # Rotate - delete last log file
                 cd /backup
-                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                find . -name "dump_*.sql" -type f -mtime +7 -delete # 7 day retention of backups
               EOT
               ]
               volume_mount {
