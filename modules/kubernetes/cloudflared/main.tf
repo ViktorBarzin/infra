@@ -26,7 +26,7 @@ resource "kubernetes_deployment" "cloudflared" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 3
     strategy {
       type = "RollingUpdate"
     }
