@@ -80,12 +80,35 @@ variable "dawarich_database_password" {}
 variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
 
+variable "defcon_level" {
+  type    = number
+  default = 5
+  validation {
+    condition     = var.defcon_level >= 1 && var.defcon_level <= 5
+    error_message = "DEFCON level must be between 1 and 5"
+  }
+}
+locals {
+  defcon_modules = {
+    1 : [],
+    2 : [],
+    3 : [],
+    4 : [],
+    5 : ["blog"],
+  }
+  active_modules = distinct(flatten([
+    for level in range(1, var.defcon_level + 1) : # From current level to 5
+    lookup(local.defcon_modules, level, [])
+  ]))
+}
+
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
   depends_on = [module.metallb]
 }
 
 module "blog" {
+  count           = contains(local.active_modules, "blog") ? 1 : 0
   source          = "./blog"
   tls_secret_name = var.tls_secret_name
   # dockerhub_password = var.dockerhub_password
@@ -274,13 +297,13 @@ module "webhook_handler" {
   depends_on = [null_resource.core_services]
 }
 
-# module "wireguard" {
-#   source          = "./wireguard"
-#   tls_secret_name = var.tls_secret_name
-#   wg_0_conf       = var.wireguard_wg_0_conf
-#   wg_0_key        = var.wireguard_wg_0_key
-#   firewall_sh     = var.wireguard_firewall_sh
-# }
+module "wireguard" {
+  source          = "./wireguard"
+  tls_secret_name = var.tls_secret_name
+  wg_0_conf       = var.wireguard_wg_0_conf
+  wg_0_key        = var.wireguard_wg_0_key
+  firewall_sh     = var.wireguard_firewall_sh
+}
 
 # module "home_assistant" {
 #   source                         = "./home_assistant"
@@ -494,10 +517,10 @@ module "jsoncrack" {
 #   # tls_secret_name = var.tls_secret_name
 # }
 
-module "ollama" {
-  source          = "./ollama"
-  tls_secret_name = var.tls_secret_name
-}
+# module "ollama" {
+#   source          = "./ollama"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "ntfy" {
   source          = "./ntfy"
