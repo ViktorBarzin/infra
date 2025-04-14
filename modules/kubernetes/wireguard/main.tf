@@ -85,6 +85,15 @@ resource "kubernetes_deployment" "wireguard" {
         }
       }
       spec {
+        init_container {
+          name    = "sysctl-setup"
+          image   = "busybox"
+          command = ["/bin/sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"]
+
+          security_context {
+            privileged = true
+          }
+        }
         container {
           image             = "sclevine/wg:latest"
           name              = "wireguard"
