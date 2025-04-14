@@ -123,8 +123,10 @@ deschedulerPolicy:
         - name: RemoveDuplicates
         - name: RemovePodsHavingTooManyRestarts
           args:
-            podRestartThreshold: 100
+            podRestartThreshold: 2
             includingInitContainers: true
+            states:
+              - CrashLoopBackOff
         - name: RemovePodsViolatingNodeAffinity
           args:
             nodeAffinityType:
@@ -158,6 +160,16 @@ deschedulerPolicy:
                 - "calico-apiserver"
                 - "metallb-system"
                 - "monitoring"
+        - name: "RemoveFailedPods"
+          args:
+            reasons:
+              - "CrashLoopBackOff"
+              - "Error"
+              - "ContainerStatusUnknown"
+            # exitCodes:
+            #   - 1
+            includingInitContainers: true
+            minPodLifetimeSeconds: 1
       plugins:
         balance:
           enabled:
@@ -171,6 +183,7 @@ deschedulerPolicy:
             - RemovePodsViolatingNodeAffinity
             - RemovePodsViolatingInterPodAntiAffinity
             - PodLifeTime
+            - RemoveFailedPods
 
 priorityClassName: system-cluster-critical
 
