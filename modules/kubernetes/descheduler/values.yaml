@@ -166,10 +166,11 @@ deschedulerPolicy:
               - "CrashLoopBackOff"
               - "Error"
               - "ContainerStatusUnknown"
+              - "ImagePullBackOff"
             # exitCodes:
             #   - 1
             includingInitContainers: true
-            minPodLifetimeSeconds: 1
+            # minPodLifetimeSeconds: 0
       plugins:
         balance:
           enabled:
