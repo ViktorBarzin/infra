@@ -142,11 +142,11 @@ deschedulerPolicy:
             thresholds:
               cpu: 50
               memory: 50
-              pods: 20
+              # pods: 20
             targetThresholds:
               cpu: 80
               memory: 80
-              pods: 30
+              # pods: 30
             metricsUtilization:
               metricsServer: true
         - name: PodLifeTime
