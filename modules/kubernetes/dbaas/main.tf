@@ -430,7 +430,7 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "50m"
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "500m"
   }
 }
 
