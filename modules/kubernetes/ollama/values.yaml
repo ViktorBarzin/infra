@@ -11,11 +11,11 @@ ollama:
 
   # -- List of models to pull at container startup
   models:
-    - llama3
+    pull:
+      - llama3
 
 persistentVolume:
   enabled: true
   existingClaim: "ollama-pvc"
-
-nodeSelector:
-  kubernetes.io/hostname: k8s-node1
+# nodeSelector:
+#   kubernetes.io/hostname: k8s-node1
