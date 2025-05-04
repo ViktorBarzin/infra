@@ -43,7 +43,7 @@ resource "helm_release" "kubernetes-dashboard" {
   repository = "https://kubernetes.github.io/dashboard/"
   chart      = "kubernetes-dashboard"
   atomic     = true
-  # version    = "0.7.0"
+  version    = "7.12.0"
 
   # values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
@@ -114,6 +114,17 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
     namespace = "kubernetes-dashboard"
   }
   # depends_on = [module.dashboard]
+}
+
+resource "kubernetes_secret" "kubernetes-dashboard-admin-token" {
+  metadata {
+    name      = "kubernetes-dashboard-admin"
+    namespace = "kubernetes-dashboard"
+    annotations = {
+      "kubernetes.io/service-account.name" : "kubernetes-dashboard"
+    }
+  }
+  type = "kubernetes.io/service-account-token"
 }
 
 ## Readonly RBAC
