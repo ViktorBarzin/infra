@@ -445,11 +445,11 @@ module "audiobookshelf" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "frigate" {
-  source                        = "./frigate"
-  tls_secret_name               = var.tls_secret_name
-  valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
-}
+# module "frigate" {
+#   source                        = "./frigate"
+#   tls_secret_name               = var.tls_secret_name
+#   valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
+# }
 
 # TODO: Currently very unstable and half of the functionality does not work:
 # notifications, import from todoist, email
@@ -517,7 +517,7 @@ module "jsoncrack" {
 #   # tls_secret_name = var.tls_secret_name
 # }
 
-# module "ollama" {
+# module "ollama" {  # Disabled as it requires too much resources...
 #   source          = "./ollama"
 #   tls_secret_name = var.tls_secret_name
 # }
