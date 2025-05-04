@@ -52,8 +52,10 @@ resource "helm_release" "ollama" {
 
   repository = "https://otwld.github.io/ollama-helm/"
   chart      = "ollama"
+  atomic     = true
 
-  values = [templatefile("${path.module}/values.yaml", {})]
+  values  = [templatefile("${path.module}/values.yaml", {})]
+  timeout = 2400
 }
 
 # Web UI
@@ -132,6 +134,7 @@ module "ingress" {
   source          = "../ingress_factory"
   namespace       = "ollama"
   name            = "ollama"
+  service_name    = "ollama-ui"
   tls_secret_name = var.tls_secret_name
-  port            = 8080
+  port            = 80
 }
