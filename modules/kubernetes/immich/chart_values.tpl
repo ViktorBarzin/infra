@@ -29,7 +29,7 @@ env:
   # IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.131.3
+  tag: v1.132.3
 
 immich:
   persistence:
@@ -67,6 +67,7 @@ server:
     repository: ghcr.io/immich-app/immich-server
     pullPolicy: IfNotPresent
 
+# increase liveliness and readiness checks to allow enough time for downloading models
 machine-learning:
   enabled: true
   image:
@@ -76,7 +77,8 @@ machine-learning:
     TRANSFORMERS_CACHE: /cache
     # MACHINE_LEARNING_PRELOAD__CLIP:  immich-app/ViT-H-14-378-quickgelu__dfn5b # too big(?)
     # MACHINE_LEARNING_PRELOAD__CLIP: immich-app/ViT-L-16-SigLIP-384__webli # too big(?)
-    MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-32__openai # too big(?)
+    #MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-32__openai # too big(?)
+    MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-16-SigLIP2__webli 
   persistence:
     cache:
       enabled: true
