@@ -170,7 +170,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
-    schedule                  = "0 */6 * * *"
+    schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
@@ -186,13 +186,15 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
               name  = "mysql-backup"
               image = "mysql"
               # TODO: would be nice to rotate at some point... Current size is 11MB so not really needed atm
-              command = ["/bin/sh", "-c", <<-EOT
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
                 mysqldump --all-databases -u root -p${var.dbaas_root_password} --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
                 find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                echo Done
               EOT
               ]
               # To restore (from outside of the cluster):
@@ -699,7 +701,8 @@ resource "kubernetes_deployment" "postgres" {
       }
       spec {
         container {
-          image = "postgis/postgis:16-master"
+          # image = "postgis/postgis:16-master"
+          image = "viktorbarzin/postgres:16-master" # mix of postgis + pgvector
           # image = "postgres:17.2-bullseye" # needs pg_upgrade to data dir
           name = "postgresql"
           env {
@@ -854,7 +857,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
-    schedule                  = "0 */6 * * *"
+    schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
@@ -869,13 +872,15 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             container {
               name  = "postgresql-backup"
               image = "postgres:16.4-bullseye"
-              command = ["/bin/sh", "-c", <<-EOT
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
                 PGPASSWORD=${var.postgresql_root_password} pg_dumpall  -h postgresql.dbaas -U root > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
                 find . -name "dump_*.sql" -type f -mtime +7 -delete # 7 day retention of backups
+                echo Done
               EOT
               ]
               volume_mount {
