@@ -53,10 +53,10 @@ namespaceOverride: ""
 commonLabels: {}
 
 cronJobApiVersion: "batch/v1"
-schedule: "0 * * * *"
+schedule: "0 0 * * *"
 suspend: false
 # startingDeadlineSeconds: 200
-# successfulJobsHistoryLimit: 3
+successfulJobsHistoryLimit: 10
 # failedJobsHistoryLimit: 1
 # ttlSecondsAfterFinished 600
 # timeZone: Etc/UTC
@@ -160,6 +160,7 @@ deschedulerPolicy:
                 - "calico-apiserver"
                 - "metallb-system"
                 - "monitoring"
+                - "authentik"
         - name: "RemoveFailedPods"
           args:
             reasons:
