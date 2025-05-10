@@ -126,13 +126,14 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
-    schedule                  = "0 */6 * * *"
+    schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 3
     job_template {
       metadata {}
       spec {
+        active_deadline_seconds    = 600 # should finish in 10 minutes
         backoff_limit              = 3
         ttl_seconds_after_finished = 10
         template {
