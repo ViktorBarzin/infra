@@ -10,11 +10,11 @@ defaultPodOptions:
 env:
   # REDIS_HOSTNAME: '{{ printf "%s-redis-master" .Release.Name }}'
   REDIS_HOSTNAME: "redis.redis.svc.cluster.local"
-  #   DB_HOSTNAME: "{{ .Release.Name }}-postgresql"
-  #   DB_USERNAME: "{{ .Values.postgresql.global.postgresql.auth.username }}"
-  #   DB_DATABASE_NAME: "{{ .Values.postgresql.global.postgresql.auth.database }}"
-  #   # -- You should provide your own secret outside of this helm-chart and use `postgresql.global.postgresql.auth.existingSecret` to provide credentials to the postgresql instance
-  #   DB_PASSWORD: "{{ .Values.postgresql.global.postgresql.auth.password }}"
+  # DB_HOSTNAME: "postgresql.dbaas"
+  # DB_USERNAME: "immich"
+  # DB_DATABASE_NAME: "immich"
+  # #   # -- You should provide your own secret outside of this helm-chart and use `postgresql.global.postgresql.auth.existingSecret` to provide credentials to the postgresql instance
+  # DB_PASSWORD: "${postgresql_password}"
   # TYPESENSE_ENABLED: "{{ .Values.typesense.enabled }}"
   # TYPESENSE_ENABLED: "1"
   #   TYPESENSE_API_KEY: "{{ .Values.typesense.env.TYPESENSE_API_KEY }}"
@@ -43,6 +43,7 @@ immich:
 
 postgresql:
   enabled: true
+  # enabled: false
   image:
     repository: tensorchord/pgvecto-rs
     tag: pg14-v0.2.0
@@ -78,7 +79,7 @@ machine-learning:
     # MACHINE_LEARNING_PRELOAD__CLIP:  immich-app/ViT-H-14-378-quickgelu__dfn5b # too big(?)
     # MACHINE_LEARNING_PRELOAD__CLIP: immich-app/ViT-L-16-SigLIP-384__webli # too big(?)
     #MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-32__openai # too big(?)
-    MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-16-SigLIP2__webli 
+    MACHINE_LEARNING_PRELOAD__CLIP: ViT-B-16-SigLIP2__webli
   persistence:
     cache:
       enabled: true
