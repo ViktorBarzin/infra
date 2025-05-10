@@ -79,6 +79,7 @@ variable "owntracks_credentials" {}
 variable "dawarich_database_password" {}
 variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
+variable "n8n_postgresql_password" {}
 
 variable "defcon_level" {
   type    = number
@@ -407,12 +408,12 @@ module "nginx-ingress" {
   crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 }
 
-module "crowdsec" {
-  source            = "./crowdsec"
-  tls_secret_name   = var.tls_secret_name
-  homepage_username = var.homepage_credentials["crowdsec"]["username"]
-  homepage_password = var.homepage_credentials["crowdsec"]["password"]
-}
+# module "crowdsec" {
+#   source            = "./crowdsec"
+#   tls_secret_name   = var.tls_secret_name
+#   homepage_username = var.homepage_credentials["crowdsec"]["username"]
+#   homepage_password = var.homepage_credentials["crowdsec"]["password"]
+# }
 
 # Seems like it needs S3 even if pg is local...
 # module "resume" {
@@ -605,4 +606,10 @@ module "tandoor" {
   tls_secret_name           = var.tls_secret_name
   tandoor_database_password = var.tandoor_database_password
   tandoor_email_password    = var.tandoor_email_password
+}
+
+module "n8n" {
+  source              = "./n8n"
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.n8n_postgresql_password
 }
