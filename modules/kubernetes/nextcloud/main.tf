@@ -44,77 +44,72 @@ resource "helm_release" "nextcloud" {
 #   }
 # }
 
-# resource "kubernetes_deployment" "nextcloud" {
-#   metadata {
-#     name      = "nextcloud"
-#     namespace = "nextcloud"
-#     labels = {
-#       app = "nextcloud"
-#     }
-#     annotations = {
-#       "reloader.stakater.com/search" = "true"
-#     }
-#   }
-#   spec {
-#     replicas = 1
-#     selector {
-#       match_labels = {
-#         app = "nextcloud"
-#       }
-#     }
-#     template {
-#       metadata {
-#         annotations = {
-#           "diun.enable" = "true"
-#         }
-#         labels = {
-#           app = "nextcloud"
-#         }
-#       }
-#       spec {
-#         container {
-#           image = "lissy93/nextcloud:latest"
-#           name  = "nextcloud"
+resource "kubernetes_deployment" "whiteboard" {
+  metadata {
+    name      = "whiteboard"
+    namespace = "nextcloud"
+    labels = {
+      app = "whiteboard"
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "whiteboard"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "whiteboard"
+        }
+      }
+      spec {
+        container {
+          image = "ghcr.io/nextcloud-releases/whiteboard:release"
+          name  = "whiteboard"
 
-#           port {
-#             container_port = 8080
-#           }
-#           volume_mount {
-#             name       = "config"
-#             mount_path = "/app/user-data/"
-#           }
-#         }
-#         volume {
-#           name = "config"
-#           config_map {
-#             name = "config"
-#           }
-#         }
-#       }
-#     }
-#   }
-# }
+          port {
+            container_port = 3002
+          }
+          env {
+            name  = "NEXTCLOUD_URL"
+            value = "http://nextcloud:8080"
+          }
+          env {
+            name  = "JWT_SECRET_KEY"
+            value = var.db_password # anything secret is fine
+          }
+        }
+      }
+    }
+  }
+}
 
-# resource "kubernetes_service" "nextcloud" {
-#   metadata {
-#     name      = "nextcloud"
-#     namespace = "nextcloud"
-#     labels = {
-#       app = "nextcloud"
-#     }
-#   }
+resource "kubernetes_service" "whiteboard" {
+  metadata {
+    name      = "whiteboard"
+    namespace = "nextcloud"
+    labels = {
+      app = "whiteboard"
+    }
+  }
 
-#   spec {
-#     selector = {
-#       app = "nextcloud"
-#     }
-#     port {
-#       name        = "http"
-#       port        = 80
-#       target_port = 8080
-#     }
-#   }
-# }
+  spec {
+    selector = {
+      app = "whiteboard"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 3002
+    }
+  }
+}
 
 resource "kubernetes_persistent_volume" "nextcloud-data-pv" {
   metadata {
@@ -156,6 +151,18 @@ module "ingress" {
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name
   port            = 8080
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+  }
+}
+
+module "whiteboard_ingress" {
+  source          = "../ingress_factory"
+  namespace       = "nextcloud"
+  name            = "whiteboard"
+  tls_secret_name = var.tls_secret_name
+  port            = 80
   extra_annotations = {
     "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
