@@ -613,3 +613,8 @@ module "n8n" {
   tls_secret_name     = var.tls_secret_name
   postgresql_password = var.n8n_postgresql_password
 }
+
+module "real-estate-crawler" {
+  source              = "./real-estate-crawler"
+  tls_secret_name     = var.tls_secret_name
+}
