@@ -2,7 +2,8 @@
 # see defaults - https://github.com/docker-mailserver/docker-mailserver/blob/master/target/postfix/main.cf
 variable "postfix_cf" {
   default = <<EOT
-relayhost = [smtp.sendgrid.net]:587
+#relayhost = [smtp.sendgrid.net]:587
+relayhost = [smtp.eu.mailgun.org]:587
 smtp_sasl_auth_enable = yes
 smtp_sasl_password_maps = hash:/etc/postfix/sasl/passwd
 smtp_sasl_security_options = noanonymous

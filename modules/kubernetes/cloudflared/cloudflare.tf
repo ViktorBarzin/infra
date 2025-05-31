@@ -92,3 +92,33 @@ resource "cloudflare_record" "mail" {
   priority = 1
   zone_id  = var.cloudflare_zone_id
 }
+
+resource "cloudflare_record" "mail_domainkey" {
+  content  = "\"k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIDLB8mhAHNqs1s6GeZMQHOxWweoNKIrqo5tqRM3yFilgfPUX34aTIXNZg9xAmlK+2S/xXO1ymt127ZGMjnoFKOEP8/uZ54iHTCnioHaPZWMfJ7o6TYIXjr+9ShKfoJxZLv7lHJ2wKQK3yOw4lg4cvja5nxQ6fNoGRwo+mQ/mgJQIDAQAB\""
+  name     = "s1._domainkey.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  priority = 1
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "mail_spf" {
+  content  = "\"v=spf1 include:mailgun.org ~all\""
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  priority = 1
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "mail_dmarc" {
+  content  = "\"v=DMARC1; p=none; pct=100; fo=1; ri=3600; sp=none; adkim=r; aspf=r; rua=mailto:e21c0ff8@dmarc.mailgun.org,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:e21c0ff8@dmarc.mailgun.org,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
+  name     = "_dmarc.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  priority = 1
+  zone_id  = var.cloudflare_zone_id
+}
