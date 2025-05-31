@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "database_password" {}
+variable "geoapify_api_key" {}
 
 resource "kubernetes_namespace" "dawarich" {
   metadata {
@@ -53,7 +54,7 @@ resource "kubernetes_deployment" "dawarich" {
       spec {
 
         container {
-          image = "freikin/dawarich:latest"
+          image = "freikin/dawarich:0.26.1"
           name  = "dawarich"
           port {
             name           = "http"
@@ -118,9 +119,13 @@ resource "kubernetes_deployment" "dawarich" {
             value = "0.0.0.0"
           }
           env {
-            name  = "PHOTON_API_HOST"
-            value = "photon.dawarich"
+            name  = "SELF_HOSTED"
+            value = "true"
           }
+          # env {
+          #   name  = "PHOTON_API_HOST"
+          #   value = "photon.dawarich"
+          # }
 
 
           #   volume_mount {
@@ -129,7 +134,7 @@ resource "kubernetes_deployment" "dawarich" {
           #   }
         }
         container {
-          image   = "freikin/dawarich:latest"
+          image   = "freikin/dawarich:0.26.1"
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
           args    = ["sidekiq"]
@@ -162,10 +167,6 @@ resource "kubernetes_deployment" "dawarich" {
             value = "10"
           }
           env {
-            name  = "DISTANCE_UNIT"
-            value = "km"
-          }
-          env {
             name  = "ENABLE_TELEMETRY"
             value = "true"
           }
@@ -181,9 +182,22 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "PROMETHEUS_EXPORTER_HOST"
             value = "dawarich.dawarich"
           }
+          # env {
+          #   name  = "PHOTON_API_HOST"
+          #   value = "photon.dawarich:2322"
+          #   # value = "photon.komoot.io"
+          # }
+          # env {
+          #   name  = "PHOTON_API_USE_HTTPS"
+          #   value = "false"
+          # }
           env {
-            name  = "PHOTON_API_HOST"
-            value = "photon.dawarich"
+            name  = "GEOAPIFY_API_KEY"
+            value = var.geoapify_api_key
+          }
+          env {
+            name  = "SELF_HOSTED"
+            value = "true"
           }
 
           #   volume_mount {
@@ -197,57 +211,61 @@ resource "kubernetes_deployment" "dawarich" {
 }
 
 
-resource "kubernetes_deployment" "photon" {
-  metadata {
-    name      = "photon"
-    namespace = "dawarich"
-    labels = {
-      app = "photon"
-    }
-  }
-  spec {
-    replicas = 1
-    strategy {
-      type = "Recreate"
-    }
-    selector {
-      match_labels = {
-        app = "photon"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "photon"
-        }
-      }
-      spec {
+# resource "kubernetes_deployment" "photon" {
+#   metadata {
+#     name      = "photon"
+#     namespace = "dawarich"
+#     labels = {
+#       app = "photon"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     strategy {
+#       type = "Recreate"
+#     }
+#     selector {
+#       match_labels = {
+#         app = "photon"
+#       }
+#     }
+#     template {
+#       metadata {
+#         labels = {
+#           app = "photon"
+#         }
+#       }
+#       spec {
 
-        container {
-          image = "thomasnordquist/photon-geocoder:latest"
-          name  = "photon"
-          port {
-            name           = "tcp"
-            container_port = 2322
-          }
+#         container {
+#           image = "rtuszik/photon-docker:latest"
+#           name  = "photon"
+#           port {
+#             name           = "tcp"
+#             container_port = 2322
+#           }
+#           env {
+#             name  = "COUNTRY_CODE"
+#             value = "bg"
+#           }
 
-          volume_mount {
-            name       = "data"
-            mount_path = "/photon/photon_data"
-          }
-        }
-        volume {
-          name = "data"
-          nfs {
-            path   = "/mnt/main/photon"
-            server = "10.0.10.15"
-          }
-        }
-      }
+#           volume_mount {
+#             name       = "data"
+#             mount_path = "/photon/photon_data"
+#           }
+#         }
+#         volume {
+#           name = "data"
+#           nfs {
+#             path   = "/mnt/main/photon"
+#             server = "10.0.10.15"
+#           }
+#         }
+#       }
 
-    }
-  }
-}
+#     }
+#   }
+# }
 
 
 
@@ -273,27 +291,27 @@ resource "kubernetes_service" "dawarich" {
   }
 }
 
-resource "kubernetes_service" "photon" {
-  metadata {
-    name      = "photon"
-    namespace = "dawarich"
-    labels = {
-      "app" = "photon"
-    }
-  }
+# resource "kubernetes_service" "photon" {
+#   metadata {
+#     name      = "photon"
+#     namespace = "dawarich"
+#     labels = {
+#       "app" = "photon"
+#     }
+#   }
 
-  spec {
-    selector = {
-      app = "photon"
-    }
-    port {
-      name        = "http"
-      port        = 2322
-      target_port = 2322
-      protocol    = "TCP"
-    }
-  }
-}
+#   spec {
+#     selector = {
+#       app = "photon"
+#     }
+#     port {
+#       name        = "http"
+#       port        = 2322
+#       target_port = 2322
+#       protocol    = "TCP"
+#     }
+#   }
+# }
 module "ingress" {
   source          = "../ingress_factory"
   namespace       = "dawarich"
