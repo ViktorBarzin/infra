@@ -49,7 +49,8 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     POSTFIX_MESSAGE_SIZE_LIMIT             = 1024 * 1024 * 200 # 200 MB
     POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
     # TLS_LEVEL                              = "intermediate"
-    DEFAULT_RELAY_HOST = "[smtp.sendgrid.net]:587"
+    # DEFAULT_RELAY_HOST = "[smtp.sendgrid.net]:587"
+    DEFAULT_RELAY_HOST = "[smtp.eu.mailgun.org]:587"
     SPOOF_PROTECTION   = "1"
     SSL_TYPE           = "manual"
     SSL_CERT_PATH      = "/tmp/ssl/tls.crt"
