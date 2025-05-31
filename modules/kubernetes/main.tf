@@ -77,6 +77,7 @@ variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "owntracks_credentials" {}
 variable "dawarich_database_password" {}
+variable "geoapify_api_key" {}
 variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
 variable "n8n_postgresql_password" {}
@@ -595,6 +596,7 @@ module "dawarich" {
   source            = "./dawarich"
   tls_secret_name   = var.tls_secret_name
   database_password = var.dawarich_database_password
+  geoapify_api_key  = var.geoapify_api_key
 }
 
 module "changedetection" {
@@ -615,6 +617,6 @@ module "n8n" {
 }
 
 module "real-estate-crawler" {
-  source              = "./real-estate-crawler"
-  tls_secret_name     = var.tls_secret_name
+  source          = "./real-estate-crawler"
+  tls_secret_name = var.tls_secret_name
 }
