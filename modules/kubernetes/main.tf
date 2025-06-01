@@ -620,3 +620,8 @@ module "real-estate-crawler" {
   source          = "./real-estate-crawler"
   tls_secret_name = var.tls_secret_name
 }
+
+module "tor-proxy" {
+  source          = "./tor-proxy"
+  tls_secret_name = var.tls_secret_name
+}
