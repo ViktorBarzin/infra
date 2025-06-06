@@ -114,6 +114,14 @@ resource "kubernetes_cron_job_v1" "scrape-rightmove" {
               #   find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
               # EOT
               # ]
+              env {
+                name  = "HTTP_PROXY"
+                value = "http://tor-proxy.tor-proxy:8118"
+              }
+              env {
+                name  = "HTTPS_PROXY"
+                value = "http://tor-proxy.tor-proxy:8118"
+              }
               volume_mount {
                 name       = "data"
                 mount_path = "/app/data"
