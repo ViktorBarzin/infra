@@ -154,6 +154,8 @@ module "ingress" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+    "nginx.ingress.kubernetes.io/limit-rps" : 100 # Increased to allow webdav syncing
+    "nginx.ingress.kubernetes.io/limit-rpm" : 600
   }
 }
 
