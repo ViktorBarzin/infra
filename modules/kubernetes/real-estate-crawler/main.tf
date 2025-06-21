@@ -49,13 +49,17 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
             container_port = 80
             protocol       = "TCP"
           }
+          env {
+            name  = "ENV"
+            value = "prod"
+          }
         }
       }
     }
   }
 }
 
-resource "kubernetes_service" "realestate-crawler" {
+resource "kubernetes_service" "realestate-crawler-ui" {
   metadata {
     name      = "realestate-crawler-ui"
     namespace = "realestate-crawler"
@@ -69,18 +73,18 @@ resource "kubernetes_service" "realestate-crawler" {
       app = "realestate-crawler-ui"
     }
     port {
-      port = "80"
+      port = 80
     }
   }
 }
-module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = "realestate-crawler"
-  name            = "wrongmove"
-  service_name    = "realestate-crawler-ui"
-  tls_secret_name = var.tls_secret_name
-  protected       = true
-}
+# module "ingress" {
+#   source          = "../ingress_factory"
+#   namespace       = "realestate-crawler"
+#   name            = "wrongmove"
+#   service_name    = "realestate-crawler-ui"
+#   tls_secret_name = var.tls_secret_name
+#   protected       = true
+# }
 
 resource "kubernetes_deployment" "realestate-crawler-api" {
   metadata {
@@ -92,6 +96,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "realestate-crawler-api"
@@ -113,6 +120,17 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             container_port = 8000
             protocol       = "TCP"
           }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            path   = "/mnt/main/real-estate-crawler"
+            server = "10.0.10.15"
+          }
         }
       }
     }
@@ -132,17 +150,68 @@ resource "kubernetes_service" "realestate-crawler-api" {
       app = "realestate-crawler-api"
     }
     port {
-      port        = "80"
+      port        = 80
       target_port = 8000
     }
   }
 }
-module "ingress-api" {
-  source          = "../ingress_factory"
-  namespace       = "realestate-crawler"
-  name            = "wrongmove-api"
-  service_name    = "realestate-crawler-api"
-  tls_secret_name = var.tls_secret_name
+# module "ingress-api" {
+#   source          = "../ingress_factory"
+#   namespace       = "realestate-crawler"
+#   name            = "wrongmove-api"
+#   service_name    = "realestate-crawler-api"
+#   tls_secret_name = var.tls_secret_name
+# }
+
+resource "kubernetes_ingress_v1" "proxied-ingress" {
+  metadata {
+    name      = "realestate-crawler"
+    namespace = "realestate-crawler"
+    annotations = {
+      "kubernetes.io/ingress.class"                  = "nginx"
+      "nginx.ingress.kubernetes.io/backend-protocol" = "http"
+
+      # "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx" : null
+      # "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri" : null
+      # "nginx.ingress.kubernetes.io/auth-snippet" : var.protected ? "proxy_set_header X-Forwarded-Host $http_host;" : null
+    }
+
+
+  }
+
+  spec {
+    tls {
+      hosts       = ["wrongmove.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "wrongmove.viktorbarzin.me"
+      http {
+        path {
+          path = "/"
+          backend {
+            service {
+              name = "realestate-crawler-ui"
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+        path {
+          path = "/api"
+          backend {
+            service {
+              name = "realestate-crawler-api"
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 
