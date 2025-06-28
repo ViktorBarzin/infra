@@ -29,7 +29,7 @@ env:
   # IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v1.132.3
+  tag: v1.135.3
 
 immich:
   persistence:
@@ -38,21 +38,6 @@ immich:
       # Automatically creating the library volume is not supported by this chart
       # You have to specify an existing PVC to use
       existingClaim: immich
-
-# Dependencies
-
-postgresql:
-  enabled: true
-  # enabled: false
-  image:
-    repository: tensorchord/pgvecto-rs
-    tag: pg14-v0.2.0
-  global:
-    postgresql:
-      auth:
-        username: immich
-        database: immich
-        password: "${postgresql_password}"
 
 redis:
   enabled: false
