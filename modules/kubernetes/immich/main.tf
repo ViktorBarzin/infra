@@ -86,6 +86,89 @@ resource "kubernetes_persistent_volume_claim" "immich" {
     volume_name = "immich"
   }
 }
+resource "kubernetes_deployment" "immich-postgres" {
+  metadata {
+    name      = "immich-postgresql"
+    namespace = "immich"
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "immich-postgresql"
+      }
+    }
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "immich-postgresql"
+        }
+      }
+      spec {
+        container {
+          image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+          name  = "immich-postgresql"
+          port {
+            container_port = 5432
+            protocol       = "TCP"
+            name           = "postgresql"
+          }
+          env {
+            name  = "POSTGRES_PASSWORD"
+            value = var.postgresql_password
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "immich"
+          }
+          env {
+            name  = "POSTGRES_DB"
+            value = "immich"
+          }
+          env {
+            name  = "DB_STORAGE_TYPE"
+            value = "HDD"
+          }
+          volume_mount {
+            name       = "postgresql-persistent-storage"
+            mount_path = "/var/lib/postgresql/data"
+          }
+        }
+        volume {
+          name = "postgresql-persistent-storage"
+          nfs {
+            path   = "/mnt/main/immich/data-immich-postgresql"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+
+resource "kubernetes_service" "immich-postgresql" {
+  metadata {
+    name      = "immich-postgresql"
+    namespace = "immich"
+    labels = {
+      "app" = "immich-postgresql"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "immich-postgresql"
+    }
+    port {
+      port = 5432
+    }
+  }
+}
+
 
 # If you're having issuewith typesens container exiting prematurely, increase liveliness check
 resource "helm_release" "immich" {
@@ -95,9 +178,8 @@ resource "helm_release" "immich" {
   repository = "https://immich-app.github.io/immich-charts"
   chart      = "immich"
   atomic     = true
-  version    = "0.8.4"
-  # version = "0.7.2"
-  timeout = 6000
+  version    = "0.9.3"
+  timeout    = 6000
 
   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
