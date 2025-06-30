@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "db_password" {}
 
 resource "kubernetes_namespace" "realestate-crawler" {
   metadata {
@@ -115,9 +116,32 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
         container {
           name  = "realestate-crawler-ui"
           image = "viktorbarzin/realestatecrawler:latest"
+          env {
+            name  = "ENV"
+            value = "prod"
+          }
+          env {
+            name  = "DB_CONNECTION_STRING"
+            value = "mysql://wrongmove:${var.db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+
+          }
+
+          env {
+            name  = "CELERY_BROKER_URL"
+            value = "redis://redis.redis.svc.cluster.local:6379/0"
+          }
+          env {
+            name  = "CELERY_RESULT_BACKEND"
+            value = "redis://redis.redis.svc.cluster.local:6379/1"
+          }
+
+          env {
+            name  = "UVICORN_LOG_LEVEL"
+            value = "debug"
+          }
           port {
             name           = "http"
-            container_port = 8000
+            container_port = 5001
             protocol       = "TCP"
           }
           volume_mount {
@@ -151,7 +175,7 @@ resource "kubernetes_service" "realestate-crawler-api" {
     }
     port {
       port        = 80
-      target_port = 8000
+      target_port = 5001
     }
   }
 }
@@ -242,13 +266,17 @@ resource "kubernetes_cron_job_v1" "scrape-rightmove" {
               EOT
               ]
               env {
-                name  = "HTTP_PROXY"
-                value = "http://tor-proxy.tor-proxy:8118"
+                name  = "DB_CONNECTION_STRING"
+                value = "mysql://wrongmove:wrongmove@mysql.dbaas.svc.cluster.local:3306/wrongmove"
               }
-              env {
-                name  = "HTTPS_PROXY"
-                value = "http://tor-proxy.tor-proxy:8118"
-              }
+              # env {
+              #   name  = "HTTP_PROXY"
+              #   value = "http://tor-proxy.tor-proxy:8118"
+              # }
+              # env {
+              #   name  = "HTTPS_PROXY"
+              #   value = "http://tor-proxy.tor-proxy:8118"
+              # }
               volume_mount {
                 name       = "data"
                 mount_path = "/app/data"
