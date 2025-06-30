@@ -81,6 +81,7 @@ variable "geoapify_api_key" {}
 variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
 variable "n8n_postgresql_password" {}
+variable "realestate_crawler_db_password" {}
 
 variable "defcon_level" {
   type    = number
@@ -619,9 +620,15 @@ module "n8n" {
 module "real-estate-crawler" {
   source          = "./real-estate-crawler"
   tls_secret_name = var.tls_secret_name
+  db_password     = var.realestate_crawler_db_password
 }
 
 module "tor-proxy" {
   source          = "./tor-proxy"
   tls_secret_name = var.tls_secret_name
 }
+
+# module "onlyoffice" {
+#   source          = "./onlyoffice"
+#   tls_secret_name = var.tls_secret_name
+# }
