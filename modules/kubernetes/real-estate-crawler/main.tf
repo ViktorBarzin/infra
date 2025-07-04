@@ -125,7 +125,14 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             value = "mysql://wrongmove:${var.db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
 
           }
-
+          env {
+            name  = "HTTP_PROXY"
+            value = "http://tor-proxy.tor-proxy:8118"
+          }
+          env {
+            name  = "HTTPS_PROXY"
+            value = "http://tor-proxy.tor-proxy:8118"
+          }
           env {
             name  = "CELERY_BROKER_URL"
             value = "redis://redis.redis.svc.cluster.local:6379/0"
