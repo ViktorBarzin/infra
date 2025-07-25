@@ -38,7 +38,7 @@ resource "kubernetes_deployment" "redis" {
       }
       spec {
         container {
-          image = "redis/redis-stack:latest"
+          image = "redis/redis-stack:7.4.0-v6"
           name  = "redis"
 
           port {
