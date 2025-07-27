@@ -82,6 +82,12 @@ variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
 variable "n8n_postgresql_password" {}
 variable "realestate_crawler_db_password" {}
+variable "realestate_crawler_notification_settings" {
+  type = map(string)
+  default = {
+  }
+}
+
 
 variable "defcon_level" {
   type    = number
@@ -618,13 +624,19 @@ module "n8n" {
 }
 
 module "real-estate-crawler" {
-  source          = "./real-estate-crawler"
-  tls_secret_name = var.tls_secret_name
-  db_password     = var.realestate_crawler_db_password
+  source                = "./real-estate-crawler"
+  tls_secret_name       = var.tls_secret_name
+  db_password           = var.realestate_crawler_db_password
+  notification_settings = var.realestate_crawler_notification_settings
 }
 
 module "tor-proxy" {
   source          = "./tor-proxy"
+  tls_secret_name = var.tls_secret_name
+}
+
+module "kured" {
+  source          = "./kured"
   tls_secret_name = var.tls_secret_name
 }
 

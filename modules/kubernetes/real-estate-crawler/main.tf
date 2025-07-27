@@ -1,4 +1,9 @@
 variable "tls_secret_name" {}
+variable "notification_settings" {
+  type = map(string)
+  default = {
+  }
+}
 variable "db_password" {}
 
 resource "kubernetes_namespace" "realestate-crawler" {
@@ -125,14 +130,14 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             value = "mysql://wrongmove:${var.db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
 
           }
-          env {
-            name  = "HTTP_PROXY"
-            value = "http://tor-proxy.tor-proxy:8118"
-          }
-          env {
-            name  = "HTTPS_PROXY"
-            value = "http://tor-proxy.tor-proxy:8118"
-          }
+          # env {
+          #   name  = "HTTP_PROXY"
+          #   value = "http://tor-proxy.tor-proxy:8118"
+          # }
+          # env {
+          #   name  = "HTTPS_PROXY"
+          #   value = "http://tor-proxy.tor-proxy:8118"
+          # }
           env {
             name  = "CELERY_BROKER_URL"
             value = "redis://redis.redis.svc.cluster.local:6379/0"
@@ -145,6 +150,10 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           env {
             name  = "UVICORN_LOG_LEVEL"
             value = "debug"
+          }
+          env {
+            name  = "SLACK_WEBHOOK_URL"
+            value = var.notification_settings["slack"]
           }
           port {
             name           = "http"

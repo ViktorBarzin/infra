@@ -102,6 +102,9 @@ variable "geoapify_api_key" {}
 variable "tandoor_database_password" {}
 variable "n8n_postgresql_password" {}
 variable "realestate_crawler_db_password" {}
+variable "realestate_crawler_notification_settings" {
+  type = map(string)
+}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -417,7 +420,8 @@ module "kubernetes_cluster" {
 
   n8n_postgresql_password = var.n8n_postgresql_password
 
-  realestate_crawler_db_password = var.realestate_crawler_db_password
+  realestate_crawler_db_password           = var.realestate_crawler_db_password
+  realestate_crawler_notification_settings = var.realestate_crawler_notification_settings
 }
 
 
