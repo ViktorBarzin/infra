@@ -87,6 +87,8 @@ variable "realestate_crawler_notification_settings" {
   default = {
   }
 }
+variable "kured_notify_url" {}
+
 
 
 variable "defcon_level" {
@@ -638,6 +640,7 @@ module "tor-proxy" {
 module "kured" {
   source          = "./kured"
   tls_secret_name = var.tls_secret_name
+  notify_url      = var.kured_notify_url
 }
 
 # module "onlyoffice" {

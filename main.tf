@@ -105,6 +105,7 @@ variable "realestate_crawler_db_password" {}
 variable "realestate_crawler_notification_settings" {
   type = map(string)
 }
+variable "kured_notify_url" {}
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -422,6 +423,8 @@ module "kubernetes_cluster" {
 
   realestate_crawler_db_password           = var.realestate_crawler_db_password
   realestate_crawler_notification_settings = var.realestate_crawler_notification_settings
+
+  kured_notify_url = var.kured_notify_url
 }
 
 
