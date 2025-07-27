@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "dawarich" {
       spec {
 
         container {
-          image = "freikin/dawarich:0.26.1"
+          image = "freikin/dawarich:0.27.1"
           name  = "dawarich"
           port {
             name           = "http"
@@ -134,7 +134,7 @@ resource "kubernetes_deployment" "dawarich" {
           #   }
         }
         container {
-          image   = "freikin/dawarich:0.26.1"
+          image   = "freikin/dawarich:0.27.1"
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
           args    = ["sidekiq"]
