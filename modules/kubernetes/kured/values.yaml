@@ -1,0 +1,12 @@
+window_start: "22:00"
+window_end: "06:00"
+reboot_days: "mon,tue,wed,thu,fri"
+
+service:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8080"
+
+configuration:
+  notifyUrl: "${notify_url}"
