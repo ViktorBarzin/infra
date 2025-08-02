@@ -23,7 +23,7 @@ resource "helm_release" "nextcloud" {
   repository = "https://nextcloud.github.io/helm/"
   chart      = "nextcloud"
   atomic     = true
-  #   version    = "0.7.0"
+  version    = "7.0.0"
 
   values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.db_password })]
   timeout = 6000
@@ -154,8 +154,8 @@ module "ingress" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-    "nginx.ingress.kubernetes.io/limit-rps" : 100 # Increased to allow webdav syncing
-    "nginx.ingress.kubernetes.io/limit-rpm" : 600
+    "nginx.ingress.kubernetes.io/limit-rps" : 1000 # Increased to allow webdav syncing
+    "nginx.ingress.kubernetes.io/limit-rpm" : 60000
   }
 }
 
