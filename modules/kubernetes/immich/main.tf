@@ -198,7 +198,7 @@ resource "kubernetes_ingress_v1" "ingress" {
       # As per https://immich.app/docs/administration/reverse-proxy
       "nginx.org/websocket-services" : "immich-server"
       # Allow big uploads
-      "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "10g"
       # Websockets
       "nginx.ingress.kubernetes.io/proxy-http-version" : "1.1"
       "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
