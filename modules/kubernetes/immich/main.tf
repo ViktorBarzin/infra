@@ -208,6 +208,8 @@ resource "kubernetes_ingress_v1" "ingress" {
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000s",
       "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
 
+      "nginx.ingress.kubernetes.io/proxy-request-buffering" : "off"
+
 
       "gethomepage.dev/enabled"      = "true"
       "gethomepage.dev/description"  = "Photos library"
