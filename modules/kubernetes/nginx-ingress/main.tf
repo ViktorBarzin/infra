@@ -31,7 +31,7 @@ resource "kubernetes_service_account" "ingress_nginx" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   automount_service_account_token = true
@@ -49,7 +49,7 @@ resource "kubernetes_service_account" "ingress_nginx_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
 }
@@ -62,7 +62,7 @@ resource "kubernetes_role" "ingress_nginx" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   rule {
@@ -126,7 +126,7 @@ resource "kubernetes_role" "ingress_nginx_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   rule {
@@ -142,7 +142,7 @@ resource "kubernetes_cluster_role" "ingress_nginx" {
       "app.kubernetes.io/instance" = "ingress-nginx"
       "app.kubernetes.io/name"     = "ingress-nginx"
       "app.kubernetes.io/part-of"  = "ingress-nginx"
-      "app.kubernetes.io/version"  = "1.8.2"
+      "app.kubernetes.io/version"  = "1.13.1"
     }
   }
   rule {
@@ -199,7 +199,7 @@ resource "kubernetes_cluster_role" "ingress_nginx_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   rule {
@@ -217,7 +217,7 @@ resource "kubernetes_role_binding" "ingress_nginx" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   subject {
@@ -240,7 +240,7 @@ resource "kubernetes_role_binding" "ingress_nginx_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   subject {
@@ -261,7 +261,7 @@ resource "kubernetes_cluster_role_binding" "ingress_nginx" {
       "app.kubernetes.io/instance" = "ingress-nginx"
       "app.kubernetes.io/name"     = "ingress-nginx"
       "app.kubernetes.io/part-of"  = "ingress-nginx"
-      "app.kubernetes.io/version"  = "1.8.2"
+      "app.kubernetes.io/version"  = "1.13.1"
     }
   }
   subject {
@@ -283,7 +283,7 @@ resource "kubernetes_cluster_role_binding" "ingress_nginx_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   subject {
@@ -306,7 +306,7 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   data = {
@@ -374,7 +374,7 @@ resource "kubernetes_service" "ingress_nginx_controller" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   spec {
@@ -415,7 +415,7 @@ resource "kubernetes_service" "ingress_nginx_controller_admission" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   spec {
@@ -441,14 +441,14 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
 
     selector {
       match_labels = {
@@ -464,7 +464,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           "app.kubernetes.io/instance"  = "ingress-nginx"
           "app.kubernetes.io/name"      = "ingress-nginx"
           "app.kubernetes.io/part-of"   = "ingress-nginx"
-          "app.kubernetes.io/version"   = "1.8.2"
+          "app.kubernetes.io/version"   = "1.13.1"
           "app"                         = "ingress-nginx"
         }
         annotations = {
@@ -556,10 +556,10 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           }
         }
         container {
-          name  = "controller"
-          image = "registry.k8s.io/ingress-nginx/controller:v1.10.1@sha256:e24f39d3eed6bcc239a56f20098878845f62baa34b9f2be2fd2c38ce9fb0f29e"
-          # image = "registry.k8s.io/ingress-nginx/controller:v1.12.0" # reverse-proxy sites break for some reason with this version
-          args = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key", "--udp-services-configmap", "ingress-nginx/udp-services"]
+          name = "controller"
+          # https://github.com/kubernetes/ingress-nginx
+          image = "registry.k8s.io/ingress-nginx/controller:v1.11.8"
+          args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key", "--udp-services-configmap", "ingress-nginx/udp-services"]
           volume_mount {
             name       = "crowdsec"
             mount_path = "/etc/nginx/lua/plugins/crowdsec"
@@ -754,7 +754,7 @@ resource "kubernetes_job" "ingress_nginx_admission_create" {
 #       "app.kubernetes.io/instance"  = "ingress-nginx"
 #       "app.kubernetes.io/name"      = "ingress-nginx"
 #       "app.kubernetes.io/part-of"   = "ingress-nginx"
-#       "app.kubernetes.io/version"   = "1.8.2"
+#       "app.kubernetes.io/version"   = "1.13.1"
 #     }
 #   }
 #   spec {
@@ -766,7 +766,7 @@ resource "kubernetes_job" "ingress_nginx_admission_create" {
 #           "app.kubernetes.io/instance"  = "ingress-nginx"
 #           "app.kubernetes.io/name"      = "ingress-nginx"
 #           "app.kubernetes.io/part-of"   = "ingress-nginx"
-#           "app.kubernetes.io/version"   = "1.8.2"
+#           "app.kubernetes.io/version"   = "1.13.1"
 #         }
 #       }
 #       spec {
@@ -806,7 +806,7 @@ resource "kubernetes_ingress_class" "nginx" {
       "app.kubernetes.io/instance"  = "ingress-nginx"
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
-      "app.kubernetes.io/version"   = "1.8.2"
+      "app.kubernetes.io/version"   = "1.13.1"
     }
   }
   spec {
@@ -825,7 +825,7 @@ resource "kubernetes_ingress_class" "nginx" {
 #       "app.kubernetes.io/instance"  = "ingress-nginx"
 #       "app.kubernetes.io/name"      = "ingress-nginx"
 #       "app.kubernetes.io/part-of"   = "ingress-nginx"
-#       "app.kubernetes.io/version"   = "1.8.2"
+#       "app.kubernetes.io/version"   = "1.13.1"
 #     }
 #   }
 #   webhook {
