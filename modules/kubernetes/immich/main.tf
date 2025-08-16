@@ -197,10 +197,7 @@ resource "kubernetes_ingress_v1" "ingress" {
 
       # As per https://immich.app/docs/administration/reverse-proxy
       "nginx.org/websocket-services" : "immich-server"
-      # Allow big uploads
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "10g"
       # Websockets
-      "nginx.ingress.kubernetes.io/proxy-http-version" : "1.1"
       "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
       "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade" # this makes a difference for web!!!
       "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
@@ -208,7 +205,25 @@ resource "kubernetes_ingress_v1" "ingress" {
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000s",
       "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
 
+      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "60s"
+
+      # Allow big uploads
+      "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
+      "nginx.ingress.kubernetes.io/proxy-buffering" : "off"
       "nginx.ingress.kubernetes.io/proxy-request-buffering" : "off"
+      "nginx.ingress.kubernetes.io/proxy-http-version" : "1.1"
+      # "nginx.ingress.kubernetes.io/client-body-buffer-size" : "512m"
+      # "nginx.ingress.kubernetes.io/proxy-buffers-number" : "4"
+
+      # good for downloading big files - https://www.pdxdev.com/nginx-content-delivery/configuring-nginx-for-large-file-transfers/
+      "nginx.ingress.kubernetes.io/configuration-snippet" : <<EOF
+        directio 4m;
+        sendfile off;
+        aio on;
+      EOF
+
+      "nginx.ingress.kubernetes.io/enable-modsecurity" : "false" # this is important!!!; setting it to true enables buffering and can lead to ooms when ploading big files
+      "nginx.ingress.kubernetes.io/enable-owasp-modsecurity-crs" : "false"
 
 
       "gethomepage.dev/enabled"      = "true"
