@@ -647,3 +647,9 @@ module "kured" {
 #   source          = "./onlyoffice"
 #   tls_secret_name = var.tls_secret_name
 # }
+
+
+module "forgejo" {
+  source          = "./forgejo"
+  tls_secret_name = var.tls_secret_name
+}
