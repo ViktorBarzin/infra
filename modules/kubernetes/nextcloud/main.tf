@@ -168,5 +168,13 @@ module "whiteboard_ingress" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
+
+    # Websockets
+    # "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
+    # "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade" # this makes a difference for web!!!
+
+    # Timeouts
+    "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000s",
+    "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
   }
 }
