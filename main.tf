@@ -106,6 +106,8 @@ variable "realestate_crawler_notification_settings" {
   type = map(string)
 }
 variable "kured_notify_url" {}
+variable "onlyoffice_db_password" { type = string }
+variable "onlyoffice_jwt_token" { type = string }
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -425,6 +427,9 @@ module "kubernetes_cluster" {
   realestate_crawler_notification_settings = var.realestate_crawler_notification_settings
 
   kured_notify_url = var.kured_notify_url
+
+  onlyoffice_db_password = var.onlyoffice_db_password
+  onlyoffice_jwt_token   = var.onlyoffice_jwt_token
 }
 
 
