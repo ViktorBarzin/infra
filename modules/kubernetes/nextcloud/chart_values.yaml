@@ -49,3 +49,13 @@ startupProbe:
 podAnnotations:
   diun.enable: "true"
   diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
+
+collabora:
+  enabled: true # Currently the app is disabled as using onlyoffice instead
+
+  autoscaling:
+    # enable autocaling, please check collabora README.md first
+    enabled: true
+
+cronjob:
+  enabled: true

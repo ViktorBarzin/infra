@@ -88,6 +88,8 @@ variable "realestate_crawler_notification_settings" {
   }
 }
 variable "kured_notify_url" {}
+variable "onlyoffice_db_password" { type = string }
+variable "onlyoffice_jwt_token" { type = string }
 
 
 
@@ -643,10 +645,12 @@ module "kured" {
   notify_url      = var.kured_notify_url
 }
 
-# module "onlyoffice" {
-#   source          = "./onlyoffice"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "onlyoffice" {
+  source          = "./onlyoffice"
+  tls_secret_name = var.tls_secret_name
+  db_password     = var.onlyoffice_db_password
+  jwt_token       = var.onlyoffice_jwt_token
+}
 
 
 module "forgejo" {
