@@ -281,8 +281,8 @@ resource "kubernetes_service" "shlink-web" {
     }
     port {
       name        = "http"
-      port        = "80"
-      target_port = "80"
+      port        = 80
+      target_port = 8080
     }
   }
 }
