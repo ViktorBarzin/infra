@@ -365,6 +365,15 @@ resource "kubernetes_config_map" "udp_services" {
     53 : "technitium/technitium-dns:53"
   }
 }
+resource "kubernetes_config_map" "tcp_services" {
+  metadata {
+    name      = "tcp-services"
+    namespace = "ingress-nginx"
+  }
+  data = {
+    # 9443 : "wireguard/xray:7443" // reality
+  }
+}
 resource "kubernetes_service" "ingress_nginx_controller" {
   metadata {
     name      = "ingress-nginx-controller"
@@ -396,6 +405,12 @@ resource "kubernetes_service" "ingress_nginx_controller" {
       port        = 53
       target_port = "dns"
     }
+    # port {
+    #   name        = "xray-reality"
+    #   protocol    = "TCP"
+    #   port        = 9443 # expose tcp port here
+    #   target_port = "9443"
+    # }
     selector = {
       "app.kubernetes.io/component" = "controller"
       "app.kubernetes.io/instance"  = "ingress-nginx"
@@ -448,7 +463,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 3
 
     selector {
       match_labels = {
@@ -559,7 +574,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           name = "controller"
           # https://github.com/kubernetes/ingress-nginx
           image = "registry.k8s.io/ingress-nginx/controller:v1.11.8"
-          args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key", "--udp-services-configmap", "ingress-nginx/udp-services"]
+          args  = ["/nginx-ingress-controller", "--election-id=ingress-nginx-leader", "--controller-class=k8s.io/ingress-nginx", "--ingress-class=nginx", "--configmap=$(POD_NAMESPACE)/ingress-nginx-controller", "--validating-webhook=:8443", "--validating-webhook-certificate=/usr/local/certificates/cert", "--validating-webhook-key=/usr/local/certificates/key", "--udp-services-configmap", "ingress-nginx/udp-services", "--tcp-services-configmap", "ingress-nginx/tcp-services"]
           volume_mount {
             name       = "crowdsec"
             mount_path = "/etc/nginx/lua/plugins/crowdsec"
@@ -580,6 +595,11 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             container_port = 53
             protocol       = "UDP"
           }
+          # port {
+          #   name           = "xray-reality"
+          #   container_port = 9443 # expose port here
+          #   protocol       = "TCP"
+          # }
           port {
             name           = "webhook"
             container_port = 8443
