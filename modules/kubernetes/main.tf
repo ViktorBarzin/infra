@@ -90,6 +90,9 @@ variable "realestate_crawler_notification_settings" {
 variable "kured_notify_url" {}
 variable "onlyoffice_db_password" { type = string }
 variable "onlyoffice_jwt_token" { type = string }
+variable "xray_reality_clients" { type = list(map(string)) }
+variable "xray_reality_private_key" { type = string }
+variable "xray_reality_short_ids" { type = list(string) }
 
 
 
@@ -656,4 +659,13 @@ module "onlyoffice" {
 module "forgejo" {
   source          = "./forgejo"
   tls_secret_name = var.tls_secret_name
+}
+
+module "xray" {
+  source          = "./xray"
+  tls_secret_name = var.tls_secret_name
+
+  xray_reality_clients     = var.xray_reality_clients
+  xray_reality_private_key = var.xray_reality_private_key
+  xray_reality_short_ids   = var.xray_reality_short_ids
 }

@@ -108,6 +108,10 @@ variable "realestate_crawler_notification_settings" {
 variable "kured_notify_url" {}
 variable "onlyoffice_db_password" { type = string }
 variable "onlyoffice_jwt_token" { type = string }
+variable "xray_reality_clients" { type = list(map(string)) }
+variable "xray_reality_private_key" { type = string }
+variable "xray_reality_short_ids" { type = list(string) }
+
 
 # data "terraform_remote_state" "foo" {
 #   backend = "kubernetes"
@@ -430,6 +434,10 @@ module "kubernetes_cluster" {
 
   onlyoffice_db_password = var.onlyoffice_db_password
   onlyoffice_jwt_token   = var.onlyoffice_jwt_token
+
+  xray_reality_clients     = var.xray_reality_clients
+  xray_reality_private_key = var.xray_reality_private_key
+  xray_reality_short_ids   = var.xray_reality_short_ids
 }
 
 
