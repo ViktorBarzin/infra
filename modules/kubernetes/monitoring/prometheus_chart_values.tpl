@@ -251,7 +251,7 @@ serverFiles:
             annotations:
               summary: "High permission error rate for {{ $labels.ingress }}: {{ $value }}%."
           - alert: HighIngressServerErrors
-            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100)  > 10
+            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*", ingress!="nextcloud", ingress!="grafana", ingress!="matrix"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100)  > 10
             for: 20m
             labels:
               severity: page
