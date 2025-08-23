@@ -1135,6 +1135,9 @@
                         "mode": "palette-classic"
                     },
                     "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
@@ -1144,8 +1147,10 @@
                         "hideFrom": {
                             "graph": false,
                             "legend": false,
-                            "tooltip": false
+                            "tooltip": false,
+                            "viz": false
                         },
+                        "insertNulls": false,
                         "lineInterpolation": "linear",
                         "lineWidth": 2,
                         "pointSize": 5,
@@ -1153,7 +1158,14 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
-                        "spanNulls": true
+                        "spanNulls": true,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
                     },
                     "mappings": [],
                     "min": 0,
@@ -1162,7 +1174,8 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green"
+                                "color": "green",
+                                "value": null
                             },
                             {
                                 "color": "red",
@@ -1190,7 +1203,8 @@
                     "showLegend": true
                 },
                 "tooltip": {
-                    "mode": "multi"
+                    "mode": "multi",
+                    "sort": "none"
                 }
             },
             "pluginVersion": "7.5.6",
@@ -1274,6 +1288,9 @@
                         "mode": "palette-classic"
                     },
                     "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
@@ -1283,8 +1300,10 @@
                         "hideFrom": {
                             "graph": false,
                             "legend": false,
-                            "tooltip": false
+                            "tooltip": false,
+                            "viz": false
                         },
+                        "insertNulls": false,
                         "lineInterpolation": "linear",
                         "lineWidth": 2,
                         "pointSize": 5,
@@ -1292,7 +1311,14 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
-                        "spanNulls": true
+                        "spanNulls": true,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
                     },
                     "mappings": [],
                     "min": 0,
@@ -1301,7 +1327,8 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green"
+                                "color": "green",
+                                "value": null
                             },
                             {
                                 "color": "red",
@@ -1329,7 +1356,8 @@
                     "showLegend": true
                 },
                 "tooltip": {
-                    "mode": "multi"
+                    "mode": "multi",
+                    "sort": "none"
                 }
             },
             "pluginVersion": "7.5.6",
