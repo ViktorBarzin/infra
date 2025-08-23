@@ -431,7 +431,8 @@ extraScrapeConfigs: |
   - job_name: 'registry'
     static_configs:
         - targets:
-          - "192.168.1.10:5001"
+          #- "192.168.1.10:5001" # rpi
+          - "10.0.10.10:5001" # devvm
     metrics_path: '/metrics'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
