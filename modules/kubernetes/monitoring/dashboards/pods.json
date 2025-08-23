@@ -1824,8 +1824,7 @@
                         "mode": "percentage",
                         "steps": [
                             {
-                                "color": "red",
-                                "value": null
+                                "color": "red"
                             },
                             {
                                 "color": "yellow",
@@ -1940,8 +1939,7 @@
                         "mode": "percentage",
                         "steps": [
                             {
-                                "color": "red",
-                                "value": null
+                                "color": "red"
                             },
                             {
                                 "color": "yellow",
@@ -2515,8 +2513,8 @@
             {
                 "current": {
                     "selected": true,
-                    "text": "authentik",
-                    "value": "authentik"
+                    "text": "monitoring",
+                    "value": "monitoring"
                 },
                 "datasource": {
                     "type": "prometheus",

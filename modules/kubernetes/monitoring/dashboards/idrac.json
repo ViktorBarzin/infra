@@ -722,6 +722,8 @@
                         "axisColorMode": "text",
                         "axisLabel": "",
                         "axisPlacement": "auto",
+                        "axisSoftMax": 150,
+                        "axisSoftMin": 100,
                         "barAlignment": 0,
                         "drawStyle": "line",
                         "fillOpacity": 10,
@@ -1976,7 +1978,7 @@
         "list": []
     },
     "time": {
-        "from": "now-3h",
+        "from": "now-7d",
         "to": "now"
     },
     "timepicker": {
@@ -1997,6 +1999,6 @@
     "timezone": "",
     "title": "iDRAC - Host Stats",
     "uid": "O19gr0jZk",
-    "version": 6,
+    "version": 9,
     "weekStart": ""
 }
