@@ -642,11 +642,11 @@ module "tor-proxy" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "kured" {
-  source          = "./kured"
-  tls_secret_name = var.tls_secret_name
-  notify_url      = var.kured_notify_url
-}
+# module "kured" {
+#   source          = "./kured"
+#   tls_secret_name = var.tls_secret_name
+#   notify_url      = var.kured_notify_url
+# }
 
 module "onlyoffice" {
   source          = "./onlyoffice"

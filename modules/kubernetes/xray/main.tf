@@ -3,6 +3,11 @@ variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
 
+# Github repo - https://github.com/teddysun/across/blob/master/docker/xray/README.md
+# Clients:
+# iOS - OneXRay - https://github.com/OneXray/OneXray
+# MacOS - V2BOX
+
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
