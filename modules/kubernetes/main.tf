@@ -669,3 +669,8 @@ module "xray" {
   xray_reality_private_key = var.xray_reality_private_key
   xray_reality_short_ids   = var.xray_reality_short_ids
 }
+
+module "freshrss" {
+  source          = "./freshrss"
+  tls_secret_name = var.tls_secret_name
+}
