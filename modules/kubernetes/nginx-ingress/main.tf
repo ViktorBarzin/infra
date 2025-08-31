@@ -331,8 +331,8 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
         setvar:tx.block_harvester_ip=1,\
         setvar:tx.block_spammer_ip=1"
         EOT
-    # plugins = "crowdsec"  # metabase causing high cpu?
-    plugins          = ""
+    plugins = "crowdsec"
+    # plugins          = ""
     lua-shared-dicts = "crowdsec_cache: 50m"
     http-snippet : <<-EOT
       proxy_cache_path /tmp/nginx-cache levels=1:2 keys_zone=static-cache:2m max_size=100m inactive=7d use_temp_path=off;
@@ -522,23 +522,23 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             name  = "MODE"
             value = "stream"
           }
-          # env {
-          #   name  = "CAPTCHA_PROVIDER"
-          #   value = "recaptcha"
-          # }
           env {
-            name = "BOUNCING_ON_TYPE"
-            # value = "all"
-            value = "ban"
+            name  = "CAPTCHA_PROVIDER"
+            value = "recaptcha"
           }
-          # env {
-          #   name  = "SECRET_KEY"
-          #   value = var.crowdsec_captcha_secret_key
-          # }
-          # env {
-          #   name  = "SITE_KEY"
-          #   value = var.crowdsec_captcha_site_key
-          # }
+          env {
+            name  = "BOUNCING_ON_TYPE"
+            value = "all"
+            # value = "ban"
+          }
+          env {
+            name  = "SECRET_KEY"
+            value = var.crowdsec_captcha_secret_key
+          }
+          env {
+            name  = "SITE_KEY"
+            value = var.crowdsec_captcha_site_key
+          }
 
           # env {
           #   name  = "DISABLE_RUN"
