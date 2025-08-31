@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "freshrss" {
           image = "freshrss/freshrss"
           env {
             name  = "CRON_MIN"
-            value = "60"
+            value = "0,30"
           }
           env {
             name  = "BASE_URL"
