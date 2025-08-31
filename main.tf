@@ -65,6 +65,8 @@ variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
 variable "ingress_crowdsec_captcha_secret_key" {}
 variable "ingress_crowdsec_captcha_site_key" {}
+variable "crowdsec_enroll_key" { type = string }
+variable "crowdsec_db_password" { type = string }
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
@@ -379,6 +381,8 @@ module "kubernetes_cluster" {
   ingress_crowdsec_api_key            = var.ingress_crowdsec_api_key
   ingress_crowdsec_captcha_secret_key = var.ingress_crowdsec_captcha_secret_key
   ingress_crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
+  crowdsec_enroll_key                 = var.crowdsec_enroll_key
+  crowdsec_db_password                = var.crowdsec_db_password
 
   vaultwarden_smtp_password = var.vaultwarden_smtp_password
 
