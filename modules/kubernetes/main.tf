@@ -52,6 +52,8 @@ variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
 variable "ingress_crowdsec_captcha_secret_key" {}
 variable "ingress_crowdsec_captcha_site_key" {}
+variable "crowdsec_enroll_key" { type = string }
+variable "crowdsec_db_password" { type = string }
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_redis_url" {}
@@ -423,12 +425,14 @@ module "nginx-ingress" {
   crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
 }
 
-# module "crowdsec" {
-#   source            = "./crowdsec"
-#   tls_secret_name   = var.tls_secret_name
-#   homepage_username = var.homepage_credentials["crowdsec"]["username"]
-#   homepage_password = var.homepage_credentials["crowdsec"]["password"]
-# }
+module "crowdsec" {
+  source            = "./crowdsec"
+  tls_secret_name   = var.tls_secret_name
+  homepage_username = var.homepage_credentials["crowdsec"]["username"]
+  homepage_password = var.homepage_credentials["crowdsec"]["password"]
+  enroll_key        = var.crowdsec_enroll_key
+  db_password       = var.crowdsec_db_password
+}
 
 # Seems like it needs S3 even if pg is local...
 # module "resume" {

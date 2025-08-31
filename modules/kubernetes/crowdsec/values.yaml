@@ -19,13 +19,56 @@ agent:
     - name: COLLECTIONS
       value: "crowdsecurity/nginx"
 lapi:
-  replicas: 3
+  replicas: 1
+  extraSecrets:
+    dbPassword: "${DB_PASSWORD}"
+  storeCAPICredentialsInSecret: true
+  persistentVolume:
+    config:
+      enabled: false
+    data:
+      enabled: false
   env:
+    - name: ENROLL_KEY
+      value: "${ENROLL_KEY}"
+    - name: ENROLL_INSTANCE_NAME
+      value: "k8s-cluster"
+    - name: ENROLL_TAGS
+      value: "k8s linux"
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-lapi-secrets
+          key: dbPassword
     # As it's a test, we don't want to share signals with CrowdSec, so disable the Online API.
     # - name: DISABLE_ONLINE_API
     #   value: "true"
   dashboard:
     enabled: true
+    env:
+    - name: MB_DB_TYPE
+      value: "mysql"
+    - name: MB_DB_DBNAME
+      value: crowdsec-metabase
+    - name: MB_DB_USER
+      value: "crowdsec"
+    - name: MB_DB_PASS
+      value: "${DB_PASSWORD}"
+    - name: MB_DB_HOST
+      value: "mysql.dbaas.svc.cluster.local"
+
+    - name: MB_EMAIL_SMTP_USERNAME
+      value: "info@viktorbarzin.me"
+    - name: MB_EMAIL_FROM_ADDRESS
+      value: "info@viktorbarzin.me"
+    - name: MB_EMAIL_SMTP_HOST
+      value: "mailserver.mailserver.svc.cluster.local"
+    - name: MB_EMAIL_SMTP_PASSWORD
+      value: "" # Ignore for now as it's unclear what notifications we can get
+    - name: MB_EMAIL_SMTP_PORT
+      value: "587"
+    - name: MB_EMAIL_SMTP_SECURITY
+      value: "starttls"
     ingress:
       enabled: true
       annotations:
@@ -55,3 +98,23 @@ lapi:
     enabled: true
   strategy:
     type: RollingUpdate
+  
+config:
+  config.yaml.local: |
+    db_config:
+      type:     mysql
+      user:     crowdsec
+      password: ${DB_PASSWORD}
+      db_name:  crowdsec
+      host:     mysql.dbaas.svc.cluster.local
+      port:     3306
+    api:
+      server:
+        auto_registration: # Activate if not using TLS for authentication
+          enabled: true
+          token: "$${REGISTRATION_TOKEN}"  # /!\ do not change
+          allowed_ranges: # /!\ adapt to the pod IP ranges used by your cluster
+            - "127.0.0.1/32"
+            - "192.168.0.0/16"
+            - "10.0.0.0/8"
+            - "172.16.0.0/12"
