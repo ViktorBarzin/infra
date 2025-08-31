@@ -19,7 +19,7 @@ agent:
     - name: COLLECTIONS
       value: "crowdsecurity/nginx"
 lapi:
-  replicas: 1
+  replicas: 3
   extraSecrets:
     dbPassword: "${DB_PASSWORD}"
   storeCAPICredentialsInSecret: true
