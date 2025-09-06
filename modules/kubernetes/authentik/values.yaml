@@ -1,4 +1,5 @@
 authentik:
+  log_level: warning
   secret_key: "${secret_key}"
   # This sends anonymous usage-data, stack traces on errors and
   # performance data to authentik.error-reporting.a7k.io, and is fully opt-in
