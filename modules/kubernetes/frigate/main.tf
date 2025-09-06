@@ -1,9 +1,4 @@
 variable "tls_secret_name" {}
-variable "valchedrym_camera_credentials" {
-  // in the format:
-  // username:password
-  default = ""
-}
 
 resource "kubernetes_namespace" "frigate" {
   metadata {
@@ -19,106 +14,6 @@ module "tls_secret" {
   namespace       = "frigate"
   tls_secret_name = var.tls_secret_name
 }
-
-## Disabled as config is now in data volume
-#
-# resource "kubernetes_config_map" "config" {
-#   metadata {
-#     name      = "config"
-#     namespace = "frigate"
-
-#     labels = {
-#       app = "frigate"
-#     }
-#     annotations = {
-#       "reloader.stakater.com/match" = "true"
-#     }
-#   }
-
-#   data = {
-#     # Actual mail settings
-#     "config.yml" = <<-EOT
-#     mqtt:
-#         enabled: False
-#     cameras:
-#         # Temp disabled until valchedrym is back up
-#         valchedrym-cam-1: 
-#            enabled: true
-#            ffmpeg:
-#                inputs:
-#                    #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/101 # <----- The stream you want to use for detection
-#                    - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/101 # <----- The stream you want to use for detection
-#            detect:
-#                enabled: True # <---- disable detection until you have a working camera feed
-#                width: 704 # <---- update for your camera's resolution
-#                height: 576 # <---- update for your camera's resolution
-#            objects:
-#              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-#              track:
-#                - person
-#                - bicycle
-#                - car
-#                - bird
-#                - cat
-#                - dog
-#                - horse
-#         valchedrym-cam-2: 
-#            enabled: true
-#            ffmpeg:
-#                inputs:
-#                    #- path: rtsp://${var.valchedrym_camera_credentials}@192.168.0.11:554/Streaming/Channels/201 # <----- The stream you want to use for detection
-#                    - path: rtsp://${var.valchedrym_camera_credentials}@valchedrym.ddns.net:554/Streaming/Channels/201 # <----- The stream you want to use for detection
-#            detect:
-#                enabled: True # <---- disable detection until you have a working camera feed
-#                width: 704 # <---- update for your camera's resolution
-#                height: 576 # <---- update for your camera's resolution
-#            objects:
-#              # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-#              track:
-#                - person
-#                - bicycle
-#                - car
-#                - bird
-#                - cat
-#                - dog
-#                - horse
-#         london-ipcam:
-#             enabled: false
-#             ffmpeg:
-#                 inputs:
-#                     - path: rtsp://192.168.2.2:8554/london_cam # <----- The stream you want to use for detection
-#                       roles:
-#                         - rtmp
-#                         - record
-#                         - detect
-#             detect:
-#                 enabled: False
-#                 width: 1280
-#                 height: 720
-#             record:
-#                 enabled: False # Not needed for this camera but keeping for reference
-#                 events:
-#                   retain:
-#                     default: 10
-#             objects:
-#               # Optional: list of objects to track from labelmap.txt (full list - https://docs.frigate.video/configuration/objects)
-#               track:
-#                 - person
-#                 - shoe
-#                 - handbag
-#                 - wine glass
-#                 - knife
-#                 - pizza
-#                 - laptop
-#                 - book
-#     EOT
-#   }
-#   # Password hashes are different each time and avoid changing secret constantly. 
-#   # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
-#   lifecycle {
-#     ignore_changes = [data["postfix-accounts.cf"]]
-#   }
-# }
 
 resource "kubernetes_deployment" "frigate" {
   metadata {
@@ -155,6 +50,12 @@ resource "kubernetes_deployment" "frigate" {
             name  = "FRIGATE_RTSP_PASSWORD"
             value = "password"
           }
+          # resources {
+          #   limits = {
+          #     cpu    = "1000m"
+          #     memory = "2Gi"
+          #   }
+          # }
 
           port {
             container_port = 5000
@@ -173,23 +74,22 @@ resource "kubernetes_deployment" "frigate" {
           volume_mount {
             name       = "config"
             mount_path = "/config"
-            # mount_path = "/config/config.yml"
-            # sub_path   = "config.yml"
           }
           volume_mount {
-            name       = "media"
-            mount_path = "/media/frigate"
+            name       = "dri"
+            mount_path = "/dev/dri"
           }
           volume_mount {
             name       = "dshm"
             mount_path = "/dev/shm"
           }
+          security_context {
+            privileged = true
+          }
         }
+
         volume {
           name = "config"
-          # config_map {
-          #   name = "config"
-          # }
           nfs {
             path   = "/mnt/main/frigate"
             server = "10.0.10.15"
@@ -207,6 +107,14 @@ resource "kubernetes_deployment" "frigate" {
           nfs {
             path   = "/mnt/main/frigate"
             server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "dri"
+          host_path {
+            path = "/dev/dri"
+            type = "Directory"
+            # type = "CharDevice"
           }
         }
       }
@@ -244,5 +152,10 @@ module "ingress" {
   protected       = true
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
+    # Websockets
+    "nginx.org/websocket-services" : "frigate"
+    "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
+    "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade"
+    "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
   }
 }
