@@ -677,3 +677,8 @@ module "freshrss" {
   source          = "./freshrss"
   tls_secret_name = var.tls_secret_name
 }
+
+module "navidrome" {
+  source          = "./navidrome"
+  tls_secret_name = var.tls_secret_name
+}
