@@ -1,24 +1,10 @@
 variable "tls_secret_name" {}
-resource "kubernetes_namespace" "qbittorrent" {
-  metadata {
-    name = "qbittorrent"
-    # labels = {
-    #   "istio-injection" : "enabled"
-    # }
-  }
-}
 
-
-module "tls_secret" {
-  source          = "../../setup_tls_secret"
-  namespace       = "qbittorrent"
-  tls_secret_name = var.tls_secret_name
-}
 
 resource "kubernetes_deployment" "qbittorrent" {
   metadata {
     name      = "qbittorrent"
-    namespace = "qbittorrent"
+    namespace = "servarr"
     labels = {
       app = "qbittorrent"
     }
@@ -87,7 +73,7 @@ resource "kubernetes_deployment" "qbittorrent" {
 resource "kubernetes_service" "qbittorrent" {
   metadata {
     name      = "qbittorrent"
-    namespace = "qbittorrent"
+    namespace = "servarr"
     labels = {
       app = "qbittorrent"
     }
@@ -108,7 +94,7 @@ resource "kubernetes_service" "qbittorrent" {
 resource "kubernetes_service" "qbittorrent-torrenting" {
   metadata {
     name      = "qbittorrent-torrenting"
-    namespace = "qbittorrent"
+    namespace = "servarr"
     labels = {
       app = "qbittorrent-torrenting"
 
@@ -141,12 +127,11 @@ resource "kubernetes_service" "qbittorrent-torrenting" {
 
 module "ingress" {
   source          = "../../ingress_factory"
-  namespace       = "qbittorrent"
+  namespace       = "servarr"
   name            = "qbittorrent"
   tls_secret_name = var.tls_secret_name
   protected       = true
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
   }
-
 }
