@@ -34,3 +34,5 @@ override.tf.json
 # example: *tfplan*
 
 git_crypt.key
+
+modules/kubernetes/frigate/config.yaml
