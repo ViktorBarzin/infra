@@ -1,12 +1,12 @@
 variable "tls_secret_name" {}
 
 
-resource "kubernetes_deployment" "prowlarr" {
+resource "kubernetes_deployment" "lidarr" {
   metadata {
-    name      = "prowlarr"
+    name      = "lidarr"
     namespace = "servarr"
     labels = {
-      app = "prowlarr"
+      app = "lidarr"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -16,22 +16,22 @@ resource "kubernetes_deployment" "prowlarr" {
     replicas = 1
     selector {
       match_labels = {
-        app = "prowlarr"
+        app = "lidarr"
       }
     }
     template {
       metadata {
         labels = {
-          app = "prowlarr"
+          app = "lidarr"
         }
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/prowlarr:latest"
-          name  = "prowlarr"
+          image = "lscr.io/linuxserver/lidarr:latest"
+          name  = "lidarr"
 
           port {
-            container_port = 9696
+            container_port = 8686
           }
           env {
             name  = "PUID"
@@ -51,17 +51,17 @@ resource "kubernetes_deployment" "prowlarr" {
           }
           volume_mount {
             name       = "data"
-            mount_path = "/books"
+            mount_path = "/downloads"
           }
           volume_mount {
             name       = "data"
-            mount_path = "/downloads"
+            mount_path = "/music"
           }
         }
         volume {
           name = "data"
           nfs {
-            path   = "/mnt/main/servarr/prowlarr"
+            path   = "/mnt/main/servarr/lidarr"
             server = "10.0.10.15"
           }
         }
@@ -70,23 +70,23 @@ resource "kubernetes_deployment" "prowlarr" {
   }
 }
 
-resource "kubernetes_service" "prowlarr" {
+resource "kubernetes_service" "lidarr" {
   metadata {
-    name      = "prowlarr"
+    name      = "lidarr"
     namespace = "servarr"
     labels = {
-      app = "prowlarr"
+      app = "lidarr"
     }
   }
 
   spec {
     selector = {
-      app = "prowlarr"
+      app = "lidarr"
     }
     port {
       name        = "http"
       port        = 80
-      target_port = 9696
+      target_port = 8686
     }
   }
 }
@@ -95,7 +95,11 @@ resource "kubernetes_service" "prowlarr" {
 module "ingress" {
   source          = "../../ingress_factory"
   namespace       = "servarr"
-  name            = "prowlarr"
+  name            = "lidarr"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  #   extra_annotations = {
+  #     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
+  #   }
+
 }
