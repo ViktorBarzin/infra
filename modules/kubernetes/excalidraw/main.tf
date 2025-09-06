@@ -37,7 +37,7 @@ resource "kubernetes_deployment" "excalidraw" {
           app = "excalidraw"
         }
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false"
           "diun.include_tags" = "^latest$"
         }
       }
