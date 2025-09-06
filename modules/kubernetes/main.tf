@@ -465,11 +465,10 @@ module "audiobookshelf" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "frigate" {
-#   source                        = "./frigate"
-#   tls_secret_name               = var.tls_secret_name
-#   valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
-# }
+module "frigate" {
+  source          = "./frigate"
+  tls_secret_name = var.tls_secret_name
+}
 
 # TODO: Currently very unstable and half of the functionality does not work:
 # notifications, import from todoist, email
