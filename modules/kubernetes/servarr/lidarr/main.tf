@@ -50,7 +50,7 @@ resource "kubernetes_deployment" "lidarr" {
             mount_path = "/config"
           }
           volume_mount {
-            name       = "data"
+            name       = "downloads"
             mount_path = "/downloads"
           }
           volume_mount {
@@ -62,6 +62,13 @@ resource "kubernetes_deployment" "lidarr" {
           name = "data"
           nfs {
             path   = "/mnt/main/servarr/lidarr"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "downloads"
+          nfs {
+            path   = "/mnt/main/servarr/downloads"
             server = "10.0.10.15"
           }
         }

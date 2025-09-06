@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "qbittorrent" {
             mount_path = "/config"
           }
           volume_mount {
-            name       = "data"
+            name       = "downloads"
             mount_path = "/downloads"
           }
         }
@@ -62,6 +62,13 @@ resource "kubernetes_deployment" "qbittorrent" {
           name = "data"
           nfs {
             path   = "/mnt/main/servarr/qbittorrent"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "downloads"
+          nfs {
+            path   = "/mnt/main/servarr/downloads"
             server = "10.0.10.15"
           }
         }
