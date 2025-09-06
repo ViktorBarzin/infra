@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "prowlarr" {
             mount_path = "/books"
           }
           volume_mount {
-            name       = "data"
+            name       = "downloads"
             mount_path = "/downloads"
           }
         }
@@ -62,6 +62,13 @@ resource "kubernetes_deployment" "prowlarr" {
           name = "data"
           nfs {
             path   = "/mnt/main/servarr/prowlarr"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "downloads"
+          nfs {
+            path   = "/mnt/main/servarr/downloads"
             server = "10.0.10.15"
           }
         }
