@@ -54,6 +54,11 @@ resource "kubernetes_deployment" "navidrome" {
             mount_path = "/music"
             read_only  = true
           }
+          volume_mount {
+            name       = "lidarr"
+            mount_path = "/lidarr"
+            read_only  = true
+          }
           port {
             name           = "http"
             container_port = 4533
@@ -72,6 +77,13 @@ resource "kubernetes_deployment" "navidrome" {
           nfs {
             path   = "/volume1/music"
             server = "192.168.1.13"
+          }
+        }
+        volume {
+          name = "lidarr"
+          nfs {
+            path   = "/mnt/main/servarr/lidarr"
+            server = "10.0.10.15"
           }
         }
       }

@@ -37,3 +37,8 @@ module "lidarr" {
   source          = "./lidarr"
   tls_secret_name = var.tls_secret_name
 }
+
+module "soulseek" {
+  source          = "./soulseek"
+  tls_secret_name = var.tls_secret_name
+}
