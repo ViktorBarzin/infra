@@ -28,10 +28,17 @@ resource "kubernetes_deployment" "lidarr" {
       spec {
         container {
           image = "lscr.io/linuxserver/lidarr:latest"
-          name  = "lidarr"
+          # image = "youegraillot/lidarr-on-steroids"
+          name = "lidarr"
+
 
           port {
+            name           = "lidarr"
             container_port = 8686
+          }
+          port {
+            name           = "deemix"
+            container_port = 6595
           }
           env {
             name  = "PUID"
@@ -56,6 +63,12 @@ resource "kubernetes_deployment" "lidarr" {
           volume_mount {
             name       = "data"
             mount_path = "/music"
+            sub_path   = "music"
+          }
+          volume_mount {
+            name       = "deemix-config"
+            mount_path = "/config_deemix"
+            sub_path   = "deemix"
           }
         }
         volume {
@@ -69,6 +82,13 @@ resource "kubernetes_deployment" "lidarr" {
           name = "downloads"
           nfs {
             path   = "/mnt/main/servarr/downloads"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "deemix-config"
+          nfs {
+            path   = "/mnt/main/servarr/lidarr"
             server = "10.0.10.15"
           }
         }
@@ -98,6 +118,27 @@ resource "kubernetes_service" "lidarr" {
   }
 }
 
+resource "kubernetes_service" "deemix" {
+  metadata {
+    name      = "deemix"
+    namespace = "servarr"
+    labels = {
+      app = "deemix"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "lidarr"
+    }
+    port {
+      name        = "deemix"
+      port        = 80
+      target_port = 6595
+    }
+  }
+}
+
 
 module "ingress" {
   source          = "../../ingress_factory"
@@ -109,4 +150,12 @@ module "ingress" {
   #     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
   #   }
 
+}
+
+module "ingress-deemix" {
+  source          = "../../ingress_factory"
+  namespace       = "servarr"
+  name            = "deemix"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }
