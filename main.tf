@@ -61,6 +61,7 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
+variable "immich_frame_api_key" {}
 variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
 variable "ingress_crowdsec_captcha_secret_key" {}
@@ -376,6 +377,7 @@ module "kubernetes_cluster" {
   headscale_acl    = var.headscale_acl
 
   immich_postgresql_password = var.immich_postgresql_password
+  immich_frame_api_key       = var.immich_frame_api_key
 
   ingress_honeypotapikey              = var.ingress_honeypotapikey
   ingress_crowdsec_api_key            = var.ingress_crowdsec_api_key

@@ -48,6 +48,7 @@ variable "finance_app_gocardless_secret_id" {}
 variable "headscale_config" {}
 variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
+variable "immich_frame_api_key" {}
 variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
 variable "ingress_crowdsec_captcha_secret_key" {}
@@ -414,6 +415,7 @@ module "immich" {
   source              = "./immich"
   tls_secret_name     = var.tls_secret_name
   postgresql_password = var.immich_postgresql_password
+  frame_api_key       = var.immich_frame_api_key
   homepage_token      = var.homepage_credentials["immich"]["token"]
 }
 
