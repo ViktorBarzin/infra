@@ -23,7 +23,7 @@ resource "helm_release" "nextcloud" {
   repository = "https://nextcloud.github.io/helm/"
   chart      = "nextcloud"
   atomic     = true
-  version    = "7.0.0"
+  version    = "8.0.2"
 
   values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.db_password })]
   timeout = 6000
