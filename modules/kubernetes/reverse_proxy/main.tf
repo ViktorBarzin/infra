@@ -131,12 +131,12 @@ module "r730" {
   depends_on       = [kubernetes_namespace.reverse-proxy]
 }
 
-# https://esxi.viktorbarzin.me/
-module "esxi" {
+# https://proxmox.viktorbarzin.me/
+module "proxmox" {
   source           = "./factory"
-  name             = "esxi"
-  external_name    = "esxi.viktorbarzin.lan"
-  port             = 443
+  name             = "proxmox"
+  external_name    = "proxmox.viktorbarzin.lan"
+  port             = 8006
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   max_body_size    = "0" # unlimited
