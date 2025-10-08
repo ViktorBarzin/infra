@@ -223,7 +223,7 @@ serverFiles:
             annotations:
               summary: Power voltage on a power supply is {{ $value }} indicating power outage.
           - alert: HighPowerUsage
-            expr: (max_over_time(r730_idrac_redfish_chassis_power_average_consumed_watts[20m])) > 133
+            expr: (max_over_time(r730_idrac_redfish_chassis_power_average_consumed_watts[20m])) > 180
             for: 60m
             labels:
               severity: page
