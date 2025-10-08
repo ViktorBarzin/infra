@@ -6,7 +6,9 @@ authentik:
   error_reporting:
     enabled: true
   postgresql:
-    host: postgresql.dbaas
+    # host: postgresql.dbaas
+    host: pgbouncer.authentik
+    port: 6432
     user: authentik
     password: ${postgres_password}
   redis:
