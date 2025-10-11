@@ -2,9 +2,11 @@ variable "prod" {
   type    = bool
   default = false
 }
-variable "vsphere_password" {}
-variable "vsphere_user" {}
-variable "vsphere_server" {}
+variable "proxmox_pm_api_url" { type = string }
+variable "proxmox_pm_api_token_id" { type = string }
+variable "proxmox_pm_api_token_secret" { type = string }
+variable "vm_wizard_password" { type = string }
+variable "proxmox_host" { type = string }
 variable "tls_secret_name" {}
 variable "tls_crt" {
   default = ""
@@ -114,9 +116,6 @@ variable "onlyoffice_jwt_token" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
-variable "proxmox_pm_api_url" { type = string }
-variable "proxmox_pm_api_token_id" { type = string }
-variable "proxmox_pm_api_token_secret" { type = string }
 
 
 # data "terraform_remote_state" "foo" {
@@ -156,28 +155,33 @@ provider "proxmox" {
 #   comment = "VLAN 99"
 # }
 
+locals {
+  vm_template_name           = "ubuntu-2404-cloudinit-template"
+  vm_cloud_init_snippet_name = "cloud_init.yaml"
+}
 
 # Main module to init infra from
 module "template-vm" {
   source          = "./modules/create-template-vm"
-  proxmox_host    = "192.168.1.127"
+  proxmox_host    = var.proxmox_host
   proxmox_user    = "root" # SSH user on Proxmox host
-  cloud_image_url = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-  image_path      = "/var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img"
+  cloud_image_url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+  image_path      = "/var/lib/vz/template/iso/noble-server-cloudimg-amd64.img"
   template_id     = 8000
-  template_name   = "ubuntu-2204-cloudinit-template"
+  template_name   = local.vm_template_name
+
+  snippet_name = local.vm_cloud_init_snippet_name
+  user_passwd  = var.vm_wizard_password
 }
 
 # module "pxe-server" {
-#   source  = "./modules/create-vm"
-#   vm_name = "pxe-server"
-#   network = "dManagementVMs"
-#   # provisioner_command = "${var.ansible_prefix} -t linux/pxe-server/add-distro"
-#   provisioner_command = "# no provisioner needed #" # Noop until ubuntu autoinstall is setup
-
-#   cdrom_path     = "ISO/ubuntu-server-20.04.1.iso"
+#   template_name  = local.vm_template_name
+#   source         = "./modules/create-vm"
+#   vm_name        = "pxe-server"
 #   vm_disk_size   = 50
-#   vm_mac_address = "00:50:56:87:4a:2d"
+#   cisnippet_name = local.vm_cloud_init_snippet_name
+
+#   # vm_mac_address = "00:50:56:87:4a:2d"
 # }
 
 # module "k8s_master" {
