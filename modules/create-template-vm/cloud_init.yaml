@@ -1,0 +1,22 @@
+#cloud-config 
+hostname: terraform-vm
+users:
+  - name: wizard
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${authorized_ssh_key}
+    passwd: ${passwd}
+    lock_passwd: false # enable passwd login
+package_update: true
+package_upgrade: true
+packages:
+  - htop
+  - vim
+  - curl
+  - jq
+  - tcpdump
+  - tree
+  - tmux
+  - wget
+  - net-tools
+  - zsh
