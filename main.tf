@@ -180,8 +180,8 @@ module "template-vm" {
 #   vm_name        = "pxe-server"
 #   vm_disk_size   = 50
 #   cisnippet_name = local.vm_cloud_init_snippet_name
-
-#   # vm_mac_address = "00:50:56:87:4a:2d"
+#   bridge         = "vmbr0"
+#   vm_mac_address = "00:50:56:87:4a:2d"
 # }
 
 # module "k8s_master" {
