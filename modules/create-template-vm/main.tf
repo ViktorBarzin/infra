@@ -9,6 +9,10 @@ variable "template_id" {
 variable "template_name" { type = string }
 variable "snippet_name" { type = string }
 variable "user_passwd" { type = string } # hashed pw
+variable "k8s_join_command" {
+  type    = string
+  default = ""
+}
 
 # SSH connection to Proxmox
 resource "null_resource" "create_template_remote" {
@@ -56,7 +60,7 @@ resource "null_resource" "upload_cloud_init" {
 
   provisioner "file" {
     destination = "/var/lib/vz/snippets/${var.snippet_name}"
-    content     = templatefile("${path.module}/cloud_init.yaml", { authorized_ssh_key = file("~/.ssh/id_ed25519.pub"), passwd = var.user_passwd })
+    content     = templatefile("${path.module}/cloud_init.yaml", { authorized_ssh_key = file("~/.ssh/id_ed25519.pub"), passwd = var.user_passwd, k8s_join_command = var.k8s_join_command })
   }
 
   triggers = {

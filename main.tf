@@ -5,6 +5,7 @@ variable "prod" {
 variable "proxmox_pm_api_url" { type = string }
 variable "proxmox_pm_api_token_id" { type = string }
 variable "proxmox_pm_api_token_secret" { type = string }
+variable "k8s_join_command" { type = string }
 variable "vm_wizard_password" { type = string }
 variable "proxmox_host" { type = string }
 variable "tls_secret_name" {}
@@ -170,18 +171,21 @@ module "template-vm" {
   template_id     = 8000
   template_name   = local.vm_template_name
 
-  snippet_name = local.vm_cloud_init_snippet_name
-  user_passwd  = var.vm_wizard_password
+  snippet_name     = local.vm_cloud_init_snippet_name
+  user_passwd      = var.vm_wizard_password
+  k8s_join_command = var.k8s_join_command
 }
 
-# module "pxe-server" {
+# module "k8s_node5" {
 #   template_name  = local.vm_template_name
 #   source         = "./modules/create-vm"
-#   vm_name        = "pxe-server"
-#   vm_disk_size   = 50
+#   vm_name        = "k8s-node5"
+#   vmid           = 205
 #   cisnippet_name = local.vm_cloud_init_snippet_name
-#   bridge         = "vmbr0"
+
 #   vm_mac_address = "00:50:56:87:4a:2d"
+#   bridge         = "vmbr1"
+#   vlan_tag       = "20"
 # }
 
 # module "k8s_master" {
