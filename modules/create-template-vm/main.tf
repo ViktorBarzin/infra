@@ -7,6 +7,8 @@ variable "template_id" {
   default = 8000
 }
 variable "template_name" { type = string }
+variable "snippet_name" { type = string }
+variable "user_passwd" { type = string } # hashed pw
 
 # SSH connection to Proxmox
 resource "null_resource" "create_template_remote" {
@@ -37,5 +39,27 @@ resource "null_resource" "create_template_remote" {
       "  echo 'Template ${var.template_id} already exists — skipping.';",
       "fi"
     ]
+  }
+}
+
+resource "null_resource" "upload_cloud_init" {
+  connection {
+    type        = "ssh"
+    host        = var.proxmox_host
+    user        = var.proxmox_user
+    private_key = file("~/.ssh/id_ed25519")
+  }
+
+  provisioner "remote-exec" {
+    inline = ["mkdir -p /var/lib/vz/snippets"]
+  }
+
+  provisioner "file" {
+    destination = "/var/lib/vz/snippets/${var.snippet_name}"
+    content     = templatefile("${path.module}/cloud_init.yaml", { authorized_ssh_key = file("~/.ssh/id_ed25519.pub"), passwd = var.user_passwd })
+  }
+
+  triggers = {
+    file_hash = filesha256("${path.module}/cloud_init.yaml")
   }
 }
