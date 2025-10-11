@@ -1,9 +1,9 @@
 
 terraform {
   required_providers {
-    vsphere = {
-      source  = "hashicorp/vsphere"
-      version = "2.0.2"
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "3.0.2-rc04"
     }
   }
 }
