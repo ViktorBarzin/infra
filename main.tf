@@ -114,6 +114,9 @@ variable "onlyoffice_jwt_token" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
+variable "proxmox_pm_api_url" { type = string }
+variable "proxmox_pm_api_token_id" { type = string }
+variable "proxmox_pm_api_token_secret" { type = string }
 
 
 # data "terraform_remote_state" "foo" {
@@ -137,15 +140,14 @@ provider "helm" {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
-# TODO: add DEFCON levels
 
-# provider "proxmox" {
-#   endpoint = "https://10.0.10.105:8006/api2/json"
-#   username = "root@pam"
-#   password = "to-change"
-#   insecure = true
-#   tmp_dir  = "/var/tmp"
-# }
+provider "proxmox" {
+  pm_api_url          = var.proxmox_pm_api_url
+  pm_api_token_id     = var.proxmox_pm_api_token_id
+  pm_api_token_secret = var.proxmox_pm_api_token_secret
+  pm_tls_insecure     = true
+}
+# TODO: add DEFCON levels
 
 # resource "proxmox_virtual_environment_network_linux_vlan" "vlan1" {
 #   node_name = "pve"
@@ -155,43 +157,27 @@ provider "helm" {
 # }
 
 
-# resource "proxmox_vm_qemu" "k8s-master-pve" {
-#   name        = "test"
-#   target_node = "pve"
-#   # iso         = "ubuntu-22.04.3-live-server-amd64.iso"
-#   iso      = "local:iso/ubuntu-22.04.3-live-server-amd64.iso"
-#   agent    = 1
-#   os_type  = "ubuntu"
-#   cores    = 4
-#   sockets  = 1
-#   cpu      = "host"
-#   memory   = 2048
-#   scsihw   = "virtio-scsi-pci"
-#   bootdisk = "scsi0"
-#   disk {
-#     slot = 0
-#     # set disk size here. leave it small for testing because expanding the disk takes time.
-#     size     = "10G"
-#     type     = "scsi"
-#     storage  = "local-lvm"
-#     iothread = 0
-#   }
-# }
-
 # Main module to init infra from
-# module "pxe_server" {
+module "template-vm" {
+  source          = "./modules/create-template-vm"
+  proxmox_host    = "192.168.1.127"
+  proxmox_user    = "root" # SSH user on Proxmox host
+  cloud_image_url = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+  image_path      = "/var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img"
+  template_id     = 8000
+  template_name   = "ubuntu-2204-cloudinit-template"
+}
+
+# module "pxe-server" {
 #   source  = "./modules/create-vm"
 #   vm_name = "pxe-server"
 #   network = "dManagementVMs"
 #   # provisioner_command = "${var.ansible_prefix} -t linux/pxe-server/add-distro"
 #   provisioner_command = "# no provisioner needed #" # Noop until ubuntu autoinstall is setup
 
-#   vsphere_password = var.vsphere_password
-#   vsphere_user     = var.vsphere_user
-#   vsphere_server   = var.vsphere_server
-#   cdrom_path       = "ISO/ubuntu-server-20.04.1.iso"
-#   vm_disk_size     = 50
-#   vm_mac_address   = "00:50:56:87:4a:2d"
+#   cdrom_path     = "ISO/ubuntu-server-20.04.1.iso"
+#   vm_disk_size   = 50
+#   vm_mac_address = "00:50:56:87:4a:2d"
 # }
 
 # module "k8s_master" {
