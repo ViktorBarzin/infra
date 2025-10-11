@@ -246,17 +246,15 @@ module "template-vm" {
 # }
 
 # module "k8s_node4" {
-#   source              = "./modules/create-vm"
-#   vm_name             = "k8s-node4"
-#   vm_mac_address      = "00:50:56:b0:a1:38"
-#   network             = "dKubernetes"
-#   provisioner_command = "${var.ansible_prefix} -t linux/k8s/node -e hostname=k8s-node4 -e k8s_master='wizard@${module.k8s_master.guest_ip}'"
+#   source         = "./modules/create-vm"
+#   vm_name        = "k8s-node4"
+#   vmid           = 204
+#   template_name  = local.vm_template_name
+#   cisnippet_name = local.vm_cloud_init_snippet_name
 
-#   vsphere_password      = var.vsphere_password
-#   vsphere_user          = var.vsphere_user
-#   vsphere_server        = var.vsphere_server
-#   vsphere_datastore     = "r730-datastore"
-#   vsphere_resource_pool = "R730"
+#   vm_mac_address = "00:50:56:b0:a1:38"
+#   bridge         = "vmbr1"
+#   vlan_tag       = "20"
 # }
 
 # module "k8s_node5" {
