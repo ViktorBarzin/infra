@@ -25,10 +25,18 @@ variable "ssh_keys" {
   default = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx devvm"
 }
 variable "bridge" { type = string }
+variable "vlan_tag" {
+  type    = string
+  default = null
+}
+variable "vmid" {
+  type    = number
+  default = 0
+}
 
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
-  vmid             = 305
+  vmid             = var.vmid
   name             = var.vm_name
   target_node      = "pve"
   agent            = 0
@@ -47,6 +55,7 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   ipconfig0    = "ip=dhcp,ip6=dhcp"
   skip_ipv6    = true
   ciuser       = "root"
+  cipassword   = "root"
   sshkeys      = var.ssh_keys
   searchdomain = "viktorbarzin.lan"
   onboot       = true # start on node boot
@@ -86,5 +95,6 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
     bridge  = var.bridge
     model   = "e1000"
     macaddr = var.vm_mac_address
+    tag     = var.vlan_tag
   }
 }

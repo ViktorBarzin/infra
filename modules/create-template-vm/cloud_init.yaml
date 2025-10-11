@@ -7,6 +7,7 @@ users:
       - ${authorized_ssh_key}
     passwd: ${passwd}
     lock_passwd: false # enable passwd login
+    shell: /bin/bash
 package_update: true
 package_upgrade: true
 packages:
@@ -20,3 +21,35 @@ packages:
   - wget
   - net-tools
   - zsh
+  - apt-transport-https
+  - ca-certificates
+  - gpg
+  # docker
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  # kubernetes
+  - kubeadm
+  - kubelet
+
+apt:
+  sources:
+    kubernetes:
+      source: "deb https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
+      keyid: "DE15B14486CD377B9E876E1A234654DA9A296436"
+      filename: kubernetes.list
+    docket:
+      source: "deb https://download.docker.com/linux/ubuntu noble stable"
+      keyid: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+      filename: docker.list
+
+runcmd:
+  - apt-mark hold kubelet kubeadm kubectl
+  - systemctl stop kubelet
+  - containerd config default | sudo tee /etc/containerd/config.toml
+  - systemctl restart containerd
+  - ${k8s_join_command}
+  - systemctl enable kubelet
+  - systemctl start kubelet
