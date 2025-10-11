@@ -20,6 +20,11 @@ variable "vm_mac_address" {
   default = null
 }
 variable "cisnippet_name" { type = string }
+variable "ssh_keys" {
+  type    = string
+  default = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx devvm"
+}
+variable "bridge" { type = string }
 
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
@@ -36,28 +41,26 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   os_type          = "cloud-init"
 
   # Cloud-Init configuration
+  cicustom     = "vendor=local:snippets/${var.cisnippet_name}"
   ciupgrade    = true
   nameserver   = "1.1.1.1 8.8.8.8"
   ipconfig0    = "ip=dhcp,ip6=dhcp"
   skip_ipv6    = true
   ciuser       = "root"
-  sshkeys      = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx vbarzin@gmail.com"
+  sshkeys      = var.ssh_keys
   searchdomain = "viktorbarzin.lan"
   onboot       = true # start on node boot
   qemu_os      = "l26"
-  cicustom     = "vendor=local:snippets/${var.cisnippet_name}"
 
   cpu {
     cores = var.vm_cpus
     type  = "host" # emulate host cpu
   }
 
-
   # Most cloud-init images require a serial device for their display
   serial {
     id = 0
   }
-
   disks {
     scsi {
       scsi0 {
@@ -78,10 +81,9 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
       }
     }
   }
-
   network {
     id      = 0
-    bridge  = "vmbr0"
+    bridge  = var.bridge
     model   = "e1000"
     macaddr = var.vm_mac_address
   }
