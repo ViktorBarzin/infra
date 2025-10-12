@@ -13,6 +13,16 @@ variable "k8s_join_command" {
   type    = string
   default = ""
 }
+variable "containerd_config_update_command" {
+  type        = string
+  default     = ""
+  description = "Command to execute to update containerd config.toml; e.g add mirror"
+}
+variable "is_k8s_template" { type = bool }
+variable "provision_cmds" {
+  type    = list(string)
+  default = []
+}
 
 # SSH connection to Proxmox
 resource "null_resource" "create_template_remote" {
@@ -60,7 +70,15 @@ resource "null_resource" "upload_cloud_init" {
 
   provisioner "file" {
     destination = "/var/lib/vz/snippets/${var.snippet_name}"
-    content     = templatefile("${path.module}/cloud_init.yaml", { authorized_ssh_key = file("~/.ssh/id_ed25519.pub"), passwd = var.user_passwd, k8s_join_command = var.k8s_join_command })
+    content = templatefile("${path.module}/cloud_init.yaml", {
+      is_k8s_template                  = var.is_k8s_template,
+      authorized_ssh_key               = file("~/.ssh/id_ed25519.pub"),
+      passwd                           = var.user_passwd,
+      provision_cmds                   = var.provision_cmds,
+      k8s_join_command                 = var.k8s_join_command,
+      containerd_config_update_command = var.containerd_config_update_command
+      }
+    )
   }
 
   triggers = {

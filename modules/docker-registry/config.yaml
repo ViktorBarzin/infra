@@ -1,0 +1,40 @@
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+    maxsize: 5GiB
+  delete:
+    enabled: true
+  maintenance:
+    uploadpurging:
+      enabled: true
+      age: 24h
+      interval: 4h
+      dryrun: false
+    readonly:
+      enabled: false
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+  debug:
+    addr: ":5001"
+    # Enable proxy on nodes - https://github.com/containerd/containerd/blob/main/docs/cri/registry.md
+    # https://ops.tips/gists/retrieving-docker-registry-metrics-using-prometheus/
+    prometheus:
+      enabled: true
+      path: "/metrics"
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+proxy:
+  remoteurl: https://registry-1.docker.io
+  username: vbarzin@gmail.com
+  password: ${password}
