@@ -24,32 +24,43 @@ packages:
   - apt-transport-https
   - ca-certificates
   - gpg
+  - isc-dhcp-client
   # docker
   - docker-ce
   - docker-ce-cli
   - containerd.io
   - docker-buildx-plugin
   - docker-compose-plugin
+  %{if is_k8s_template}
   # kubernetes
   - kubeadm
   - kubelet
+  %{endif}
 
 apt:
   sources:
+  %{if is_k8s_template}
     kubernetes:
       source: "deb https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
       keyid: "DE15B14486CD377B9E876E1A234654DA9A296436"
       filename: kubernetes.list
-    docket:
+  %{endif}
+    docker:
       source: "deb https://download.docker.com/linux/ubuntu noble stable"
       keyid: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
       filename: docker.list
 
 runcmd:
+  %{if is_k8s_template}
   - apt-mark hold kubelet kubeadm kubectl
   - systemctl stop kubelet
   - containerd config default | sudo tee /etc/containerd/config.toml
+  - ${containerd_config_update_command}
   - systemctl restart containerd
   - ${k8s_join_command}
   - systemctl enable kubelet
   - systemctl start kubelet
+  %{ endif }
+  %{ for provision_cmd in provision_cmds ~}
+  - ${provision_cmd}
+  %{ endfor ~}
