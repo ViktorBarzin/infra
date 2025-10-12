@@ -1,20 +1,21 @@
+variable "vm_name" { type = string }
+variable "vmid" {
+  type    = number
+  default = 0
+}
 variable "template_name" { type = string }
-variable "vm_name" { default = "terraform-test" }
 variable "vm_cpus" {
   type    = number
   default = 4
 }
-
 variable "vm_mem_mb" {
   type    = number
   default = 8192
 }
-
 variable "vm_disk_size" {
   type    = string
   default = "64G"
 }
-
 variable "vm_mac_address" {
   type    = string
   default = null
@@ -29,11 +30,6 @@ variable "vlan_tag" {
   type    = string
   default = null
 }
-variable "vmid" {
-  type    = number
-  default = 0
-}
-
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
   vmid             = var.vmid

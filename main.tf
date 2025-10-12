@@ -36,7 +36,7 @@ variable "dbaas_pgadmin_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
-# variable "dockerhub_password" {}
+variable "dockerhub_registry_password" {}
 variable "oauth2_proxy_client_id" {}
 variable "oauth2_proxy_client_secret" {}
 variable "oauth2_proxy_authenticated_emails" {}
@@ -119,18 +119,6 @@ variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
 
 
-# data "terraform_remote_state" "foo" {
-#   backend = "kubernetes"
-#   config = {
-#     secret_suffix     = "state"
-#     namespace         = "drone"
-#     in_cluster_config = var.prod
-#     host              = "https://kubernetes:6443"
-#     //  load_config_file  = true
-#   }
-
-#   depends_on = [module.kubernetes_cluster]
-# }
 provider "kubernetes" {
   config_path = var.prod ? "" : "~/.kube/config"
 }
@@ -149,32 +137,106 @@ provider "proxmox" {
 }
 # TODO: add DEFCON levels
 
-# resource "proxmox_virtual_environment_network_linux_vlan" "vlan1" {
-#   node_name = "pve"
-#   name      = "ens160.99"
-
-#   comment = "VLAN 99"
-# }
+# Main module to init infra from
 
 locals {
-  vm_template_name           = "ubuntu-2404-cloudinit-template"
-  vm_cloud_init_snippet_name = "cloud_init.yaml"
+  k8s_vm_template             = "ubuntu-2404-cloudinit-k8s-template"
+  k8s_cloud_init_snippet_name = "k8s_cloud_init.yaml"
+  k8s_cloud_init_image_path   = "/var/lib/vz/template/iso/noble-server-cloudimg-amd64-k8s.img"
+
+  non_k8s_vm_template             = "ubuntu-2404-cloudinit-non-k8s-template"
+  non_k8s_cloud_init_snippet_name = "non_k8s_cloud_init.yaml"
+  non_k8s_cloud_init_image_path   = "/var/lib/vz/template/iso/noble-server-cloudimg-amd64-non-k8s.img"
+
+  cloud_init_image_url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 }
 
-# Main module to init infra from
-module "template-vm" {
-  source          = "./modules/create-template-vm"
-  proxmox_host    = var.proxmox_host
-  proxmox_user    = "root" # SSH user on Proxmox host
-  cloud_image_url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
-  image_path      = "/var/lib/vz/template/iso/noble-server-cloudimg-amd64.img"
-  template_id     = 8000
-  template_name   = local.vm_template_name
+module "k8s-node-template" {
+  source       = "./modules/create-template-vm"
+  proxmox_host = var.proxmox_host
+  proxmox_user = "root" # SSH user on Proxmox host
 
-  snippet_name     = local.vm_cloud_init_snippet_name
-  user_passwd      = var.vm_wizard_password
-  k8s_join_command = var.k8s_join_command
+  cloud_image_url = local.cloud_init_image_url
+  image_path      = local.k8s_cloud_init_image_path
+  template_id     = 2000
+  template_name   = local.k8s_vm_template
+  user_passwd     = var.vm_wizard_password
+
+  is_k8s_template = true # provision cloud init file with k8s deps
+  snippet_name    = local.k8s_cloud_init_snippet_name
+  # Add mirror registry
+  containerd_config_update_command = "echo '[plugins.\"io.containerd.grpc.v1.cri\".registry.mirrors.\"docker.io\"]' >> /etc/containerd/config.toml && echo '  endpoint = [\"http://10.0.20.10:5000\"]' >> /etc/containerd/config.toml" # docker registry vm 
+  k8s_join_command                 = var.k8s_join_command
 }
+
+module "non-k8s-node-template" {
+  source       = "./modules/create-template-vm"
+  proxmox_host = var.proxmox_host
+  proxmox_user = "root" # SSH user on Proxmox host
+
+  cloud_image_url = local.cloud_init_image_url
+  image_path      = local.non_k8s_cloud_init_image_path
+  template_id     = 1000
+  template_name   = local.non_k8s_vm_template
+  user_passwd     = var.vm_wizard_password
+
+  is_k8s_template = false # provision cloud init file without k8s deps
+  snippet_name    = local.non_k8s_cloud_init_snippet_name
+}
+
+module "docker-registry-template" {
+  source = "./modules/create-template-vm"
+
+  proxmox_host = var.proxmox_host
+  proxmox_user = "root" # SSH user on Proxmox host
+
+  cloud_image_url = local.cloud_init_image_url
+  image_path      = local.non_k8s_cloud_init_image_path # keke
+  template_id     = 1001
+  template_name   = "docker-registry-template"
+
+  user_passwd = var.vm_wizard_password
+
+  is_k8s_template = false # provision cloud init file without k8s deps
+  snippet_name    = "docker-registry.yaml"
+
+  # Setup registry config and start container
+  provision_cmds = [
+    "mkdir -p /etc/docker-registry",
+    format("echo %s | base64 -d > /etc/docker-registry/config.yml",
+      base64encode(
+        templatefile("./modules/docker-registry/config.yaml", {
+          password = var.dockerhub_registry_password
+          }
+        )
+      )
+    ),
+    "docker run -p 5000:5000 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2"
+  ]
+}
+
+
+module "docker-registry-vm" {
+  source = "./modules/create-vm"
+  vmid   = 220
+
+  vm_cpus      = 4
+  vm_mem_mb    = 4196
+  vm_disk_size = "32G"
+
+  template_name  = "docker-registry-template"
+  vm_name        = "docker-registry"
+  cisnippet_name = "docker-registry.yaml"
+
+  vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
+  bridge         = "vmbr1"
+  vlan_tag       = "20"
+}
+
+# module that provisions the proxmox host?
+# make dns stateless?
+# pfsense/truenas configs in code
+# etcd db backup in code
 
 # module "k8s_node5" {
 #   template_name  = local.vm_template_name
