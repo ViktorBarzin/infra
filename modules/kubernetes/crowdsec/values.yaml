@@ -18,6 +18,20 @@ agent:
     # As we are running Nginx, we want to install the Nginx collection
     - name: COLLECTIONS
       value: "crowdsecurity/nginx"
+  # Mount custom scenarios into /etc/crowdsec/scenarios
+  extraVolumeMounts:
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-403-abuse.yaml
+      subPath: "http-403-abuse.yaml"
+      readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
+      subPath: "http-429-abuse.yaml"
+      readonly: true
+  extraVolumes:
+    - name: custom-scenarios
+      configMap:
+        name: crowdsec-custom-scenarios
 lapi:
   replicas: 3
   extraSecrets:
