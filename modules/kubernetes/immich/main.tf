@@ -216,9 +216,9 @@ resource "kubernetes_ingress_v1" "ingress" {
       # "nginx.ingress.kubernetes.io/proxy-buffers-number" : "4"
 
       # More lenient DDOS protection as to not confuse with image loading
-      "nginx.ingress.kubernetes.io/limit-connections" : 500
+      "nginx.ingress.kubernetes.io/limit-connections" : 5000
       "nginx.ingress.kubernetes.io/limit-rps" : 100
-      "nginx.ingress.kubernetes.io/limit-rpm" : 60
+      "nginx.ingress.kubernetes.io/limit-rpm" : 6000
       "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 10
 
       # good for downloading big files - https://www.pdxdev.com/nginx-content-delivery/configuring-nginx-for-large-file-transfers/
