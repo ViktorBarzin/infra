@@ -310,12 +310,12 @@ resource "kubernetes_config_map" "ingress_nginx_controller" {
     }
   }
   data = {
-    use-forwarded-headers      = "true"
-    compute-full-forwarded-for = "true"
-    enable-real-ip             = "true"
-    allow-snippet-annotations  = true
-    # limit-req-status-code        = 429
-    # limit-conn-status-code       = 429
+    use-forwarded-headers        = "true"
+    compute-full-forwarded-for   = "true"
+    enable-real-ip               = "true"
+    allow-snippet-annotations    = true
+    limit-req-status-code        = 429
+    limit-conn-status-code       = 429
     enable-modsecurity           = true
     enable-owasp-modsecurity-crs = false
     modsecurity-snippet : <<-EOT
