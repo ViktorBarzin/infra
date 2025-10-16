@@ -89,9 +89,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
 
       # DDOS protection
       "nginx.ingress.kubernetes.io/limit-connections" : 100
-      "nginx.ingress.kubernetes.io/limit-rps" : 10
-      "nginx.ingress.kubernetes.io/limit-rpm" : 30
-      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 10
+      "nginx.ingress.kubernetes.io/limit-rps" : 1
+      "nginx.ingress.kubernetes.io/limit-rpm" : 20
+      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 5
       "nginx.ingress.kubernetes.io/limit-rate-after" : 10
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
         limit_req_status 429;
