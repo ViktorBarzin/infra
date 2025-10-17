@@ -4,8 +4,10 @@
 # Usage: ./registry-mirror.sh [--add|--remove] [mirror_url]
 # Docs - https://github.com/containerd/containerd/blob/main/docs/cri/registry.md
 # To apply on all nodes (tail +3 skips master node):
-# for node in $(kubectl get nodes -o wide | awk '{print $6}' | tail -n +3); do cat node_registry_manager.sh | s wizard@$node "sudo bash -s -- --add http://192.168.1.10:5000"; done
+# for node in $(kubectl get nodes -o wide | awk '{print $6}' | tail -n +3); do cat node_registry_manager.sh | s wizard@$node "sudo bash -s -- --add http://10.0.20.10:5000"; done
+# for node in $(kubectl get nodes -o wide | awk '{print $6}' | tail -n +3); do cat node_registry_manager.sh | s wizard@$node "sudo bash -s -- --remove http://10.0.20.10:5000"; done
 
+set -euo pipefail
 CONFIG_FILE="/etc/containerd/config.toml"
 BACKUP_FILE="/etc/containerd/config.toml.bak"
 
