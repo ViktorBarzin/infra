@@ -690,3 +690,8 @@ module "navidrome" {
   source          = "./navidrome"
   tls_secret_name = var.tls_secret_name
 }
+
+module "networking-toolbox" {
+  source          = "./networking-toolbox"
+  tls_secret_name = var.tls_secret_name
+}
