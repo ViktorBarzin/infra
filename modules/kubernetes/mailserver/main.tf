@@ -316,46 +316,6 @@ resource "kubernetes_deployment" "mailserver" {
         }
 
         container {
-          name  = "roundcube"
-          image = "roundcube/roundcubemail:1.6.9-apache"
-          env {
-            name = "ROUNDCUBEMAIL_DEFAULT_HOST"
-            # value = "ssl://127.0.0.1" # running in same pod
-            value = "tls://127.0.0.1" # running in same pod
-          }
-          env {
-            name  = "ROUNDCUBEMAIL_SMTP_SERVER"
-            value = "tls://127.0.0.1" # running in same pod
-            # value = "ssl://127.0.0.1" # running in same pod
-            # value = "tls://mailserver.mailserver.svc.cluster.local" # running in same pod
-            # value = "tls://smtp.viktorbarzin.me"
-            # value = "tls://mailserver.mailserver.svc.cluster.local"
-          }
-          env {
-            name  = "ROUNDCUBEMAIL_DEFAULT_PORT"
-            value = "993"
-          }
-          env {
-            name  = "ROUNDCUBEMAIL_SMTP_DEBUG"
-            value = "true"
-          }
-          env {
-            name  = "ROUNDCUBEMAIL_DEBUG_LEVEL"
-            value = "6"
-          }
-          env {
-            name = "ROUNDCUBEMAIL_LOG_DRIVER"
-            # value = "file"
-            value = "syslog"
-          }
-          port {
-            name           = "web"
-            container_port = 80
-            protocol       = "TCP"
-          }
-
-        }
-        container {
           name  = "dovecot-exporter"
           image = "viktorbarzin/dovecot_exporter:latest"
           command = [
@@ -476,13 +436,5 @@ resource "kubernetes_service" "mailserver" {
       port     = 80
     }
   }
-}
-
-module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = "mailserver"
-  name            = "mail"
-  service_name    = "mailserver"
-  tls_secret_name = var.tls_secret_name
 }
 
