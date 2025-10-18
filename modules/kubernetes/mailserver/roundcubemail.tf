@@ -57,11 +57,12 @@ resource "kubernetes_deployment" "roundcubemail" {
         container {
           name  = "roundcube"
           image = "roundcube/roundcubemail:latest"
-          volume_mount {
-            name       = "imap-config"
-            mount_path = "/var/roundcube/config/imap.php"
-            sub_path   = "imap.php"
-          }
+          # Uncomment me to mount additional settings
+          #   volume_mount {
+          #     name       = "imap-config"
+          #     mount_path = "/var/roundcube/config/imap.php"
+          #     sub_path   = "imap.php"
+          #   }
           env {
             name  = "ROUNDCUBEMAIL_DEFAULT_HOST"
             value = "ssl://mail.viktorbarzin.me" # tls cert must be valid!
@@ -80,6 +81,7 @@ resource "kubernetes_deployment" "roundcubemail" {
             value = 587
           }
 
+          # DB Settings
           env {
             name  = "ROUNDCUBEMAIL_DB_TYPE"
             value = "mysql"
@@ -96,6 +98,16 @@ resource "kubernetes_deployment" "roundcubemail" {
             name  = "ROUNDCUBEMAIL_DB_PASSWORD"
             value = var.roundcube_db_password
           }
+          # Plugins
+          env {
+            name  = "ROUNDCUBEMAIL_COMPOSER_PLUGINS"
+            value = "mmvi/twofactor_webauthn,texxasrulez/persistent_login,dsoares/rcguard"
+          }
+          env {
+            name  = "ROUNDCUBEMAIL_PLUGINS"
+            value = "attachment_reminder,database_attachments,enigma,twofactor_webauthn,persistent_login,rcguard"
+          }
+
           env {
             name  = "ROUNDCUBEMAIL_SMTP_DEBUG"
             value = "true"
@@ -114,12 +126,35 @@ resource "kubernetes_deployment" "roundcubemail" {
             container_port = 80
             protocol       = "TCP"
           }
+          volume_mount {
+            name       = "html"
+            mount_path = "/var/www/html"
+          }
+          volume_mount {
+            name       = "enigma"
+            mount_path = "/var/roundcube/enigma"
+          }
         }
 
+        # volume {
+        #   name = "imap-config"
+        #   config_map {
+        #     name = "roundcubemail.config"
+        #   }
+        # }
+
         volume {
-          name = "imap-config"
-          config_map {
-            name = "roundcubemail.config"
+          name = "html"
+          nfs {
+            path   = "/mnt/main/roundcubemail/html"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "enigma"
+          nfs {
+            path   = "/mnt/main/roundcubemail/enigma"
+            server = "10.0.10.15"
           }
         }
       }
