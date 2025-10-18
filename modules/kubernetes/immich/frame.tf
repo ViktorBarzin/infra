@@ -23,6 +23,7 @@ resource "kubernetes_config_map" "mailserver_config" {
         Interval: 10
         ImageZoom: false
         ShowAlbumName: false
+        ShowProgressBar: false
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${var.frame_api_key}
@@ -50,7 +51,7 @@ resource "kubernetes_deployment" "immich-frame" {
       }
     }
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
     }
     template {
       metadata {
