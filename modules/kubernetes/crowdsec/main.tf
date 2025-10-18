@@ -35,9 +35,9 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
       description: "Detect IPs triggering too many HTTP 403s in NGINX ingress logs"
       filter: "evt.Meta.log_type == 'http_access-log' && evt.Parsed.status == '403'"
       groupby: "evt.Meta.source_ip"
-      leakspeed: "10s"
-      capacity: 5
-      blackhole: 1m
+      leakspeed: "30s"
+      capacity: 10
+      blackhole: 5m
       labels:
         service: http
         behavior: abusive_403
