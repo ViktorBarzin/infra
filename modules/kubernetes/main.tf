@@ -5,6 +5,7 @@ variable "hackmd_db_password" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
 variable "mailserver_opendkim_key" {}
+variable "mailserver_roundcubemail_db_password" { type = string }
 variable "mailserver_sasl_passwd" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
@@ -219,6 +220,7 @@ module "mailserver" {
   postfix_account_aliases = var.mailserver_aliases
   opendkim_key            = var.mailserver_opendkim_key
   sasl_passwd             = var.mailserver_sasl_passwd
+  roundcube_db_password   = var.mailserver_roundcubemail_db_password
 
   depends_on = [null_resource.core_services]
 }

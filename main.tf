@@ -19,6 +19,7 @@ variable "client_certificate_secret_name" {}
 variable "mailserver_accounts" {}
 variable "mailserver_aliases" {}
 variable "mailserver_opendkim_key" {}
+variable "mailserver_roundcubemail_db_password" { type = string }
 variable "mailserver_sasl_passwd" {}
 variable "pihole_web_password" {}
 variable "webhook_handler_secret" {}
@@ -363,12 +364,13 @@ module "kubernetes_cluster" {
   prod            = var.prod
   tls_secret_name = var.tls_secret_name
   # dockerhub_password             = var.dockerhub_password
-  client_certificate_secret_name = var.client_certificate_secret_name
-  mailserver_accounts            = var.mailserver_accounts
-  mailserver_sasl_passwd         = var.mailserver_sasl_passwd
-  mailserver_aliases             = var.mailserver_aliases
-  mailserver_opendkim_key        = var.mailserver_opendkim_key
-  pihole_web_password            = var.pihole_web_password
+  client_certificate_secret_name       = var.client_certificate_secret_name
+  mailserver_accounts                  = var.mailserver_accounts
+  mailserver_sasl_passwd               = var.mailserver_sasl_passwd
+  mailserver_aliases                   = var.mailserver_aliases
+  mailserver_opendkim_key              = var.mailserver_opendkim_key
+  mailserver_roundcubemail_db_password = var.mailserver_roundcubemail_db_password
+  pihole_web_password                  = var.pihole_web_password
 
   # Webhook tokens
   webhook_handler_secret          = var.webhook_handler_secret
