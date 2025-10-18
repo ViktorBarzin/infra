@@ -197,6 +197,7 @@ module "ha-sofia" {
   port            = 8123
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.reverse-proxy]
+  protected       = false
 }
 
 # https://ha-london.viktorbarzin.me/
