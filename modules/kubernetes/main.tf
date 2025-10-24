@@ -100,6 +100,9 @@ variable "onlyoffice_jwt_token" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
+variable "tiny_tuya_api_key" { type = string }
+variable "tiny_tuya_api_secret" { type = string }
+variable "tiny_tuya_service_secret" { type = string }
 
 
 
@@ -696,4 +699,13 @@ module "navidrome" {
 module "networking-toolbox" {
   source          = "./networking-toolbox"
   tls_secret_name = var.tls_secret_name
+}
+
+module "tuya-bridge" {
+  source          = "./tuya-bridge"
+  tls_secret_name = var.tls_secret_name
+
+  tiny_tuya_api_key        = var.tiny_tuya_api_key
+  tiny_tuya_api_secret     = var.tiny_tuya_api_secret
+  tiny_tuya_service_secret = var.tiny_tuya_service_secret
 }

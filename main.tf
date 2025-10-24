@@ -121,6 +121,9 @@ variable "onlyoffice_jwt_token" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
+variable "tiny_tuya_api_key" { type = string }
+variable "tiny_tuya_api_secret" { type = string }
+variable "tiny_tuya_service_secret" { type = string }
 
 
 provider "kubernetes" {
@@ -506,6 +509,10 @@ module "kubernetes_cluster" {
   xray_reality_clients     = var.xray_reality_clients
   xray_reality_private_key = var.xray_reality_private_key
   xray_reality_short_ids   = var.xray_reality_short_ids
+
+  tiny_tuya_api_key        = var.tiny_tuya_api_key
+  tiny_tuya_api_secret     = var.tiny_tuya_api_secret
+  tiny_tuya_service_secret = var.tiny_tuya_service_secret
 }
 
 
