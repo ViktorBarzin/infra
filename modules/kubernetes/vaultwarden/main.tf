@@ -46,7 +46,7 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.34.1"
+          image = "vaultwarden/server:1.34.3"
           name  = "vaultwarden"
           env {
             name  = "DOMAIN"
