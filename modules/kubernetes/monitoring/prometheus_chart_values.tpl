@@ -440,3 +440,14 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'registry_$${1}' 
+  - job_name: 'automatic-transfer-switch'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80" # devvm
+    metrics_path: '/metrics'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'automatic_transfer_switch_$${1}'

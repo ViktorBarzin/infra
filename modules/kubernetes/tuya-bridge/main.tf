@@ -41,7 +41,7 @@ resource "kubernetes_deployment" "tuya-bridge" {
       }
       spec {
         container {
-          image = "viktorbarzin/tuya_bridge"
+          image = "viktorbarzin/tuya_bridge:latest"
           name  = "tuya-bridge"
           port {
             container_port = 8080
@@ -90,4 +90,13 @@ module "ingress" {
   namespace       = "tuya-bridge"
   name            = "tuya-bridge"
   tls_secret_name = var.tls_secret_name
+
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/server-snippet" : <<-EOF
+      location /metrics {
+        deny all;
+        return 403;
+      }
+      EOF
+  }
 }
