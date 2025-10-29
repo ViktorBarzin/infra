@@ -257,6 +257,13 @@ serverFiles:
               severity: page
             annotations:
               summary: "High server failiure rate for {{ $labels.ingress }}: {{ $value }}%."
+          - alert: UsingInverterEnergyForTooLong
+            expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
+            for: 24h
+            labels:
+              severity: page
+            annotations:
+              summary: "Running on inverter for too long: {{ $value }}%. Maybe switching to grid does not work."
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
