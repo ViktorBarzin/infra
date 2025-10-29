@@ -450,11 +450,33 @@ extraScrapeConfigs: |
   - job_name: 'automatic-transfer-switch'
     static_configs:
         - targets:
-          - "tuya-bridge.tuya-bridge.svc.cluster.local:80" # devvm
-    metrics_path: '/metrics'
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bfe98afa941d5a1e2def8s'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
         action: replace
         regex: '(.*)'
         replacement: 'automatic_transfer_switch_$${1}'
+  - job_name: 'fuse-garage'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bf62301ef04e38d881ugcu'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'fuse_garage_$${1}'
+  - job_name: 'fuse-main'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bf1a684e80ae942e4dji6b'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'fuse_main_$${1}'
