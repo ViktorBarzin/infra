@@ -1607,7 +1607,7 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
+            "axisBorderShow": true,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
@@ -1709,7 +1709,127 @@
           "useBackend": false
         }
       ],
-      "title": "Panel Title",
+      "title": "Current Consumption",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "watth"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 21,
+        "x": 3,
+        "y": 44
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "increase(automatic_transfer_switch_totalele_add[1d]) * 10",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "interval": "1d",
+          "legendFormat": "Inverter",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "increase(automatic_transfer_switch_dwele_add[1d]) * 10",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "interval": "1d",
+          "legendFormat": "Grid",
+          "range": true,
+          "refId": "B",
+          "useBackend": false
+        }
+      ],
+      "title": "Daily Total Consumption",
       "type": "timeseries"
     },
     {
@@ -1769,7 +1889,7 @@
               }
             ]
           },
-          "unit": "watt"
+          "unit": "watth"
         },
         "overrides": []
       },
@@ -1777,7 +1897,7 @@
         "h": 8,
         "w": 21,
         "x": 3,
-        "y": 44
+        "y": 52
       },
       "id": 26,
       "options": {
@@ -1800,7 +1920,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "automatic_transfer_switch_dwele_add",
+          "expr": "automatic_transfer_switch_dwele_add * 10",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,
@@ -1816,7 +1936,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "automatic_transfer_switch_totalele_add",
+          "expr": "automatic_transfer_switch_totalele_add * 10",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -1838,13 +1958,13 @@
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-7d",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "Huawei UPS 2000",
   "uid": "ee70yskqw5u68f",
-  "version": 29,
+  "version": 33,
   "weekStart": ""
 }
