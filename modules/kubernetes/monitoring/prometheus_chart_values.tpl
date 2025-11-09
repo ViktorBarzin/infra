@@ -452,6 +452,8 @@ extraScrapeConfigs: |
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bfe98afa941d5a1e2def8s'
+    params:
+      api-key: ['${tuya_api_key}']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -463,6 +465,8 @@ extraScrapeConfigs: |
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf62301ef04e38d881ugcu'
+    params:
+      api-key: ['${tuya_api_key}']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -474,6 +478,8 @@ extraScrapeConfigs: |
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
     metrics_path: '/metrics/bf1a684e80ae942e4dji6b'
+    params:
+      api-key: ['${tuya_api_key}']
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'

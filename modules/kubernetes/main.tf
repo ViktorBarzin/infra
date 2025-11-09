@@ -239,6 +239,7 @@ module "monitoring" {
   idrac_username                = var.idrac_username
   idrac_password                = var.idrac_password
   alertmanager_slack_api_url    = var.alertmanager_slack_api_url
+  tiny_tuya_service_secret      = var.tiny_tuya_service_secret
 
   depends_on = [null_resource.core_services]
 }
