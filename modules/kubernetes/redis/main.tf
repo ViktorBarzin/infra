@@ -25,6 +25,9 @@ resource "kubernetes_deployment" "redis" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "redis"
@@ -38,7 +41,7 @@ resource "kubernetes_deployment" "redis" {
       }
       spec {
         container {
-          image = "redis/redis-stack:7.4.0-v6"
+          image = "redis/redis-stack:latest"
           name  = "redis"
 
           port {
