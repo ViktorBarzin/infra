@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "dawarich" {
       spec {
 
         container {
-          image = "freikin/dawarich:0.27.1"
+          image = "freikin/dawarich:0.30.12"
           name  = "dawarich"
           port {
             name           = "http"
@@ -68,7 +68,7 @@ resource "kubernetes_deployment" "dawarich" {
           args    = ["bin/dev"]
           env {
             name  = "REDIS_URL"
-            value = "redis://redis.redis:6379/0"
+            value = "redis://redis.redis.svc.cluster.local:6379"
           }
           env {
             name  = "DATABASE_HOST"
@@ -106,18 +106,18 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "APPLICATION_HOSTS"
             value = "dawarich.viktorbarzin.me"
           }
-          env {
-            name  = "PROMETHEUS_EXPORTER_ENABLED"
-            value = "true"
-          }
-          env {
-            name  = "PROMETHEUS_EXPORTER_PORT"
-            value = "9394"
-          }
-          env {
-            name  = "PROMETHEUS_EXPORTER_HOST"
-            value = "0.0.0.0"
-          }
+          # env {
+          #   name  = "PROMETHEUS_EXPORTER_ENABLED"
+          #   value = "true"
+          # }
+          # env {
+          #   name  = "PROMETHEUS_EXPORTER_PORT"
+          #   value = "9394"
+          # }
+          # env {
+          #   name  = "PROMETHEUS_EXPORTER_HOST"
+          #   value = "0.0.0.0"
+          # }
           env {
             name  = "SELF_HOSTED"
             value = "true"
@@ -134,13 +134,13 @@ resource "kubernetes_deployment" "dawarich" {
           #   }
         }
         container {
-          image   = "freikin/dawarich:0.27.1"
+          image   = "freikin/dawarich:0.30.12"
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
           args    = ["sidekiq"]
           env {
             name  = "REDIS_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://redis.redis.svc.cluster.local:6379"
           }
           env {
             name  = "DATABASE_HOST"
@@ -174,14 +174,14 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "APPLICATION_HOST"
             value = "dawarich.viktorbarzin.me"
           }
-          env {
-            name  = "PROMETHEUS_EXPORTER_ENABLED"
-            value = "false"
-          }
-          env {
-            name  = "PROMETHEUS_EXPORTER_HOST"
-            value = "dawarich.dawarich"
-          }
+          # env {
+          #   name  = "PROMETHEUS_EXPORTER_ENABLED"
+          #   value = "false"
+          # }
+          # env {
+          #   name  = "PROMETHEUS_EXPORTER_HOST"
+          #   value = "dawarich.dawarich"
+          # }
           # env {
           #   name  = "PHOTON_API_HOST"
           #   value = "photon.dawarich:2322"
