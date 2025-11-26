@@ -103,6 +103,7 @@ variable "xray_reality_short_ids" { type = list(string) }
 variable "tiny_tuya_api_key" { type = string }
 variable "tiny_tuya_api_secret" { type = string }
 variable "tiny_tuya_service_secret" { type = string }
+variable "tiny_tuya_slack_url" { type = string }
 
 
 
@@ -709,4 +710,5 @@ module "tuya-bridge" {
   tiny_tuya_api_key        = var.tiny_tuya_api_key
   tiny_tuya_api_secret     = var.tiny_tuya_api_secret
   tiny_tuya_service_secret = var.tiny_tuya_service_secret
+  slack_url                = var.tiny_tuya_slack_url
 }
