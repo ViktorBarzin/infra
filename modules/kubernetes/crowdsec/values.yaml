@@ -17,7 +17,10 @@ agent:
     #   value: "true"
     # As we are running Nginx, we want to install the Nginx collection
     - name: COLLECTIONS
-      value: "crowdsecurity/nginx"
+      value: "crowdsecurity/nginx crowdsecurity/base-http-scenarios crowdsecurity/http-cve"
+    - name: SCENARIOS
+      value: ""
+      # value: "crowdsecurity/http-crawl-aggressive"
   # Mount custom scenarios into /etc/crowdsec/scenarios
   extraVolumeMounts:
     - name: custom-scenarios
