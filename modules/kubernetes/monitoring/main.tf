@@ -11,6 +11,7 @@ variable "idrac_password" {
 }
 variable "alertmanager_slack_api_url" {}
 variable "tiny_tuya_service_secret" { type = string }
+variable "haos_api_token" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -72,7 +73,7 @@ resource "helm_release" "prometheus" {
   # version    = "15.0.2"
   version = "25.8.2"
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret })]
+  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token })]
 }
 
 # Terraform get angry with the 30k values file :/ use ansible until solved
