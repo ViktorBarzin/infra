@@ -21,6 +21,7 @@ steps:
       TF_VAR_prod: "true"
     commands:
       - "env"
+      - "mkdir -p ~/.ssh && touch ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub" # needed by TF apply; not used in practice
       - "terraform init"
       - "terraform apply -target=module.kubernetes_cluster -auto-approve"
 
