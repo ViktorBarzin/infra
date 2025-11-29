@@ -73,7 +73,7 @@ alertmanager:
 server:
   # Enable me to delete metrics
   extraFlags:
-    #  - "web.enable-admin-api"
+    # - "web.enable-admin-api"
     - "web.enable-lifecycle"
     - "storage.tsdb.allow-overlapping-blocks"
     # - "storage.tsdb.retention.size=1GB"
@@ -486,3 +486,9 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'fuse_main_$${1}'
+  - job_name: 'haos'
+    static_configs:
+        - targets:
+          - "ha-sofia.viktorbarzin.lan:8123"
+    metrics_path: '/api/prometheus'
+    bearer_token: "${haos_api_token}"
