@@ -53,11 +53,12 @@ resource "kubernetes_deployment" "paperless-ngx" {
       }
       spec {
         container {
-          image = "paperlessngx/paperless-ngx:2.13.5"
+          image = "ghcr.io/paperless-ngx/paperless-ngx:latest"
           name  = "paperless-ngx"
           env {
             name  = "PAPERLESS_REDIS"
             value = "redis://redis.redis"
+            # value = "redis://redis.redis.svc.cluster.local:6379/0"
           }
           env {
             name  = "PAPERLESS_REDIS_PREFIX"
@@ -149,7 +150,7 @@ module "ingress" {
   service_name    = "paperless-ngx"
   host            = "pdf"
   tls_secret_name = var.tls_secret_name
-  port            = 8000
+  port            = 80
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
     # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
