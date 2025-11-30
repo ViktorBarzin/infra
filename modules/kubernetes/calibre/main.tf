@@ -21,12 +21,85 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_deployment" "calibre" {
+# resource "kubernetes_deployment" "calibre" {
+#   metadata {
+#     name      = "calibre"
+#     namespace = "calibre"
+#     labels = {
+#       app = "calibre"
+#     }
+#     annotations = {
+#       "reloader.stakater.com/search" = "true"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     strategy {
+#       type = "Recreate"
+#     }
+#     selector {
+#       match_labels = {
+#         app = "calibre"
+#       }
+#     }
+#     template {
+#       metadata {
+#         annotations = {
+#           # "diun.enable"       = "true"
+#           "diun.enable"       = "false"
+#           "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+#         }
+#         labels = {
+#           app = "calibre"
+#         }
+#       }
+#       spec {
+#         container {
+#           image = "lscr.io/linuxserver/calibre-web:latest"
+#           name  = "calibre"
+#           env {
+#             name  = "PUID"
+#             value = 1000
+#           }
+#           env {
+#             name  = "PGID"
+#             value = 1000
+#           }
+#           env {
+#             name  = "DOCKER_MODS"
+#             value = "linuxserver/mods:universal-calibre"
+#           }
+
+#           port {
+#             container_port = 8083
+#           }
+#           volume_mount {
+#             name       = "data"
+#             mount_path = "/config"
+#           }
+#           volume_mount {
+#             name       = "data"
+#             mount_path = "/books"
+#           }
+#         }
+#         volume {
+#           name = "data"
+#           nfs {
+#             path   = "/mnt/main/calibre"
+#             server = "10.0.10.15"
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
+
+resource "kubernetes_deployment" "calibre-web-automated" {
   metadata {
-    name      = "calibre"
+    name      = "calibre-web-automated"
     namespace = "calibre"
     labels = {
-      app = "calibre"
+      app = "calibre-web-automated"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -39,7 +112,7 @@ resource "kubernetes_deployment" "calibre" {
     }
     selector {
       match_labels = {
-        app = "calibre"
+        app = "calibre-web-automated"
       }
     }
     template {
@@ -50,13 +123,13 @@ resource "kubernetes_deployment" "calibre" {
           "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
         labels = {
-          app = "calibre"
+          app = "calibre-web-automated"
         }
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/calibre-web:latest"
-          name  = "calibre"
+          image = "crocodilestick/calibre-web-automated:latest"
+          name  = "calibre-web-automated"
           env {
             name  = "PUID"
             value = 1000
@@ -69,23 +142,46 @@ resource "kubernetes_deployment" "calibre" {
             name  = "DOCKER_MODS"
             value = "linuxserver/mods:universal-calibre"
           }
+          env {
+            # If your library is on a network share (e.g., NFS/SMB), disable WAL to reduce locking issues
+            name  = "NETWORK_SHARE_MODE"
+            value = "true"
+          }
 
           port {
             container_port = 8083
           }
           volume_mount {
-            name       = "data"
+            name       = "config"
             mount_path = "/config"
           }
           volume_mount {
-            name       = "data"
-            mount_path = "/books"
+            name       = "library"
+            mount_path = "/calibre-library"
+          }
+          volume_mount {
+            name       = "ingest"
+            mount_path = "/cwa-book-ingest"
           }
         }
         volume {
-          name = "data"
+          name = "library"
           nfs {
-            path   = "/mnt/main/calibre"
+            path   = "/mnt/main/calibre-web-automated/calibre-library"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "config"
+          nfs {
+            path   = "/mnt/main/calibre-web-automated/config"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "ingest"
+          nfs {
+            path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
             server = "10.0.10.15"
           }
         }
@@ -104,7 +200,8 @@ resource "kubernetes_service" "calibre" {
 
   spec {
     selector = {
-      app = "calibre"
+      # app = "calibre"
+      app = "calibre-web-automated"
     }
     port {
       name        = "http"
@@ -136,4 +233,92 @@ module "ingress" {
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional
   }
+}
+
+# Stacks - Anna's Archive Download Manager
+
+resource "kubernetes_deployment" "annas-archive-stacks" {
+  metadata {
+    name      = "annas-archive-stacks"
+    namespace = "calibre"
+    labels = {
+      app = "annas-archive-stacks"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "annas-archive-stacks"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "annas-archive-stacks"
+        }
+      }
+      spec {
+        container {
+          image = "zelest/stacks:latest"
+          name  = "annas-archive-stacks"
+          port {
+            container_port = 7788
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/opt/stacks/config"
+          }
+          volume_mount {
+            name       = "ingest"
+            mount_path = "/opt/stacks/download" # this must be the same as CWA ingest dir to auto ingest
+          }
+        }
+        volume {
+          name = "config"
+          nfs {
+            path   = "/mnt/main/calibre-web-automated/stacks"
+            server = "10.0.10.15"
+          }
+        }
+        volume {
+          name = "ingest"
+          nfs {
+            path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "annas-archive-stacks" {
+  metadata {
+    name      = "annas-archive-stacks"
+    namespace = "calibre"
+    labels = {
+      "app" = "annas-archive-stacks"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "annas-archive-stacks"
+    }
+    port {
+      name        = "http"
+      port        = "80"
+      target_port = 7788
+    }
+  }
+}
+
+module "stacks-ingress" {
+  source          = "../ingress_factory"
+  namespace       = "calibre"
+  name            = "stacks"
+  service_name    = "annas-archive-stacks"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }
