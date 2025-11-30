@@ -543,10 +543,10 @@ module "jsoncrack" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "servarr" {
-#   source          = "./servarr"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "servarr" {
+  source          = "./servarr"
+  tls_secret_name = var.tls_secret_name
+}
 
 # module "dnscat2" {
 #   source = "./dnscat2"
