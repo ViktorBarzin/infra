@@ -127,7 +127,7 @@ resource "cloudflare_record" "keyserver" {
   content  = "130.162.165.220" # Oracle VPS
   name     = "keyserver.viktorbarzin.me"
   proxied  = false
-  ttl      = 1
+  ttl      = 3600
   type     = "A"
   priority = 1
   zone_id  = var.cloudflare_zone_id
