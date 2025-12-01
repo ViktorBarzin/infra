@@ -714,3 +714,9 @@ module "tuya-bridge" {
   tiny_tuya_service_secret = var.tiny_tuya_service_secret
   slack_url                = var.tiny_tuya_slack_url
 }
+
+
+module "stirling-pdf" {
+  source          = "./stirling-pdf"
+  tls_secret_name = var.tls_secret_name
+}

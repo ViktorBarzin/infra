@@ -56,9 +56,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
           image = "ghcr.io/paperless-ngx/paperless-ngx:latest"
           name  = "paperless-ngx"
           env {
-            name  = "PAPERLESS_REDIS"
+            name = "PAPERLESS_REDIS"
+            // If redis gets stuck, try deleting the locks files in log dir
             value = "redis://redis.redis"
-            # value = "redis://redis.redis.svc.cluster.local:6379/0"
           }
           env {
             name  = "PAPERLESS_REDIS_PREFIX"
