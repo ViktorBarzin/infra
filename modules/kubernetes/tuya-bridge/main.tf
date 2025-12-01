@@ -28,7 +28,7 @@ resource "kubernetes_deployment" "tuya-bridge" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     selector {
       match_labels = {
         app = "tuya-bridge"
