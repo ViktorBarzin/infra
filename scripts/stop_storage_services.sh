@@ -13,7 +13,7 @@ function scale() { kubectl scale deployment --replicas=$3 --namespace $1 $2; }
 cmd="${1:-stop}"
 case "$cmd" in
   stop)
-    scale calibre calibre 0
+    scale calibre calibre-web-automated 0
     scale redis redis 0
     scale uptime-kuma uptime-kuma 0
     scale paperless-ngx paperless-ngx 0
@@ -37,7 +37,7 @@ case "$cmd" in
     scale redis redis 1
     scale uptime-kuma uptime-kuma 1
     scale vaultwarden vaultwarden 1
-    scale calibre calibre 1
+    scale calibre calibre-web-automated 1
     ;;
     # echo "[!] Cleanup only removes links (not flushing all iptables to avoid surprises)."
     # ip netns list | grep -qw "$NS_NAME" && sudo ip netns del "$NS_NAME" || true
