@@ -201,7 +201,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
               # To restore (from outside of the cluster):
               # run kubectl port-forward to pod e.g.:
               # > kb port-forward mysql-647cfd4969-46rmw --address 0.0.0.0 3307:3306
-              # run mysql import (and specify non-localhost address to avoid using unix socket):
+              # run mysql import (and specify non-localhost address to avoid using unix socket): (password is in tfvars)
               # > mysql -u root -p --host 10.0.10.10 --port 3307 < /mnt/nfs/2024_01_06_13_54.sql
               volume_mount {
                 name       = "mysql-backup"
