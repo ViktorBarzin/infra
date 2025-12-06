@@ -720,3 +720,7 @@ module "stirling-pdf" {
   source          = "./stirling-pdf"
   tls_secret_name = var.tls_secret_name
 }
+
+module "isponsorblocktv" {
+  source = "./isponsorblocktv"
+}
