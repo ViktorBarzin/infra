@@ -424,6 +424,16 @@ resource "kubernetes_service" "idrac-redfish-exporter" {
   }
 }
 
+module "idrac-redfish-exporter-ingress" {
+  source                  = "../ingress_factory"
+  namespace               = "monitoring"
+  name                    = "idrac-redfish-exporter"
+  root_domain             = "viktorbarzin.lan"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  port                    = 9090
+}
 
 /**
 1. clone snmp exporter
@@ -524,6 +534,17 @@ resource "kubernetes_service" "snmp-exporter" {
       target_port = "9116"
     }
   }
+}
+
+module "snmp-exporter-ingress" {
+  source                  = "../ingress_factory"
+  namespace               = "monitoring"
+  name                    = "snmp-exporter"
+  root_domain             = "viktorbarzin.lan"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  port                    = 9116
 }
 
 # resource "helm_release" "loki" {
