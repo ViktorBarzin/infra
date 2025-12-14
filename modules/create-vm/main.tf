@@ -89,7 +89,7 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   network {
     id      = 0
     bridge  = var.bridge
-    model   = "e1000"
+    model   = "virtio"
     macaddr = var.vm_mac_address
     tag     = var.vlan_tag
   }
