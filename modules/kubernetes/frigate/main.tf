@@ -27,7 +27,7 @@ resource "kubernetes_deployment" "frigate" {
     }
   }
   spec {
-    replicas = 0 # Temporarily disabled due to high power consumption
+    replicas = 1 # Temporarily disabled due to high power consumption
     strategy {
       type = "Recreate"
     }
@@ -43,9 +43,18 @@ resource "kubernetes_deployment" "frigate" {
         }
       }
       spec {
+        node_selector = {
+          "gpu" : true
+        }
         container {
           image = "ghcr.io/blakeblackshear/frigate:stable"
           name  = "frigate"
+
+          resources {
+            limits = {
+              "nvidia.com/gpu" = "1"
+            }
+          }
           env {
             name  = "FRIGATE_RTSP_PASSWORD"
             value = "password"
@@ -157,5 +166,10 @@ module "ingress" {
     "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
     "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade"
     "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
+
+    "nginx.ingress.kubernetes.io/limit-rps" : 50000
+    "nginx.ingress.kubernetes.io/limit-rpm" : 1000000
+    "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50000
+    "nginx.ingress.kubernetes.io/limit-rate-after" : 100000
   }
 }
