@@ -43,6 +43,18 @@ variable "proxy_timeout" {
 variable "extra_annotations" {
   default = {}
 }
+variable "ssl_redirect" {
+  default = true
+  type    = bool
+}
+variable "allow_local_access_only" {
+  default = false
+  type    = bool
+}
+variable "root_domain" {
+  default = "viktorbarzin.me"
+  type    = string
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -87,6 +99,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
       "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
 
+      "nginx.ingress.kubernetes.io/whitelist-source-range" : var.allow_local_access_only ? "192.168.1.0/24, 10.0.0.0/8" : "0.0.0.0/0"
+      "nginx.ingress.kubernetes.io/ssl-redirect" : "${var.ssl_redirect}"
+
       # DDOS protection
       "nginx.ingress.kubernetes.io/limit-connections" : 100
       "nginx.ingress.kubernetes.io/limit-rps" : 5
@@ -103,11 +118,11 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
 
   spec {
     tls {
-      hosts       = ["${var.name}.viktorbarzin.me"]
+      hosts       = ["${var.name}.${var.root_domain}"]
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "${var.host != null ? var.host : var.name}.viktorbarzin.me"
+      host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
       http {
         dynamic "path" {
           # for_each = { for pr in var.ingress_path : pr => pr }
