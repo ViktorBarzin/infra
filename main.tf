@@ -231,7 +231,7 @@ module "docker-registry-vm" {
 
   vm_cpus      = 4
   vm_mem_mb    = 4196
-  vm_disk_size = "32G"
+  vm_disk_size = "64G"
 
   template_name  = "docker-registry-template"
   vm_name        = "docker-registry"

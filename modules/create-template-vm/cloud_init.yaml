@@ -25,6 +25,7 @@ packages:
   - ca-certificates
   - gpg
   - isc-dhcp-client
+  - cloud-guest-utils # to enable resizing of disk via growpart
   # docker
   - docker-ce
   - docker-ce-cli
