@@ -553,10 +553,10 @@ module "servarr" {
 #   # tls_secret_name = var.tls_secret_name
 # }
 
-# module "ollama" {  # Disabled as it requires too much resources...
-#   source          = "./ollama"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "ollama" { # Disabled as it requires too much resources...
+  source          = "./ollama"
+  tls_secret_name = var.tls_secret_name
+}
 
 module "ntfy" {
   source          = "./ntfy"
@@ -723,4 +723,14 @@ module "stirling-pdf" {
 
 module "isponsorblocktv" {
   source = "./isponsorblocktv"
+}
+
+module "nvidia" {
+  source          = "./nvidia"
+  tls_secret_name = var.tls_secret_name
+}
+
+module "ebook2audiobook" {
+  source          = "./ebook2audiobook"
+  tls_secret_name = var.tls_secret_name
 }
