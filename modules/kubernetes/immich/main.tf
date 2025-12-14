@@ -35,7 +35,8 @@ resource "kubernetes_persistent_volume" "immich-postgresql" {
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
       nfs {
-        path   = "/mnt/main/immich/data-immich-postgresql"
+        # path   = "/mnt/main/immich/data-immich-postgresql"
+        path   = "/mnt/ssd/immich/data-immich-postgresql"
         server = "10.0.10.15"
       }
     }
@@ -217,8 +218,8 @@ resource "kubernetes_deployment" "immich-machine-learning" {
           "gpu" : "true"
         }
         container {
-          # image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}-cuda"
-          image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}"
+          # image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}"
+          image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}-cuda"
           name  = "immich-machine-learning"
           port {
             container_port = 3003
