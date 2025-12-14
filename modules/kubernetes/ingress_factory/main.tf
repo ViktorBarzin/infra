@@ -106,8 +106,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/limit-connections" : 100
       "nginx.ingress.kubernetes.io/limit-rps" : 5
       "nginx.ingress.kubernetes.io/limit-rpm" : 100
-      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 5
-      "nginx.ingress.kubernetes.io/limit-rate-after" : 10
+      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50
+      "nginx.ingress.kubernetes.io/limit-rate-after" : 100
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
         limit_req_status 429;
         limit_conn_status 429;
