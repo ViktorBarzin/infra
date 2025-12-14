@@ -1,6 +1,12 @@
 variable "tls_secret_name" {}
 variable "postgresql_password" {}
 variable "homepage_token" {}
+variable "immich_version" {
+  type = string
+  # Change me to upgrade
+  default = "v2.3.1"
+}
+
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -181,7 +187,100 @@ resource "helm_release" "immich" {
   version    = "0.9.3"
   timeout    = 6000
 
-  values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
+  values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password, version = var.immich_version })]
+}
+
+# The helm one cannot be customized to use affinity settings to use the gpu node
+resource "kubernetes_deployment" "immich-machine-learning" {
+  metadata {
+    name      = "immich-machine-learning"
+    namespace = "immich"
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "immich-machine-learning"
+      }
+    }
+    strategy {
+      type = "RollingUpdate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "immich-machine-learning"
+        }
+      }
+      spec {
+        node_selector = {
+          "gpu" : "true"
+        }
+        container {
+          # image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}-cuda"
+          image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}"
+          name  = "immich-machine-learning"
+          port {
+            container_port = 3003
+            protocol       = "TCP"
+            name           = "immich-ml"
+          }
+          env {
+            name  = "TRANSFORMERS_CACHE"
+            value = "/cache"
+          }
+          env {
+            name  = "HF_XET_CACHE"
+            value = "/cache/huggingface-xet"
+          }
+          env {
+            name  = "MPLCONFIGDIR"
+            value = "/cache/matplotlib-config"
+          }
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__CLIP"
+            value = "ViT-B-16-SigLIP2__webli"
+          }
+
+          volume_mount {
+            name       = "cache"
+            mount_path = "/cache"
+          }
+          resources {
+            limits = {
+              "nvidia.com/gpu" = "1" # Used for inference
+            }
+          }
+        }
+        volume {
+          name = "cache"
+          nfs {
+            path   = "/mnt/main/immich/machine-learning"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "immich-machine-learning" {
+  metadata {
+    name      = "immich-machine-learning"
+    namespace = "immich"
+    labels = {
+      "app" = "immich-machine-learning"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "immich-machine-learning"
+    }
+    port {
+      port = 3003
+    }
+  }
 }
 
 resource "kubernetes_ingress_v1" "ingress" {
