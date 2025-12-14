@@ -1,0 +1,48 @@
+# values-cuda12.8.yaml
+driver:
+  enabled: true
+  repository: nvcr.io/nvidia/driver
+  # choose a driver version compatible with your GPU + CUDA 12.x (example)
+  version: "535.113.01"
+
+toolkit:
+  enabled: true
+  image:
+    repository: nvcr.io/nvidia/cuda
+    # use a CUDA 12.8 toolkit image; adjust OS tag as needed (e.g. ubuntu22.04, ubuntu20.04)
+    tag: "12.8.1-devel-ubuntu22.04"
+  # (Optional) If you have containerd, you might need environment for containerd config
+  # env:
+  #   - name: CONTAINERD_CONFIG
+  #     value: /etc/containerd/config.toml
+  #   - name: CONTAINERD_SOCKET
+  #     value: /run/containerd/containerd.sock
+  #   - name: RUNTIME_CONFIG_SOURCE
+  #     value: "command, file"
+
+devicePlugin:
+  enabled: true
+  image:
+    repository: nvcr.io/nvidia/k8s-device-plugin
+    # pick a device-plugin build compatible with CUDA 12.8
+    tag: "1.14.0-12.8-ubuntu22.04"
+
+dcgmExporter:
+  enabled: true
+  image:
+    repository: nvcr.io/nvidia/k8s/dcgm-exporter
+    tag: "2.12.13-12.8-ubuntu22.04"
+
+# Optional: if you use MIG or want MIG Manager
+# migManager:
+#   enabled: false
+
+# If you want GPU‑Feature‑Discovery (GFD) — optional
+# gfd:
+#   enabled: false
+
+# Other optional overrides (keep defaults or adjust as needed)
+# ccManager:
+#   enabled: false
+# cdi:
+#   enabled: true
