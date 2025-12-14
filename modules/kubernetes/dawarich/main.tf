@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "dawarich" {
       spec {
 
         container {
-          image = "freikin/dawarich:0.30.12"
+          image = "freikin/dawarich:0.36.2"
           name  = "dawarich"
           port {
             name           = "http"
