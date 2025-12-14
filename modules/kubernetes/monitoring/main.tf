@@ -333,6 +333,8 @@ resource "kubernetes_config_map" "redfish-config" {
   }
   data = {
     "config.yml" = <<-EOF
+      address: 0.0.0.0
+      port: 9610
       hosts:
         ${var.idrac_host}:
           username: ${var.idrac_username}
@@ -340,10 +342,8 @@ resource "kubernetes_config_map" "redfish-config" {
         default:
           username: root
           password: calvin
-      groups:
-        group1:
-          username: user
-          password: pass
+      metrics:
+        all: true
     EOF
   }
 }
@@ -374,20 +374,17 @@ resource "kubernetes_deployment" "idrac-redfish" {
       }
       spec {
         container {
-          image = "viktorbarzin/redfish-exporter:latest"
+          # https://github.com/mrlhansen/idrac_exporter?tab=readme-ov-file
+          image = "ghcr.io/mrlhansen/idrac_exporter:latest"
           name  = "redfish-exporter"
-          # command = ["/bin/sh", "-c", "redfish-exporter --config.file /app/config.yml"]
-          # command = ["/usr/local/bin/redfish_exporter", "--config.file", "/etc/prometheus/redfish_exporter.yml"]
-          command = ["/usr/local/bin/redfish_exporter", "--config.file", "/app/config.yml"]
           port {
             container_port = 9610
           }
 
           volume_mount {
             name       = "redfish-exporter-config"
-            mount_path = "/app/config.yml"
-            # mount_path = "/etc/prometheus/redfish_exporter.yml"
-            sub_path = "config.yml"
+            mount_path = "/etc/prometheus/idrac.yml"
+            sub_path   = "config.yml"
           }
         }
         volume {

@@ -81,7 +81,7 @@ server:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
     # storageClass: rook-cephfs
-  retention: "12w"
+  retention: "52w"
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
@@ -222,8 +222,15 @@ serverFiles:
               severity: page
             annotations:
               summary: Power voltage on a power supply is {{ $value }} indicating power outage.
+          - alert: HighGPUTemp
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
+            for: 1m
+            labels:
+              severity: page
+            annotations:
+              summary: "High GPU Temperature {{$value}}"
           - alert: HighPowerUsage
-            expr: (max_over_time(r730_idrac_redfish_chassis_power_average_consumed_watts[20m])) > 180
+            expr: r730_idrac_idrac_power_control_consumed_watts > 200
             for: 60m
             labels:
               severity: page
@@ -237,7 +244,7 @@ serverFiles:
             annotations:
               summary: No node load data. Can signal that prometheus is not scraping
           - alert: NoiDRACData
-            expr: (max(r730_idrac_redfish_chassis_power_average_consumed_watts) or on() vector(0)) == 0
+            expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
             for: 30m
             labels:
               severity: page
@@ -359,15 +366,13 @@ extraScrapeConfigs: |
         - targets:
           - "idrac.viktorbarzin.lan:161"
     metrics_path: '/snmp'
-    params:
-      module: [dell_idrac]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: 'prometheus-snmp-exporter.monitoring.svc.cluster.local:9116'
+        replacement: 'snmp-exporter.monitoring.svc.cluster.local:9116'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
         target_label: '__name__'
@@ -375,9 +380,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
-    scrape_interval: 5m
-    scrape_timeout: 4m
-    metrics_path: /redfish
+    scrape_interval: 3m
+    scrape_timeout: 1m
+    metrics_path: /metrics
     static_configs:
       - targets:
         - 192.168.1.4
@@ -492,3 +497,15 @@ extraScrapeConfigs: |
           - "ha-sofia.viktorbarzin.lan:8123"
     metrics_path: '/api/prometheus'
     bearer_token: "${haos_api_token}"
+  - job_name: 'nvidia'
+    static_configs:
+        - targets:
+          - "nvidia-exporter.nvidia.svc.cluster.local"
+    metrics_path: '/metrics'
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'nvidia_tesla_t4_$${1}'
+    
