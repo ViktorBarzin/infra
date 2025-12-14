@@ -29,7 +29,7 @@ env:
   # IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning.immich.svc.cluster.local:3003"
 
 image:
-  tag: v2.3.1
+  tag: ${version}
 
 immich:
   persistence:
@@ -55,7 +55,8 @@ server:
 
 # increase liveliness and readiness checks to allow enough time for downloading models
 machine-learning:
-  enabled: true
+  # enabled: true
+  enabled: false
   image:
     repository: ghcr.io/immich-app/immich-machine-learning
     pullPolicy: IfNotPresent
