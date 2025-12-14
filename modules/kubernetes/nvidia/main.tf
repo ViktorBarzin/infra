@@ -49,7 +49,7 @@ resource "helm_release" "nvidia-gpu-operator" {
   #   version    = "0.9.3"
   timeout = 6000
 
-  # values = [templatefile("${path.module}/values.yaml", {})]
+  values = [templatefile("${path.module}/values.yaml", {})]
 }
 
 resource "kubernetes_deployment" "nvidia-exporter" {
