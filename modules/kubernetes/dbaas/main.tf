@@ -435,7 +435,10 @@ module "ingress" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "500m"
   }
-  rybbit_site_id = "942c76b8bd4d"
+  rybbit_site_id                   = "942c76b8bd4d"
+  additional_configuration_snippet = <<-EOF
+    more_set_headers "Content-Security-Policy: script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me";
+  EOF
 }
 
 
