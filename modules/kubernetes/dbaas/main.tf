@@ -435,6 +435,7 @@ module "ingress" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "500m"
   }
+  rybbit_site_id = "942c76b8bd4d"
 }
 
 
@@ -847,6 +848,7 @@ module "ingress-pgadmin" {
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "50m"
   }
+  rybbit_site_id = "7cef78e30485"
 }
 
 

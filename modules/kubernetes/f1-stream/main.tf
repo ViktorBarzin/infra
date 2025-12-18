@@ -89,4 +89,5 @@ module "ingress" {
     "nginx.ingress.kubernetes.io/force-ssl-redirect" : "false"
     "nginx.ingress.kubernetes.io/ssl-redirect" : "false"
   }
+  rybbit_site_id = "7e69786f66d5"
 }

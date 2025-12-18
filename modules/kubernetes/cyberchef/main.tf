@@ -79,4 +79,5 @@ module "ingress" {
   namespace       = "cyberchef"
   name            = "cc"
   tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "7c460afc68c4"
 }

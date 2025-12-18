@@ -157,6 +157,7 @@ module "ingress" {
     "nginx.ingress.kubernetes.io/limit-rps" : 1000 # Increased to allow webdav syncing
     "nginx.ingress.kubernetes.io/limit-rpm" : 60000
   }
+  rybbit_site_id = "5a3bfe59a3fe"
 }
 
 module "whiteboard_ingress" {

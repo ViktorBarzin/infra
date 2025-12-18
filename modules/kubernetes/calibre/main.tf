@@ -233,6 +233,7 @@ module "ingress" {
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional
   }
+  rybbit_site_id = "17a5c7fbb077"
 }
 
 # Stacks - Anna's Archive Download Manager
@@ -321,4 +322,5 @@ module "stacks-ingress" {
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  rybbit_site_id  = "ce5f8aed6bbb"
 }
