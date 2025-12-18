@@ -271,6 +271,13 @@ serverFiles:
               severity: page
             annotations:
               summary: "Running on inverter for too long: {{ $value }}%. Maybe switching to grid does not work."
+          - alert: DockerRegistryDown
+            expr: (registry_process_start_time_seconds or on() vector(0)) == 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "Docker registry is down"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
@@ -444,7 +451,8 @@ extraScrapeConfigs: |
     static_configs:
         - targets:
           #- "192.168.1.10:5001" # rpi
-          - "10.0.10.10:5001" # devvm
+          #- "10.0.10.10:5001" # devvm
+          - "10.0.20.10:5001" # registry-vm
     metrics_path: '/metrics'
     metric_relabel_configs:
       - source_labels: [ __name__ ]
