@@ -59,6 +59,10 @@ variable "rybbit_site_id" {
   default = null
   type    = string
 }
+variable "additional_configuration_snippet" {
+  type    = string
+  default = ""
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -133,6 +137,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         JS
       : ""
       }
+      ${var.additional_configuration_snippet}
       EOF
 
   }, var.extra_annotations)
