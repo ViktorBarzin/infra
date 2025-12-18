@@ -117,24 +117,24 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50
       "nginx.ingress.kubernetes.io/limit-rate-after" : 100
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
-        limit_req_status 429;
-        limit_conn_status 429;
-        ${var.rybbit_site_id != null ? <<-JS
-          # Rybbit Analytics
-          # Only modify HTML
-          sub_filter_types text/html;
-          sub_filter_once off;
+      limit_req_status 429;
+      limit_conn_status 429;
+      ${var.rybbit_site_id != null ? <<-JS
+        # Rybbit Analytics
+        # Only modify HTML
+        sub_filter_types text/html;
+        sub_filter_once off;
 
-          # Disable compression so sub_filter works
-          proxy_set_header Accept-Encoding "";
+        # Disable compression so sub_filter works
+        proxy_set_header Accept-Encoding "";
 
-          # Inject analytics before </head>
-          sub_filter '</head>' '
-          <script src="https://rybbit.viktorbarzin.me/api/script.js"
-                data-site-id="${var.rybbit_site_id}"
-                defer></script> 
-          </head>';
-        JS
+        # Inject analytics before </head>
+        sub_filter '</head>' '
+        <script src="https://rybbit.viktorbarzin.me/api/script.js"
+              data-site-id="${var.rybbit_site_id}"
+              defer></script>
+        </head>';
+          JS
       : ""
       }
       ${var.additional_configuration_snippet}

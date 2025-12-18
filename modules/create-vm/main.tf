@@ -45,17 +45,17 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   os_type          = "cloud-init"
 
   # Cloud-Init configuration
-  cicustom     = "vendor=local:snippets/${var.cisnippet_name}"
-  ciupgrade    = true
-  nameserver   = "1.1.1.1 8.8.8.8"
-  ipconfig0    = "ip=dhcp,ip6=dhcp"
-  skip_ipv6    = true
-  ciuser       = "root"
-  cipassword   = "root"
-  sshkeys      = var.ssh_keys
-  searchdomain = "viktorbarzin.lan"
-  onboot       = true # start on node boot
-  qemu_os      = "l26"
+  cicustom           = "vendor=local:snippets/${var.cisnippet_name}"
+  ciupgrade          = true
+  nameserver         = "1.1.1.1 8.8.8.8"
+  ipconfig0          = "ip=dhcp,ip6=dhcp"
+  skip_ipv6          = true
+  ciuser             = "root"
+  cipassword         = "root"
+  sshkeys            = var.ssh_keys
+  searchdomain       = "viktorbarzin.lan"
+  start_at_node_boot = true # start on node boot
+  qemu_os            = "l26"
 
   cpu {
     cores = var.vm_cpus

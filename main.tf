@@ -135,7 +135,7 @@ provider "kubernetes" {
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = var.prod ? "" : "~/.kube/config"
   }
 }
