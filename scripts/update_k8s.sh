@@ -4,8 +4,8 @@
 # for n in $(kbn | grep 'k8s-node' | awk '{print $1}'); do echo $n; kb drain $n --ignore-daemonsets --delete-emptydir-data; s wizard@$n 'bash -s' <update_k8s.sh; kb uncordon $n; done
 
 set -e
-export stable_version='1.32'  # change me
-export release="$stable_version.4"  # change me
+export stable_version='1.34'  # change me
+export release="$stable_version.2"  # change me
 
 echo "Upgrading to $stable_version"
 
