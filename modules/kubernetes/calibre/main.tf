@@ -233,7 +233,10 @@ module "ingress" {
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional
   }
-  rybbit_site_id = "17a5c7fbb077"
+  rybbit_site_id                   = "17a5c7fbb077"
+  additional_configuration_snippet = <<-EOF
+    more_set_headers "Content-Security-Policy: script-src 'self' 'unsafe-inline' 'unsafe-eval' https://rybbit.viktorbarzin.me";
+  EOF
 }
 
 # Stacks - Anna's Archive Download Manager
