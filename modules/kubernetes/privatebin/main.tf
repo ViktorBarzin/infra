@@ -89,10 +89,13 @@ resource "kubernetes_service" "privatebin" {
 }
 
 module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = "privatebin"
-  name            = "privatebin"
-  host            = "pb"
-  tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "3ae810b0476d"
+  source                           = "../ingress_factory"
+  namespace                        = "privatebin"
+  name                             = "privatebin"
+  host                             = "pb"
+  tls_secret_name                  = var.tls_secret_name
+  rybbit_site_id                   = "3ae810b0476d"
+  additional_configuration_snippet = <<-EOF
+    more_set_headers "Content-Security-Policy: script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me";
+  EOF
 }
