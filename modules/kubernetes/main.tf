@@ -105,7 +105,8 @@ variable "tiny_tuya_api_secret" { type = string }
 variable "tiny_tuya_service_secret" { type = string }
 variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
-
+variable "clickhouse_password" { type = string }
+variable "clickhouse_postgres_password" { type = string }
 
 
 variable "defcon_level" {
@@ -733,4 +734,11 @@ module "nvidia" {
 module "ebook2audiobook" {
   source          = "./ebook2audiobook"
   tls_secret_name = var.tls_secret_name
+}
+
+module "rybbit" {
+  source              = "./rybbit"
+  tls_secret_name     = var.tls_secret_name
+  clickhouse_password = var.clickhouse_password
+  postgres_password   = var.clickhouse_postgres_password
 }
