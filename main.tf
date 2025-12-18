@@ -220,7 +220,7 @@ module "docker-registry-template" {
         )
       )
     ),
-    "docker run -p 5000:5000 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2"
+    "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2"
   ]
 }
 
