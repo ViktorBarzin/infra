@@ -90,4 +90,5 @@ module "ingress" {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
     "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
   }
+  rybbit_site_id = "3e6b6b68088a"
 }

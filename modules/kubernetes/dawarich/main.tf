@@ -317,4 +317,16 @@ module "ingress" {
   namespace       = "dawarich"
   name            = "dawarich"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/limit-connections" : 100
+    "nginx.ingress.kubernetes.io/limit-rps" : 50
+    "nginx.ingress.kubernetes.io/limit-rpm" : 1000
+    "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 500
+    "nginx.ingress.kubernetes.io/limit-rate-after" : 1000
+    "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
+        limit_req_status 429;
+        limit_conn_status 429;
+      EOF
+  }
+  rybbit_site_id = "0abfd409f2fb"
 }

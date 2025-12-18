@@ -326,6 +326,24 @@ resource "kubernetes_ingress_v1" "ingress" {
         directio 4m;
         sendfile off;
         aio on;
+
+        limit_req_status 429;
+        limit_conn_status 429;
+
+        # Rybbit Analytics
+        # Only modify HTML
+        sub_filter_types text/html;
+        sub_filter_once off;
+
+        # Disable compression so sub_filter works
+        proxy_set_header Accept-Encoding "";
+
+        # Inject analytics before </head>
+        sub_filter '</head>' '
+        <script src="https://rybbit.viktorbarzin.me/api/script.js"
+              data-site-id="35eedb7a3d2b"
+              defer></script> 
+        </head>';
       EOF
 
       "nginx.ingress.kubernetes.io/enable-modsecurity" : "false" # this is important!!!; setting it to true enables buffering and can lead to ooms when ploading big files

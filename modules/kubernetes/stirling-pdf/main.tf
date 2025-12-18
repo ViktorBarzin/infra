@@ -86,4 +86,5 @@ module "ingress" {
   namespace       = "stirling-pdf"
   name            = "stirling-pdf"
   tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "a55ac54ec749"
 }

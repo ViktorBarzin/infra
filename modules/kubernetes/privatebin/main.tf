@@ -94,4 +94,5 @@ module "ingress" {
   name            = "privatebin"
   host            = "pb"
   tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "3ae810b0476d"
 }

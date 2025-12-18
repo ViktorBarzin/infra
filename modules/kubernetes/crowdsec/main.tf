@@ -66,7 +66,7 @@ resource "helm_release" "crowdsec" {
   create_namespace = true
   name             = "crowdsec"
   atomic           = true
-  version          = "0.19.4"
+  version          = "0.21.0"
 
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
@@ -172,5 +172,6 @@ module "ingress" {
       }
     EOF
   }
+  rybbit_site_id = "d09137795ccc"
 }
 
