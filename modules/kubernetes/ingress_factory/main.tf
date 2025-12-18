@@ -55,6 +55,10 @@ variable "root_domain" {
   default = "viktorbarzin.me"
   type    = string
 }
+variable "rybbit_site_id" {
+  default = null
+  type    = string
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -111,32 +115,49 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
         limit_req_status 429;
         limit_conn_status 429;
+        ${var.rybbit_site_id != null ? <<-JS
+          # Rybbit Analytics
+          # Only modify HTML
+          sub_filter_types text/html;
+          sub_filter_once off;
+
+          # Disable compression so sub_filter works
+          proxy_set_header Accept-Encoding "";
+
+          # Inject analytics before </head>
+          sub_filter '</head>' '
+          <script src="https://rybbit.viktorbarzin.me/api/script.js"
+                data-site-id="${var.rybbit_site_id}"
+                defer></script> 
+          </head>';
+        JS
+      : ""
+      }
       EOF
 
-    }, var.extra_annotations)
+  }, var.extra_annotations)
+}
+
+spec {
+  tls {
+    hosts       = ["${var.name}.${var.root_domain}"] # TODO: refactor me to be easier to use
+    secret_name = var.tls_secret_name
   }
+  rule {
+    host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
+    http {
+      dynamic "path" {
+        # for_each = { for pr in var.ingress_path : pr => pr }
+        for_each = var.ingress_path
 
-  spec {
-    tls {
-      hosts       = ["${var.name}.${var.root_domain}"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
-      http {
-        dynamic "path" {
-          # for_each = { for pr in var.ingress_path : pr => pr }
-          for_each = var.ingress_path
+        content {
+          path = path.value
+          backend {
+            service {
 
-          content {
-            path = path.value
-            backend {
-              service {
-
-                name = var.service_name != null ? var.service_name : var.name
-                port {
-                  number = var.port
-                }
+              name = var.service_name != null ? var.service_name : var.name
+              port {
+                number = var.port
               }
             }
           }
@@ -144,5 +165,6 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       }
     }
   }
+}
 }
 

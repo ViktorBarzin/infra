@@ -363,6 +363,7 @@ resource "kubernetes_config_map" "udp_services" {
   }
   data = {
     53 : "technitium/technitium-dns:53"
+    # 8554 : "frigate/frigate:8554"
   }
 }
 resource "kubernetes_config_map" "tcp_services" {
@@ -372,6 +373,7 @@ resource "kubernetes_config_map" "tcp_services" {
   }
   data = {
     # 9443 : "wireguard/xray:7443" // reality
+    # 8554 : "frigate/frigate:8554"
   }
 }
 resource "kubernetes_service" "ingress_nginx_controller" {
@@ -405,6 +407,16 @@ resource "kubernetes_service" "ingress_nginx_controller" {
       port        = 53
       target_port = "dns"
     }
+    # port {
+    #   name     = "frigate-rtsptcp"
+    #   port     = 8554
+    #   protocol = "TCP"
+    # }
+    # port {
+    #   name     = "frigate-rtspudp"
+    #   port     = 8554
+    #   protocol = "UDP"
+    # }
     # port {
     #   name        = "xray-reality"
     #   protocol    = "TCP"
@@ -605,6 +617,16 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
             container_port = 8443
             protocol       = "TCP"
           }
+          # port {
+          #   name           = "frigate-rtsptcp"
+          #   container_port = 8554
+          #   protocol       = "TCP"
+          # }
+          # port {
+          #   name           = "frigate-rtspudp"
+          #   container_port = 8554
+          #   protocol       = "UDP"
+          # }
           port {
             name           = "metrics"
             container_port = 10254

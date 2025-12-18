@@ -112,4 +112,5 @@ module "ingress" {
   name            = "highlights-immich"
   tls_secret_name = var.tls_secret_name
   service_name    = "immich-frame"
+  rybbit_site_id  = "602167601c6b"
 }

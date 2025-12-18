@@ -127,4 +127,5 @@ module "ingress" {
   namespace       = "vaultwarden"
   name            = "vaultwarden"
   tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "b8fc85e18683"
 }

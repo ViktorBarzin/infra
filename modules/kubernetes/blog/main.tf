@@ -111,7 +111,22 @@ resource "kubernetes_ingress_v1" "blog" {
     name      = "blog-ingress"
     namespace = "website"
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "kubernetes.io/ingress.class"                       = "nginx"
+      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOT
+        # Only modify HTML
+        sub_filter_types text/html;
+        sub_filter_once off;
+
+        # Disable compression so sub_filter works
+        proxy_set_header Accept-Encoding "";
+
+        # Inject analytics before </head>
+        sub_filter '</head>' '
+         <script src="https://rybbit.viktorbarzin.me/api/script.js"
+              data-site-id="da853a2438d0"
+              defer></script> 
+        </head>';
+      EOT
     }
   }
 

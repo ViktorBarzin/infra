@@ -76,4 +76,5 @@ module "ingress" {
   name            = "networking-toolbox"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  rybbit_site_id  = "50e38577e41c"
 }

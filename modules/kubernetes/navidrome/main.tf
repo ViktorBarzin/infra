@@ -115,4 +115,5 @@ module "ingress" {
   namespace       = "navidrome"
   name            = "navidrome"
   tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "8a3844ff75ba"
 }

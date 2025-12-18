@@ -107,6 +107,7 @@ module "ingress" {
     "gethomepage.dev/widget.slug"  = "cluster-internal"
     "gethomepage.dev/pod-selector" = ""
   }
+  rybbit_site_id = "8fef77b1f7fe"
 }
 
 # CronJob for daily SQLite backups # no longer needed as we're using the mysql

@@ -171,5 +171,6 @@ module "ingress" {
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional
   }
+  rybbit_site_id = "be6d140cbed8"
 }
 

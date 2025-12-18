@@ -43,7 +43,8 @@ module "pfsense" {
     "gethomepage.dev/widget.wan"    = "vmx0"
     # "gethomepage.dev/pod-selector" : ""
   }
-  depends_on = [kubernetes_namespace.reverse-proxy]
+  depends_on     = [kubernetes_namespace.reverse-proxy]
+  rybbit_site_id = "b029580e5a7c"
 }
 
 # https://nas.viktorbarzin.me/
@@ -56,6 +57,7 @@ module "nas" {
   backend_protocol = "HTTPS"
   max_body_size    = "0m"
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  rybbit_site_id   = "1e11f8449f7d"
 }
 
 # https://files.viktorbarzin.me/
@@ -117,7 +119,8 @@ module "truenas" {
     # "gethomepage.dev/widget.enablePools" : "true"
     # "gethomepage.dev/pod-selector" : ""
   }
-  depends_on = [kubernetes_namespace.reverse-proxy]
+  depends_on     = [kubernetes_namespace.reverse-proxy]
+  rybbit_site_id = "b66fbd3cb58a"
 }
 
 # https://r730.viktorbarzin.me/
@@ -141,6 +144,7 @@ module "proxmox" {
   backend_protocol = "HTTPS"
   max_body_size    = "0" # unlimited
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  rybbit_site_id   = "190a7ad3e1c7"
 }
 
 # https://valchedrym.viktorbarzin.me/
@@ -198,6 +202,7 @@ module "ha-sofia" {
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.reverse-proxy]
   protected       = false
+  rybbit_site_id  = "590fc392690a"
 }
 
 # https://ha-london.viktorbarzin.me/

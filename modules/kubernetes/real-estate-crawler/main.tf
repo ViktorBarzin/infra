@@ -214,6 +214,26 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       # "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx" : null
       # "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri" : null
       # "nginx.ingress.kubernetes.io/auth-snippet" : var.protected ? "proxy_set_header X-Forwarded-Host $http_host;" : null
+
+      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
+        limit_req_status 429;
+        limit_conn_status 429;
+
+        # Rybbit Analytics
+        # Only modify HTML
+        sub_filter_types text/html;
+        sub_filter_once off;
+
+        # Disable compression so sub_filter works
+        proxy_set_header Accept-Encoding "";
+
+        # Inject analytics before </head>
+        sub_filter '</head>' '
+        <script src="https://rybbit.viktorbarzin.me/api/script.js"
+              data-site-id="edee05de453d"
+              defer></script> 
+        </head>';
+      EOF
     }
 
 
