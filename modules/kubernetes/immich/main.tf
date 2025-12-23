@@ -256,7 +256,8 @@ resource "kubernetes_deployment" "immich-machine-learning" {
         volume {
           name = "cache"
           nfs {
-            path   = "/mnt/main/immich/machine-learning"
+            # path   = "/mnt/main/immich/machine-learning"
+            path   = "/mnt/ssd/immich/machine-learning" # load cache from ssd
             server = "10.0.10.15"
           }
         }
