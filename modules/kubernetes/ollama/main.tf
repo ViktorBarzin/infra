@@ -113,7 +113,8 @@ resource "kubernetes_deployment" "ollama" {
         volume {
           name = "ollama-data"
           nfs {
-            path   = "/mnt/main/ollama"
+            # path   = "/mnt/main/ollama"
+            path   = "/mnt/ssd/ollama"
             server = "10.0.10.15"
           }
         }
@@ -179,7 +180,8 @@ resource "kubernetes_deployment" "ollama-ui" {
       }
       spec {
         container {
-          image = "ghcr.io/open-webui/open-webui:main"
+          # image = "ghcr.io/open-webui/open-webui:main"
+          image = "ghcr.io/open-webui/open-webui:v0.6.43"
           name  = "ollama-ui"
           env {
             name  = "OLLAMA_BASE_URL"
