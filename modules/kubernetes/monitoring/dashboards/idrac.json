@@ -26,6 +26,7 @@
                 },
                 "enable": true,
                 "expr": "last_over_time(r730_idrac_idrac_events_log_entry{job=~\"$job\", instance=~\"$instance\"}[$__interval] offset -$__interval) * 1000 < ${__to}\nand \nlast_over_time(r730_idrac_idrac_events_log_entry{job=~\"$job\", instance=~\"$instance\"}[$__interval] offset -$__interval) * 1000 > ${__from}",
+                "hide": false,
                 "iconColor": "purple",
                 "name": "Events",
                 "tagKeys": "instance,severity",
@@ -53,7 +54,6 @@
             "url": "d/3faidY24k"
         }
     ],
-    "liveNow": false,
     "panels": [
         {
             "collapsed": false,
@@ -109,7 +109,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -145,7 +145,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -212,7 +212,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -248,7 +248,7 @@
                 "textMode": "name",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -303,6 +303,9 @@
                         "cellOptions": {
                             "type": "auto"
                         },
+                        "footer": {
+                            "reducers": []
+                        },
                         "inspect": false
                     },
                     "mappings": [],
@@ -311,7 +314,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -456,14 +459,6 @@
             "id": 32,
             "options": {
                 "cellHeight": "sm",
-                "footer": {
-                    "countRows": false,
-                    "fields": "",
-                    "reducer": [
-                        "sum"
-                    ],
-                    "show": false
-                },
                 "showHeader": true,
                 "sortBy": [
                     {
@@ -472,7 +467,7 @@
                     }
                 ]
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -590,7 +585,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -604,7 +599,6 @@
                 "x": 0,
                 "y": 5
             },
-            "hideTimeOverride": true,
             "id": 4,
             "options": {
                 "colorMode": "value",
@@ -624,7 +618,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -686,7 +680,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -700,7 +694,6 @@
                 "x": 4,
                 "y": 5
             },
-            "hideTimeOverride": true,
             "id": 6,
             "options": {
                 "colorMode": "value",
@@ -720,7 +713,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -747,7 +740,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -783,7 +776,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -847,7 +840,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -861,7 +854,6 @@
                 "x": 0,
                 "y": 7
             },
-            "hideTimeOverride": true,
             "id": 5,
             "options": {
                 "colorMode": "value",
@@ -881,7 +873,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -918,7 +910,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -932,7 +924,6 @@
                 "x": 4,
                 "y": 7
             },
-            "hideTimeOverride": true,
             "id": 7,
             "options": {
                 "colorMode": "value",
@@ -952,7 +943,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -979,7 +970,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1015,7 +1006,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -1069,7 +1060,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1105,7 +1096,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -1173,7 +1164,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1209,7 +1200,7 @@
                 "textMode": "name",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -1278,7 +1269,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1314,7 +1305,7 @@
                 "textMode": "value",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -1368,6 +1359,9 @@
                         "cellOptions": {
                             "type": "auto"
                         },
+                        "footer": {
+                            "reducers": []
+                        },
                         "inspect": false
                     },
                     "mappings": [],
@@ -1376,7 +1370,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -1505,14 +1499,6 @@
             "id": 31,
             "options": {
                 "cellHeight": "sm",
-                "footer": {
-                    "countRows": false,
-                    "fields": "",
-                    "reducer": [
-                        "sum"
-                    ],
-                    "show": false
-                },
                 "showHeader": true,
                 "sortBy": [
                     {
@@ -1521,7 +1507,7 @@
                     }
                 ]
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -1616,6 +1602,9 @@
                         "cellOptions": {
                             "type": "auto"
                         },
+                        "footer": {
+                            "reducers": []
+                        },
                         "inspect": false
                     },
                     "mappings": [],
@@ -1624,7 +1613,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -1765,18 +1754,10 @@
             "id": 34,
             "options": {
                 "cellHeight": "sm",
-                "footer": {
-                    "countRows": false,
-                    "fields": "",
-                    "reducer": [
-                        "sum"
-                    ],
-                    "show": false
-                },
                 "showHeader": true,
                 "sortBy": []
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -1909,6 +1890,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 10,
                         "gradientMode": "opacity",
@@ -1925,6 +1907,7 @@
                             "type": "linear"
                         },
                         "showPoints": "auto",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -1941,7 +1924,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1966,11 +1949,13 @@
                     "showLegend": true
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "maxHeight": 600,
                     "mode": "multi",
                     "sort": "desc"
                 }
             },
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -2025,6 +2010,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 10,
                         "gradientMode": "opacity",
@@ -2041,6 +2027,7 @@
                             "type": "linear"
                         },
                         "showPoints": "auto",
+                        "showValues": false,
                         "spanNulls": 3600000,
                         "stacking": {
                             "group": "A",
@@ -2057,7 +2044,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -2082,11 +2069,13 @@
                     "showLegend": true
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "maxHeight": 600,
                     "mode": "multi",
                     "sort": "desc"
                 }
             },
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "alias": "",
@@ -2184,8 +2173,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     },
@@ -2287,8 +2275,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     },
@@ -2412,8 +2399,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     },
@@ -2490,8 +2476,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             }
                         ]
                     },
@@ -2604,8 +2589,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             },
                             {
                                 "color": "red",
@@ -2814,8 +2798,9 @@
             "type": "table"
         }
     ],
+    "preload": false,
     "refresh": "auto",
-    "schemaVersion": 39,
+    "schemaVersion": 42,
     "tags": [
         "dell",
         "idrac",
@@ -2826,30 +2811,21 @@
         "list": [
             {
                 "current": {
-                    "selected": false,
                     "text": "Prometheus",
                     "value": "PBFA97CFB590B2093"
                 },
-                "hide": 0,
                 "includeAll": false,
                 "label": "Datasource",
-                "multi": false,
                 "name": "datasource",
                 "options": [],
                 "query": "prometheus",
-                "queryValue": "",
                 "refresh": 1,
                 "regex": ".+",
-                "skipUrlSync": false,
                 "type": "datasource"
             },
             {
-                "allValue": "",
                 "current": {
-                    "selected": true,
-                    "text": [
-                        "All"
-                    ],
+                    "text": "All",
                     "value": [
                         "$__all"
                     ]
@@ -2859,7 +2835,6 @@
                     "uid": "${datasource}"
                 },
                 "definition": "label_values(r730_idrac_idrac_system_machine_info,job)",
-                "hide": 0,
                 "includeAll": true,
                 "label": "job",
                 "multi": true,
@@ -2868,14 +2843,12 @@
                 "query": "label_values(r730_idrac_idrac_system_machine_info,job)",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "sort": 1,
                 "type": "query"
             },
             {
                 "allValue": ".+",
                 "current": {
-                    "selected": false,
                     "text": "192.168.1.4",
                     "value": "192.168.1.4"
                 },
@@ -2884,16 +2857,12 @@
                     "uid": "${datasource}"
                 },
                 "definition": "label_values(r730_idrac_idrac_system_machine_info{job=~\"$job\"},instance)",
-                "hide": 0,
                 "includeAll": false,
-                "label": "",
-                "multi": false,
                 "name": "instance",
                 "options": [],
                 "query": "label_values(r730_idrac_idrac_system_machine_info{job=~\"$job\"},instance)",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "sort": 3,
                 "type": "query"
             }
@@ -2907,6 +2876,5 @@
     "timezone": "",
     "title": "IDRAC",
     "uid": "YVz226S4z",
-    "version": 3,
-    "weekStart": ""
+    "version": 4
 }

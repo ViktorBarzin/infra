@@ -36,7 +36,6 @@
     "description": "NGINX Ingress controller",
     "editable": true,
     "fiscalYearStartMonth": 0,
-    "gnetId": 21334,
     "graphTooltip": 0,
     "id": 21,
     "links": [],
@@ -68,7 +67,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -79,6 +78,12 @@
                     "unit": "ops"
                 },
                 "overrides": []
+            },
+            "gridPos": {
+                "h": 3,
+                "w": 6,
+                "x": 0,
+                "y": 0
             },
             "id": 20,
             "maxDataPoints": 100,
@@ -99,7 +104,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -143,7 +148,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -180,7 +185,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -225,7 +230,7 @@
                         "steps": [
                             {
                                 "color": "rgba(245, 54, 54, 0.9)",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "rgba(237, 129, 40, 0.89)",
@@ -266,7 +271,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -311,7 +316,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -348,7 +353,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -394,7 +399,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -431,7 +436,7 @@
                 "textMode": "auto",
                 "wideLayout": true
             },
-            "pluginVersion": "11.1.0",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -466,6 +471,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 10,
                         "gradientMode": "none",
@@ -482,6 +488,7 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -497,7 +504,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -547,12 +554,12 @@
                     "showLegend": true
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "multi",
                     "sort": "none"
                 }
             },
-            "pluginVersion": "10.4.3",
-            "repeatDirection": "h",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -591,6 +598,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 0,
                         "gradientMode": "none",
@@ -607,6 +615,7 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -622,7 +631,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -717,11 +726,12 @@
                     "showLegend": true
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "multi",
                     "sort": "asc"
                 }
             },
-            "pluginVersion": "10.4.3",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -747,6 +757,10 @@
                 "type": "loki",
                 "uid": "fejvsai4fvvggf"
             },
+            "fieldConfig": {
+                "defaults": {},
+                "overrides": []
+            },
             "gridPos": {
                 "h": 12,
                 "w": 24,
@@ -756,14 +770,17 @@
             "id": 92,
             "options": {
                 "dedupStrategy": "none",
+                "enableInfiniteScrolling": false,
                 "enableLogDetails": true,
                 "prettifyLogMessage": false,
                 "showCommonLabels": false,
+                "showControls": false,
                 "showLabels": false,
                 "showTime": true,
                 "sortOrder": "Descending",
                 "wrapLogMessage": true
             },
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -796,6 +813,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 10,
                         "gradientMode": "none",
@@ -812,6 +830,7 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -827,7 +846,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -858,11 +877,12 @@
                     "width": 200
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "multi",
                     "sort": "none"
                 }
             },
-            "pluginVersion": "10.4.3",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -915,6 +935,7 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 0,
                         "gradientMode": "none",
@@ -931,6 +952,7 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -946,7 +968,7 @@
                         "steps": [
                             {
                                 "color": "green",
-                                "value": null
+                                "value": 0
                             },
                             {
                                 "color": "red",
@@ -1023,11 +1045,12 @@
                     "width": 200
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "multi",
                     "sort": "desc"
                 }
             },
-            "pluginVersion": "10.4.3",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -1065,6 +1088,7 @@
                         "axisLabel": "cores",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
+                        "barWidthFactor": 0.6,
                         "drawStyle": "line",
                         "fillOpacity": 0,
                         "gradientMode": "none",
@@ -1081,6 +1105,7 @@
                             "type": "linear"
                         },
                         "showPoints": "never",
+                        "showValues": false,
                         "spanNulls": true,
                         "stacking": {
                             "group": "A",
@@ -1096,7 +1121,7 @@
                         "steps": [
                             {
                                 "color": "transparent",
-                                "value": null
+                                "value": 0
                             }
                         ]
                     },
@@ -1122,11 +1147,12 @@
                     "showLegend": false
                 },
                 "tooltip": {
+                    "hideZeros": false,
                     "mode": "multi",
                     "sort": "desc"
                 }
             },
-            "pluginVersion": "10.4.3",
+            "pluginVersion": "12.3.0",
             "targets": [
                 {
                     "datasource": {
@@ -1169,8 +1195,7 @@
                         "mode": "absolute",
                         "steps": [
                             {
-                                "color": "green",
-                                "value": null
+                                "color": "green"
                             },
                             {
                                 "color": "red",
@@ -1287,8 +1312,7 @@
                                     "mode": "absolute",
                                     "steps": [
                                         {
-                                            "color": "rgba(245, 54, 54, 0.9)",
-                                            "value": null
+                                            "color": "rgba(245, 54, 54, 0.9)"
                                         },
                                         {
                                             "color": "rgba(237, 129, 40, 0.89)"
@@ -1352,7 +1376,6 @@
                 "x": 0,
                 "y": 28
             },
-            "hideTimeOverride": false,
             "id": 75,
             "options": {
                 "cellHeight": "sm",
@@ -1367,7 +1390,6 @@
                 "showHeader": true
             },
             "pluginVersion": "11.1.0",
-            "repeatDirection": "h",
             "targets": [
                 {
                     "datasource": {
@@ -1511,7 +1533,6 @@
                 "x": 0,
                 "y": 36
             },
-            "hideTimeOverride": false,
             "id": 91,
             "options": {
                 "legend": {
@@ -1526,7 +1547,6 @@
                 }
             },
             "pluginVersion": "8.3.4",
-            "repeatDirection": "h",
             "targets": [
                 {
                     "datasource": {
@@ -1579,15 +1599,6 @@
             "type": "timeseries"
         },
         {
-            "cards": {},
-            "color": {
-                "cardColor": "#b4ff00",
-                "colorScale": "sqrt",
-                "colorScheme": "interpolateWarm",
-                "exponent": 0.5,
-                "mode": "spectrum"
-            },
-            "dataFormat": "tsbuckets",
             "datasource": {
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
@@ -1614,13 +1625,7 @@
                 "x": 12,
                 "y": 36
             },
-            "heatmap": {},
-            "hideZeroBuckets": false,
-            "highlightCards": true,
             "id": 89,
-            "legend": {
-                "show": true
-            },
             "options": {
                 "calculate": false,
                 "calculation": {},
@@ -1660,7 +1665,6 @@
                 }
             },
             "pluginVersion": "10.4.3",
-            "reverseYBuckets": false,
             "targets": [
                 {
                     "datasource": {
@@ -1676,20 +1680,7 @@
                 }
             ],
             "title": "Ingress Request Latency Heatmap (Ingress Namespaces)",
-            "tooltip": {
-                "show": true,
-                "showHistogram": true
-            },
-            "type": "heatmap",
-            "xAxis": {
-                "show": true
-            },
-            "yAxis": {
-                "format": "s",
-                "logBase": 1,
-                "show": true
-            },
-            "yBucketBound": "auto"
+            "type": "heatmap"
         },
         {
             "datasource": {
@@ -1833,8 +1824,9 @@
             "type": "table"
         }
     ],
+    "preload": false,
     "refresh": "5s",
-    "schemaVersion": 39,
+    "schemaVersion": 42,
     "tags": [
         "nginx"
     ],
@@ -1842,27 +1834,21 @@
         "list": [
             {
                 "current": {
-                    "selected": false,
                     "text": "Prometheus",
                     "value": "PBFA97CFB590B2093"
                 },
-                "hide": 0,
                 "includeAll": false,
                 "label": "datasource",
-                "multi": false,
                 "name": "DS_PROMETHEUS",
                 "options": [],
                 "query": "prometheus",
-                "queryValue": "",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "type": "datasource"
             },
             {
                 "allValue": ".*",
                 "current": {
-                    "selected": false,
                     "text": "All",
                     "value": "$__all"
                 },
@@ -1871,26 +1857,18 @@
                     "uid": "PBFA97CFB590B2093"
                 },
                 "definition": "",
-                "hide": 0,
                 "includeAll": true,
                 "label": "Namespace",
-                "multi": false,
                 "name": "namespace",
                 "options": [],
                 "query": "label_values(nginx_ingress_controller_config_hash, controller_namespace)",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
-                "sort": 0,
-                "tagValuesQuery": "",
-                "tagsQuery": "",
-                "type": "query",
-                "useTags": false
+                "type": "query"
             },
             {
                 "allValue": ".*",
                 "current": {
-                    "selected": false,
                     "text": "All",
                     "value": "$__all"
                 },
@@ -1899,26 +1877,18 @@
                     "uid": "PBFA97CFB590B2093"
                 },
                 "definition": "",
-                "hide": 0,
                 "includeAll": true,
                 "label": "Controller Class",
-                "multi": false,
                 "name": "controller_class",
                 "options": [],
                 "query": "label_values(nginx_ingress_controller_config_hash{namespace=~\"$namespace\"}, controller_class) ",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
-                "sort": 0,
-                "tagValuesQuery": "",
-                "tagsQuery": "",
-                "type": "query",
-                "useTags": false
+                "type": "query"
             },
             {
                 "allValue": ".*",
                 "current": {
-                    "selected": false,
                     "text": "All",
                     "value": "$__all"
                 },
@@ -1927,26 +1897,19 @@
                     "uid": "PBFA97CFB590B2093"
                 },
                 "definition": "",
-                "hide": 0,
                 "includeAll": true,
                 "label": "Controller",
-                "multi": false,
                 "name": "controller",
                 "options": [],
                 "query": "label_values(nginx_ingress_controller_config_hash{namespace=~\"$namespace\",controller_class=~\"$controller_class\"}, controller_pod) ",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "sort": 1,
-                "tagValuesQuery": "",
-                "tagsQuery": "",
-                "type": "query",
-                "useTags": false
+                "type": "query"
             },
             {
                 "allValue": ".*",
                 "current": {
-                    "selected": false,
                     "text": "All",
                     "value": "$__all"
                 },
@@ -1955,26 +1918,19 @@
                     "uid": "PBFA97CFB590B2093"
                 },
                 "definition": "",
-                "hide": 0,
                 "includeAll": true,
                 "label": "Ingress Namespace",
-                "multi": false,
                 "name": "exported_namespace",
                 "options": [],
                 "query": "label_values(nginx_ingress_controller_requests{namespace=~\"$namespace\",controller_class=~\"$controller_class\",controller_pod=~\"$controller\"}, exported_namespace) ",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "sort": 1,
-                "tagValuesQuery": "",
-                "tagsQuery": "",
-                "type": "query",
-                "useTags": false
+                "type": "query"
             },
             {
                 "allValue": ".*",
                 "current": {
-                    "selected": false,
                     "text": "All",
                     "value": "$__all"
                 },
@@ -1983,21 +1939,15 @@
                     "uid": "PBFA97CFB590B2093"
                 },
                 "definition": "",
-                "hide": 0,
                 "includeAll": true,
                 "label": "Ingress",
-                "multi": false,
                 "name": "ingress",
                 "options": [],
                 "query": "label_values(nginx_ingress_controller_requests{namespace=~\"$namespace\",controller_class=~\"$controller_class\",controller_pod=~\"$controller\",exported_namespace=~\"$exported_namespace\"}, ingress) ",
                 "refresh": 1,
                 "regex": "",
-                "skipUrlSync": false,
                 "sort": 1,
-                "tagValuesQuery": "",
-                "tagsQuery": "",
-                "type": "query",
-                "useTags": false
+                "type": "query"
             }
         ]
     },
@@ -2017,22 +1967,10 @@
             "1h",
             "2h",
             "1d"
-        ],
-        "time_options": [
-            "5m",
-            "15m",
-            "1h",
-            "6h",
-            "12h",
-            "24h",
-            "2d",
-            "7d",
-            "30d"
         ]
     },
     "timezone": "browser",
     "title": "NGINX Ingress controller",
     "uid": "nginx",
-    "version": 2,
-    "weekStart": ""
+    "version": 2
 }
