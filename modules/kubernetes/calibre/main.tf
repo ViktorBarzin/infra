@@ -147,6 +147,10 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             name  = "NETWORK_SHARE_MODE"
             value = "true"
           }
+          env {
+            name  = "CALIBRE_PORT"
+            value = "8083"
+          }
 
           port {
             container_port = 8083
