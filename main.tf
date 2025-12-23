@@ -128,6 +128,7 @@ variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
+variable "wealthfolio_password_hash" { type = string }
 
 
 provider "kubernetes" {
@@ -522,6 +523,8 @@ module "kubernetes_cluster" {
 
   clickhouse_password          = var.clickhouse_password
   clickhouse_postgres_password = var.clickhouse_postgres_password
+
+  wealthfolio_password_hash = var.wealthfolio_password_hash
 }
 
 

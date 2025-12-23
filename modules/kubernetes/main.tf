@@ -107,6 +107,7 @@ variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
+variable "wealthfolio_password_hash" { type = string }
 
 
 variable "defcon_level" {
@@ -344,15 +345,15 @@ module "wireguard" {
 #   configuration_yaml             = var.home_assistant_configuration
 # }
 
-module "finance_app" {
-  source                     = "./finance_app"
-  tls_secret_name            = var.tls_secret_name
-  graphql_api_secret         = var.finance_app_graphql_api_secret
-  db_connection_string       = var.finance_app_db_connection_string
-  currency_converter_api_key = var.finance_app_currency_converter_api_key
-  gocardless_secret_key      = var.finance_app_gocardless_secret_key
-  gocardless_secret_id       = var.finance_app_gocardless_secret_id
-}
+# module "finance_app" {
+#   source                     = "./finance_app"
+#   tls_secret_name            = var.tls_secret_name
+#   graphql_api_secret         = var.finance_app_graphql_api_secret
+#   db_connection_string       = var.finance_app_db_connection_string
+#   currency_converter_api_key = var.finance_app_currency_converter_api_key
+#   gocardless_secret_key      = var.finance_app_gocardless_secret_key
+#   gocardless_secret_id       = var.finance_app_gocardless_secret_id
+# }
 
 module "excalidraw" {
   source          = "./excalidraw"
@@ -741,4 +742,10 @@ module "rybbit" {
   tls_secret_name     = var.tls_secret_name
   clickhouse_password = var.clickhouse_password
   postgres_password   = var.clickhouse_postgres_password
+}
+
+module "wealthfolio" {
+  source                    = "./wealthfolio"
+  tls_secret_name           = var.tls_secret_name
+  wealthfolio_password_hash = var.wealthfolio_password_hash
 }
