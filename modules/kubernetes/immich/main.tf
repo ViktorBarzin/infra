@@ -4,7 +4,7 @@ variable "homepage_token" {}
 variable "immich_version" {
   type = string
   # Change me to upgrade
-  default = "v2.3.1"
+  default = "v2.4.1"
 }
 
 
