@@ -47,7 +47,9 @@ resource "kubernetes_deployment" "frigate" {
           "gpu" : true
         }
         container {
-          image = "ghcr.io/blakeblackshear/frigate:stable"
+          # image = "ghcr.io/blakeblackshear/frigate:stable"
+          # image = "ghcr.io/blakeblackshear/frigate:stable-tensorrt"
+          image = "ghcr.io/blakeblackshear/frigate:0.17.0-beta1-tensorrt"
           name  = "frigate"
 
           resources {
@@ -59,13 +61,6 @@ resource "kubernetes_deployment" "frigate" {
             name  = "FRIGATE_RTSP_PASSWORD"
             value = "password"
           }
-          # resources {
-          #   limits = {
-          #     cpu    = "1000m"
-          #     memory = "2Gi"
-          #   }
-          # }
-
           port {
             container_port = 5000
           }
@@ -92,6 +87,10 @@ resource "kubernetes_deployment" "frigate" {
             name       = "dshm"
             mount_path = "/dev/shm"
           }
+          volume_mount {
+            name       = "media"
+            mount_path = "/media/frigate"
+          }
           security_context {
             privileged = true
           }
@@ -100,7 +99,7 @@ resource "kubernetes_deployment" "frigate" {
         volume {
           name = "config"
           nfs {
-            path   = "/mnt/main/frigate"
+            path   = "/mnt/main/frigate/config"
             server = "10.0.10.15"
           }
         }
@@ -114,7 +113,7 @@ resource "kubernetes_deployment" "frigate" {
         volume {
           name = "media"
           nfs {
-            path   = "/mnt/main/frigate"
+            path   = "/mnt/main/frigate/media"
             server = "10.0.10.15"
           }
         }
@@ -123,7 +122,6 @@ resource "kubernetes_deployment" "frigate" {
           host_path {
             path = "/dev/dri"
             type = "Directory"
-            # type = "CharDevice"
           }
         }
       }
@@ -153,12 +151,69 @@ resource "kubernetes_service" "frigate" {
   }
 }
 
+resource "kubernetes_service" "frigate-rtsp" {
+  metadata {
+    name      = "frigate-rtsp"
+    namespace = "frigate"
+    labels = {
+      "app" = "frigate"
+    }
+  }
+
+  spec {
+    type = "NodePort" # Should always live on node1 where the gpu is
+    selector = {
+      app = "frigate"
+    }
+    port {
+      name        = "rtsp-tcp"
+      target_port = 8554
+      port        = 8554
+      protocol    = "TCP"
+      node_port   = 30554
+    }
+    port {
+      name        = "rtsp-udp"
+      target_port = 8554
+      port        = 8554
+      protocol    = "UDP"
+      node_port   = 30554
+    }
+  }
+}
+
 module "ingress" {
   source          = "../ingress_factory"
   namespace       = "frigate"
   name            = "frigate"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
+    # Websockets
+    "nginx.org/websocket-services" : "frigate"
+    "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
+    "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade"
+    "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
+
+    "nginx.ingress.kubernetes.io/limit-rps" : 50000
+    "nginx.ingress.kubernetes.io/limit-rpm" : 1000000
+    "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50000
+    "nginx.ingress.kubernetes.io/limit-rate-after" : 100000
+  }
+  rybbit_site_id = "0d4044069ff5"
+}
+
+module "ingress-internal" {
+  source                  = "../ingress_factory"
+  namespace               = "frigate"
+  name                    = "frigate-lan"
+  host                    = "frigate-lan"
+  root_domain             = "viktorbarzin.lan"
+  service_name            = "frigate"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
   extra_annotations = {
     "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
     # Websockets
