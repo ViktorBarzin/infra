@@ -187,7 +187,7 @@ serverFiles:
             annotations:
               summary: Node {{$labels.instance}} down.
           - alert: NodeHighCPUUsage
-            expr: node_load1 > 2
+            expr: node_load1{instance!="pve-node-r730"} > 2
             for: 20m
             labels:
               severity: page
@@ -200,6 +200,13 @@ serverFiles:
               severity: page
             annotations:
               summary: "Low free memory on {{ $labels.node }} - {{ $value }}"
+          - alert: SSDHighWriteRate
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "High write rate on SSD - {{ $value }}MB"
           # - name: PodStuckNotReady
           #   rules:
           #   - alert: PodStuckNotReady
@@ -344,6 +351,15 @@ serverFiles:
               summary: New tailscale client registered
 
 extraScrapeConfigs: |
+  - job_name: 'proxmox-host'
+    static_configs:
+      - targets:
+        - "192.168.1.127:9100"
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'pve-node-r730' # Giving it a friendly name
   - job_name: 'istiod'
     kubernetes_sd_configs:
     - role: endpoints
