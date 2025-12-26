@@ -39,7 +39,7 @@ resource "kubernetes_deployment" "technitium" {
     template {
       metadata {
         annotations = {
-          "diun.enable" = "true"
+          "diun.enable" = "false"
           # "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
           "diun.include_tags" = "latest"
         }
