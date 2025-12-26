@@ -1,6 +1,10 @@
 variable "tls_secret_name" {}
 variable "database_password" {}
 variable "geoapify_api_key" {}
+variable "image_version" {
+  type    = string
+  default = "0.36.3"
+}
 
 resource "kubernetes_namespace" "dawarich" {
   metadata {
@@ -54,7 +58,7 @@ resource "kubernetes_deployment" "dawarich" {
       spec {
 
         container {
-          image = "freikin/dawarich:0.36.2"
+          image = "freikin/dawarich:${var.image_version}"
           name  = "dawarich"
           port {
             name           = "http"
@@ -134,7 +138,7 @@ resource "kubernetes_deployment" "dawarich" {
           #   }
         }
         container {
-          image   = "freikin/dawarich:0.30.12"
+          image   = "freikin/dawarich:${var.image_version}"
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
           args    = ["sidekiq"]
