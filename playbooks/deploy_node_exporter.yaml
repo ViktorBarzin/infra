@@ -1,0 +1,70 @@
+---
+- name: Install Prometheus Node Exporter
+  hosts: all
+  become: true
+  vars:
+    node_exporter_version: "1.10.2"
+    architecture: "linux-amd64"
+    # Defines where the binary is downloaded/extracted
+    download_url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.{{ architecture }}.tar.gz"
+
+  tasks:
+    - name: Create node_exporter group
+      group:
+        name: node_exporter
+        state: present
+
+    - name: Create node_exporter user
+      user:
+        name: node_exporter
+        group: node_exporter
+        shell: /bin/false
+        create_home: no
+
+    - name: Download and unarchive Node Exporter
+      unarchive:
+        src: "{{ download_url }}"
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Move binary to /usr/local/bin
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.{{ architecture }}/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        owner: node_exporter
+        group: node_exporter
+        remote_src: yes
+
+    - name: Create Systemd service file
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=node_exporter
+          Group=node_exporter
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Force systemd to reread configs
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+
+    - name: Clean up temporary files
+      file:
+        path: "/tmp/node_exporter-{{ node_exporter_version }}.{{ architecture }}"
+        state: absent
