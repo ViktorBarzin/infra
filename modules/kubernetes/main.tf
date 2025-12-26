@@ -105,6 +105,7 @@ variable "tiny_tuya_api_secret" { type = string }
 variable "tiny_tuya_service_secret" { type = string }
 variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
+variable "pve_password" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
@@ -245,6 +246,7 @@ module "monitoring" {
   alertmanager_slack_api_url    = var.alertmanager_slack_api_url
   tiny_tuya_service_secret      = var.tiny_tuya_service_secret
   haos_api_token                = var.haos_api_token
+  pve_password                  = var.pve_password
 
   depends_on = [null_resource.core_services]
 }
