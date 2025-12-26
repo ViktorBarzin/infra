@@ -45,7 +45,7 @@ resource "kubernetes_deployment" "linkwarden" {
           app = "linkwarden"
         }
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false"
           "diun.include_tags" = "latest"
         }
       }
