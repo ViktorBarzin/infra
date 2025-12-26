@@ -734,10 +734,10 @@ module "nvidia" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "ebook2audiobook" {
-  source          = "./ebook2audiobook"
-  tls_secret_name = var.tls_secret_name
-}
+# module "ebook2audiobook" {
+#   source          = "./ebook2audiobook"
+#   tls_secret_name = var.tls_secret_name
+# }
 
 module "rybbit" {
   source              = "./rybbit"
