@@ -70,6 +70,8 @@ alertmanager:
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
+# prometheus-node-exporter:
+#   enabled: true
 server:
   # Enable me to delete metrics
   extraFlags:
@@ -77,6 +79,7 @@ server:
     - "web.enable-lifecycle"
     - "storage.tsdb.allow-overlapping-blocks"
     # - "storage.tsdb.retention.size=1GB"
+    - "storage.tsdb.wal-compression"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-iscsi-pvc
@@ -85,6 +88,15 @@ server:
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
+  extraVolumes:
+      - name: prometheus-wal-tmpfs
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+  # 2. Mount it over the WAL directory
+  extraVolumeMounts:
+    - name: prometheus-wal-tmpfs
+      mountPath: /data/wal  # Standard path for the chart
   ingress:
     enabled: true
     annotations:
@@ -355,6 +367,8 @@ extraScrapeConfigs: |
     static_configs:
       - targets:
         - "192.168.1.127:9100"
+        labels:
+          node: 'pve-node-r730'
     metrics_path: '/metrics'
     relabel_configs:
       - source_labels: [__address__]
