@@ -24,7 +24,7 @@ resource "kubernetes_deployment" "matrix" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0
     selector {
       match_labels = {
         app = "matrix"
