@@ -17,10 +17,6 @@ module "tls_secret" {
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
-    # Container comms are broken - seems due to tls
-    # labels = {
-    #   "istio-injection" : "enabled"
-    # }
   }
 }
 
@@ -43,56 +39,217 @@ resource "kubernetes_persistent_volume" "immich-postgresql" {
   }
 }
 
-resource "kubernetes_persistent_volume" "immich" {
+resource "kubernetes_deployment" "immich_server" {
   metadata {
-    name = "immich"
-  }
-  spec {
-    capacity = {
-      "storage" = "100Gi"
+    name      = "immich-server"
+    namespace = "immich"
+
+    labels = {
+      app = "immich-server"
     }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/immich/immich"
-        server = "10.0.10.15"
+  }
+
+  spec {
+    replicas                  = 1
+    progress_deadline_seconds = 600
+
+    selector {
+      match_labels = {
+        app = "immich-server"
+      }
+    }
+
+    strategy {
+      type = "RollingUpdate"
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "immich-server"
+        }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
+      }
+
+      spec {
+        container {
+          name  = "immich-server"
+          image = "ghcr.io/immich-app/immich-server:${var.immich_version}"
+
+          port {
+            name           = "http"
+            container_port = 2283
+            protocol       = "TCP"
+          }
+
+          env {
+            name  = "DB_DATABASE_NAME"
+            value = "immich"
+          }
+          env {
+            name  = "DB_HOSTNAME"
+            value = "immich-postgresql.immich.svc.cluster.local"
+          }
+          env {
+            name  = "DB_USERNAME"
+            value = "immich"
+          }
+          env {
+            name  = "DB_PASSWORD"
+            value = var.postgresql_password
+          }
+          env {
+            name  = "IMMICH_MACHINE_LEARNING_URL"
+            value = "http://immich-machine-learning:3003"
+          }
+          env {
+            name  = "REDIS_HOSTNAME"
+            value = "redis.redis.svc.cluster.local"
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            initial_delay_seconds = 0
+            period_seconds        = 10
+            timeout_seconds       = 1
+            failure_threshold     = 3
+            success_threshold     = 1
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 1
+            failure_threshold = 3
+            success_threshold = 1
+          }
+
+          startup_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 1
+            failure_threshold = 30
+            success_threshold = 1
+          }
+
+          # volume_mount {
+          #   name       = "library-old"
+          #   mount_path = "/usr/src/app/upload"
+          # }
+
+          # Mount them 1 by 1 to enable thumbs in ssd
+          volume_mount {
+            name       = "backups"
+            mount_path = "/usr/src/app/upload/backups"
+          }
+          volume_mount {
+            name       = "encoded-video"
+            mount_path = "/usr/src/app/upload/encoded-video"
+          }
+          volume_mount {
+            name       = "library"
+            mount_path = "/usr/src/app/upload/library"
+          }
+          volume_mount {
+            name       = "profile"
+            mount_path = "/usr/src/app/upload/profile"
+          }
+          volume_mount {
+            name       = "thumbs"
+            mount_path = "/usr/src/app/upload/thumbs"
+          }
+          volume_mount {
+            name       = "upload"
+            mount_path = "/usr/src/app/upload/upload"
+          }
+        }
+
+        # volume {
+        #   name = "library-old"
+        #   nfs {
+        #     server = "10.0.10.15"
+        #     path   = "/mnt/main/immich/immich/"
+        #   }
+        # }
+
+        volume {
+          name = "backups"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/backups"
+          }
+        }
+        volume {
+          name = "encoded-video"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/encoded-video"
+          }
+        }
+        volume {
+          name = "library"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/library"
+          }
+        }
+        volume {
+          name = "profile"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/profile"
+          }
+        }
+        volume {
+          name = "thumbs"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/ssd/immich/thumbs"
+          }
+        }
+        volume {
+          name = "upload"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/upload"
+          }
+        }
       }
     }
   }
 }
 
-resource "kubernetes_persistent_volume" "immich-typesense-tsdata" {
+resource "kubernetes_service" "immich-server" {
   metadata {
-    name = "immich-typesense-tsdata"
-  }
-  spec {
-    capacity = {
-      "storage" = "5Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/immich/typesense-tsdata"
-        server = "10.0.10.15"
-      }
-    }
-  }
-}
-resource "kubernetes_persistent_volume_claim" "immich" {
-  metadata {
-    name      = "immich"
+    name      = "immich-server"
     namespace = "immich"
-  }
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = {
-        "storage" = "20Gi"
-      }
+    labels = {
+      "app" = "immich-server"
     }
-    volume_name = "immich"
+  }
+
+  spec {
+    selector = {
+      app = "immich-server"
+    }
+    port {
+      port = 2283
+    }
   }
 }
+
 resource "kubernetes_deployment" "immich-postgres" {
   metadata {
     name      = "immich-postgresql"
@@ -178,18 +335,18 @@ resource "kubernetes_service" "immich-postgresql" {
 
 
 # If you're having issuewith typesens container exiting prematurely, increase liveliness check
-resource "helm_release" "immich" {
-  namespace = "immich"
-  name      = "immich"
+# resource "helm_release" "immich" {
+#   namespace = "immich"
+#   name      = "immich"
 
-  repository = "https://immich-app.github.io/immich-charts"
-  chart      = "immich"
-  atomic     = true
-  version    = "0.9.3"
-  timeout    = 6000
+#   repository = "https://immich-app.github.io/immich-charts"
+#   chart      = "immich"
+#   atomic     = true
+#   version    = "0.9.3"
+#   timeout    = 6000
 
-  values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password, version = var.immich_version })]
-}
+#   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password, version = var.immich_version })]
+# }
 
 # The helm one cannot be customized to use affinity settings to use the gpu node
 resource "kubernetes_deployment" "immich-machine-learning" {
