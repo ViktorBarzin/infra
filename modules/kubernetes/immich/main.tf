@@ -20,25 +20,6 @@ resource "kubernetes_namespace" "immich" {
   }
 }
 
-resource "kubernetes_persistent_volume" "immich-postgresql" {
-  metadata {
-    name = "immich-postgresql"
-  }
-  spec {
-    capacity = {
-      "storage" = "10Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      nfs {
-        # path   = "/mnt/main/immich/data-immich-postgresql"
-        path   = "/mnt/ssd/immich/data-immich-postgresql"
-        server = "10.0.10.15"
-      }
-    }
-  }
-}
-
 resource "kubernetes_deployment" "immich_server" {
   metadata {
     name      = "immich-server"
