@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           app = "paperless-ngx"
         }
         annotations = {
-          "diun.enable"       = "true"
+          "diun.enable"       = "false"
           "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
       }
