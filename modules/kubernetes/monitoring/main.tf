@@ -13,6 +13,7 @@ variable "alertmanager_slack_api_url" {}
 variable "tiny_tuya_service_secret" { type = string }
 variable "haos_api_token" { type = string }
 variable "pve_password" { type = string }
+variable "grafana_db_password" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -222,7 +223,7 @@ resource "helm_release" "grafana" {
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"
 
-  values = [file("${path.module}/grafana_chart_values.yaml")]
+  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password })]
 }
 
 resource "kubernetes_cron_job_v1" "monitor_prom" {
