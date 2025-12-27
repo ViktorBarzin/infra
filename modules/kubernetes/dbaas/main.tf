@@ -380,7 +380,7 @@ resource "kubernetes_deployment" "phpmyadmin" {
       spec {
         container {
           name  = "phpmyadmin"
-          image = "phpmyadmin/phpmyadmin"
+          image = "phpmyadmin/phpmyadmin:5.2.3"
           port {
             container_port = 80
           }
