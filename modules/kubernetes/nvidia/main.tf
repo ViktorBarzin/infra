@@ -15,7 +15,7 @@ resource "kubernetes_namespace" "nvidia" {
   }
 }
 
-# Apply to operator with:
+# [not needed anymore; part of the chart values] Apply to operator with:
 # kubectl patch clusterpolicies.nvidia.com/cluster-policy -n gpu-operator --type merge -p '{"spec": {"devicePlugin": {"config": {"name": "time-slicing-config", "default": "any"}}}}'
 
 resource "kubernetes_config_map" "time_slicing_config" {
@@ -37,6 +37,7 @@ resource "kubernetes_config_map" "time_slicing_config" {
               replicas: 10
     EOF
   }
+  depends_on = [kubernetes_namespace.nvidia]
 }
 
 resource "helm_release" "nvidia-gpu-operator" {
@@ -49,7 +50,8 @@ resource "helm_release" "nvidia-gpu-operator" {
   #   version    = "0.9.3"
   timeout = 6000
 
-  values = [templatefile("${path.module}/values.yaml", {})]
+  values     = [templatefile("${path.module}/values.yaml", {})]
+  depends_on = [kubernetes_config_map.time_slicing_config]
 }
 
 resource "kubernetes_deployment" "nvidia-exporter" {
@@ -83,9 +85,6 @@ resource "kubernetes_deployment" "nvidia-exporter" {
           port {
             container_port = 9400
           }
-          port {
-            container_port = 9400
-          }
           security_context {
             privileged = true
             capabilities {
@@ -101,6 +100,7 @@ resource "kubernetes_deployment" "nvidia-exporter" {
       }
     }
   }
+  depends_on = [helm_release.nvidia-gpu-operator]
 }
 
 resource "kubernetes_service" "nvidia-exporter" {

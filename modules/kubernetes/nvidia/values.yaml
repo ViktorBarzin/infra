@@ -13,3 +13,7 @@ driver:
   version: "570.195.03" # CUDA 12.8
   upgradePolicy:
     autoUpgrade: false
+
+  devicePlugin:
+    config:
+      name: time-slicing-config
