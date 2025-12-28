@@ -93,6 +93,7 @@ resource "kubernetes_deployment" "pgbouncer" {
       }
     }
   }
+  depends_on = [kubernetes_secret.pgbouncer_auth]
 }
 
 # --- 4️⃣ Service ---
