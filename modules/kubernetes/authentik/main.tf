@@ -22,9 +22,10 @@ resource "helm_release" "authentik" {
 
   repository = "https://charts.goauthentik.io/"
   chart      = "authentik"
-  version    = "2025.10.3"
-  atomic     = true
-  timeout    = 6000
+  # version    = "2025.8.1"
+  version = "2025.10.3"
+  atomic  = true
+  timeout = 6000
 
   values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key })]
 }
@@ -48,17 +49,6 @@ resource "kubernetes_ingress_v1" "authentik" {
       host = "authentik.viktorbarzin.me"
       http {
         path {
-          path = "/"
-          backend {
-            service {
-              name = "goauthentik-server"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-        path {
           path      = "/outpost.goauthentik.io"
           path_type = "Prefix"
           backend {
@@ -66,6 +56,18 @@ resource "kubernetes_ingress_v1" "authentik" {
               name = "ak-outpost-authentik-embedded-outpost"
               port {
                 number = 9000
+              }
+            }
+          }
+        }
+        path {
+          path      = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = "goauthentik-server"
+              port {
+                number = 80
               }
             }
           }
