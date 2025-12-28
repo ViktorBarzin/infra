@@ -168,15 +168,89 @@ serverFiles:
   #           targets: "alertmanager.viktorbarzin.lan"
   alerting_rules.yml:
     groups:
-      - name: Cluster
+      - name: R730 Host
         rules:
-          - alert: LowVoltage
-            expr: ups_upsInputVoltage < 205
+          - alert: HighCPUTemperature
+            expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 75
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "High CPU Temperature: {{ $value }}."
+          - alert: SSDHighWriteRate
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: "Low input voltage - {{ $value }}"
+              summary: "High write rate on SSD - {{ $value }}MB"
+          - alert: HDDHighWriteRate
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 # sdc is 11TB HDD; value in MB
+            for: 20m
+            labels:
+              severity: page
+            annotations:
+              summary: "High write rate on HDD - {{ $value }}MB"
+          - alert: NoiDRACData
+            expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
+          - alert: HighRAMUsage
+            expr: clamp_min((1 - (node_memory_MemAvailable_bytes{instance="pve-node-r730"} / node_memory_MemTotal_bytes{instance="pve-node-r730"})) * 100, 0) > 90
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "High memory usage: {{ $value }}. Risk of OOM-ing."
+          - alert: HighSystemLoad
+            expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "High system load: {{ $value }}. Can signal runaway process."
+          - alert: DockerRegistryDown
+            expr: (registry_process_start_time_seconds or on() vector(0)) == 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "Docker registry is down"
+      - name: Nvidia Tesla T4 GPU
+        rules:
+          - alert: HighGPUTemp
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
+            for: 1m
+            labels:
+              severity: page
+            annotations:
+              summary: "High GPU Temperature {{$value}}"
+          - alert: HighPowerUsage
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 50
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "High GPU power usage {{$value}}"
+          - alert: HighUtilization
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_UTIL > 50
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "High GPU utilization {{$value}}"
+          - alert: HighMemoryUsage
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 12
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "High VRAM usage {{$value}}"
+      - name: Power
+        rules:
           - alert: OnBattery
             expr: ups_upsSecondsOnBattery > 0
             for: 30m
@@ -184,13 +258,35 @@ serverFiles:
               severity: critical
             annotations:
               summary: "UPS on battery for {{ $value }} seconds"
-          - alert: LowUPBattery
+          - alert: LowUPSBattery
             expr: ups_upsEstimatedMinutesRemaining < 25 and on(instance) ups_upsInputVoltage < 150
             for: 1m
             labels:
               severity: critical
             annotations:
               summary: "UPS battery running out - {{ $value }} minutes remaining"
+          - alert: PowerOutage
+            expr: ups_upsInputVoltage < 150
+            labels:
+              severity: page
+            annotations:
+              summary: Power voltage on a power supply is {{ $value }} indicating power outage.
+          - alert: HighPowerUsage
+            expr: r730_idrac_idrac_power_control_consumed_watts > 200
+            for: 60m
+            labels:
+              severity: page
+            annotations:
+              summary: "High server power usage - {{$value}} watts"
+          - alert: UsingInverterEnergyForTooLong
+            expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
+            for: 24h
+            labels:
+              severity: page
+            annotations:
+              summary: "Running on inverter for too long: {{ $value }}%. Maybe switching to grid does not work."
+      - name: Cluster
+        rules:
           - alert: NodeDown
             expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
             for: 1m
@@ -212,13 +308,6 @@ serverFiles:
               severity: page
             annotations:
               summary: "Low free memory on {{ $labels.node }} - {{ $value }}"
-          - alert: SSDHighWriteRate
-            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: "High write rate on SSD - {{ $value }}MB"
           # - name: PodStuckNotReady
           #   rules:
           #   - alert: PodStuckNotReady
@@ -235,26 +324,6 @@ serverFiles:
           #    severity: page
           #  annotations:
           #    summary: Number of ready pods in {{ $labels.deployment }} is less than what is defined in spec.
-          - alert: PowerOutage
-            expr: ups_upsInputVoltage < 150
-            labels:
-              severity: page
-            annotations:
-              summary: Power voltage on a power supply is {{ $value }} indicating power outage.
-          - alert: HighGPUTemp
-            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
-            for: 1m
-            labels:
-              severity: page
-            annotations:
-              summary: "High GPU Temperature {{$value}}"
-          - alert: HighPowerUsage
-            expr: r730_idrac_idrac_power_control_consumed_watts > 200
-            for: 60m
-            labels:
-              severity: page
-            annotations:
-              summary: "High server power usage - {{$value}} watts"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
@@ -262,13 +331,6 @@ serverFiles:
               severity: page
             annotations:
               summary: No node load data. Can signal that prometheus is not scraping
-          - alert: NoiDRACData
-            expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
-            for: 30m
-            labels:
-              severity: page
-            annotations:
-              summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
           - alert: HighIngressPermissionErrors
             expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
             for: 20m
@@ -283,20 +345,6 @@ serverFiles:
               severity: page
             annotations:
               summary: "High server failiure rate for {{ $labels.ingress }}: {{ $value }}%."
-          - alert: UsingInverterEnergyForTooLong
-            expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
-            for: 24h
-            labels:
-              severity: page
-            annotations:
-              summary: "Running on inverter for too long: {{ $value }}%. Maybe switching to grid does not work."
-          - alert: DockerRegistryDown
-            expr: (registry_process_start_time_seconds or on() vector(0)) == 0
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: "Docker registry is down"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
