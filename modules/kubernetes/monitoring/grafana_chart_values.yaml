@@ -1,7 +1,7 @@
 deploymentStrategy:
   type: Recreate
 persistence:
-  enabled: true
+  enabled: false # using external mysql
   existingClaim: "grafana-pvc"
 ingress:
   enabled: "true"
@@ -39,6 +39,7 @@ dashboardProviders:
       path: "/var/lib/grafana/dashboards/default"
 env:
   GF_DATABASE_PASSWORD:  "${db_password}"
+  GF_SERVER_ROOT_URL: https://grafana.viktorbarzin.me
 
 grafana.ini:
   database:
