@@ -1,10 +1,8 @@
 # Contents for cloudflare account
 variable "cloudflare_api_key" {}
 variable "cloudflare_email" {}
-variable "cloudflare_proxied_names" {}
-variable "cloudflare_non_proxied_names" {
-  type = list(string)
-}
+variable "cloudflare_proxied_names" { type = list(string) }
+variable "cloudflare_non_proxied_names" { type = list(string) }
 variable "cloudflare_zone_id" {
   description = "Zone ID for your domain"
   type        = string
@@ -36,6 +34,18 @@ provider "cloudflare" {
   email   = var.cloudflare_email
 }
 
+
+locals {
+  cloudflare_proxied_names_map = {
+    for h in var.cloudflare_proxied_names :
+    h => h
+  }
+  cloudflare_non_proxied_names_map = {
+    for h in var.cloudflare_non_proxied_names :
+    h => h
+  }
+}
+
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
   account_id = var.cloudflare_account_id
   tunnel_id  = var.cloudflare_tunnel_id
@@ -62,9 +72,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
 }
 
 resource "cloudflare_record" "dns_record" {
-  count   = length(var.cloudflare_proxied_names)
+  for_each = local.cloudflare_proxied_names_map
+  # count   = length(var.cloudflare_proxied_names)
   content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
-  name    = var.cloudflare_proxied_names[count.index]
+  # name    = var.cloudflare_proxied_names[count.index]
+  name    = each.key
   proxied = true
   ttl     = 1
   type    = "CNAME"
@@ -72,10 +84,12 @@ resource "cloudflare_record" "dns_record" {
 }
 
 resource "cloudflare_record" "non_proxied_dns_record" {
-  count = length(var.cloudflare_non_proxied_names)
+  for_each = local.cloudflare_non_proxied_names_map
+  # count = length(var.cloudflare_non_proxied_names)
   # content = var.non_proxied_names[count.index].ip
   content = var.public_ip
-  name    = var.cloudflare_non_proxied_names[count.index]
+  # name    = var.cloudflare_non_proxied_names[count.index]
+  name    = each.key
   proxied = false
   ttl     = 1
   type    = "A"
