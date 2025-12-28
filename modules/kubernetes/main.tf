@@ -143,7 +143,11 @@ locals {
 
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
-  depends_on = [module.metallb]
+  depends_on = [
+    module.metallb, module.dbaas, module.monitoring, module.technitium, module.vaultwarden, module.reverse-proxy,
+    module.redis, module.nginx-ingress, module.crowdsec, module.cloudflared, module.metrics-server, module.authentik,
+    module.nvidia,
+  ]
 }
 
 module "blog" {
@@ -172,8 +176,9 @@ module "dbaas" {
 }
 
 module "descheduler" {
-  source   = "./descheduler"
-  for_each = contains(local.active_modules, "descheduler") ? { descheduler = true } : {}
+  source     = "./descheduler"
+  for_each   = contains(local.active_modules, "descheduler") ? { descheduler = true } : {}
+  depends_on = [null_resource.core_services]
 }
 
 # module "dnscrypt" {
@@ -263,8 +268,6 @@ module "monitoring" {
   haos_api_token                = var.haos_api_token
   pve_password                  = var.pve_password
   grafana_db_password           = var.grafana_db_password
-
-  depends_on = [null_resource.core_services]
 }
 
 # module "oauth" {
@@ -305,17 +308,23 @@ module "vault" {
   source          = "./vault"
   for_each        = contains(local.active_modules, "vault") ? { vault = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "reloader" {
   source   = "./reloader"
   for_each = contains(local.active_modules, "reloader") ? { reloader = true } : {}
+
+  depends_on = [null_resource.core_services]
 }
 
 module "shadowsocks" {
   source   = "./shadowsocks"
   for_each = contains(local.active_modules, "shadowsocks") ? { shadowsocks = true } : {}
   password = var.shadowsocks_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "city-guesser" {
@@ -339,6 +348,8 @@ module "url" {
   geolite_license_key = var.url_shortener_geolite_license_key
   api_key             = var.url_shortener_api_key
   mysql_password      = var.url_shortener_mysql_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "webhook_handler" {
@@ -363,6 +374,8 @@ module "wireguard" {
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
   firewall_sh     = var.wireguard_firewall_sh
+
+  depends_on = [null_resource.core_services]
 }
 
 # module "home_assistant" {
@@ -386,6 +399,8 @@ module "excalidraw" {
   source          = "./excalidraw"
   for_each        = contains(local.active_modules, "excalidraw") ? { excalidraw = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "infra-maintenance" {
@@ -400,6 +415,8 @@ module "travel_blog" {
   source          = "./travel_blog"
   for_each        = contains(local.active_modules, "travel_blog") ? { travel_blog = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "technitium" {
@@ -415,12 +432,16 @@ module "headscale" {
   tls_secret_name  = var.tls_secret_name
   headscale_config = var.headscale_config
   headscale_acl    = var.headscale_acl
+
+  depends_on = [null_resource.core_services]
 }
 
 module "dashy" {
   source          = "./dashy"
   for_each        = contains(local.active_modules, "dashy") ? { dashy = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 # module "localai" {
@@ -448,6 +469,8 @@ module "send" {
   source          = "./send"
   for_each        = contains(local.active_modules, "send") ? { send = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "redis" {
@@ -460,6 +483,8 @@ module "ytdlp" {
   source          = "./youtube_dl"
   for_each        = contains(local.active_modules, "ytdlp") ? { ytdlp = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "immich" {
@@ -469,6 +494,8 @@ module "immich" {
   postgresql_password = var.immich_postgresql_password
   frame_api_key       = var.immich_frame_api_key
   homepage_token      = var.homepage_credentials["immich"]["token"]
+
+  depends_on = [null_resource.core_services]
 }
 
 module "nginx-ingress" {
@@ -505,6 +532,8 @@ module "uptime-kuma" {
   source          = "./uptime-kuma"
   for_each        = contains(local.active_modules, "uptime-kuma") ? { uptime-kuma = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "calibre" {
@@ -513,6 +542,8 @@ module "calibre" {
   tls_secret_name   = var.tls_secret_name
   homepage_username = var.homepage_credentials["calibre-web"]["username"]
   homepage_password = var.homepage_credentials["calibre-web"]["password"]
+
+  depends_on = [null_resource.core_services]
 }
 
 # Audiobooks are served using audiobookshelf; still looking for a usecawe for JF
@@ -525,12 +556,16 @@ module "audiobookshelf" {
   source          = "./audiobookshelf"
   for_each        = contains(local.active_modules, "audiobookshelf") ? { audiobookshelf = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "frigate" {
   source          = "./frigate"
   for_each        = contains(local.active_modules, "frigate") ? { frigate = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 # TODO: Currently very unstable and half of the functionality does not work:
@@ -586,18 +621,24 @@ module "paperless-ngx" {
   # homepage_token  = var.homepage_credentials["paperless-ngx"]["token"]
   homepage_username = var.homepage_credentials["paperless-ngx"]["username"]
   homepage_password = var.homepage_credentials["paperless-ngx"]["password"]
+
+  depends_on = [null_resource.core_services]
 }
 
 module "jsoncrack" {
   source          = "./jsoncrack"
   for_each        = contains(local.active_modules, "jsoncrack") ? { jsoncrack = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "servarr" {
   source          = "./servarr"
   for_each        = contains(local.active_modules, "servarr") ? { servarr = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 # module "dnscat2" {
@@ -609,18 +650,24 @@ module "ollama" { # Disabled as it requires too much resources...
   source          = "./ollama"
   for_each        = contains(local.active_modules, "ollama") ? { ollama = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "ntfy" {
   source          = "./ntfy"
   for_each        = contains(local.active_modules, "ntfy") ? { ntfy = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "cyberchef" {
   source          = "./cyberchef"
   for_each        = contains(local.active_modules, "cyberchef") ? { cyberchef = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "diun" {
@@ -629,12 +676,16 @@ module "diun" {
   tls_secret_name = var.tls_secret_name
   diun_nfty_token = var.diun_nfty_token
   diun_slack_url  = var.diun_slack_url
+
+  depends_on = [null_resource.core_services]
 }
 
 module "meshcentral" {
   source          = "./meshcentral"
   for_each        = contains(local.active_modules, "meshcentral") ? { meshcentral = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 # module "netbox" {
 #   source          = "./netbox"
@@ -646,18 +697,24 @@ module "nextcloud" {
   for_each        = contains(local.active_modules, "nextcloud") ? { nextcloud = true } : {}
   tls_secret_name = var.tls_secret_name
   db_password     = var.nextcloud_db_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "homepage" {
   source          = "./homepage"
   for_each        = contains(local.active_modules, "homepage") ? { homepage = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "matrix" {
   source          = "./matrix"
   for_each        = contains(local.active_modules, "matrix") ? { matrix = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "authentik" {
@@ -675,12 +732,16 @@ module "linkwarden" {
   postgresql_password     = var.linkwarden_postgresql_password
   authentik_client_id     = var.linkwarden_authentik_client_id
   authentik_client_secret = var.linkwarden_authentik_client_secret
+
+  depends_on = [null_resource.core_services]
 }
 
 module "actualbudget" {
   source          = "./actualbudget"
   for_each        = contains(local.active_modules, "actualbudget") ? { actualbudget = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "owntracks" {
@@ -688,6 +749,8 @@ module "owntracks" {
   for_each              = contains(local.active_modules, "owntracks") ? { owntracks = true } : {}
   tls_secret_name       = var.tls_secret_name
   owntracks_credentials = var.owntracks_credentials
+
+  depends_on = [null_resource.core_services]
 }
 
 module "dawarich" {
@@ -696,12 +759,16 @@ module "dawarich" {
   tls_secret_name   = var.tls_secret_name
   database_password = var.dawarich_database_password
   geoapify_api_key  = var.geoapify_api_key
+
+  depends_on = [null_resource.core_services]
 }
 
 module "changedetection" {
   source          = "./changedetection"
   for_each        = contains(local.active_modules, "changedetection") ? { changedetection = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 module "tandoor" {
   source                    = "./tandoor"
@@ -709,6 +776,8 @@ module "tandoor" {
   tls_secret_name           = var.tls_secret_name
   tandoor_database_password = var.tandoor_database_password
   tandoor_email_password    = var.tandoor_email_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "n8n" {
@@ -716,6 +785,8 @@ module "n8n" {
   for_each            = contains(local.active_modules, "n8n") ? { n8n = true } : {}
   tls_secret_name     = var.tls_secret_name
   postgresql_password = var.n8n_postgresql_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "real-estate-crawler" {
@@ -724,12 +795,16 @@ module "real-estate-crawler" {
   tls_secret_name       = var.tls_secret_name
   db_password           = var.realestate_crawler_db_password
   notification_settings = var.realestate_crawler_notification_settings
+
+  depends_on = [null_resource.core_services]
 }
 
 module "tor-proxy" {
   source          = "./tor-proxy"
   for_each        = contains(local.active_modules, "tor-proxy") ? { tor-proxy = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 # module "kured" {
@@ -744,6 +819,8 @@ module "onlyoffice" {
   tls_secret_name = var.tls_secret_name
   db_password     = var.onlyoffice_db_password
   jwt_token       = var.onlyoffice_jwt_token
+
+  depends_on = [null_resource.core_services]
 }
 
 
@@ -751,6 +828,8 @@ module "forgejo" {
   source          = "./forgejo"
   for_each        = contains(local.active_modules, "forgejo") ? { forgejo = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "xray" {
@@ -761,24 +840,32 @@ module "xray" {
   xray_reality_clients     = var.xray_reality_clients
   xray_reality_private_key = var.xray_reality_private_key
   xray_reality_short_ids   = var.xray_reality_short_ids
+
+  depends_on = [null_resource.core_services]
 }
 
 module "freshrss" {
   source          = "./freshrss"
   for_each        = contains(local.active_modules, "freshrss") ? { freshrss = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "navidrome" {
   source          = "./navidrome"
   for_each        = contains(local.active_modules, "navidrome") ? { navidrome = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "networking-toolbox" {
   source          = "./networking-toolbox"
   for_each        = contains(local.active_modules, "networking-toolbox") ? { networking-toolbox = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "tuya-bridge" {
@@ -790,6 +877,8 @@ module "tuya-bridge" {
   tiny_tuya_api_secret     = var.tiny_tuya_api_secret
   tiny_tuya_service_secret = var.tiny_tuya_service_secret
   slack_url                = var.tiny_tuya_slack_url
+
+  depends_on = [null_resource.core_services]
 }
 
 
@@ -797,11 +886,15 @@ module "stirling-pdf" {
   source          = "./stirling-pdf"
   for_each        = contains(local.active_modules, "stirling-pdf") ? { stirling-pdf = true } : {}
   tls_secret_name = var.tls_secret_name
+
+  depends_on = [null_resource.core_services]
 }
 
 module "isponsorblocktv" {
   source   = "./isponsorblocktv"
   for_each = contains(local.active_modules, "isponsorblocktv") ? { isponsorblocktv = true } : {}
+
+  depends_on = [null_resource.core_services]
 }
 
 module "nvidia" {
@@ -821,6 +914,8 @@ module "rybbit" {
   tls_secret_name     = var.tls_secret_name
   clickhouse_password = var.clickhouse_password
   postgres_password   = var.clickhouse_postgres_password
+
+  depends_on = [null_resource.core_services]
 }
 
 module "wealthfolio" {
@@ -828,4 +923,6 @@ module "wealthfolio" {
   for_each                  = contains(local.active_modules, "wealthfolio") ? { wealthfolio = true } : {}
   tls_secret_name           = var.tls_secret_name
   wealthfolio_password_hash = var.wealthfolio_password_hash
+
+  depends_on = [null_resource.core_services]
 }
