@@ -125,14 +125,17 @@ locals {
     1 : ["wireguard", "technitium", "headscale", "nginx-ingress", "xray", "authentik", "cloudflare", "authelia"], # Critical connectivity services
     2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec"],                # Storage and other db services
     3 : ["k8s-dashboard", "reverse-proxy"],                                                                       # Cluster admin services
-    4 : ["mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud"],    # Nice to have services
+    4 : [
+      "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
+      "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget"
+    ], # Activel used services
     # Optional services
     5 : [
-      "blog", "descheduler", "drone", "f1-stream", "hackmd", "kms", "privatebin", "vault", "reloader", "city-guesser", "echo"
-      , "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "isponsorblocktv", "stirling-pdf",
-      "networking-toolbox", "navidrome", "freshrss", "forgejo", "onlyoffice", "tor-proxy", "real-estate-crawler", "n8n", "tnadoor",
-      "changedetection", "actualbudget", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "calibre", "tandoor"
+      "blog", "descheduler", "drone", "hackmd", "kms", "privatebin", "vault", "reloader", "city-guesser", "echo",
+      "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
+      "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
+      "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor"
     ],
   }
   active_modules = distinct(flatten([
