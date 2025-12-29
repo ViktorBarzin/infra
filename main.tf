@@ -225,7 +225,8 @@ module "docker-registry-template" {
         )
       )
     ),
-    "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect /etc/docker/registry/config.yml' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '0 * * * * /usr/bin/docker restart registry' ) | crontab -",
     "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2"
   ]
 }
