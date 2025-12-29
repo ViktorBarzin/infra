@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "servarr" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "servarr"
+  namespace       = kubernetes_namespace.servarr.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 

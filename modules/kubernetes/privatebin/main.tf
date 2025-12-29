@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "privatebin" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "privatebin"
+  namespace       = kubernetes_namespace.privatebin.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "privatebin" {
   metadata {
     name      = "privatebin"
-    namespace = "privatebin"
+    namespace = kubernetes_namespace.privatebin.metadata[0].name
     labels = {
       app                             = "privatebin"
       "kubernetes.io/cluster-service" = "true"
@@ -71,7 +71,7 @@ resource "kubernetes_deployment" "privatebin" {
 resource "kubernetes_service" "privatebin" {
   metadata {
     name      = "privatebin"
-    namespace = "privatebin"
+    namespace = kubernetes_namespace.privatebin.metadata[0].name
     labels = {
       "app" = "privatebin"
     }
@@ -90,7 +90,7 @@ resource "kubernetes_service" "privatebin" {
 
 module "ingress" {
   source                           = "../ingress_factory"
-  namespace                        = "privatebin"
+  namespace                        = kubernetes_namespace.privatebin.metadata[0].name
   name                             = "privatebin"
   host                             = "pb"
   tls_secret_name                  = var.tls_secret_name

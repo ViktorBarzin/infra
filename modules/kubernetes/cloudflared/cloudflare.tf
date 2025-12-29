@@ -72,11 +72,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
 }
 
 resource "cloudflare_record" "dns_record" {
-  for_each = local.cloudflare_proxied_names_map
-  # count   = length(var.cloudflare_proxied_names)
+  # for_each = local.cloudflare_proxied_names_map
+  count   = length(var.cloudflare_proxied_names)
   content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
-  # name    = var.cloudflare_proxied_names[count.index]
-  name    = each.key
+  name    = var.cloudflare_proxied_names[count.index]
+  # name    = each.key
   proxied = true
   ttl     = 1
   type    = "CNAME"
@@ -84,12 +84,12 @@ resource "cloudflare_record" "dns_record" {
 }
 
 resource "cloudflare_record" "non_proxied_dns_record" {
-  for_each = local.cloudflare_non_proxied_names_map
-  # count = length(var.cloudflare_non_proxied_names)
+  # for_each = local.cloudflare_non_proxied_names_map
+  count = length(var.cloudflare_non_proxied_names)
   # content = var.non_proxied_names[count.index].ip
   content = var.public_ip
-  # name    = var.cloudflare_non_proxied_names[count.index]
-  name    = each.key
+  name    = var.cloudflare_non_proxied_names[count.index]
+  # name    = each.key
   proxied = false
   ttl     = 1
   type    = "A"

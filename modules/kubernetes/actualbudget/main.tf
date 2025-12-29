@@ -18,7 +18,7 @@ resource "kubernetes_namespace" "actualbudget" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "actualbudget"
+  namespace       = kubernetes_namespace.actualbudget
   tls_secret_name = var.tls_secret_name
 }
 
@@ -29,6 +29,7 @@ module "viktor" {
   name            = "viktor"
   tag             = "edge"
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.actualbudget]
 }
 
 # https://budget-anca.viktorbarzin.me/
@@ -37,4 +38,5 @@ module "anca" {
   name            = "anca"
   tag             = "edge"
   tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.actualbudget]
 }

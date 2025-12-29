@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "networking-toolbox" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "networking-toolbox"
+  namespace       = kubernetes_namespace.networking-toolbox.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "networking-toolbox" {
   metadata {
     name      = "networking-toolbox"
-    namespace = "networking-toolbox"
+    namespace = kubernetes_namespace.networking-toolbox.metadata[0].name
     labels = {
       app = "networking-toolbox"
     }
@@ -52,7 +52,7 @@ resource "kubernetes_deployment" "networking-toolbox" {
 resource "kubernetes_service" "networking-toolbox" {
   metadata {
     name      = "networking-toolbox"
-    namespace = "networking-toolbox"
+    namespace = kubernetes_namespace.networking-toolbox.metadata[0].name
     labels = {
       "app" = "networking-toolbox"
     }
@@ -72,7 +72,7 @@ resource "kubernetes_service" "networking-toolbox" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "networking-toolbox"
+  namespace       = kubernetes_namespace.networking-toolbox.metadata[0].name
   name            = "networking-toolbox"
   tls_secret_name = var.tls_secret_name
   protected       = true

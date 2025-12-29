@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "frigate" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "frigate"
+  namespace       = kubernetes_namespace.frigate.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "frigate" {
   metadata {
     name      = "frigate"
-    namespace = "frigate"
+    namespace = kubernetes_namespace.frigate.metadata[0].name
     labels = {
       app = "frigate"
     }
@@ -132,7 +132,7 @@ resource "kubernetes_deployment" "frigate" {
 resource "kubernetes_service" "frigate" {
   metadata {
     name      = "frigate"
-    namespace = "frigate"
+    namespace = kubernetes_namespace.frigate.metadata[0].name
     labels = {
       "app" = "frigate"
     }
@@ -154,7 +154,7 @@ resource "kubernetes_service" "frigate" {
 resource "kubernetes_service" "frigate-rtsp" {
   metadata {
     name      = "frigate-rtsp"
-    namespace = "frigate"
+    namespace = kubernetes_namespace.frigate.metadata[0].name
     labels = {
       "app" = "frigate"
     }
@@ -184,7 +184,7 @@ resource "kubernetes_service" "frigate-rtsp" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "frigate"
+  namespace       = kubernetes_namespace.frigate.metadata[0].name
   name            = "frigate"
   tls_secret_name = var.tls_secret_name
   protected       = true
@@ -206,7 +206,7 @@ module "ingress" {
 
 module "ingress-internal" {
   source                  = "../ingress_factory"
-  namespace               = "frigate"
+  namespace               = kubernetes_namespace.frigate.metadata[0].name
   name                    = "frigate-lan"
   host                    = "frigate-lan"
   root_domain             = "viktorbarzin.lan"

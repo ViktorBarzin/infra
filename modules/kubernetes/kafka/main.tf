@@ -3,12 +3,12 @@ variable "client_certificate_secret_name" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "kafka"
+  namespace       = kubernetes_namespace.kafka.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "helm_release" "kafka" {
-  namespace        = "kafka"
+  namespace        = kubernetes_namespace.kafka.metadata[0].name
   create_namespace = true
   name             = "kafka"
 
@@ -21,7 +21,7 @@ resource "helm_release" "kafka" {
 resource "kubernetes_deployment" "kafka-ui" {
   metadata {
     name      = "kafka-ui"
-    namespace = "kafka"
+    namespace = kubernetes_namespace.kafka.metadata[0].name
     labels = {
       run = "kafka-ui"
     }
@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "kafka-ui" {
 resource "kubernetes_service" "kafka-ui" {
   metadata {
     name      = "kafka-ui"
-    namespace = "kafka"
+    namespace = kubernetes_namespace.kafka.metadata[0].name
     labels = {
       "run" = "kafka-ui"
     }
@@ -108,7 +108,7 @@ resource "kubernetes_service" "kafka-ui" {
 resource "kubernetes_ingress_v1" "kafka-ui" {
   metadata {
     name      = "kafka-ui-ingress"
-    namespace = "kafka"
+    namespace = kubernetes_namespace.kafka.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                        = "nginx"
       "nginx.ingress.kubernetes.io/force-ssl-redirect"     = "true"

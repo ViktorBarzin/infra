@@ -8,14 +8,14 @@ resource "kubernetes_namespace" "vikunja" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "vikunja"
+  namespace       = kubernetes_namespace.vikunja.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "vikunja" {
   metadata {
     name      = "vikunja"
-    namespace = "vikunja"
+    namespace = kubernetes_namespace.vikunja.metadata[0].name
     labels = {
       app = "vikunja"
     }
@@ -154,7 +154,7 @@ resource "kubernetes_deployment" "vikunja" {
 resource "kubernetes_service" "vikunja" {
   metadata {
     name      = "vikunja"
-    namespace = "vikunja"
+    namespace = kubernetes_namespace.vikunja.metadata[0].name
     labels = {
       "app" = "vikunja"
     }
@@ -176,7 +176,7 @@ resource "kubernetes_service" "vikunja" {
 resource "kubernetes_service" "api" {
   metadata {
     name      = "api"
-    namespace = "vikunja"
+    namespace = kubernetes_namespace.vikunja.metadata[0].name
     labels = {
       "app" = "vikunja"
     }
@@ -198,7 +198,7 @@ resource "kubernetes_service" "api" {
 resource "kubernetes_ingress_v1" "vikunja" {
   metadata {
     name      = "vikunja"
-    namespace = "vikunja"
+    namespace = kubernetes_namespace.vikunja.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
     }

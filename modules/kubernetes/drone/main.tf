@@ -23,14 +23,14 @@ resource "kubernetes_namespace" "drone" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "drone"
+  namespace       = kubernetes_namespace.drone.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
   }
 
   data = {
@@ -41,7 +41,7 @@ resource "kubernetes_config_map" "git_crypt_key" {
 resource "kubernetes_deployment" "drone_server" {
   metadata {
     name      = "drone-server"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
       app = "drone"
     }
@@ -136,7 +136,7 @@ resource "kubernetes_deployment" "drone_server" {
 resource "kubernetes_service" "drone" {
   metadata {
     name      = "drone"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
       app = "drone"
     }
@@ -155,7 +155,7 @@ resource "kubernetes_service" "drone" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "drone"
+  namespace       = kubernetes_namespace.drone.metadata[0].name
   name            = "drone"
   tls_secret_name = var.tls_secret_name
   # protected       = true
@@ -196,7 +196,7 @@ resource "kubernetes_cluster_role_binding" "drone" {
   subject {
     kind      = "ServiceAccount"
     name      = "default"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
   }
   role_ref {
     kind = "ClusterRole"
@@ -209,7 +209,7 @@ resource "kubernetes_cluster_role_binding" "drone" {
 resource "kubernetes_deployment" "drone_runner" {
   metadata {
     name      = "drone-runner"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
       app = "drone-runner"
     }
@@ -284,7 +284,7 @@ resource "kubernetes_deployment" "drone_runner" {
 resource "kubernetes_deployment" "drone_runner_secret" {
   metadata {
     name      = "drone-runner-secret"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
       app = "drone-runner-secret"
     }
@@ -339,7 +339,7 @@ resource "kubernetes_deployment" "drone_runner_secret" {
 resource "kubernetes_service" "drone_runner_secret" {
   metadata {
     name      = "drone-runner-secret"
-    namespace = "drone"
+    namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
       app = "drone-runner-secret"
     }

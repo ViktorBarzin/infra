@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "meshcentral" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "meshcentral"
+  namespace       = kubernetes_namespace.meshcentral.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "meshcentral" {
   metadata {
     name      = "meshcentral"
-    namespace = "meshcentral"
+    namespace = kubernetes_namespace.meshcentral.metadata[0].name
     labels = {
       app = "meshcentral"
     }
@@ -120,7 +120,7 @@ resource "kubernetes_deployment" "meshcentral" {
 resource "kubernetes_service" "meshcentral" {
   metadata {
     name      = "meshcentral"
-    namespace = "meshcentral"
+    namespace = kubernetes_namespace.meshcentral.metadata[0].name
     labels = {
       "app" = "meshcentral"
     }
@@ -140,7 +140,7 @@ resource "kubernetes_service" "meshcentral" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "meshcentral"
+  namespace       = kubernetes_namespace.meshcentral.metadata[0].name
   name            = "meshcentral"
   tls_secret_name = var.tls_secret_name
   port            = 443

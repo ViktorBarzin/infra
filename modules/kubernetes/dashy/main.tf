@@ -3,7 +3,7 @@ variable "tls_secret_name" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "dashy"
+  namespace       = kubernetes_namespace.dashy.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -19,7 +19,7 @@ resource "kubernetes_namespace" "dashy" {
 resource "kubernetes_config_map" "config" {
   metadata {
     name      = "config"
-    namespace = "dashy"
+    namespace = kubernetes_namespace.dashy.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -34,7 +34,7 @@ resource "kubernetes_config_map" "config" {
 resource "kubernetes_deployment" "dashy" {
   metadata {
     name      = "dashy"
-    namespace = "dashy"
+    namespace = kubernetes_namespace.dashy.metadata[0].name
     labels = {
       app = "dashy"
     }
@@ -85,7 +85,7 @@ resource "kubernetes_deployment" "dashy" {
 resource "kubernetes_service" "dashy" {
   metadata {
     name      = "dashy"
-    namespace = "dashy"
+    namespace = kubernetes_namespace.dashy.metadata[0].name
     labels = {
       app = "dashy"
     }
@@ -105,7 +105,7 @@ resource "kubernetes_service" "dashy" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "dashy"
+  namespace       = kubernetes_namespace.dashy.metadata[0].name
   name            = "dashy"
   tls_secret_name = var.tls_secret_name
   protected       = true # hidden as we use homepage now

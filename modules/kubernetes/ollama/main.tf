@@ -8,13 +8,13 @@ resource "kubernetes_namespace" "ollama" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "ollama"
+  namespace       = kubernetes_namespace.ollama.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 resource "kubernetes_persistent_volume_claim" "ollama-pvc" {
   metadata {
     name      = "ollama-pvc"
-    namespace = "ollama"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
   }
 
   spec {
@@ -47,7 +47,7 @@ resource "kubernetes_persistent_volume" "ollama-pv" {
 }
 
 # resource "helm_release" "ollama" {
-#   namespace = "ollama"
+#  namespace = kubernetes_namespace.ollama.metadata[0].name
 #   name      = "ollama"
 
 #   repository = "https://otwld.github.io/ollama-helm/"
@@ -62,7 +62,7 @@ resource "kubernetes_persistent_volume" "ollama-pv" {
 resource "kubernetes_deployment" "ollama" {
   metadata {
     name      = "ollama"
-    namespace = "ollama"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
       app = "ollama"
     }
@@ -126,7 +126,7 @@ resource "kubernetes_deployment" "ollama" {
 resource "kubernetes_service" "ollama" {
   metadata {
     name      = "ollama"
-    namespace = "ollama"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
       app = "ollama"
     }
@@ -146,7 +146,7 @@ resource "kubernetes_service" "ollama" {
 # Allow ollama to be connected to from external apps
 module "ollama-ingress" {
   source                  = "../ingress_factory"
-  namespace               = "ollama"
+  namespace               = kubernetes_namespace.ollama.metadata[0].name
   name                    = "ollama-server"
   service_name            = "ollama"
   root_domain             = "viktorbarzin.lan"
@@ -160,7 +160,7 @@ module "ollama-ingress" {
 resource "kubernetes_deployment" "ollama-ui" {
   metadata {
     name      = "ollama-ui"
-    namespace = "ollama"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
       app = "ollama-ui"
     }
@@ -211,7 +211,7 @@ resource "kubernetes_deployment" "ollama-ui" {
 resource "kubernetes_service" "ollama-ui" {
   metadata {
     name      = "ollama-ui"
-    namespace = "ollama"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
       app = "dashy"
     }
@@ -231,7 +231,7 @@ resource "kubernetes_service" "ollama-ui" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "ollama"
+  namespace       = kubernetes_namespace.ollama.metadata[0].name
   name            = "ollama"
   service_name    = "ollama-ui"
   tls_secret_name = var.tls_secret_name

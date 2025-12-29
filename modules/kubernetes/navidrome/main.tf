@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "navidrome" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "navidrome"
+  namespace       = kubernetes_namespace.navidrome.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "navidrome" {
   metadata {
     name      = "navidrome"
-    namespace = "navidrome"
+    namespace = kubernetes_namespace.navidrome.metadata[0].name
     labels = {
       app                             = "navidrome"
       "kubernetes.io/cluster-service" = "true"
@@ -94,7 +94,7 @@ resource "kubernetes_deployment" "navidrome" {
 resource "kubernetes_service" "navidrome" {
   metadata {
     name      = "navidrome"
-    namespace = "navidrome"
+    namespace = kubernetes_namespace.navidrome.metadata[0].name
     labels = {
       "app" = "navidrome"
     }
@@ -112,7 +112,7 @@ resource "kubernetes_service" "navidrome" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "navidrome"
+  namespace       = kubernetes_namespace.navidrome.metadata[0].name
   name            = "navidrome"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "8a3844ff75ba"

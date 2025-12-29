@@ -1,6 +1,6 @@
 variable "tls_secret_name" {}
 
-resource "kubernetes_namespace" "finance_app" {
+resource "kubernetes_namespace" "excalidraw" {
   metadata {
     name = "excalidraw"
     labels = {
@@ -12,14 +12,14 @@ resource "kubernetes_namespace" "finance_app" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "excalidraw"
+  namespace       = kubernetes_namespace.excalidraw.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "excalidraw" {
   metadata {
     name      = "excalidraw"
-    namespace = "excalidraw"
+    namespace = kubernetes_namespace.excalidraw.metadata[0].name
     labels = {
       app = "excalidraw"
     }
@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "excalidraw" {
 resource "kubernetes_service" "draw" {
   metadata {
     name      = "draw"
-    namespace = "excalidraw"
+    namespace = kubernetes_namespace.excalidraw.metadata[0].name
     labels = {
       app = "excalidraw"
     }
@@ -73,7 +73,7 @@ resource "kubernetes_service" "draw" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "excalidraw"
+  namespace       = kubernetes_namespace.excalidraw.metadata[0].name
   name            = "draw"
   tls_secret_name = var.tls_secret_name
 }

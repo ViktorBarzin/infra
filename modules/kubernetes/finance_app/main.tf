@@ -23,7 +23,7 @@ resource "kubernetes_namespace" "finance_app" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "finance-app"
+  namespace       = kubernetes_namespace.finance_app.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -49,7 +49,7 @@ module "tls_secret" {
 # resource "kubernetes_persistent_volume_claim" "finance_app_pvc" {
 #   metadata {
 #     name      = "finance-iscsi-pvc"
-#     namespace = "finance-app"
+#    namespace = kubernetes_namespace.finance_app.metadata[0].name
 #   }
 #   spec {
 #     access_modes = ["ReadWriteOnce"]
@@ -64,7 +64,7 @@ module "tls_secret" {
 resource "kubernetes_deployment" "finance_app" {
   metadata {
     name      = "finance-app"
-    namespace = "finance-app"
+    namespace = kubernetes_namespace.finance_app.metadata[0].name
     labels = {
       app = "finance-app"
     }
@@ -175,7 +175,7 @@ resource "kubernetes_deployment" "finance_app" {
 resource "kubernetes_deployment" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
-    namespace = "finance-app"
+    namespace = kubernetes_namespace.finance_app.metadata[0].name
     labels = {
       app = "finance-app-frontend"
     }
@@ -210,7 +210,7 @@ resource "kubernetes_deployment" "finance_app_frontend" {
 resource "kubernetes_service" "finance_app" {
   metadata {
     name      = "finance-app"
-    namespace = "finance-app"
+    namespace = kubernetes_namespace.finance_app.metadata[0].name
     labels = {
       app = "finance-app"
     }
@@ -230,7 +230,7 @@ resource "kubernetes_service" "finance_app" {
 resource "kubernetes_service" "finance_app_frontend" {
   metadata {
     name      = "finance-app-frontend"
-    namespace = "finance-app"
+    namespace = kubernetes_namespace.finance_app.metadata[0].name
     labels = {
       app = "finance-app-frontend"
     }
@@ -250,7 +250,7 @@ resource "kubernetes_service" "finance_app_frontend" {
 resource "kubernetes_ingress_v1" "finance_app" {
   metadata {
     name      = "finance-app"
-    namespace = "finance-app"
+    namespace = kubernetes_namespace.finance_app.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
       #"nginx.ingress.kubernetes.io/auth-url"= "https://oauth-provider/auth"

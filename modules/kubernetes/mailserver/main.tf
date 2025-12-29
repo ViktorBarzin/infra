@@ -16,14 +16,14 @@ resource "kubernetes_namespace" "mailserver" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "mailserver"
+  namespace       = kubernetes_namespace.mailserver.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_config_map" "mailserver_env_config" {
   metadata {
     name      = "mailserver.env.config"
-    namespace = "mailserver"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
     labels = {
       app = "mailserver"
     }
@@ -61,7 +61,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
 resource "kubernetes_config_map" "mailserver_config" {
   metadata {
     name      = "mailserver.config"
-    namespace = "mailserver"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
 
     labels = {
       app = "mailserver"
@@ -98,7 +98,7 @@ resource "kubernetes_config_map" "mailserver_config" {
 # resource "kubernetes_config_map" "user_patches" {
 #   metadata {
 #     name      = "user-patches"
-#     namespace = "mailserver"
+#    namespace = kubernetes_namespace.mailserver.metadata[0].name
 #     labels = {
 #       "app" = "mailserver"
 #     }
@@ -116,7 +116,7 @@ resource "kubernetes_config_map" "mailserver_config" {
 resource "kubernetes_secret" "opendkim_key" {
   metadata {
     name      = "mailserver.opendkim.key"
-    namespace = "mailserver"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
     labels = {
       "app" = "mailserver"
     }
@@ -131,7 +131,7 @@ resource "kubernetes_secret" "opendkim_key" {
 resource "kubernetes_deployment" "mailserver" {
   metadata {
     name      = "mailserver"
-    namespace = "mailserver"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
     labels = {
       "app" = "mailserver"
     }
@@ -383,7 +383,7 @@ resource "kubernetes_deployment" "mailserver" {
 resource "kubernetes_service" "mailserver" {
   metadata {
     name      = "mailserver"
-    namespace = "mailserver"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
 
     labels = {
       app = "mailserver"

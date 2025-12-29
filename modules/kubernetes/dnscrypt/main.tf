@@ -7,7 +7,7 @@ resource "kubernetes_namespace" "dnscrypt" {
 resource "kubernetes_config_map" "dnscrypt" {
   metadata {
     name      = "dnscrypt-proxy-configmap"
-    namespace = "dnscrypt"
+    namespace = kubernetes_namespace.dnscrypt.metadata[0].name
   }
   data = {
     "dnscrypt-proxy.toml" = var.dnscrypt_proxy_toml
@@ -17,7 +17,7 @@ resource "kubernetes_config_map" "dnscrypt" {
 resource "kubernetes_deployment" "dnscrypt" {
   metadata {
     name      = "dnscrypt-proxy"
-    namespace = "dnscrypt"
+    namespace = kubernetes_namespace.dnscrypt.metadata[0].name
     labels = {
       app                             = "dnscrypt-proxy"
       "kubernetes.io/cluster-service" = "true"
@@ -69,7 +69,7 @@ resource "kubernetes_deployment" "dnscrypt" {
 resource "kubernetes_service" "dnscrypt" {
   metadata {
     name      = "dnscrypt-proxy"
-    namespace = "dnscrypt"
+    namespace = kubernetes_namespace.dnscrypt.metadata[0].name
     labels = {
       "app" = "dnscrypt-proxy"
     }

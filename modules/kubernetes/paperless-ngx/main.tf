@@ -15,7 +15,7 @@ resource "kubernetes_namespace" "paperless-ngx" {
 }
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "paperless-ngx"
+  namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -23,7 +23,7 @@ module "tls_secret" {
 resource "kubernetes_deployment" "paperless-ngx" {
   metadata {
     name      = "paperless-ngx"
-    namespace = "paperless-ngx"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
     labels = {
       app = "paperless-ngx"
     }
@@ -124,7 +124,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
 resource "kubernetes_service" "paperless-ngx" {
   metadata {
     name      = "paperless-ngx"
-    namespace = "paperless-ngx"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
     labels = {
       "app" = "paperless-ngx"
     }
@@ -145,7 +145,7 @@ resource "kubernetes_service" "paperless-ngx" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "paperless-ngx"
+  namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
   name            = "paperless-ngx"
   service_name    = "paperless-ngx"
   host            = "pdf"

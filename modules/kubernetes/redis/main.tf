@@ -8,14 +8,14 @@ resource "kubernetes_namespace" "redis" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "redis"
+  namespace       = kubernetes_namespace.redis.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "redis" {
   metadata {
     name      = "redis"
-    namespace = "redis"
+    namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis"
     }
@@ -69,7 +69,7 @@ resource "kubernetes_deployment" "redis" {
 resource "kubernetes_service" "redis" {
   metadata {
     name      = "redis"
-    namespace = "redis"
+    namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis"
     }
@@ -91,7 +91,7 @@ resource "kubernetes_service" "redis" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "redis"
+  namespace       = kubernetes_namespace.redis.metadata[0].name
   name            = "redis"
   tls_secret_name = var.tls_secret_name
   protected       = true

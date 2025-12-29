@@ -7,14 +7,14 @@ resource "kubernetes_namespace" "ntfy" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "ntfy"
+  namespace       = kubernetes_namespace.ntfy.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "ntfy" {
   metadata {
     name      = "ntfy"
-    namespace = "ntfy"
+    namespace = kubernetes_namespace.ntfy.metadata[0].name
     labels = {
       app = "ntfy"
     }
@@ -96,7 +96,7 @@ resource "kubernetes_deployment" "ntfy" {
 resource "kubernetes_service" "ntfy" {
   metadata {
     name      = "ntfy"
-    namespace = "ntfy"
+    namespace = kubernetes_namespace.ntfy.metadata[0].name
     labels = {
       "app" = "ntfy"
     }
@@ -121,7 +121,7 @@ resource "kubernetes_service" "ntfy" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "ntfy"
+  namespace       = kubernetes_namespace.ntfy.metadata[0].name
   name            = "ntfy"
   tls_secret_name = var.tls_secret_name
 }

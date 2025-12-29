@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "home_assistant" {
 resource "kubernetes_config_map" "home_assistant_config_map" {
   metadata {
     name      = "home-assistant-configmap"
-    namespace = "home-assistant"
+    namespace = kubernetes_namespace.home_assistant.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -28,12 +28,12 @@ resource "kubernetes_config_map" "home_assistant_config_map" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "home-assistant"
+  namespace       = kubernetes_namespace.home_assistant.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "helm_release" "home_assistant" {
-  namespace        = "home-assistant"
+  namespace        = kubernetes_namespace.home_assistant.metadata[0].name
   create_namespace = true
   name             = "home-assistant"
 
@@ -46,7 +46,7 @@ resource "helm_release" "home_assistant" {
 resource "kubernetes_deployment" "home_assistant" {
   metadata {
     name      = "home-assistant"
-    namespace = "home-assistant"
+    namespace = kubernetes_namespace.home_assistant.metadata[0].name
 
     labels = {
       "app.kubernetes.io/instance" = "home-assistant"
@@ -158,7 +158,7 @@ resource "kubernetes_deployment" "home_assistant" {
 resource "kubernetes_service" "home_assistant" {
   metadata {
     name      = "home-assistant"
-    namespace = "home-assistant"
+    namespace = kubernetes_namespace.home_assistant.metadata[0].name
 
     labels = {
       "app.kubernetes.io/instance" = "home-assistant"
@@ -204,7 +204,7 @@ resource "kubernetes_service" "home_assistant" {
 resource "kubernetes_ingress_v1" "home-assistant-ui" {
   metadata {
     name      = "home-assistant-ui-ingress"
-    namespace = "home-assistant"
+    namespace = kubernetes_namespace.home_assistant.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                        = "nginx"
       "nginx.ingress.kubernetes.io/force-ssl-redirect"     = "true"

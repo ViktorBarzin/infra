@@ -10,7 +10,7 @@ variable "immich_version" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "immich"
+  namespace       = kubernetes_namespace.immich.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -23,7 +23,7 @@ resource "kubernetes_namespace" "immich" {
 resource "kubernetes_deployment" "immich_server" {
   metadata {
     name      = "immich-server"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
 
     labels = {
       app = "immich-server"
@@ -215,7 +215,7 @@ resource "kubernetes_deployment" "immich_server" {
 resource "kubernetes_service" "immich-server" {
   metadata {
     name      = "immich-server"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
     labels = {
       "app" = "immich-server"
     }
@@ -234,7 +234,7 @@ resource "kubernetes_service" "immich-server" {
 resource "kubernetes_deployment" "immich-postgres" {
   metadata {
     name      = "immich-postgresql"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
   }
   spec {
     replicas = 1
@@ -298,7 +298,7 @@ resource "kubernetes_deployment" "immich-postgres" {
 resource "kubernetes_service" "immich-postgresql" {
   metadata {
     name      = "immich-postgresql"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
     labels = {
       "app" = "immich-postgresql"
     }
@@ -317,7 +317,7 @@ resource "kubernetes_service" "immich-postgresql" {
 
 # If you're having issuewith typesens container exiting prematurely, increase liveliness check
 # resource "helm_release" "immich" {
-#   namespace = "immich"
+#  namespace = kubernetes_namespace.immich.metadata[0].name
 #   name      = "immich"
 
 #   repository = "https://immich-app.github.io/immich-charts"
@@ -333,7 +333,7 @@ resource "kubernetes_service" "immich-postgresql" {
 resource "kubernetes_deployment" "immich-machine-learning" {
   metadata {
     name      = "immich-machine-learning"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
   }
   spec {
     replicas = 1
@@ -407,7 +407,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
 resource "kubernetes_service" "immich-machine-learning" {
   metadata {
     name      = "immich-machine-learning"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
     labels = {
       "app" = "immich-machine-learning"
     }
@@ -425,7 +425,7 @@ resource "kubernetes_service" "immich-machine-learning" {
 
 resource "kubernetes_ingress_v1" "ingress" {
   metadata {
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
     name      = "immich"
     annotations = {
       # NOTE: when changing - test video playback from mobile and web!
@@ -528,7 +528,7 @@ resource "kubernetes_ingress_v1" "ingress" {
 resource "kubernetes_cron_job_v1" "postgresql-backup" {
   metadata {
     name      = "postgresql-backup"
-    namespace = "immich"
+    namespace = kubernetes_namespace.immich.metadata[0].name
   }
   spec {
     concurrency_policy        = "Replace"
@@ -581,7 +581,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 # resource "kubernetes_deployment" "powertools" {
 #   metadata {
 #     name      = "immich-powertools"
-#     namespace = "immich"
+#    namespace = kubernetes_namespace.immich.metadata[0].name
 #     labels = {
 #       app = "immich-powertools"
 #     }
@@ -665,7 +665,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 # resource "kubernetes_service" "powertools" {
 #   metadata {
 #     name      = "immich-powertools"
-#     namespace = "immich"
+#    namespace = kubernetes_namespace.immich.metadata[0].name
 #     labels = {
 #       "app" = "immich-powertools"
 #     }
@@ -686,7 +686,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 
 # module "ingress-powertools" {
 #   source          = "../ingress_factory"
-#   namespace       = "immich"
+#  namespace = kubernetes_namespace.immich.metadata[0].name
 #   name            = "immich-powertools"
 #   tls_secret_name = var.tls_secret_name
 #   protected       = true

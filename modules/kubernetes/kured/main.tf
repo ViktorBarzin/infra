@@ -12,12 +12,12 @@ resource "kubernetes_namespace" "kured" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "kured"
+  namespace       = kubernetes_namespace.kured.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "helm_release" "kured" {
-  namespace        = "kured"
+  namespace        = kubernetes_namespace.kured.metadata[0].name
   create_namespace = false
   name             = "kured"
 
