@@ -227,7 +227,15 @@ module "docker-registry-template" {
     ),
     "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
     "( crontab -l 2>/dev/null; echo '0 * * * * /usr/bin/docker restart registry' ) | crontab -",
-    "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2"
+    "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2",
+    # Setup the registry nginx config; We want clients to connect via the nginx to serialize requests for the same blobs
+    # Otherwise race conditions lead to corrupt blobs
+    "mkdir -p /var/cache/nginx/registry",
+    format("echo %s | base64 -d > /etc/nginx/conf.d/registry.conf",
+      base64encode(
+        templatefile("${path.root}/modules/docker-registry/nginx_registry.conf", {})
+      )
+    ),
   ]
 }
 
@@ -247,6 +255,10 @@ module "docker-registry-vm" {
   vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
   bridge         = "vmbr1"
   vlan_tag       = "20"
+  # ports:
+  # 5000 -> registry
+  # 5001 -> metrics
+  # 5002 -> ngin proxy <-- use this to prevent races on the same blobs
 }
 
 # module that provisions the proxmox host?

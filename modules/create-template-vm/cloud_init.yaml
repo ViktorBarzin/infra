@@ -26,6 +26,7 @@ packages:
   - gpg
   - isc-dhcp-client
   - cloud-guest-utils # to enable resizing of disk via growpart
+  - nginx
   # docker
   - docker-ce
   - docker-ce-cli
