@@ -81,7 +81,13 @@ resource "null_resource" "upload_cloud_init" {
     )
   }
 
+  # Force recreate when the below changes
   triggers = {
-    file_hash = filesha256("${path.module}/cloud_init.yaml")
+    file_hash                        = filesha256("${path.module}/cloud_init.yaml")
+    provision_cmds                   = join(", ", var.provision_cmds)
+    is_k8s_template                  = var.is_k8s_template,
+    passwd                           = var.user_passwd,
+    k8s_join_command                 = var.k8s_join_command,
+    containerd_config_update_command = var.containerd_config_update_command
   }
 }
