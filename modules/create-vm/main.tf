@@ -61,6 +61,11 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
     cores = var.vm_cpus
     type  = "host" # emulate host cpu
   }
+  startup_shutdown {
+    order            = -1
+    shutdown_timeout = -1
+    startup_delay    = -1
+  }
 
   # Most cloud-init images require a serial device for their display
   serial {
