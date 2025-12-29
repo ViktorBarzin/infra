@@ -212,13 +212,6 @@ serverFiles:
               severity: page
             annotations:
               summary: "High system load: {{ $value }}. Can signal runaway process."
-          - alert: DockerRegistryDown
-            expr: (registry_process_start_time_seconds or on() vector(0)) == 0
-            for: 10m
-            labels:
-              severity: page
-            annotations:
-              summary: "Docker registry is down"
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -294,6 +287,20 @@ serverFiles:
               severity: page
             annotations:
               summary: Node {{$labels.instance}} down.
+          - alert: DockerRegistryDown
+            expr: (registry_process_start_time_seconds or on() vector(0)) == 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "Docker registry is down"
+          - alert: RegistryLowCacheHitRate
+            expr: (sum by (job) (rate(registry_registry_storage_cache_total{type="Hit"}[15m]))) / (sum by (job) (rate(registry_registry_storage_cache_total{type="Request"}[15m]))) * 100 < 50
+            for: 12h
+            labels:
+              severity: page
+            annotations:
+              summary: "Low registry cache hit rate"
           - alert: NodeHighCPUUsage
             expr: node_load1{instance!="pve-node-r730"} > 2
             for: 20m
