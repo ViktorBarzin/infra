@@ -18,7 +18,7 @@ resource "kubernetes_namespace" "actualbudget" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = kubernetes_namespace.actualbudget
+  namespace       = kubernetes_namespace.actualbudget.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
