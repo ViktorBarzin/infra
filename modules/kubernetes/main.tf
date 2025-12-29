@@ -592,7 +592,9 @@ module "cloudflared" {
   public_ip                    = var.public_ip
   cloudflare_proxied_names     = var.cloudflare_proxied_names
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
-  cloudflare_tunnel_token      = var.cloudflare_tunnel_token
+  # cloudflare_proxied_names     = []
+  # cloudflare_non_proxied_names = []
+  cloudflare_tunnel_token = var.cloudflare_tunnel_token
 }
 
 # module "istio" {
