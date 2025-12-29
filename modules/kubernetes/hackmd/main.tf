@@ -12,14 +12,14 @@ resource "kubernetes_namespace" "hackmd" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "hackmd"
+  namespace       = kubernetes_namespace.hackmd.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "hackmd" {
   metadata {
     name      = "hackmd"
-    namespace = "hackmd"
+    namespace = kubernetes_namespace.hackmd.metadata[0].name
     labels = {
       app                             = "hackmd"
       "kubernetes.io/cluster-service" = "true"
@@ -127,7 +127,7 @@ resource "kubernetes_deployment" "hackmd" {
 resource "kubernetes_service" "hackmd" {
   metadata {
     name      = "hackmd"
-    namespace = "hackmd"
+    namespace = kubernetes_namespace.hackmd.metadata[0].name
     labels = {
       "app" = "hackmd"
     }
@@ -145,7 +145,7 @@ resource "kubernetes_service" "hackmd" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "hackmd"
+  namespace       = kubernetes_namespace.hackmd.metadata[0].name
   name            = "hackmd"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

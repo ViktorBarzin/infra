@@ -2,7 +2,7 @@
 resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   metadata {
     name      = "prometheus-iscsi-pvc"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
   }
 
   spec {
@@ -45,7 +45,7 @@ resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
 }
 
 resource "helm_release" "prometheus" {
-  namespace        = "monitoring"
+  namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
   name             = "prometheus"
 

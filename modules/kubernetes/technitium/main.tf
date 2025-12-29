@@ -13,7 +13,7 @@ resource "kubernetes_namespace" "technitium" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "technitium"
+  namespace       = kubernetes_namespace.technitium.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -21,7 +21,7 @@ resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
     name      = "technitium"
-    namespace = "technitium"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
     labels = {
       app = "technitium"
     }
@@ -103,7 +103,7 @@ resource "kubernetes_deployment" "technitium" {
 resource "kubernetes_service" "technitium-web" {
   metadata {
     name      = "technitium-web"
-    namespace = "technitium"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
     labels = {
       "app" = "technitium"
     }
@@ -134,7 +134,7 @@ resource "kubernetes_service" "technitium-web" {
 resource "kubernetes_service" "technitium-dns" {
   metadata {
     name      = "technitium-dns"
-    namespace = "technitium"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
     labels = {
       "app" = "technitium"
     }
@@ -162,7 +162,7 @@ resource "kubernetes_service" "technitium-dns" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "technitium"
+  namespace       = kubernetes_namespace.technitium.metadata[0].name
   name            = "technitium"
   tls_secret_name = var.tls_secret_name
   port            = 5380
@@ -185,7 +185,7 @@ module "ingress" {
 
 module "ingress-doh" {
   source          = "../ingress_factory"
-  namespace       = "technitium"
+  namespace       = kubernetes_namespace.technitium.metadata[0].name
   name            = "technitium-doh"
   tls_secret_name = var.tls_secret_name
   host            = "dns"

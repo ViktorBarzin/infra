@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "kms" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "kms"
+  namespace       = kubernetes_namespace.kms.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_config_map" "kms-web-page" {
   metadata {
     name      = "kms-web-page-config"
-    namespace = "kms"
+    namespace = kubernetes_namespace.kms.metadata[0].name
   }
   data = {
     "index.html" = var.index_html
@@ -28,7 +28,7 @@ resource "kubernetes_config_map" "kms-web-page" {
 resource "kubernetes_deployment" "kms-web-page" {
   metadata {
     name      = "kms-web-page"
-    namespace = "kms"
+    namespace = kubernetes_namespace.kms.metadata[0].name
     labels = {
       "app"                           = "kms-web-page"
       "kubernetes.io/cluster-service" = "true"
@@ -92,7 +92,7 @@ resource "kubernetes_deployment" "kms-web-page" {
 resource "kubernetes_service" "kms-web-page" {
   metadata {
     name      = "kms"
-    namespace = "kms"
+    namespace = kubernetes_namespace.kms.metadata[0].name
     labels = {
       "app" = "kms-web-page"
     }
@@ -111,7 +111,7 @@ resource "kubernetes_service" "kms-web-page" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "kms"
+  namespace       = kubernetes_namespace.kms.metadata[0].name
   name            = "kms"
   tls_secret_name = var.tls_secret_name
 }
@@ -119,7 +119,7 @@ module "ingress" {
 resource "kubernetes_deployment" "windows_kms" {
   metadata {
     name      = "kms"
-    namespace = "kms"
+    namespace = kubernetes_namespace.kms.metadata[0].name
     labels = {
       app = "kms-service"
     }
@@ -163,7 +163,7 @@ resource "kubernetes_deployment" "windows_kms" {
 resource "kubernetes_service" "windows_kms" {
   metadata {
     name      = "windows-kms"
-    namespace = "kms"
+    namespace = kubernetes_namespace.kms.metadata[0].name
     labels = {
       app = "kms-service"
     }

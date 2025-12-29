@@ -2,7 +2,7 @@
 resource "kubernetes_config_map" "redfish-config" {
   metadata {
     name      = "redfish-exporter-config"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -28,7 +28,7 @@ resource "kubernetes_config_map" "redfish-config" {
 resource "kubernetes_deployment" "idrac-redfish" {
   metadata {
     name      = "idrac-redfish-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       app = "idrac-redfish-exporter"
     }
@@ -78,7 +78,7 @@ resource "kubernetes_deployment" "idrac-redfish" {
 resource "kubernetes_service" "idrac-redfish-exporter" {
   metadata {
     name      = "idrac-redfish-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       "app" = "idrac-redfish-exporter"
     }
@@ -103,7 +103,7 @@ resource "kubernetes_service" "idrac-redfish-exporter" {
 
 module "idrac-redfish-exporter-ingress" {
   source                  = "../ingress_factory"
-  namespace               = "monitoring"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "idrac-redfish-exporter"
   root_domain             = "viktorbarzin.lan"
   tls_secret_name         = var.tls_secret_name

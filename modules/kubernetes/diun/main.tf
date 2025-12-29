@@ -13,14 +13,14 @@ resource "kubernetes_namespace" "diun" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "diun"
+  namespace       = kubernetes_namespace.diun.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_service_account" "diun" {
   metadata {
     name      = "diun"
-    namespace = "diun"
+    namespace = kubernetes_namespace.diun.metadata[0].name
   }
 }
 
@@ -47,14 +47,14 @@ resource "kubernetes_cluster_role_binding" "diun" {
   subject {
     kind      = "ServiceAccount"
     name      = "diun"
-    namespace = "diun"
+    namespace = kubernetes_namespace.diun.metadata[0].name
   }
 }
 
 resource "kubernetes_deployment" "diun" {
   metadata {
     name      = "diun"
-    namespace = "diun"
+    namespace = kubernetes_namespace.diun.metadata[0].name
     labels = {
       app = "diun"
     }

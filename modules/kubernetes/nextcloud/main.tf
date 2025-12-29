@@ -3,7 +3,7 @@ variable "db_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "nextcloud"
+  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "nextcloud" {
 }
 
 resource "helm_release" "nextcloud" {
-  namespace = "nextcloud"
+  namespace = kubernetes_namespace.nextcloud.metadata[0].name
   name      = "nextcloud"
 
   repository = "https://nextcloud.github.io/helm/"
@@ -32,7 +32,7 @@ resource "helm_release" "nextcloud" {
 # resource "kubernetes_config_map" "config" {
 #   metadata {
 #     name      = "config"
-#     namespace = "nextcloud"
+#    namespace = kubernetes_namespace.nextcloud.metadata[0].name
 
 #     annotations = {
 #       "reloader.stakater.com/match" = "true"
@@ -47,7 +47,7 @@ resource "helm_release" "nextcloud" {
 resource "kubernetes_deployment" "whiteboard" {
   metadata {
     name      = "whiteboard"
-    namespace = "nextcloud"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
     labels = {
       app = "whiteboard"
     }
@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "whiteboard" {
 resource "kubernetes_service" "whiteboard" {
   metadata {
     name      = "whiteboard"
-    namespace = "nextcloud"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
     labels = {
       app = "whiteboard"
     }
@@ -132,7 +132,7 @@ resource "kubernetes_persistent_volume" "nextcloud-data-pv" {
 resource "kubernetes_persistent_volume_claim" "nextcloud-data-pvc" {
   metadata {
     name      = "nextcloud-data-pvc"
-    namespace = "nextcloud"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
   }
   spec {
     access_modes = ["ReadWriteOnce"]
@@ -147,7 +147,7 @@ resource "kubernetes_persistent_volume_claim" "nextcloud-data-pvc" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "nextcloud"
+  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name
   port            = 8080
@@ -162,7 +162,7 @@ module "ingress" {
 
 module "whiteboard_ingress" {
   source          = "../ingress_factory"
-  namespace       = "nextcloud"
+  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "whiteboard"
   tls_secret_name = var.tls_secret_name
   port            = 80

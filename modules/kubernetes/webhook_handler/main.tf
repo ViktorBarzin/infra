@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "webhook-handler" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "webhook-handler"
+  namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -40,7 +40,7 @@ resource "kubernetes_cluster_role_binding" "update_deployment_binding" {
   subject {
     kind      = "ServiceAccount"
     name      = "default"
-    namespace = "webhook-handler"
+    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
   }
 
   role_ref {
@@ -54,7 +54,7 @@ resource "kubernetes_cluster_role_binding" "update_deployment_binding" {
 resource "kubernetes_secret" "ssh-key" {
   metadata {
     name      = "ssh-key"
-    namespace = "webhook-handler"
+    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -68,7 +68,7 @@ resource "kubernetes_secret" "ssh-key" {
 resource "kubernetes_deployment" "webhook_handler" {
   metadata {
     name      = "webhook-handler"
-    namespace = "webhook-handler"
+    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
     labels = {
       app = "webhook-handler"
     }
@@ -170,7 +170,7 @@ resource "kubernetes_deployment" "webhook_handler" {
 resource "kubernetes_service" "webhook_handler" {
   metadata {
     name      = "webhook-handler"
-    namespace = "webhook-handler"
+    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
     labels = {
       "app" = "webhook-handler"
     }
@@ -190,7 +190,7 @@ resource "kubernetes_service" "webhook_handler" {
 resource "kubernetes_ingress_v1" "webhook_handler" {
   metadata {
     name      = "webhook-handler-ingress"
-    namespace = "webhook-handler"
+    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
     }

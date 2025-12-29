@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "changedetection" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "changedetection"
+  namespace       = kubernetes_namespace.changedetection.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "changedetection" {
   metadata {
     name      = "changedetection"
-    namespace = "changedetection"
+    namespace = kubernetes_namespace.changedetection.metadata[0].name
     labels = {
       app = "changedetection"
     }
@@ -103,7 +103,7 @@ resource "kubernetes_deployment" "changedetection" {
 resource "kubernetes_service" "changedetection" {
   metadata {
     name      = "changedetection"
-    namespace = "changedetection"
+    namespace = kubernetes_namespace.changedetection.metadata[0].name
     labels = {
       "app" = "changedetection"
     }
@@ -122,7 +122,7 @@ resource "kubernetes_service" "changedetection" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "changedetection"
+  namespace       = kubernetes_namespace.changedetection.metadata[0].name
   name            = "changedetection"
   tls_secret_name = var.tls_secret_name
   protected       = true

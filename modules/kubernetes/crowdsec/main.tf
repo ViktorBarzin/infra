@@ -9,7 +9,7 @@ variable "crowdsec_dash_machine_password" { type = string } # used for web dash
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "crowdsec"
+  namespace       = kubernetes_namespace.crowdsec.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -22,7 +22,7 @@ resource "kubernetes_namespace" "crowdsec" {
 resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
   metadata {
     name      = "crowdsec-custom-scenarios"
-    namespace = "crowdsec"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
     labels = {
       "app.kubernetes.io/name" = "crowdsec"
     }
@@ -62,7 +62,7 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
 
 
 resource "helm_release" "crowdsec" {
-  namespace        = "crowdsec"
+  namespace        = kubernetes_namespace.crowdsec.metadata[0].name
   create_namespace = true
   name             = "crowdsec"
   atomic           = true
@@ -80,7 +80,7 @@ resource "helm_release" "crowdsec" {
 resource "kubernetes_deployment" "crowdsec-web" {
   metadata {
     name      = "crowdsec-web"
-    namespace = "crowdsec"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
     labels = {
       app                             = "crowdsec_web"
       "kubernetes.io/cluster-service" = "true"
@@ -137,7 +137,7 @@ resource "kubernetes_deployment" "crowdsec-web" {
 resource "kubernetes_service" "crowdsec-web" {
   metadata {
     name      = "crowdsec-web"
-    namespace = "crowdsec"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
     labels = {
       "app" = "crowdsec_web"
     }
@@ -155,7 +155,7 @@ resource "kubernetes_service" "crowdsec-web" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "crowdsec"
+  namespace       = kubernetes_namespace.crowdsec.metadata[0].name
   name            = "crowdsec-web"
   protected       = true
   tls_secret_name = var.tls_secret_name

@@ -43,7 +43,7 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 # resource "kubernetes_persistent_volume_claim" "grafana_pvc" {
 #   metadata {
 #     name      = "grafana-pvc"
-#     namespace = "monitoring"
+#    namespace = kubernetes_namespace.monitoring.metadata[0].name
 #   }
 #   spec {
 #     access_modes = ["ReadWriteOnce"]
@@ -56,7 +56,7 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 # }
 
 resource "helm_release" "grafana" {
-  namespace        = "monitoring"
+  namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
   name             = "grafana"
   atomic           = true

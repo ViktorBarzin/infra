@@ -12,14 +12,14 @@ resource "kubernetes_namespace" "vaultwarden" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "vaultwarden"
+  namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "vaultwarden" {
   metadata {
     name      = "vaultwarden"
-    namespace = "vaultwarden"
+    namespace = kubernetes_namespace.vaultwarden.metadata[0].name
     labels = {
       app = "vaultwarden"
     }
@@ -104,7 +104,7 @@ resource "kubernetes_deployment" "vaultwarden" {
 resource "kubernetes_service" "vaultwarden" {
   metadata {
     name      = "vaultwarden"
-    namespace = "vaultwarden"
+    namespace = kubernetes_namespace.vaultwarden.metadata[0].name
     labels = {
       "app" = "vaultwarden"
     }
@@ -124,7 +124,7 @@ resource "kubernetes_service" "vaultwarden" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "vaultwarden"
+  namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   name            = "vaultwarden"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "b8fc85e18683"

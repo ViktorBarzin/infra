@@ -17,14 +17,14 @@ resource "random_password" "secret_key" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "tandoor"
+  namespace       = kubernetes_namespace.tandoor.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "tandoor" {
   metadata {
     name      = "tandoor"
-    namespace = "tandoor"
+    namespace = kubernetes_namespace.tandoor.metadata[0].name
     labels = {
       app = "tandoor"
     }
@@ -144,7 +144,7 @@ resource "kubernetes_deployment" "tandoor" {
 resource "kubernetes_service" "tandoor" {
   metadata {
     name      = "tandoor"
-    namespace = "tandoor"
+    namespace = kubernetes_namespace.tandoor.metadata[0].name
     labels = {
       "app" = "tandoor"
     }
@@ -163,7 +163,7 @@ resource "kubernetes_service" "tandoor" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "tandoor"
+  namespace       = kubernetes_namespace.tandoor.metadata[0].name
   name            = "tandoor"
   tls_secret_name = var.tls_secret_name
 }

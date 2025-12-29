@@ -11,20 +11,20 @@ resource "kubernetes_namespace" "travel-blog" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "travel-blog"
+  namespace       = kubernetes_namespace.travel-blog.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 # module "dockerhub_creds" {
 #   source    = "../dockerhub_secret"
-#   namespace = "website"
+#  namespace = kubernetes_namespace.travel.metadata[0].name
 #   password  = var.dockerhub_password
 # }
 
 resource "kubernetes_deployment" "blog" {
   metadata {
     name      = "travel-blog"
-    namespace = "travel-blog"
+    namespace = kubernetes_namespace.travel-blog.metadata[0].name
     labels = {
       run = "travel-blog"
     }
@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "blog" {
 resource "kubernetes_service" "travel-blog" {
   metadata {
     name      = "travel-blog"
-    namespace = "travel-blog"
+    namespace = kubernetes_namespace.travel-blog.metadata[0].name
     labels = {
       "run" = "travel-blog"
     }
@@ -107,7 +107,7 @@ resource "kubernetes_service" "travel-blog" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "travel-blog"
+  namespace       = kubernetes_namespace.travel-blog.metadata[0].name
   name            = "travel"
   tls_secret_name = var.tls_secret_name
   service_name    = "travel-blog"

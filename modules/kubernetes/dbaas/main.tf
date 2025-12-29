@@ -19,7 +19,7 @@ resource "kubernetes_namespace" "dbaas" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "dbaas"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -27,7 +27,7 @@ module "tls_secret" {
 resource "kubernetes_config_map" "mycnf" {
   metadata {
     name      = "mycnf"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -80,7 +80,7 @@ resource "kubernetes_config_map" "mycnf" {
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     selector = {
@@ -95,7 +95,7 @@ resource "kubernetes_service" "mysql" {
 resource "kubernetes_deployment" "mysql" {
   metadata {
     name      = "mysql"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
@@ -166,7 +166,7 @@ resource "kubernetes_deployment" "mysql" {
 resource "kubernetes_cron_job_v1" "mysql-backup" {
   metadata {
     name      = "mysql-backup"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     concurrency_policy        = "Replace"
@@ -244,7 +244,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
 
 
 # resource "helm_release" "mysql" {
-#   namespace        = "dbaas"
+#  namespace = kubernetes_namespace.dbaas.metadata[0].name
 #   create_namespace = false
 #   name             = "mysql"
 
@@ -259,7 +259,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
 # }
 
 # # resource "helm_release" "mysql" {
-# #   namespace        = "dbaas"
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
 # #   create_namespace = false
 # #   name             = "mysql-operator"
 
@@ -270,7 +270,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
 # # }
 
 # # resource "helm_release" "innodb-cluster" {
-# #   namespace        = "dbaas"
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
 # #   create_namespace = false
 # #   name             = var.cluster_master_service
 
@@ -304,7 +304,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
 resource "kubernetes_secret" "cluster-password" {
   metadata {
     name      = "cluster-secret"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/match" = "true"
     }
@@ -318,7 +318,7 @@ resource "kubernetes_secret" "cluster-password" {
 # resource "kubernetes_ingress_v1" "dbaas" {
 #   metadata {
 #     name      = "orchestrator-ingress"
-#     namespace = "dbaas"
+#    namespace = kubernetes_namespace.dbaas.metadata[0].name
 #     annotations = {
 #       "kubernetes.io/ingress.class"                        = "nginx"
 #       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
@@ -355,7 +355,7 @@ resource "kubernetes_secret" "cluster-password" {
 resource "kubernetes_deployment" "phpmyadmin" {
   metadata {
     name      = "phpmyadmin"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
     labels = {
       "app" = "phpmyadmin"
 
@@ -414,7 +414,7 @@ resource "kubernetes_deployment" "phpmyadmin" {
 resource "kubernetes_service" "phpmyadmin" {
   metadata {
     name      = "pma"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     selector = {
@@ -428,7 +428,7 @@ resource "kubernetes_service" "phpmyadmin" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "dbaas"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
   name            = "pma"
   tls_secret_name = var.tls_secret_name
   protected       = true
@@ -448,7 +448,7 @@ module "ingress" {
 #     kind: MysqlCluster
 #     metadata:
 #       name: mysql-cluster
-#       namespace: dbaas
+#      namespace = kubernetes_namespace.dbaas.metadata[0].name
 #     spec:
 #       mysqlVersion: "5.7"
 #       replicas: 1
@@ -481,7 +481,7 @@ module "ingress" {
 #   #   kind       = "MysqlCluster"
 #   #   metadata = {
 #   #     name      = "mysql-cluster"
-#   #     namespace = "dbaas"
+#   #    namespace = kubernetes_namespace.dbaas.metadata[0].name
 #   #   }
 #   #   spec = {
 #   #     mysqlVersion = "5.7"
@@ -523,7 +523,7 @@ module "ingress" {
 #         listKind: MysqlUserList
 #         plural: mysqlusers
 #         singular: mysqluser
-#       scope: Namespaced
+#       scope:namespace = kubernetes_namespace.dbaas.metadata[0].name
 #       versions:
 #         - additionalPrinterColumns:
 #             - description: The user status
@@ -566,8 +566,8 @@ module "ingress" {
 #                         name:
 #                           description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. apiVersion, kind, uid?'
 #                           type: string
-#                         namespace:
-#                           description: Namespace the MySQL cluster namespace
+#                        namespace = kubernetes_namespace.dbaas.metadata[0].name
+#                           description:namespace = kubernetes_namespace.dbaas.metadata[0].name
 #                           type: string
 #                       type: object
 #                     password:
@@ -680,7 +680,7 @@ module "ingress" {
 resource "kubernetes_deployment" "postgres" {
   metadata {
     name      = "postgresql"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
@@ -754,7 +754,7 @@ resource "kubernetes_deployment" "postgres" {
 resource "kubernetes_service" "postgresql" {
   metadata {
     name      = "postgresql"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     selector = {
@@ -773,7 +773,7 @@ resource "kubernetes_service" "postgresql" {
 resource "kubernetes_deployment" "pgadmin" {
   metadata {
     name      = "pgadmin"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
@@ -830,7 +830,7 @@ resource "kubernetes_deployment" "pgadmin" {
 resource "kubernetes_service" "pgadmin" {
   metadata {
     name      = "pgadmin"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     selector = {
@@ -844,7 +844,7 @@ resource "kubernetes_service" "pgadmin" {
 }
 module "ingress-pgadmin" {
   source          = "../ingress_factory"
-  namespace       = "dbaas"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
   protected       = true
@@ -858,7 +858,7 @@ module "ingress-pgadmin" {
 resource "kubernetes_cron_job_v1" "postgresql-backup" {
   metadata {
     name      = "postgresql-backup"
-    namespace = "dbaas"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
     concurrency_policy        = "Replace"

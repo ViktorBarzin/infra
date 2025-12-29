@@ -17,14 +17,14 @@ resource "kubernetes_namespace" "calibre" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "calibre"
+  namespace       = kubernetes_namespace.calibre.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 # resource "kubernetes_deployment" "calibre" {
 #   metadata {
 #     name      = "calibre"
-#     namespace = "calibre"
+#    namespace = kubernetes_namespace.calibre.metadata[0].name
 #     labels = {
 #       app = "calibre"
 #     }
@@ -97,7 +97,7 @@ module "tls_secret" {
 resource "kubernetes_deployment" "calibre-web-automated" {
   metadata {
     name      = "calibre-web-automated"
-    namespace = "calibre"
+    namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
       app = "calibre-web-automated"
     }
@@ -196,7 +196,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
 resource "kubernetes_service" "calibre" {
   metadata {
     name      = "calibre"
-    namespace = "calibre"
+    namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
       "app" = "calibre"
     }
@@ -218,7 +218,7 @@ resource "kubernetes_service" "calibre" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "calibre"
+  namespace       = kubernetes_namespace.calibre.metadata[0].name
   name            = "calibre"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
@@ -248,7 +248,7 @@ module "ingress" {
 resource "kubernetes_deployment" "annas-archive-stacks" {
   metadata {
     name      = "annas-archive-stacks"
-    namespace = "calibre"
+    namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
       app = "annas-archive-stacks"
     }
@@ -304,7 +304,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
 resource "kubernetes_service" "annas-archive-stacks" {
   metadata {
     name      = "annas-archive-stacks"
-    namespace = "calibre"
+    namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
       "app" = "annas-archive-stacks"
     }
@@ -324,7 +324,7 @@ resource "kubernetes_service" "annas-archive-stacks" {
 
 module "stacks-ingress" {
   source          = "../ingress_factory"
-  namespace       = "calibre"
+  namespace       = kubernetes_namespace.calibre.metadata[0].name
   name            = "stacks"
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name

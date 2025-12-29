@@ -13,14 +13,14 @@ resource "kubernetes_namespace" "onlyoffice" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "onlyoffice"
+  namespace       = kubernetes_namespace.onlyoffice.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "onlyoffice-document-server" {
   metadata {
     name      = "onlyoffice-document-server"
-    namespace = "onlyoffice"
+    namespace = kubernetes_namespace.onlyoffice.metadata[0].name
     labels = {
       app = "onlyoffice-document-server"
     }
@@ -104,7 +104,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
 resource "kubernetes_service" "onlyoffice" {
   metadata {
     name      = "onlyoffice-document-server"
-    namespace = "onlyoffice"
+    namespace = kubernetes_namespace.onlyoffice.metadata[0].name
     labels = {
       "app" = "onlyoffice-document-server"
     }
@@ -121,7 +121,7 @@ resource "kubernetes_service" "onlyoffice" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "onlyoffice"
+  namespace       = kubernetes_namespace.onlyoffice.metadata[0].name
   name            = "onlyoffice"
   service_name    = "onlyoffice-document-server"
   tls_secret_name = var.tls_secret_name

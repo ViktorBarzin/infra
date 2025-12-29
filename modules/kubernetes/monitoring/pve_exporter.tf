@@ -2,7 +2,7 @@
 resource "kubernetes_secret" "pve_exporter_config" {
   metadata {
     name      = "pve-exporter-config"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
   }
 
   data = {
@@ -19,7 +19,7 @@ resource "kubernetes_secret" "pve_exporter_config" {
 resource "kubernetes_deployment" "pve_exporter" {
   metadata {
     name      = "proxmox-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
   }
 
   spec {
@@ -72,7 +72,7 @@ resource "kubernetes_deployment" "pve_exporter" {
 resource "kubernetes_service" "proxmox-exporter" {
   metadata {
     name      = "proxmox-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       "app" = "proxmox-exporter"
     }

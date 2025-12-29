@@ -53,7 +53,7 @@ resource "kubernetes_cluster_role" "descheduler" {
 resource "kubernetes_service_account" "descheduler" {
   metadata {
     name      = "descheduler-sa"
-    namespace = "descheduler"
+    namespace = kubernetes_namespace.descheduler.metadata[0].name
   }
 }
 
@@ -70,12 +70,12 @@ resource "kubernetes_cluster_role_binding" "descheduler" {
   subject {
     name      = "descheduler-sa"
     kind      = "ServiceAccount"
-    namespace = "descheduler"
+    namespace = kubernetes_namespace.descheduler.metadata[0].name
   }
 }
 
 resource "helm_release" "prometheus" {
-  namespace = "descheduler"
+  namespace = kubernetes_namespace.descheduler.metadata[0].name
   name      = "descheduler"
 
   repository = "https://kubernetes-sigs.github.io/descheduler/"

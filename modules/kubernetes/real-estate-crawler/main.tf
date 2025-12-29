@@ -17,14 +17,14 @@ resource "kubernetes_namespace" "realestate-crawler" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "realestate-crawler"
+  namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "realestate-crawler-ui" {
   metadata {
     name      = "realestate-crawler-ui"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
       app = "realestate-crawler-ui"
     }
@@ -68,7 +68,7 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
 resource "kubernetes_service" "realestate-crawler-ui" {
   metadata {
     name      = "realestate-crawler-ui"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
       "app" = "realestate-crawler-ui"
     }
@@ -85,7 +85,7 @@ resource "kubernetes_service" "realestate-crawler-ui" {
 }
 # module "ingress" {
 #   source          = "../ingress_factory"
-#   namespace       = "realestate-crawler"
+#  namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
 #   name            = "wrongmove"
 #   service_name    = "realestate-crawler-ui"
 #   tls_secret_name = var.tls_secret_name
@@ -95,7 +95,7 @@ resource "kubernetes_service" "realestate-crawler-ui" {
 resource "kubernetes_deployment" "realestate-crawler-api" {
   metadata {
     name      = "realestate-crawler-api"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
       app = "realestate-crawler-api"
     }
@@ -179,7 +179,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
 resource "kubernetes_service" "realestate-crawler-api" {
   metadata {
     name      = "realestate-crawler-api"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
       "app" = "realestate-crawler-api"
     }
@@ -197,7 +197,7 @@ resource "kubernetes_service" "realestate-crawler-api" {
 }
 # module "ingress-api" {
 #   source          = "../ingress_factory"
-#   namespace       = "realestate-crawler"
+#  namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
 #   name            = "wrongmove-api"
 #   service_name    = "realestate-crawler-api"
 #   tls_secret_name = var.tls_secret_name
@@ -206,7 +206,7 @@ resource "kubernetes_service" "realestate-crawler-api" {
 resource "kubernetes_ingress_v1" "proxied-ingress" {
   metadata {
     name      = "realestate-crawler"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                  = "nginx"
       "nginx.ingress.kubernetes.io/backend-protocol" = "http"
@@ -278,7 +278,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
 resource "kubernetes_cron_job_v1" "scrape-rightmove" {
   metadata {
     name      = "scrape-rightmove"
-    namespace = "realestate-crawler"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
   }
   spec {
     concurrency_policy            = "Replace"

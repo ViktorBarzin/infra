@@ -8,14 +8,14 @@ resource "kubernetes_namespace" "jellyfin" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "jellyfin"
+  namespace       = kubernetes_namespace.jellyfin.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "jellyfin" {
   metadata {
     name      = "jellyfin"
-    namespace = "jellyfin"
+    namespace = kubernetes_namespace.jellyfin.metadata[0].name
     labels = {
       app = "jellyfin"
     }
@@ -89,7 +89,7 @@ resource "kubernetes_deployment" "jellyfin" {
 resource "kubernetes_service" "jellyfin" {
   metadata {
     name      = "jellyfin"
-    namespace = "jellyfin"
+    namespace = kubernetes_namespace.jellyfin.metadata[0].name
     labels = {
       "app" = "jellyfin"
     }
@@ -111,7 +111,7 @@ resource "kubernetes_service" "jellyfin" {
 resource "kubernetes_ingress_v1" "jellyfin" {
   metadata {
     name      = "jellyfin"
-    namespace = "jellyfin"
+    namespace = kubernetes_namespace.jellyfin.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
       "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"

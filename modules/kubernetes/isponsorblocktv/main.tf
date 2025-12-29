@@ -15,7 +15,7 @@ resource "kubernetes_namespace" "isponsorblocktv" {
 resource "kubernetes_deployment" "isponsorblocktv-vermont" {
   metadata {
     name      = "isponsorblocktv-vermont"
-    namespace = "isponsorblocktv"
+    namespace = kubernetes_namespace.isponsorblocktv.metadata[0].name
     labels = {
       app = "isponsorblocktv-vermont"
     }

@@ -19,7 +19,7 @@ resource "kubernetes_namespace" "wealthfolio" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "wealthfolio"
+  namespace       = kubernetes_namespace.wealthfolio.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -31,7 +31,7 @@ resource "random_string" "random" {
 resource "kubernetes_deployment" "wealthfolio" {
   metadata {
     name      = "wealthfolio"
-    namespace = "wealthfolio"
+    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
     labels = {
       app = "wealthfolio"
     }
@@ -100,7 +100,7 @@ resource "kubernetes_deployment" "wealthfolio" {
 resource "kubernetes_service" "wealthfolio" {
   metadata {
     name      = "wealthfolio"
-    namespace = "wealthfolio"
+    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
     labels = {
       "app" = "wealthfolio"
     }
@@ -120,7 +120,7 @@ resource "kubernetes_service" "wealthfolio" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "wealthfolio"
+  namespace       = kubernetes_namespace.wealthfolio.metadata[0].name
   name            = "wealthfolio"
   tls_secret_name = var.tls_secret_name
   protected       = true

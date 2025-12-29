@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "audiobookshelf" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "audiobookshelf"
+  namespace       = kubernetes_namespace.audiobookshelf.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "audiobookshelf" {
   metadata {
     name      = "audiobookshelf"
-    namespace = "audiobookshelf"
+    namespace = kubernetes_namespace.audiobookshelf.metadata[0].name
     labels = {
       app = "audiobookshelf"
     }
@@ -103,7 +103,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
 resource "kubernetes_service" "audiobookshelf" {
   metadata {
     name      = "audiobookshelf"
-    namespace = "audiobookshelf"
+    namespace = kubernetes_namespace.audiobookshelf.metadata[0].name
     labels = {
       "app" = "audiobookshelf"
     }
@@ -124,7 +124,7 @@ resource "kubernetes_service" "audiobookshelf" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "audiobookshelf"
+  namespace       = kubernetes_namespace.audiobookshelf.metadata[0].name
   name            = "audiobookshelf"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

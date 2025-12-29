@@ -11,14 +11,12 @@ resource "kubernetes_namespace" "metrics-server" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "metrics-server"
+  namespace       = kubernetes_namespace.metrics-server.metadata[0].name
   tls_secret_name = var.tls_secret_name
-
-  depends_on = [kubernetes_namespace.metrics-server]
 }
 
 resource "helm_release" "metrics-server" {
-  namespace        = "metrics-server"
+  namespace        = kubernetes_namespace.metrics-server.metadata[0].name
   create_namespace = false
   name             = "metrics-server"
   atomic           = true
@@ -27,6 +25,4 @@ resource "helm_release" "metrics-server" {
   chart      = "metrics-server"
 
   values = [templatefile("${path.module}/values.yaml", {})]
-
-  depends_on = [kubernetes_namespace.metrics-server]
 }

@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "pihole" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "pihole"
+  namespace       = kubernetes_namespace.pihole.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -17,7 +17,7 @@ module "tls_secret" {
 resource "kubernetes_config_map" "external_conf" {
   metadata {
     name      = "external-conf"
-    namespace = "pihole"
+    namespace = kubernetes_namespace.pihole.metadata[0].name
 
     labels = {
       app = "pihole"
@@ -31,7 +31,7 @@ resource "kubernetes_config_map" "external_conf" {
 resource "kubernetes_deployment" "pihole" {
   metadata {
     name      = "pihole"
-    namespace = "pihole"
+    namespace = kubernetes_namespace.pihole.metadata[0].name
     labels = {
       app = "pihole"
     }
@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "pihole" {
 resource "kubernetes_service" "pihole-dns" {
   metadata {
     name      = "pihole-dns"
-    namespace = "pihole"
+    namespace = kubernetes_namespace.pihole.metadata[0].name
     labels = {
       "app" = "pihole"
     }
@@ -144,7 +144,7 @@ resource "kubernetes_service" "pihole-dns" {
 resource "kubernetes_service" "pihole-web" {
   metadata {
     name      = "pihole-web"
-    namespace = "pihole"
+    namespace = kubernetes_namespace.pihole.metadata[0].name
     labels = {
       "app" = "pihole"
     }
@@ -167,7 +167,7 @@ resource "kubernetes_service" "pihole-web" {
 resource "kubernetes_ingress_v1" "pihole" {
   metadata {
     name      = "pihole-ingress"
-    namespace = "pihole"
+    namespace = kubernetes_namespace.pihole.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                        = "nginx"
       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"

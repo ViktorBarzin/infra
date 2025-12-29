@@ -15,14 +15,23 @@ variable "haos_api_token" { type = string }
 variable "pve_password" { type = string }
 variable "grafana_db_password" { type = string }
 
+resource "kubernetes_namespace" "monitoring" {
+  metadata {
+    name = "monitoring"
+    labels = {
+      "istio-injection" : "disabled"
+    }
+  }
+}
+
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "monitoring"
+  namespace       = kubernetes_namespace.monitoring.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 # Terraform get angry with the 30k values file :/ use ansible until solved
 # resource "helm_release" "ups_prometheus_snmp_exporter" {
-#   namespace        = "monitoring"
+#  namespace = kubernetes_namespace.monitoring.metadata[0].name
 #   create_namespace = true
 #   name             = "ups_prometheus_exporter"
 
@@ -67,7 +76,7 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
 resource "kubernetes_ingress_v1" "status" {
   metadata {
     name      = "hetrix-redirect-ingress"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                    = "nginx"
       "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/"
@@ -101,7 +110,7 @@ resource "kubernetes_ingress_v1" "status" {
 resource "kubernetes_ingress_v1" "status_yotovski" {
   metadata {
     name      = "hetrix-yotovski-redirect-ingress"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                    = "nginx"
       "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/2ba9d7a5e017794db0fd91f0115a8b3b/"

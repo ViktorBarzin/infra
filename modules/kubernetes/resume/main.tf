@@ -4,7 +4,7 @@ variable "redis_url" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "resume"
+  namespace       = kubernetes_namespace.resume.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "resume" {
 resource "kubernetes_deployment" "resume" {
   metadata {
     name      = "resume"
-    namespace = "resume"
+    namespace = kubernetes_namespace.resume.metadata[0].name
     labels = {
       app = "resume"
     }

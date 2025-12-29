@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "echo" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "echo"
+  namespace       = kubernetes_namespace.echo.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "echo" {
   metadata {
     name      = "echo"
-    namespace = "echo"
+    namespace = kubernetes_namespace.echo.metadata[0].name
     labels = {
       app = "echo"
     }
@@ -55,7 +55,7 @@ resource "kubernetes_deployment" "echo" {
 resource "kubernetes_service" "echo" {
   metadata {
     name      = "echo"
-    namespace = "echo"
+    namespace = kubernetes_namespace.echo.metadata[0].name
     labels = {
       "app" = "echo"
     }
@@ -75,7 +75,7 @@ resource "kubernetes_service" "echo" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "echo"
+  namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"
   tls_secret_name = var.tls_secret_name
 }

@@ -122,9 +122,9 @@ variable "defcon_level" {
 }
 locals {
   defcon_modules = {
-    1 : ["wireguard", "technitium", "headscale", "nginx-ingress", "xray", "authentik", "cloudflare", "authelia"], # Critical connectivity services
-    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec"],                # Storage and other db services
-    3 : ["k8s-dashboard", "reverse-proxy"],                                                                       # Cluster admin services
+    1 : ["wireguard", "technitium", "headscale", "nginx-ingress", "xray", "authentik", "cloudflare", "authelia", "monitoring"], # Critical connectivity services
+    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec"],                              # Storage and other db services
+    3 : ["k8s-dashboard", "reverse-proxy"],                                                                                     # Cluster admin services
     4 : [
       "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
       "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget"
@@ -147,7 +147,7 @@ locals {
 resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
   depends_on = [
-    module.metallb, module.dbaas, module.monitoring, module.technitium, module.vaultwarden, module.reverse-proxy,
+    module.metallb, module.dbaas, module.technitium, module.vaultwarden, module.reverse-proxy,
     module.redis, module.nginx-ingress, module.crowdsec, module.cloudflared, module.metrics-server, module.authentik,
     module.nvidia,
   ]
@@ -263,6 +263,7 @@ module "metallb" {
 module "monitoring" {
   source                        = "./monitoring"
   tls_secret_name               = var.tls_secret_name
+  for_each                      = contains(local.active_modules, "monitoring") ? { monitoring = true } : {}
   alertmanager_account_password = var.alertmanager_account_password
   idrac_username                = var.idrac_username
   idrac_password                = var.idrac_password

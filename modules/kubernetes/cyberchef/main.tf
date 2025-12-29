@@ -7,14 +7,14 @@ resource "kubernetes_namespace" "cyberchef" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "cyberchef"
+  namespace       = kubernetes_namespace.cyberchef.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "cyberchef" {
   metadata {
     name      = "cyberchef"
-    namespace = "cyberchef"
+    namespace = kubernetes_namespace.cyberchef.metadata[0].name
     labels = {
       app = "cyberchef"
     }
@@ -55,7 +55,7 @@ resource "kubernetes_deployment" "cyberchef" {
 resource "kubernetes_service" "cyberchef" {
   metadata {
     name      = "cc"
-    namespace = "cyberchef"
+    namespace = kubernetes_namespace.cyberchef.metadata[0].name
     labels = {
       "app" = "cyberchef"
     }
@@ -76,7 +76,7 @@ resource "kubernetes_service" "cyberchef" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "cyberchef"
+  namespace       = kubernetes_namespace.cyberchef.metadata[0].name
   name            = "cc"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "7c460afc68c4"

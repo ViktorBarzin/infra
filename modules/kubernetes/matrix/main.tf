@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "matrix" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "matrix"
+  namespace       = kubernetes_namespace.matrix.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "matrix" {
   metadata {
     name      = "matrix"
-    namespace = "matrix"
+    namespace = kubernetes_namespace.matrix.metadata[0].name
     labels = {
       app = "matrix"
     }
@@ -71,7 +71,7 @@ resource "kubernetes_deployment" "matrix" {
 resource "kubernetes_service" "matrix" {
   metadata {
     name      = "matrix"
-    namespace = "matrix"
+    namespace = kubernetes_namespace.matrix.metadata[0].name
     labels = {
       "app" = "matrix"
     }
@@ -91,7 +91,7 @@ resource "kubernetes_service" "matrix" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "matrix"
+  namespace       = kubernetes_namespace.matrix.metadata[0].name
   name            = "matrix"
   tls_secret_name = var.tls_secret_name
 }

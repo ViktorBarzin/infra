@@ -12,7 +12,7 @@ https://sbcode.net/prometheus/snmp-generate-huawei/
 resource "kubernetes_config_map" "snmp-exporter-yaml" {
   metadata {
     name      = "snmp-exporter-yaml"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -27,7 +27,7 @@ resource "kubernetes_config_map" "snmp-exporter-yaml" {
 resource "kubernetes_deployment" "snmp-exporter" {
   metadata {
     name      = "snmp-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       app = "snmp-exporter"
     }
@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "snmp-exporter" {
 resource "kubernetes_service" "snmp-exporter" {
   metadata {
     name      = "snmp-exporter"
-    namespace = "monitoring"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       "app" = "snmp-exporter"
     }
@@ -102,7 +102,7 @@ resource "kubernetes_service" "snmp-exporter" {
 
 module "snmp-exporter-ingress" {
   source                  = "../ingress_factory"
-  namespace               = "monitoring"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "snmp-exporter"
   root_domain             = "viktorbarzin.lan"
   tls_secret_name         = var.tls_secret_name

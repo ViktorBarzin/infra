@@ -8,13 +8,13 @@ resource "kubernetes_namespace" "istio" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "istio-system"
+  namespace       = kubernetes_namespace.istio.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 # to delete all CRDS: kubectl get crd -oname | grep --color=never 'istio.io' | xargs kubectl delete
 resource "helm_release" "istio-base" {
-  namespace        = "istio-system"
+  namespace        = kubernetes_namespace.istio.metadata[0].name
   create_namespace = false
   name             = "istio-base"
   atomic           = true
@@ -25,7 +25,7 @@ resource "helm_release" "istio-base" {
 }
 
 resource "helm_release" "istiod" {
-  namespace        = "istio-system"
+  namespace        = kubernetes_namespace.istio.metadata[0].name
   create_namespace = false
   name             = "istiod"
   atomic           = true
@@ -36,7 +36,7 @@ resource "helm_release" "istiod" {
 }
 
 resource "helm_release" "istio-gateway" {
-  namespace        = "istio-system"
+  namespace        = kubernetes_namespace.istio.metadata[0].name
   create_namespace = false
   name             = "istio-gateway"
   atomic           = true
@@ -48,7 +48,7 @@ resource "helm_release" "istio-gateway" {
 
 # Kiali dashboard
 resource "helm_release" "kiali" {
-  namespace        = "istio-system"
+  namespace        = kubernetes_namespace.istio.metadata[0].name
   create_namespace = false
   name             = "kiali"
   atomic           = true
@@ -71,7 +71,7 @@ resource "helm_release" "kiali" {
 resource "kubernetes_secret" "kiali-token" {
   metadata {
     name      = "kiali-secret"
-    namespace = "istio-system"
+    namespace = kubernetes_namespace.istio.metadata[0].name
     annotations = {
       "kubernetes.io/service-account.name" : "kiali-service-account"
     }
@@ -83,7 +83,7 @@ resource "kubernetes_secret" "kiali-token" {
 # resource "kubernetes_ingress_v1" "kiali" {
 #   metadata {
 #     name      = "kiali"
-#     namespace = "istio-system"
+#    namespace = kubernetes_namespace.istio.metadata[0].name
 #     annotations = {
 #       "kubernetes.io/ingress.class" = "nginx"
 #       "nginx.ingress.kubernetes.io/auth-url" : "https://oauth2.viktorbarzin.me/oauth2/auth"

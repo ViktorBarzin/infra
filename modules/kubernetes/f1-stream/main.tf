@@ -12,7 +12,7 @@ resource "kubernetes_namespace" "f1-stream" {
 resource "kubernetes_deployment" "f1-stream" {
   metadata {
     name      = "f1-stream"
-    namespace = "f1-stream"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
     labels = {
       app = "f1-stream"
     }
@@ -57,7 +57,7 @@ resource "kubernetes_deployment" "f1-stream" {
 resource "kubernetes_service" "f1-stream" {
   metadata {
     name      = "f1"
-    namespace = "f1-stream"
+    namespace = kubernetes_namespace.f1-stream.metadata[0].name
     labels = {
       "app" = "f1-stream"
     }
@@ -75,14 +75,14 @@ resource "kubernetes_service" "f1-stream" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "f1-stream"
+  namespace       = kubernetes_namespace.f1-stream.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "f1-stream"
+  namespace       = kubernetes_namespace.f1-stream.metadata[0].name
   name            = "f1"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

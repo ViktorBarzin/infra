@@ -3,11 +3,11 @@ variable "postgresql_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "n8n"
+  namespace       = kubernetes_namespace.n8n.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_namespace" "immich" {
+resource "kubernetes_namespace" "n8n" {
   metadata {
     name = "n8n"
   }
@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "immich" {
 resource "kubernetes_deployment" "n8n" {
   metadata {
     name      = "n8n"
-    namespace = "n8n"
+    namespace = kubernetes_namespace.n8n.metadata[0].name
     labels = {
       app = "n8n"
     }
@@ -112,7 +112,7 @@ resource "kubernetes_deployment" "n8n" {
 resource "kubernetes_service" "n8n" {
   metadata {
     name      = "n8n"
-    namespace = "n8n"
+    namespace = kubernetes_namespace.n8n.metadata[0].name
     labels = {
       "app" = "n8n"
     }
@@ -130,7 +130,7 @@ resource "kubernetes_service" "n8n" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "n8n"
+  namespace       = kubernetes_namespace.n8n.metadata[0].name
   name            = "n8n"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

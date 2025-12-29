@@ -3,7 +3,7 @@ variable "method" {
   default = "chacha20-ietf-poly1305"
 }
 
-resource "kubernetes_namespace" "mailserver" {
+resource "kubernetes_namespace" "shadowsocks" {
   metadata {
     name = "shadowsocks"
     # TLS termination seems iffy - I get pfsense MiTM-ing
@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "mailserver" {
 resource "kubernetes_deployment" "shadowsocks" {
   metadata {
     name      = "shadowsocks"
-    namespace = "shadowsocks"
+    namespace = kubernetes_namespace.shadowsocks.metadata[0].name
     labels = {
       "app" = "shadowsocks"
     }
@@ -67,7 +67,7 @@ resource "kubernetes_deployment" "shadowsocks" {
 resource "kubernetes_service" "mailserver" {
   metadata {
     name      = "shadowsocks"
-    namespace = "shadowsocks"
+    namespace = kubernetes_namespace.shadowsocks.metadata[0].name
 
     labels = {
       app = "shadowsocks"

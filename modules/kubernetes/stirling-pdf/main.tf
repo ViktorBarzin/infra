@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "stirling-pdf" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "stirling-pdf"
+  namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "stirling-pdf" {
   metadata {
     name      = "stirling-pdf"
-    namespace = "stirling-pdf"
+    namespace = kubernetes_namespace.stirling-pdf.metadata[0].name
     labels = {
       app = "stirling-pdf"
     }
@@ -63,7 +63,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
 resource "kubernetes_service" "stirling-pdf" {
   metadata {
     name      = "stirling-pdf"
-    namespace = "stirling-pdf"
+    namespace = kubernetes_namespace.stirling-pdf.metadata[0].name
     labels = {
       "app" = "stirling-pdf"
     }
@@ -83,7 +83,7 @@ resource "kubernetes_service" "stirling-pdf" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "stirling-pdf"
+  namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   name            = "stirling-pdf"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "a55ac54ec749"

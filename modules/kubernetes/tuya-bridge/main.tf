@@ -15,14 +15,14 @@ resource "kubernetes_namespace" "tuya-bridge" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "tuya-bridge"
+  namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "tuya-bridge" {
   metadata {
     name      = "tuya-bridge"
-    namespace = "tuya-bridge"
+    namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
     labels = {
       app = "tuya-bridge"
     }
@@ -72,7 +72,7 @@ resource "kubernetes_deployment" "tuya-bridge" {
 resource "kubernetes_service" "tuya-bridge" {
   metadata {
     name      = "tuya-bridge"
-    namespace = "tuya-bridge"
+    namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
     labels = {
       "app" = "tuya-bridge"
     }
@@ -92,7 +92,7 @@ resource "kubernetes_service" "tuya-bridge" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "tuya-bridge"
+  namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   name            = "tuya-bridge"
   tls_secret_name = var.tls_secret_name
 

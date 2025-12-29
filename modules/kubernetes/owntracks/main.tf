@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "owntracks" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "owntracks"
+  namespace       = kubernetes_namespace.owntracks.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -29,7 +29,7 @@ locals {
 resource "kubernetes_secret" "basic_auth" {
   metadata {
     name      = "basic-auth-secret"
-    namespace = "owntracks"
+    namespace = kubernetes_namespace.owntracks.metadata[0].name
   }
 
   data = {
@@ -45,7 +45,7 @@ resource "kubernetes_secret" "basic_auth" {
 resource "kubernetes_deployment" "owntracks" {
   metadata {
     name      = "owntracks"
-    namespace = "owntracks"
+    namespace = kubernetes_namespace.owntracks.metadata[0].name
     labels = {
       app = "owntracks"
     }
@@ -112,7 +112,7 @@ resource "kubernetes_deployment" "owntracks" {
 resource "kubernetes_service" "owntracks" {
   metadata {
     name      = "owntracks"
-    namespace = "owntracks"
+    namespace = kubernetes_namespace.owntracks.metadata[0].name
     labels = {
       "app" = "owntracks"
     }
@@ -133,7 +133,7 @@ resource "kubernetes_service" "owntracks" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "owntracks"
+  namespace       = kubernetes_namespace.owntracks.metadata[0].name
   name            = "owntracks"
   tls_secret_name = var.tls_secret_name
   port            = 443

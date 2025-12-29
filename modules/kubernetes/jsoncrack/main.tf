@@ -10,14 +10,14 @@ resource "kubernetes_namespace" "jsoncrack" {
 }
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "jsoncrack"
+  namespace       = kubernetes_namespace.jsoncrack.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "jsoncrack" {
   metadata {
     name      = "jsoncrack"
-    namespace = "jsoncrack"
+    namespace = kubernetes_namespace.jsoncrack.metadata[0].name
     labels = {
       app = "jsoncrack"
     }
@@ -51,7 +51,7 @@ resource "kubernetes_deployment" "jsoncrack" {
 resource "kubernetes_service" "jsoncrack" {
   metadata {
     name      = "json"
-    namespace = "jsoncrack"
+    namespace = kubernetes_namespace.jsoncrack.metadata[0].name
     labels = {
       "app" = "jsoncrack"
     }
@@ -72,7 +72,7 @@ resource "kubernetes_service" "jsoncrack" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "jsoncrack"
+  namespace       = kubernetes_namespace.jsoncrack.metadata[0].name
   name            = "json"
   tls_secret_name = var.tls_secret_name
 }
