@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "dnscat2" {
 
 # module "tls_secret" {
 #   source          = "../setup_tls_secret"
-#   namespace       = "dnscat2"
+#  namespace = kubernetes_namespace.dnscat2.metadata[0].name
 #   tls_secret_name = var.tls_secret_name
 # }
 
 resource "kubernetes_deployment" "dnscat2" {
   metadata {
     name      = "dnscat2"
-    namespace = "dnscat2"
+    namespace = kubernetes_namespace.dnscat2.metadata[0].name
     labels = {
       app = "dnscat2"
     }
@@ -43,7 +43,7 @@ resource "kubernetes_deployment" "dnscat2" {
           stdin = true
           tty   = true
           port {
-            name="dns"
+            name           = "dns"
             container_port = 53
             protocol       = "UDP"
           }
@@ -60,7 +60,7 @@ resource "kubernetes_deployment" "dnscat2" {
 resource "kubernetes_service" "dnscat2" {
   metadata {
     name      = "dnscat2"
-    namespace = "dnscat2"
+    namespace = kubernetes_namespace.dnscat2.metadata[0].name
     labels = {
       "app" = "dnscat2"
     }

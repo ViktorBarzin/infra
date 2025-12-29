@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "headscale" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "headscale"
+  namespace       = kubernetes_namespace.headscale.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "headscale" {
   metadata {
     name      = "headscale"
-    namespace = "headscale"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
     labels = {
       app = "headscale"
       # scare to try but probably non-http will fail
@@ -141,7 +141,7 @@ resource "kubernetes_deployment" "headscale" {
 resource "kubernetes_service" "headscale" {
   metadata {
     name      = "headscale"
-    namespace = "headscale"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
     labels = {
       "app" = "headscale"
     }
@@ -184,7 +184,7 @@ resource "kubernetes_service" "headscale" {
 resource "kubernetes_ingress_v1" "headscale" {
   metadata {
     name      = "headscale-ingress"
-    namespace = "headscale"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
     annotations = {
       // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
       "kubernetes.io/ingress.class"              = "nginx"
@@ -233,7 +233,7 @@ resource "kubernetes_ingress_v1" "headscale" {
 resource "kubernetes_service" "headscale-server" {
   metadata {
     name      = "headscale-server"
-    namespace = "headscale"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
     labels = {
       "app" = "headscale"
     }
@@ -265,7 +265,7 @@ resource "kubernetes_service" "headscale-server" {
 resource "kubernetes_config_map" "headscale-config" {
   metadata {
     name      = "headscale-config"
-    namespace = "headscale"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"

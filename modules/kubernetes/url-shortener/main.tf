@@ -23,14 +23,14 @@ resource "kubernetes_namespace" "shlink" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "url"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_secret" "mysql_config" {
   metadata {
     name      = "mysql-config"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
     annotations = {
       "reloader.stakater.com/match" = "true"
     }
@@ -48,12 +48,12 @@ resource "kubernetes_secret" "mysql_config" {
 #     kind: MysqlUser
 #     metadata:
 #       name: shlink
-#       namespace: url
+#      namespace = kubernetes_namespace.shlink.metadata[0].name
 #     spec:
 #       user: shlink
 #       clusterRef:
 #         name: mysql-cluster
-#         namespace: dbaas
+#        namespace = kubernetes_namespace.shlink.metadata[0].name
 #       password:
 #         name: mysql-config
 #         key: password
@@ -74,7 +74,7 @@ resource "kubernetes_secret" "mysql_config" {
 resource "kubernetes_deployment" "shlink" {
   metadata {
     name      = "shlink"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
       run = "shlink"
     }
@@ -152,7 +152,7 @@ resource "kubernetes_deployment" "shlink" {
 resource "kubernetes_service" "shlink" {
   metadata {
     name      = "shlink"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
       "run" = "shlink"
     }
@@ -172,7 +172,7 @@ resource "kubernetes_service" "shlink" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "url"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "url"
   service_name    = "shlink"
   tls_secret_name = var.tls_secret_name
@@ -192,7 +192,7 @@ module "ingress" {
 resource "kubernetes_config_map" "shlink-web" {
   metadata {
     name      = "shlink-web-servers"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -211,7 +211,7 @@ resource "kubernetes_config_map" "shlink-web" {
 resource "kubernetes_deployment" "shlink-web" {
   metadata {
     name      = "shlink-web"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
       run = "shlink-web"
     }
@@ -269,7 +269,7 @@ resource "kubernetes_deployment" "shlink-web" {
 resource "kubernetes_service" "shlink-web" {
   metadata {
     name      = "shlink-web"
-    namespace = "url"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
       "run" = "shlink-web"
     }
@@ -289,7 +289,7 @@ resource "kubernetes_service" "shlink-web" {
 
 module "ingress-web" {
   source          = "../ingress_factory"
-  namespace       = "url"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "shlink"
   service_name    = "shlink-web"
   tls_secret_name = var.tls_secret_name

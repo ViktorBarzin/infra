@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "rybbit" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "rybbit"
+  namespace       = kubernetes_namespace.rybbit.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -27,7 +27,7 @@ locals {
 resource "kubernetes_deployment" "clickhouse" {
   metadata {
     name      = "clickhouse"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       app = "clickhouse"
     }
@@ -86,7 +86,7 @@ resource "kubernetes_deployment" "clickhouse" {
 resource "kubernetes_service" "clickhouse" {
   metadata {
     name      = "clickhouse"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       "app" = "clickhouse"
     }
@@ -108,7 +108,7 @@ resource "kubernetes_service" "clickhouse" {
 resource "kubernetes_deployment" "rybbit" {
   metadata {
     name      = "rybbit"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       app = "rybbit"
     }
@@ -199,7 +199,7 @@ resource "kubernetes_deployment" "rybbit" {
 resource "kubernetes_service" "rybbit" {
   metadata {
     name      = "rybbit"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       "app" = "rybbit"
     }
@@ -220,7 +220,7 @@ resource "kubernetes_service" "rybbit" {
 resource "kubernetes_deployment" "rybbit-client" {
   metadata {
     name      = "rybbit-client"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       app = "rybbit-client"
     }
@@ -264,7 +264,7 @@ resource "kubernetes_deployment" "rybbit-client" {
 resource "kubernetes_service" "rybbit-client" {
   metadata {
     name      = "rybbit-client"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
       "app" = "rybbit-client"
     }
@@ -286,7 +286,7 @@ resource "kubernetes_service" "rybbit-client" {
 resource "kubernetes_ingress_v1" "rybbit" {
   metadata {
     name      = "rybbit"
-    namespace = "rybbit"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
 
     annotations = {
       "kubernetes.io/ingress.class"           = "nginx"

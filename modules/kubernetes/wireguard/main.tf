@@ -5,7 +5,7 @@ variable "wg_0_key" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "wireguard"
+  namespace       = kubernetes_namespace.wireguard.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "wireguard" {
 resource "kubernetes_config_map" "wg_0_conf" {
   metadata {
     name      = "wg0-conf"
-    namespace = "wireguard"
+    namespace = kubernetes_namespace.wireguard.metadata[0].name
 
     labels = {
       app = "wireguard"
@@ -36,7 +36,7 @@ resource "kubernetes_config_map" "wg_0_conf" {
 resource "kubernetes_secret" "wg_0_key" {
   metadata {
     name      = "wg0-key"
-    namespace = "wireguard"
+    namespace = kubernetes_namespace.wireguard.metadata[0].name
 
     annotations = {
       "reloader.stakater.com/match" = "true"
@@ -54,7 +54,7 @@ resource "kubernetes_secret" "wg_0_key" {
 resource "kubernetes_deployment" "wireguard" {
   metadata {
     name      = "wireguard"
-    namespace = "wireguard"
+    namespace = kubernetes_namespace.wireguard.metadata[0].name
     labels = {
       app = "wireguard"
     }
@@ -177,7 +177,7 @@ resource "kubernetes_deployment" "wireguard" {
 resource "kubernetes_service" "wireguard" {
   metadata {
     name      = "wireguard"
-    namespace = "wireguard"
+    namespace = kubernetes_namespace.wireguard.metadata[0].name
     annotations = {
       "metallb.universe.tf/allow-shared-ip" = "shared"
     }
@@ -203,7 +203,7 @@ resource "kubernetes_service" "wireguard" {
 resource "kubernetes_service" "wireguard_exporter" {
   metadata {
     name      = "wireguard-exporter"
-    namespace = "wireguard"
+    namespace = kubernetes_namespace.wireguard.metadata[0].name
     labels = {
       "app" = "wireguard-exporter"
     }

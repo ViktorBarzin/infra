@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "forgejo" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "forgejo"
+  namespace       = kubernetes_namespace.forgejo.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "forgejo" {
   metadata {
     name      = "forgejo"
-    namespace = "forgejo"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
     labels = {
       app = "forgejo"
     }
@@ -76,7 +76,7 @@ resource "kubernetes_deployment" "forgejo" {
 resource "kubernetes_service" "forgejo" {
   metadata {
     name      = "forgejo"
-    namespace = "forgejo"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
     labels = {
       "app" = "forgejo"
     }
@@ -94,7 +94,7 @@ resource "kubernetes_service" "forgejo" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "forgejo"
+  namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

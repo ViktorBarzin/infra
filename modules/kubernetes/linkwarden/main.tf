@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "linkwarden" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "linkwarden"
+  namespace       = kubernetes_namespace.linkwarden.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -24,7 +24,7 @@ resource "random_string" "secret" {
 resource "kubernetes_deployment" "linkwarden" {
   metadata {
     name      = "linkwarden"
-    namespace = "linkwarden"
+    namespace = kubernetes_namespace.linkwarden.metadata[0].name
     labels = {
       app = "linkwarden"
     }
@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "linkwarden" {
 resource "kubernetes_service" "linkwarden" {
   metadata {
     name      = "linkwarden"
-    namespace = "linkwarden"
+    namespace = kubernetes_namespace.linkwarden.metadata[0].name
     labels = {
       app = "linkwarden"
     }
@@ -113,7 +113,7 @@ resource "kubernetes_service" "linkwarden" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "linkwarden"
+  namespace       = kubernetes_namespace.linkwarden.metadata[0].name
   name            = "linkwarden"
   tls_secret_name = var.tls_secret_name
 }

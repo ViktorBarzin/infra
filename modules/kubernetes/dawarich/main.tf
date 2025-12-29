@@ -17,14 +17,14 @@ resource "kubernetes_namespace" "dawarich" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "dawarich"
+  namespace       = kubernetes_namespace.dawarich.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "dawarich" {
   metadata {
     name      = "dawarich"
-    namespace = "dawarich"
+    namespace = kubernetes_namespace.dawarich.metadata[0].name
     labels = {
       app = "dawarich"
     }
@@ -218,7 +218,7 @@ resource "kubernetes_deployment" "dawarich" {
 # resource "kubernetes_deployment" "photon" {
 #   metadata {
 #     name      = "photon"
-#     namespace = "dawarich"
+#    namespace = kubernetes_namespace.dawarich.metadata[0].name
 #     labels = {
 #       app = "photon"
 #     }
@@ -276,7 +276,7 @@ resource "kubernetes_deployment" "dawarich" {
 resource "kubernetes_service" "dawarich" {
   metadata {
     name      = "dawarich"
-    namespace = "dawarich"
+    namespace = kubernetes_namespace.dawarich.metadata[0].name
     labels = {
       "app" = "dawarich"
     }
@@ -298,7 +298,7 @@ resource "kubernetes_service" "dawarich" {
 # resource "kubernetes_service" "photon" {
 #   metadata {
 #     name      = "photon"
-#     namespace = "dawarich"
+#    namespace = kubernetes_namespace.dawarich.metadata[0].name
 #     labels = {
 #       "app" = "photon"
 #     }
@@ -318,7 +318,7 @@ resource "kubernetes_service" "dawarich" {
 # }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "dawarich"
+  namespace       = kubernetes_namespace.dawarich.metadata[0].name
   name            = "dawarich"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

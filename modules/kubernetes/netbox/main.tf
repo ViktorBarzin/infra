@@ -8,14 +8,14 @@ resource "kubernetes_namespace" "netbox" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "netbox"
+  namespace       = kubernetes_namespace.netbox.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "netbox" {
   metadata {
     name      = "netbox"
-    namespace = "netbox"
+    namespace = kubernetes_namespace.netbox.metadata[0].name
     labels = {
       app = "netbox"
     }
@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "netbox" {
 resource "kubernetes_service" "netbox" {
   metadata {
     name      = "netbox"
-    namespace = "netbox"
+    namespace = kubernetes_namespace.netbox.metadata[0].name
     labels = {
       "app" = "netbox"
     }
@@ -138,7 +138,7 @@ resource "kubernetes_service" "netbox" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "netbox"
+  namespace       = kubernetes_namespace.netbox.metadata[0].name
   name            = "netbox"
   tls_secret_name = var.tls_secret_name
   protected       = true

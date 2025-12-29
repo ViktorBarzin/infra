@@ -2,7 +2,7 @@ variable "tls_secret_name" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "nvidia"
+  namespace       = kubernetes_namespace.nvidia.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -21,7 +21,7 @@ resource "kubernetes_namespace" "nvidia" {
 resource "kubernetes_config_map" "time_slicing_config" {
   metadata {
     name      = "time-slicing-config"
-    namespace = "nvidia"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
   }
 
   data = {
@@ -41,7 +41,7 @@ resource "kubernetes_config_map" "time_slicing_config" {
 }
 
 resource "helm_release" "nvidia-gpu-operator" {
-  namespace = "nvidia"
+  namespace = kubernetes_namespace.nvidia.metadata[0].name
   name      = "nvidia-gpu-operator"
 
   repository = "https://helm.ngc.nvidia.com/nvidia"
@@ -57,7 +57,7 @@ resource "helm_release" "nvidia-gpu-operator" {
 resource "kubernetes_deployment" "nvidia-exporter" {
   metadata {
     name      = "nvidia-exporter"
-    namespace = "nvidia"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
     labels = {
       app = "nvidia-exporter"
     }
@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "nvidia-exporter" {
 resource "kubernetes_service" "nvidia-exporter" {
   metadata {
     name      = "nvidia-exporter"
-    namespace = "nvidia"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
     labels = {
       "app" = "nvidia-exporter"
     }
@@ -127,7 +127,7 @@ resource "kubernetes_service" "nvidia-exporter" {
 
 module "ingress" {
   source                  = "../ingress_factory"
-  namespace               = "nvidia"
+  namespace               = kubernetes_namespace.nvidia.metadata[0].name
   name                    = "nvidia-exporter"
   root_domain             = "viktorbarzin.lan"
   tls_secret_name         = var.tls_secret_name
@@ -138,7 +138,7 @@ module "ingress" {
 # resource "kubernetes_ingress_v1" "nvidia-exporter" {
 #   metadata {
 #     name      = "nvidia-exporter"
-#     namespace = "nvidia"
+#    namespace = kubernetes_namespace.nvidia.metadata[0].name
 #     annotations = {
 #       "kubernetes.io/ingress.class" = "nginx"
 #       "nginx.ingress.kubernetes.io/whitelist-source-range" : "192.168.1.0/24, 10.0.0.0/8"

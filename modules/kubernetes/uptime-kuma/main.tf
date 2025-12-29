@@ -1,11 +1,5 @@
 variable "tls_secret_name" {}
 
-module "tls_secret" {
-  source          = "../setup_tls_secret"
-  namespace       = "uptime-kuma"
-  tls_secret_name = var.tls_secret_name
-}
-
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
@@ -15,10 +9,16 @@ resource "kubernetes_namespace" "uptime-kuma" {
   }
 }
 
+module "tls_secret" {
+  source          = "../setup_tls_secret"
+  namespace       = kubernetes_namespace.uptime-kuma.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
 resource "kubernetes_deployment" "uptime-kuma" {
   metadata {
     name      = "uptime-kuma"
-    namespace = "uptime-kuma"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
     labels = {
       app = "uptime-kuma"
     }
@@ -73,7 +73,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
 resource "kubernetes_service" "uptime-kuma" {
   metadata {
     name      = "uptime-kuma"
-    namespace = "uptime-kuma"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
     labels = {
       "app" = "uptime-kuma"
     }
@@ -91,7 +91,7 @@ resource "kubernetes_service" "uptime-kuma" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "uptime-kuma"
+  namespace       = kubernetes_namespace.uptime-kuma.metadata[0].name
   name            = "uptime"
   tls_secret_name = var.tls_secret_name
   service_name    = "uptime-kuma"
@@ -114,7 +114,7 @@ module "ingress" {
 # resource "kubernetes_cron_job_v1" "sqlite-backup" {
 #   metadata {
 #     name      = "backup"
-#     namespace = "uptime-kuma"
+#    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
 #   }
 #   spec {
 #     concurrency_policy        = "Replace"

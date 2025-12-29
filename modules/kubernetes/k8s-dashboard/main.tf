@@ -32,12 +32,12 @@ resource "kubernetes_namespace" "k8s-dashboard" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "kubernetes-dashboard"
+  namespace       = kubernetes_namespace.k8s-dashboard.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "helm_release" "kubernetes-dashboard" {
-  namespace = "kubernetes-dashboard"
+  namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name      = "kubernetes-dashboard"
 
   repository = "https://kubernetes.github.io/dashboard/"
@@ -68,7 +68,7 @@ resource "helm_release" "kubernetes-dashboard" {
 # resource "kubernetes_secret" "dashboard-token" {
 #   metadata {
 #     name      = "dashboard-secret"
-#     namespace = "kubernetes-dashboard"
+#    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
 #     annotations = {
 #       "kubernetes.io/service-account.name" : "kubernetes-dashboard"
 #     }
@@ -79,7 +79,7 @@ resource "helm_release" "kubernetes-dashboard" {
 
 module "ingress" {
   source           = "../ingress_factory"
-  namespace        = "kubernetes-dashboard"
+  namespace        = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name             = "kubernetes-dashboard"
   service_name     = "kubernetes-dashboard-kong-proxy"
   host             = "k8s"
@@ -94,7 +94,7 @@ module "ingress" {
 resource "kubernetes_service_account" "kubernetes-dashboard" {
   metadata {
     name      = "kubernetes-dashboard"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   }
 }
 
@@ -111,7 +111,7 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
   subject {
     kind      = "ServiceAccount"
     name      = "kubernetes-dashboard"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   }
   # depends_on = [module.dashboard]
 }
@@ -119,7 +119,7 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
 resource "kubernetes_secret" "kubernetes-dashboard-admin-token" {
   metadata {
     name      = "kubernetes-dashboard-admin"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
     annotations = {
       "kubernetes.io/service-account.name" : "kubernetes-dashboard"
     }
@@ -213,21 +213,21 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard-viewonly" {
   subject {
     kind      = "ServiceAccount"
     name      = "kubernetes-dashboard-viewonly"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   }
 }
 
 resource "kubernetes_service_account" "kubernetes-dashboard-viewonly" {
   metadata {
     name      = "kubernetes-dashboard-viewonly"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   }
 }
 
 resource "kubernetes_secret" "kubernetes-dashboard-viewonly-token" {
   metadata {
     name      = "kubernetes-dashboard-viewonly"
-    namespace = "kubernetes-dashboard"
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
     annotations = {
       "kubernetes.io/service-account.name" : "kubernetes-dashboard-viewonly"
     }

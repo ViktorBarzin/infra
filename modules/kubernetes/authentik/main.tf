@@ -5,7 +5,7 @@ variable "postgres_password" {}
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "authentik"
+  namespace       = kubernetes_namespace.authentik.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "authentik" {
 }
 
 resource "helm_release" "authentik" {
-  namespace        = "authentik"
+  namespace        = kubernetes_namespace.authentik.metadata[0].name
   create_namespace = true
   name             = "goauthentik"
 
@@ -34,7 +34,7 @@ resource "helm_release" "authentik" {
 resource "kubernetes_ingress_v1" "authentik" {
   metadata {
     name      = "authentik"
-    namespace = "authentik"
+    namespace = kubernetes_namespace.authentik.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
     }

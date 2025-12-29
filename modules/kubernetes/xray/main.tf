@@ -11,7 +11,7 @@ variable "xray_reality_short_ids" { type = list(string) }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "xray"
+  namespace       = kubernetes_namespace.xray.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -24,7 +24,7 @@ resource "kubernetes_namespace" "xray" {
 resource "kubernetes_config_map" "xray_config" {
   metadata {
     name      = "xray-config"
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
 
     labels = {
       app = "xray"
@@ -46,7 +46,7 @@ resource "kubernetes_config_map" "xray_config" {
 resource "kubernetes_deployment" "xray" {
   metadata {
     name      = "xray"
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     labels = {
       app = "xray"
     }
@@ -131,7 +131,7 @@ resource "kubernetes_deployment" "xray" {
 resource "kubernetes_service" "xray" {
   metadata {
     name      = "xray"
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     labels = {
       "app" = "xray"
     }
@@ -162,7 +162,7 @@ resource "kubernetes_service" "xray" {
 resource "kubernetes_service" "xray-reality" {
   metadata {
     name      = "xray-reality"
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     labels = {
       "app" = "xray"
     }
@@ -183,7 +183,7 @@ resource "kubernetes_service" "xray-reality" {
 
 resource "kubernetes_ingress_v1" "ingress" {
   metadata {
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray"
     annotations = {
       "kubernetes.io/ingress.class"                  = "nginx"
@@ -219,7 +219,7 @@ resource "kubernetes_ingress_v1" "ingress" {
 
 resource "kubernetes_ingress_v1" "ingress-grpc" {
   metadata {
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray-grpc"
     annotations = {
       "kubernetes.io/ingress.class"                    = "nginx"
@@ -257,7 +257,7 @@ resource "kubernetes_ingress_v1" "ingress-grpc" {
 
 resource "kubernetes_ingress_v1" "ingress-vless" {
   metadata {
-    namespace = "xray"
+    namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray-vless"
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"

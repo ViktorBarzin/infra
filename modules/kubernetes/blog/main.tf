@@ -12,20 +12,20 @@ resource "kubernetes_namespace" "website" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "website"
+  namespace       = kubernetes_namespace.website.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 # module "dockerhub_creds" {
 #   source    = "../dockerhub_secret"
-#   namespace = "website"
+#  namespace = kubernetes_namespace.website.metadata[0].name
 #   password  = var.dockerhub_password
 # }
 
 resource "kubernetes_deployment" "blog" {
   metadata {
     name      = "blog"
-    namespace = "website"
+    namespace = kubernetes_namespace.website.metadata[0].name
     labels = {
       run = "blog"
     }
@@ -78,7 +78,7 @@ resource "kubernetes_deployment" "blog" {
 resource "kubernetes_service" "blog" {
   metadata {
     name      = "blog"
-    namespace = "website"
+    namespace = kubernetes_namespace.website.metadata[0].name
     labels = {
       "run" = "blog"
     }
@@ -109,7 +109,7 @@ resource "kubernetes_service" "blog" {
 resource "kubernetes_ingress_v1" "blog" {
   metadata {
     name      = "blog-ingress"
-    namespace = "website"
+    namespace = kubernetes_namespace.website.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class"                       = "nginx"
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOT

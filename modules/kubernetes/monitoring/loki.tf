@@ -1,5 +1,5 @@
 # resource "helm_release" "loki" {
-#   namespace        = "monitoring"
+#  namespace = kubernetes_namespace.monitoring.metadata[0].name
 #   create_namespace = true
 #   name             = "loki"
 
@@ -54,7 +54,7 @@
 
 # https://grafana.com/docs/alloy/latest/configure/kubernetes/
 # resource "helm_release" "alloy" {
-#   namespace        = "monitoring"
+#  namespace = kubernetes_namespace.monitoring.metadata[0].name
 #   create_namespace = true
 #   name             = "alloy"
 
@@ -71,7 +71,7 @@
 # for n in $(kbn | awk '{print $1}'); do echo $n; s wizard@$n 'sudo sysctl -w fs.inotify.max_user_watches=2099999999; sudo sysctl -w fs.inotify.max_user_instances=2099999999;sudo sysctl -w fs.inotify.max_queued_events=2099999999'; done
 
 # resource "helm_release" "k8s-monitoring" {
-#   namespace        = "monitoring"
+#  namespace = kubernetes_namespace.monitoring.metadata[0].name
 #   create_namespace = true
 #   name             = "k8s-monitoring"
 

@@ -11,12 +11,12 @@ resource "kubernetes_namespace" "authelia" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "authelia"
+  namespace       = kubernetes_namespace.authelia.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "helm_release" "authelia" {
-  namespace = "authelia"
+  namespace = kubernetes_namespace.authelia.metadata[0].name
   name      = "authelia"
   atomic    = true
 
@@ -32,7 +32,7 @@ resource "helm_release" "authelia" {
 # resource "kubernetes_config_map" "configuration" {
 #   metadata {
 #     name      = "configuration"
-#     namespace = "authelia"
+#    namespace = kubernetes_namespace.authelia.metadata[0].name
 
 #     labels = {
 #       app = "configuration"
@@ -53,7 +53,7 @@ resource "helm_release" "authelia" {
 # resource "kubernetes_deployment" "authelia" {
 #   metadata {
 #     name      = "authelia"
-#     namespace = "authelia"
+#    namespace = kubernetes_namespace.authelia.metadata[0].name
 #     labels = {
 #       app = "authelia"
 #     }
@@ -119,7 +119,7 @@ resource "helm_release" "authelia" {
 # resource "kubernetes_service" "authelia" {
 #   metadata {
 #     name      = "authelia"
-#     namespace = "authelia"
+#    namespace = kubernetes_namespace.authelia.metadata[0].name
 #     labels = {
 #       "app" = "authelia"
 #     }
@@ -142,7 +142,7 @@ resource "helm_release" "authelia" {
 # resource "kubernetes_ingress_v1" "authelia" {
 #   metadata {
 #     name      = "authelia"
-#     namespace = "authelia"
+#    namespace = kubernetes_namespace.authelia.metadata[0].name
 #     annotations = {
 #       "kubernetes.io/ingress.class" = "nginx"
 #       # "nginx.ingress.kubernetes.io/affinity" = "cookie"

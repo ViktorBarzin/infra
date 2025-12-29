@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "send" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "send"
+  namespace       = kubernetes_namespace.send.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "send" {
   metadata {
     name      = "send"
-    namespace = "send"
+    namespace = kubernetes_namespace.send.metadata[0].name
     labels = {
       app = "send"
     }
@@ -90,7 +90,7 @@ resource "kubernetes_deployment" "send" {
 resource "kubernetes_service" "send" {
   metadata {
     name      = "send"
-    namespace = "send"
+    namespace = kubernetes_namespace.send.metadata[0].name
     labels = {
       app = "send"
     }
@@ -108,7 +108,7 @@ resource "kubernetes_service" "send" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "send"
+  namespace       = kubernetes_namespace.send.metadata[0].name
   name            = "send"
   tls_secret_name = var.tls_secret_name
   port            = 1443

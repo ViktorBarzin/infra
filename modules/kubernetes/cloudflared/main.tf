@@ -10,14 +10,14 @@ resource "kubernetes_namespace" "cloudflared" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "cloudflared"
+  namespace       = kubernetes_namespace.cloudflared.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "cloudflared" {
   metadata {
     name      = "cloudflared"
-    namespace = "cloudflared"
+    namespace = kubernetes_namespace.cloudflared.metadata[0].name
     labels = {
       app = "cloudflared"
     }
@@ -64,7 +64,7 @@ resource "kubernetes_deployment" "cloudflared" {
 resource "kubernetes_service" "cloudflared" {
   metadata {
     name      = "cloudflared"
-    namespace = "cloudflared"
+    namespace = kubernetes_namespace.cloudflared.metadata[0].name
     labels = {
       "app" = "cloudflared"
     }

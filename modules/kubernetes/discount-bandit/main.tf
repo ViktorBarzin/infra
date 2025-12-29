@@ -11,14 +11,14 @@ resource "kubernetes_namespace" "discount-bandit" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "discount-bandit"
+  namespace       = kubernetes_namespace.discount-bandit.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_deployment" "discount-bandit" {
   metadata {
     name      = "discount-bandit"
-    namespace = "discount-bandit"
+    namespace = kubernetes_namespace.discount-bandit.metadata[0].name
     labels = {
       app = "discount-bandit"
     }
@@ -79,7 +79,7 @@ resource "kubernetes_deployment" "discount-bandit" {
 resource "kubernetes_service" "discount-bandit" {
   metadata {
     name      = "discount-bandit"
-    namespace = "discount-bandit"
+    namespace = kubernetes_namespace.discount-bandit.metadata[0].name
     labels = {
       "app" = "discount-bandit"
     }
@@ -101,7 +101,7 @@ resource "kubernetes_service" "discount-bandit" {
 resource "kubernetes_ingress_v1" "discount-bandit" {
   metadata {
     name      = "discount-bandit"
-    namespace = "discount-bandit"
+    namespace = kubernetes_namespace.discount-bandit.metadata[0].name
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
     }

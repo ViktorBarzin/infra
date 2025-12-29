@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "ytdlp" {
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = "ytdlp"
+  namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
@@ -19,7 +19,7 @@ resource "kubernetes_deployment" "ytdlp" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
     name      = "ytdlp"
-    namespace = "ytdlp"
+    namespace = kubernetes_namespace.ytdlp.metadata[0].name
     labels = {
       app = "ytdlp"
     }
@@ -97,7 +97,7 @@ resource "kubernetes_deployment" "ytdlp" {
 resource "kubernetes_service" "ytdlp" {
   metadata {
     name      = "ytdlp"
-    namespace = "ytdlp"
+    namespace = kubernetes_namespace.ytdlp.metadata[0].name
     labels = {
       "app" = "ytdlp"
     }
@@ -117,7 +117,7 @@ resource "kubernetes_service" "ytdlp" {
 }
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = "ytdlp"
+  namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
   host            = "yt"
