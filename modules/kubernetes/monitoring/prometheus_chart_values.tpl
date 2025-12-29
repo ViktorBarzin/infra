@@ -8,6 +8,7 @@ alertmanager:
     # storageClass: rook-cephfs
   strategy:
     type: Recreate
+  baseURL: "https://alertmanager.viktorbarzin.me"
   ingress:
     enabled: true
     annotations:
@@ -473,7 +474,7 @@ extraScrapeConfigs: |
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
     scrape_interval: 3m
-    scrape_timeout: 1m
+    scrape_timeout: 2m
     metrics_path: /metrics
     static_configs:
       - targets:
