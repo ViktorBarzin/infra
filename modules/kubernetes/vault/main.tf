@@ -35,8 +35,8 @@ resource "kubernetes_persistent_volume" "vault_data" {
 
 resource "helm_release" "vault" {
   namespace        = kubernetes_namespace.vault.metadata[0].name
-  create_namespace = true
   name             = "vault"
+  atomic           = true
 
   repository = "https://helm.releases.hashicorp.com"
   chart      = "vault"

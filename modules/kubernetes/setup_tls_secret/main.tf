@@ -1,4 +1,4 @@
-variable "namespace" {}
+variable "namespace" { type = string }
 variable "tls_secret_name" {}
 variable "tls_crt" {
   default = ""
