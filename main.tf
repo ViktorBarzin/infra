@@ -131,6 +131,7 @@ variable "grafana_db_password" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
+variable "aiostreams_database_connection_string" { type = string }
 
 
 provider "kubernetes" {
@@ -543,6 +544,8 @@ module "kubernetes_cluster" {
   clickhouse_postgres_password = var.clickhouse_postgres_password
 
   wealthfolio_password_hash = var.wealthfolio_password_hash
+
+  aiostreams_database_connection_string = var.aiostreams_database_connection_string
 }
 
 
