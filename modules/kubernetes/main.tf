@@ -110,6 +110,7 @@ variable "grafana_db_password" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
+variable "aiostreams_database_connection_string" { type = string }
 
 
 variable "defcon_level" {
@@ -135,7 +136,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox"
     ],
   }
   active_modules = distinct(flatten([
@@ -644,7 +645,8 @@ module "servarr" {
   for_each        = contains(local.active_modules, "servarr") ? { servarr = true } : {}
   tls_secret_name = var.tls_secret_name
 
-  depends_on = [null_resource.core_services]
+  depends_on                            = [null_resource.core_services]
+  aiostreams_database_connection_string = var.aiostreams_database_connection_string
 }
 
 # module "dnscat2" {
@@ -693,10 +695,11 @@ module "meshcentral" {
 
   depends_on = [null_resource.core_services]
 }
-# module "netbox" {
-#   source          = "./netbox"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "netbox" {
+  source          = "./netbox"
+  for_each        = contains(local.active_modules, "netbox") ? { netbox = true } : {}
+  tls_secret_name = var.tls_secret_name
+}
 
 module "nextcloud" {
   source          = "./nextcloud"
@@ -909,10 +912,11 @@ module "nvidia" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "ebook2audiobook" {
-#   source          = "./ebook2audiobook"
-#   tls_secret_name = var.tls_secret_name
-# }
+module "ebook2audiobook" {
+  source          = "./ebook2audiobook"
+  for_each        = contains(local.active_modules, "ebook2audiobook") ? { ebook2audiobook = true } : {}
+  tls_secret_name = var.tls_secret_name
+}
 
 module "rybbit" {
   source              = "./rybbit"
