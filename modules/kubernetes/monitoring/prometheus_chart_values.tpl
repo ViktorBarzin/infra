@@ -172,7 +172,7 @@ serverFiles:
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
-            expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 75
+            expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 55
             for: 30m
             labels:
               severity: page
