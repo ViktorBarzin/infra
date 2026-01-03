@@ -3,7 +3,7 @@ variable "database_password" {}
 variable "geoapify_api_key" {}
 variable "image_version" {
   type    = string
-  default = "0.36.3"
+  default = "0.37.1"
 }
 
 resource "kubernetes_namespace" "dawarich" {
@@ -141,7 +141,7 @@ resource "kubernetes_deployment" "dawarich" {
           image   = "freikin/dawarich:${var.image_version}"
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
-          args    = ["sidekiq"]
+          args    = ["bundle exec sidekiq"]
           env {
             name  = "REDIS_URL"
             value = "redis://redis.redis.svc.cluster.local:6379"
