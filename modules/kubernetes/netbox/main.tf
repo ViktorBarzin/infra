@@ -12,6 +12,15 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "random_string" "random" {
+  length = 50
+  lower  = true
+}
+resource "random_string" "api_token_pepper" {
+  length = 50
+  lower  = true
+}
+
 resource "kubernetes_deployment" "netbox" {
   metadata {
     name      = "netbox"
@@ -44,7 +53,7 @@ resource "kubernetes_deployment" "netbox" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/netbox:v4.0.9-ls219"
+          image = "netboxcommunity/netbox:v4.5.0-beta1"
           name  = "netbox"
           env {
             name  = "DB_USER"
@@ -57,6 +66,22 @@ resource "kubernetes_deployment" "netbox" {
           env {
             name  = "DB_HOST"
             value = "postgresql.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "DB_NAME"
+            value = "netbox"
+          }
+          env {
+            name  = "DB_WAIT_DEBUG"
+            value = "1"
+          }
+          env {
+            name  = "SECRET_KEY"
+            value = random_string.random.result
+          }
+          env {
+            name  = "API_TOKEN_PEPPERS"
+            value = random_string.api_token_pepper.result
           }
           env {
             name  = "REDIS_HOST"
@@ -97,7 +122,7 @@ resource "kubernetes_deployment" "netbox" {
           }
 
           port {
-            container_port = 8000
+            container_port = 8080
           }
           #   volume_mount {
           #     name       = "data"
@@ -130,7 +155,7 @@ resource "kubernetes_service" "netbox" {
     }
     port {
       name        = "http"
-      target_port = 8000
+      target_port = 8080
       port        = 80
       protocol    = "TCP"
     }
