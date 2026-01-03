@@ -303,8 +303,8 @@ serverFiles:
             annotations:
               summary: "Low registry cache hit rate"
           - alert: NodeHighCPUUsage
-            expr: node_load1{instance!="pve-node-r730"} > 2
-            for: 20m
+            expr: pve_cpu_usage_ratio > 0.3
+            for: 6h
             labels:
               severity: page
             annotations:
