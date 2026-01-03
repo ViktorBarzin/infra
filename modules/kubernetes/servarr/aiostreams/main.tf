@@ -10,10 +10,9 @@ resource "kubernetes_namespace" "aiostreams" {
   }
 }
 
-# resource "random_string" "random" {
-#   length = 50
-#   lower  = true
-# }
+resource "random_id" "secret_key" {
+  byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
+}
 
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
@@ -49,7 +48,7 @@ resource "kubernetes_deployment" "aiostreams" {
           }
           env {
             name  = "SECRET_KEY"
-            value = substr(sha256(uuid()), 0, 64)
+            value = random_id.secret_key.hex
           }
           env {
             name  = "DATABASE_URI"
