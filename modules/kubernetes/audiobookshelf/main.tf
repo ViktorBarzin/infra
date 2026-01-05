@@ -44,7 +44,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
       }
       spec {
         container {
-          image = "ghcr.io/advplyr/audiobookshelf:latest"
+          image = "ghcr.io/advplyr/audiobookshelf:2.32.1"
           name  = "audiobookshelf"
 
           port {
