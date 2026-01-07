@@ -473,8 +473,8 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
-    scrape_interval: 3m
-    scrape_timeout: 2m
+    scrape_interval: 1m
+    scrape_timeout: 45s
     metrics_path: /metrics
     static_configs:
       - targets:

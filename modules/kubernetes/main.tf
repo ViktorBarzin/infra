@@ -118,7 +118,7 @@ variable "defcon_level" {
   default = 5
   validation {
     condition     = var.defcon_level >= 1 && var.defcon_level <= 5
-    error_message = "DEFCON level must be between 1 and 5. 1 is highest level or alertness"
+    error_message = "DEFCON level must be between 1 and 5. 1 is highest level of alertness"
   }
 }
 locals {
