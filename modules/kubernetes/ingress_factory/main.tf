@@ -107,7 +107,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
       "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
 
-      "nginx.ingress.kubernetes.io/whitelist-source-range" : var.allow_local_access_only ? "192.168.1.0/24, 10.0.0.0/8" : "0.0.0.0/0"
+      "nginx.ingress.kubernetes.io/whitelist-source-range" : var.allow_local_access_only ? "192.168.1.0/24, 10.0.0.0/8, ::1/128, fc00::/7, fe80::/10" : "0.0.0.0/0, ::/0"
       "nginx.ingress.kubernetes.io/ssl-redirect" : "${var.ssl_redirect}"
 
       # DDOS protection
