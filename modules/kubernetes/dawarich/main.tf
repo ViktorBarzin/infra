@@ -137,78 +137,78 @@ resource "kubernetes_deployment" "dawarich" {
           #     mount_path = "/var/app/tmp/imports/watched"
           #   }
         }
-        container {
-          image   = "freikin/dawarich:${var.image_version}"
-          name    = "dawarich-sidekiq"
-          command = ["sidekiq-entrypoint.sh"]
-          args    = ["bundle exec sidekiq"]
-          env {
-            name  = "REDIS_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379"
-          }
-          env {
-            name  = "DATABASE_HOST"
-            value = "postgresql.dbaas"
-          }
-          env {
-            name  = "DATABASE_USERNAME"
-            value = "dawarich"
-          }
-          env {
-            name  = "DATABASE_PASSWORD"
-            value = var.database_password
-          }
-          env {
-            name  = "DATABASE_NAME"
-            value = "dawarich"
-          }
-          env {
-            name  = "MIN_MINUTES_SPENT_IN_CITY"
-            value = "60"
-          }
-          env {
-            name  = "BACKGROUND_PROCESSING_CONCURRENCY"
-            value = "10"
-          }
-          env {
-            name  = "ENABLE_TELEMETRY"
-            value = "true"
-          }
-          env {
-            name  = "APPLICATION_HOST"
-            value = "dawarich.viktorbarzin.me"
-          }
-          # env {
-          #   name  = "PROMETHEUS_EXPORTER_ENABLED"
-          #   value = "false"
-          # }
-          # env {
-          #   name  = "PROMETHEUS_EXPORTER_HOST"
-          #   value = "dawarich.dawarich"
-          # }
-          # env {
-          #   name  = "PHOTON_API_HOST"
-          #   value = "photon.dawarich:2322"
-          #   # value = "photon.komoot.io"
-          # }
-          # env {
-          #   name  = "PHOTON_API_USE_HTTPS"
-          #   value = "false"
-          # }
-          env {
-            name  = "GEOAPIFY_API_KEY"
-            value = var.geoapify_api_key
-          }
-          env {
-            name  = "SELF_HOSTED"
-            value = "true"
-          }
+        # container {
+        #   image   = "freikin/dawarich:${var.image_version}"
+        #   name    = "dawarich-sidekiq"
+        #   command = ["sidekiq-entrypoint.sh"]
+        #   args    = ["bundle exec sidekiq"]
+        #   env {
+        #     name  = "REDIS_URL"
+        #     value = "redis://redis.redis.svc.cluster.local:6379"
+        #   }
+        #   env {
+        #     name  = "DATABASE_HOST"
+        #     value = "postgresql.dbaas"
+        #   }
+        #   env {
+        #     name  = "DATABASE_USERNAME"
+        #     value = "dawarich"
+        #   }
+        #   env {
+        #     name  = "DATABASE_PASSWORD"
+        #     value = var.database_password
+        #   }
+        #   env {
+        #     name  = "DATABASE_NAME"
+        #     value = "dawarich"
+        #   }
+        #   env {
+        #     name  = "MIN_MINUTES_SPENT_IN_CITY"
+        #     value = "60"
+        #   }
+        #   env {
+        #     name  = "BACKGROUND_PROCESSING_CONCURRENCY"
+        #     value = "10"
+        #   }
+        #   env {
+        #     name  = "ENABLE_TELEMETRY"
+        #     value = "true"
+        #   }
+        #   env {
+        #     name  = "APPLICATION_HOST"
+        #     value = "dawarich.viktorbarzin.me"
+        #   }
+        #   # env {
+        #   #   name  = "PROMETHEUS_EXPORTER_ENABLED"
+        #   #   value = "false"
+        #   # }
+        #   # env {
+        #   #   name  = "PROMETHEUS_EXPORTER_HOST"
+        #   #   value = "dawarich.dawarich"
+        #   # }
+        #   # env {
+        #   #   name  = "PHOTON_API_HOST"
+        #   #   value = "photon.dawarich:2322"
+        #   #   # value = "photon.komoot.io"
+        #   # }
+        #   # env {
+        #   #   name  = "PHOTON_API_USE_HTTPS"
+        #   #   value = "false"
+        #   # }
+        #   env {
+        #     name  = "GEOAPIFY_API_KEY"
+        #     value = var.geoapify_api_key
+        #   }
+        #   env {
+        #     name  = "SELF_HOSTED"
+        #     value = "true"
+        #   }
 
-          #   volume_mount {
-          #     name       = "watched"
-          #     mount_path = "/var/app/tmp/imports/watched"
-          #   }
-        }
+        #   #   volume_mount {
+        #   #     name       = "watched"
+        #   #     mount_path = "/var/app/tmp/imports/watched"
+        #   #   }
+        # }
       }
     }
   }
