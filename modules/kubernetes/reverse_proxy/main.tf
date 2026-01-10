@@ -82,7 +82,11 @@ module "idrac" {
   port             = 443
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = {
+    # authentik causes 413; we don't need the header below
+    "nginx.ingress.kubernetes.io/auth-response-headers" : null
+  }
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # Can either listen on https or http; can't do both :/
@@ -96,23 +100,10 @@ module "tp-link-gateway" {
   backend_protocol = "HTTPS"
   depends_on       = [kubernetes_namespace.reverse-proxy]
   protected        = true
-  # Doesn't work due to 413 due to GA/authentik cookie
-  #   additional_configuration_snippet = <<-EOF
-  #       # 1. Try to extract the sysauth cookie and its value
-  #       # This regex looks for 'sysauth=' followed by everything until a semicolon or end of string
-  #       set $sysauth_only "";
-  #       if ($http_cookie ~* "sysauth=([^;]+)") {
-  #           set $sysauth_only "sysauth=$1";
-  #       }
-
-  #       # 2. Overwrite the Cookie header. 
-  #       # If sysauth was found, only it is sent. If not found, no cookies are sent.
-  #       proxy_set_header Cookie $sysauth_only;
-  # EOF
-  #   extra_annotations = {
-  #     client-header-buffer-size : "16k"
-  #     large-client-header-buffers : "4 16k"
-  #   }
+  extra_annotations = {
+    # authentik causes 413; we don't need the header below
+    "nginx.ingress.kubernetes.io/auth-response-headers" : null
+  }
 }
 
 # https://truenas.viktorbarzin.me/
