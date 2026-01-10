@@ -187,7 +187,7 @@ module "dbaas" {
   dbaas_root_password      = var.dbaas_root_password
   postgresql_root_password = var.dbaas_postgresql_root_password
   pgadmin_password         = var.dbaas_pgadmin_password
-  tier                     = local.tiers.core
+  tier                     = local.tiers.cluster
 }
 
 module "descheduler" {
@@ -406,7 +406,7 @@ module "wireguard" {
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
   firewall_sh     = var.wireguard_firewall_sh
-  tier            = local.tiers.cluster
+  tier            = local.tiers.core
 
   depends_on = [null_resource.core_services]
 }
@@ -517,7 +517,7 @@ module "redis" {
   source          = "./redis"
   for_each        = contains(local.active_modules, "redis") ? { redis = true } : {}
   tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.core
+  tier            = local.tiers.cluster
 }
 
 module "ytdlp" {
@@ -553,7 +553,7 @@ module "nginx-ingress" {
 
 module "crowdsec" {
   source                         = "./crowdsec"
-  tier                           = local.tiers.core
+  tier                           = local.tiers.cluster
   for_each                       = contains(local.active_modules, "crowdsec") ? { crowdsec = true } : {}
   tls_secret_name                = var.tls_secret_name
   homepage_username              = var.homepage_credentials["crowdsec"]["username"]
@@ -786,7 +786,7 @@ module "matrix" {
 
 module "authentik" {
   source            = "./authentik"
-  tier              = local.tiers.core
+  tier              = local.tiers.cluster
   for_each          = contains(local.active_modules, "authentik") ? { authentik = true } : {}
   tls_secret_name   = var.tls_secret_name
   secret_key        = var.authentik_secret_key
@@ -916,7 +916,7 @@ module "xray" {
   source          = "./xray"
   for_each        = contains(local.active_modules, "xray") ? { xray = true } : {}
   tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.aux
+  tier            = local.tiers.core
 
   xray_reality_clients     = var.xray_reality_clients
   xray_reality_private_key = var.xray_reality_private_key
