@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "credentials" { type = map(any) }
 
 # To create a new deployment:
 /**
@@ -26,20 +27,24 @@ module "tls_secret" {
 
 # https://budget-viktor.viktorbarzin.me/
 module "viktor" {
-  source          = "./factory"
-  name            = "viktor"
-  tag             = "edge"
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.actualbudget]
-  tier            = var.tier
+  source                     = "./factory"
+  name                       = "viktor"
+  tag                        = "edge"
+  tls_secret_name            = var.tls_secret_name
+  depends_on                 = [kubernetes_namespace.actualbudget]
+  tier                       = var.tier
+  budget_encryption_password = lookup(var.credentials["viktor"], "password", null)
+  sync_id                    = lookup(var.credentials["viktor"], "sync_id", null)
 }
 
 # https://budget-anca.viktorbarzin.me/
 module "anca" {
-  source          = "./factory"
-  name            = "anca"
-  tag             = "edge"
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.actualbudget]
-  tier            = var.tier
+  source                     = "./factory"
+  name                       = "anca"
+  tag                        = "edge"
+  tls_secret_name            = var.tls_secret_name
+  depends_on                 = [kubernetes_namespace.actualbudget]
+  tier                       = var.tier
+  budget_encryption_password = lookup(var.credentials["anca"], "password", null)
+  sync_id                    = lookup(var.credentials["anca"], "sync_id", null)
 }

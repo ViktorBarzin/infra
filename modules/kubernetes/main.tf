@@ -111,6 +111,7 @@ variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
+variable "actualbudget_credentials" { type = map(any) }
 
 
 variable "defcon_level" {
@@ -809,6 +810,7 @@ module "actualbudget" {
   for_each        = contains(local.active_modules, "actualbudget") ? { actualbudget = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.edge
+  credentials     = var.actualbudget_credentials
 
   depends_on = [null_resource.core_services]
 }

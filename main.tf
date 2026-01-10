@@ -132,6 +132,7 @@ variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
+variable "actualbudget_credentials" { type = map(any) }
 
 
 provider "kubernetes" {
@@ -553,6 +554,8 @@ module "kubernetes_cluster" {
   wealthfolio_password_hash = var.wealthfolio_password_hash
 
   aiostreams_database_connection_string = var.aiostreams_database_connection_string
+
+  actualbudget_credentials = var.actualbudget_credentials
 }
 
 
