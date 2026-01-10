@@ -30,7 +30,8 @@ resource "kubernetes_deployment" "idrac-redfish" {
     name      = "idrac-redfish-exporter"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
-      app = "idrac-redfish-exporter"
+      app  = "idrac-redfish-exporter"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

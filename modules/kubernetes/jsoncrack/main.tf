@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "jsoncrack" {
   metadata {
@@ -19,7 +20,8 @@ resource "kubernetes_deployment" "jsoncrack" {
     name      = "jsoncrack"
     namespace = kubernetes_namespace.jsoncrack.metadata[0].name
     labels = {
-      app = "jsoncrack"
+      app  = "jsoncrack"
+      tier = var.tier
     }
   }
   spec {

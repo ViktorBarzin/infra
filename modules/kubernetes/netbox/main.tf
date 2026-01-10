@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "netbox" {
   metadata {
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "netbox" {
     name      = "netbox"
     namespace = kubernetes_namespace.netbox.metadata[0].name
     labels = {
-      app = "netbox"
+      app  = "netbox"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

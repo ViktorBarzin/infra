@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "wg_0_conf" {}
 variable "firewall_sh" {}
 variable "wg_0_key" {}
@@ -56,7 +57,8 @@ resource "kubernetes_deployment" "wireguard" {
     name      = "wireguard"
     namespace = kubernetes_namespace.wireguard.metadata[0].name
     labels = {
-      app = "wireguard"
+      app  = "wireguard"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

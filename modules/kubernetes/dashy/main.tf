@@ -1,5 +1,6 @@
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -36,7 +37,8 @@ resource "kubernetes_deployment" "dashy" {
     name      = "dashy"
     namespace = kubernetes_namespace.dashy.metadata[0].name
     labels = {
-      app = "dashy"
+      app  = "dashy"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "tandoor_database_password" {}
 variable "tandoor_email_password" {}
 
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "tandoor" {
     name      = "tandoor"
     namespace = kubernetes_namespace.tandoor.metadata[0].name
     labels = {
-      app = "tandoor"
+      app  = "tandoor"
+      tier = var.tier
     }
   }
   spec {

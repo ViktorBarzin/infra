@@ -74,7 +74,7 @@ resource "kubernetes_cluster_role_binding" "descheduler" {
   }
 }
 
-resource "helm_release" "prometheus" {
+resource "helm_release" "descheduler" { # rename me
   namespace = kubernetes_namespace.descheduler.metadata[0].name
   name      = "descheduler"
 

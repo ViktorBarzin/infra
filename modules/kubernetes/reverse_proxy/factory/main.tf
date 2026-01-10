@@ -37,6 +37,10 @@ variable "rybbit_site_id" {
   default = null
   type    = string
 }
+variable "additional_configuration_snippet" {
+  default = ""
+  type    = string
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -90,6 +94,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
         limit_req_status 429;
         limit_conn_status 429;
+        ${var.additional_configuration_snippet}
         ${var.rybbit_site_id != null ? <<-JS
           # Rybbit Analytics
           # Only modify HTML

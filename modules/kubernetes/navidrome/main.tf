@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "navidrome" {
   metadata {
@@ -20,8 +21,8 @@ resource "kubernetes_deployment" "navidrome" {
     name      = "navidrome"
     namespace = kubernetes_namespace.navidrome.metadata[0].name
     labels = {
-      app                             = "navidrome"
-      "kubernetes.io/cluster-service" = "true"
+      app  = "navidrome"
+      tier = var.tier
     }
   }
   spec {
@@ -37,8 +38,7 @@ resource "kubernetes_deployment" "navidrome" {
     template {
       metadata {
         labels = {
-          app                             = "navidrome"
-          "kubernetes.io/cluster-service" = "true"
+          app = "navidrome"
         }
       }
       spec {

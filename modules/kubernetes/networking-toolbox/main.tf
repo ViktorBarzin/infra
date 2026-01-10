@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "networking-toolbox" {
   metadata {
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "networking-toolbox" {
     name      = "networking-toolbox"
     namespace = kubernetes_namespace.networking-toolbox.metadata[0].name
     labels = {
-      app = "networking-toolbox"
+      app  = "networking-toolbox"
+      tier = var.tier
     }
   }
   spec {

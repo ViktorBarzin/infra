@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "postgresql_password" {}
 
 module "tls_secret" {
@@ -18,7 +19,8 @@ resource "kubernetes_deployment" "n8n" {
     name      = "n8n"
     namespace = kubernetes_namespace.n8n.metadata[0].name
     labels = {
-      app = "n8n"
+      app  = "n8n"
+      tier = var.tier
     }
   }
   spec {
@@ -31,8 +33,7 @@ resource "kubernetes_deployment" "n8n" {
     template {
       metadata {
         labels = {
-          app                             = "n8n"
-          "kubernetes.io/cluster-service" = "true"
+          app = "n8n"
         }
       }
       spec {

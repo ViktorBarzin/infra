@@ -29,7 +29,8 @@ resource "kubernetes_deployment" "pgbouncer" {
     name      = "pgbouncer"
     namespace = "authentik"
     labels = {
-      app = "pgbouncer"
+      app  = "pgbouncer"
+      tier = var.tier
     }
   }
 

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 
 resource "kubernetes_deployment" "soulseek" {
@@ -6,7 +7,8 @@ resource "kubernetes_deployment" "soulseek" {
     name      = "soulseek"
     namespace = "servarr"
     labels = {
-      app = "soulseek"
+      app  = "soulseek"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

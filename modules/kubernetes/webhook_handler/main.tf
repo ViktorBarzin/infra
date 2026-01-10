@@ -1,5 +1,6 @@
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "webhook_secret" {}
 variable "fb_verify_token" {}
 variable "fb_page_token" {}
@@ -70,7 +71,8 @@ resource "kubernetes_deployment" "webhook_handler" {
     name      = "webhook-handler"
     namespace = kubernetes_namespace.webhook-handler.metadata[0].name
     labels = {
-      app = "webhook-handler"
+      app  = "webhook-handler"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

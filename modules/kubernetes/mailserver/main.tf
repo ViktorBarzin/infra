@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
@@ -134,6 +135,7 @@ resource "kubernetes_deployment" "mailserver" {
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     labels = {
       "app" = "mailserver"
+      tier  = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -157,7 +159,6 @@ resource "kubernetes_deployment" "mailserver" {
         labels = {
           "app"  = "mailserver"
           "role" = "mail"
-          "tier" = "backend"
         }
       }
       spec {

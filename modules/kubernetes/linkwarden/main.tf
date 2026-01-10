@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "postgresql_password" {}
 variable "authentik_client_id" {}
 variable "authentik_client_secret" {}
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "linkwarden" {
     name      = "linkwarden"
     namespace = kubernetes_namespace.linkwarden.metadata[0].name
     labels = {
-      app = "linkwarden"
+      app  = "linkwarden"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

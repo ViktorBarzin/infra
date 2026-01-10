@@ -124,7 +124,7 @@ variable "defcon_level" {
 locals {
   defcon_modules = {
     1 : ["wireguard", "technitium", "headscale", "nginx-ingress", "xray", "authentik", "cloudflare", "authelia", "monitoring"], # Critical connectivity services
-    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec"],                              # Storage and other db services
+    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec", "kyverno"],                   # Storage and other db services
     3 : ["k8s-dashboard", "reverse-proxy"],                                                                                     # Cluster admin services
     4 : [
       "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
@@ -143,6 +143,14 @@ locals {
     for level in range(1, var.defcon_level + 1) : # From current level to 5
     lookup(local.defcon_modules, level, [])
   ]))
+
+  tiers = {
+    core    = "0-core"    # Bare minimum cluster primitives
+    cluster = "1-cluster" # All cluster primitives
+    gpu     = "2-gpu"     # GPU services
+    edge    = "3-edge"    # Critical user services
+    aux     = "4-aux"     # Optional user services
+  }
 }
 
 resource "null_resource" "core_services" {
@@ -159,6 +167,7 @@ module "blog" {
   source          = "./blog"
   tls_secret_name = var.tls_secret_name
   # dockerhub_password = var.dockerhub_password
+  tier = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -177,6 +186,7 @@ module "dbaas" {
   dbaas_root_password      = var.dbaas_root_password
   postgresql_root_password = var.dbaas_postgresql_root_password
   pgadmin_password         = var.dbaas_pgadmin_password
+  tier                     = local.tiers.core
 }
 
 module "descheduler" {
@@ -200,6 +210,7 @@ module "drone" {
   rpc_secret           = var.drone_rpc_secret
   server_host          = "drone.viktorbarzin.me"
   server_proto         = "https"
+  tier                 = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -208,6 +219,7 @@ module "f1-stream" {
   source          = "./f1-stream"
   for_each        = contains(local.active_modules, "f1-stream") ? { f1-stream = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -217,6 +229,7 @@ module "hackmd" {
   for_each           = contains(local.active_modules, "hackmd") ? { hackmd = true } : {}
   hackmd_db_password = var.hackmd_db_password
   tls_secret_name    = var.tls_secret_name
+  tier               = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -231,12 +244,14 @@ module "kms" {
   source          = "./kms"
   for_each        = contains(local.active_modules, "kms") ? { kms = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
 
 module "k8s-dashboard" {
   source                         = "./k8s-dashboard"
+  tier                           = local.tiers.cluster
   for_each                       = contains(local.active_modules, "k8s-dashboard") ? { k8s-dashboard = true } : {}
   tls_secret_name                = var.tls_secret_name
   client_certificate_secret_name = var.client_certificate_secret_name
@@ -253,12 +268,14 @@ module "mailserver" {
   opendkim_key            = var.mailserver_opendkim_key
   sasl_passwd             = var.mailserver_sasl_passwd
   roundcube_db_password   = var.mailserver_roundcubemail_db_password
+  tier                    = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
 
 module "metallb" {
   source = "./metallb"
+  tier   = local.tiers.core
 }
 
 module "monitoring" {
@@ -273,6 +290,7 @@ module "monitoring" {
   haos_api_token                = var.haos_api_token
   pve_password                  = var.pve_password
   grafana_db_password           = var.grafana_db_password
+  tier                          = local.tiers.cluster
 }
 
 # module "oauth" {
@@ -305,21 +323,24 @@ module "privatebin" {
   source          = "./privatebin"
   for_each        = contains(local.active_modules, "privatebin") ? { privatebin = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
 
-module "vault" {
-  source          = "./vault"
-  for_each        = contains(local.active_modules, "vault") ? { vault = true } : {}
-  tls_secret_name = var.tls_secret_name
+# module "vault" {
+#   source          = "./vault"
+#   tier            = local.tiers.edge
+#   for_each        = contains(local.active_modules, "vault") ? { vault = true } : {}
+#   tls_secret_name = var.tls_secret_name
 
-  depends_on = [null_resource.core_services]
-}
+#   depends_on = [null_resource.core_services]
+# }
 
 module "reloader" {
   source   = "./reloader"
   for_each = contains(local.active_modules, "reloader") ? { reloader = true } : {}
+  tier     = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -328,6 +349,7 @@ module "shadowsocks" {
   source   = "./shadowsocks"
   for_each = contains(local.active_modules, "shadowsocks") ? { shadowsocks = true } : {}
   password = var.shadowsocks_password
+  tier     = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -336,6 +358,7 @@ module "city-guesser" {
   source          = "./city-guesser"
   for_each        = contains(local.active_modules, "city-guesser") ? { city-guesser = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
   depends_on      = [null_resource.core_services]
 }
 
@@ -344,6 +367,7 @@ module "echo" {
   for_each        = contains(local.active_modules, "echo") ? { echo = true } : {}
   tls_secret_name = var.tls_secret_name
   depends_on      = [null_resource.core_services]
+  tier            = local.tiers.edge
 }
 
 module "url" {
@@ -353,6 +377,7 @@ module "url" {
   geolite_license_key = var.url_shortener_geolite_license_key
   api_key             = var.url_shortener_api_key
   mysql_password      = var.url_shortener_mysql_password
+  tier                = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -368,6 +393,7 @@ module "webhook_handler" {
   git_user        = var.webhook_handler_git_user
   git_token       = var.webhook_handler_git_token
   ssh_key         = var.webhook_handler_ssh_key
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -379,6 +405,7 @@ module "wireguard" {
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
   firewall_sh     = var.wireguard_firewall_sh
+  tier            = local.tiers.cluster
 
   depends_on = [null_resource.core_services]
 }
@@ -404,6 +431,7 @@ module "excalidraw" {
   source          = "./excalidraw"
   for_each        = contains(local.active_modules, "excalidraw") ? { excalidraw = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -420,6 +448,7 @@ module "travel_blog" {
   source          = "./travel_blog"
   for_each        = contains(local.active_modules, "travel_blog") ? { travel_blog = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -429,6 +458,7 @@ module "technitium" {
   for_each        = contains(local.active_modules, "technitium") ? { technitium = true } : {}
   tls_secret_name = var.tls_secret_name
   homepage_token  = var.homepage_credentials["technitium"]["token"]
+  tier            = local.tiers.core
 }
 
 module "headscale" {
@@ -437,6 +467,7 @@ module "headscale" {
   tls_secret_name  = var.tls_secret_name
   headscale_config = var.headscale_config
   headscale_acl    = var.headscale_acl
+  tier             = local.tiers.core
 
   depends_on = [null_resource.core_services]
 }
@@ -445,6 +476,7 @@ module "dashy" {
   source          = "./dashy"
   for_each        = contains(local.active_modules, "dashy") ? { dashy = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -459,6 +491,7 @@ module "vaultwarden" {
   for_each        = contains(local.active_modules, "vaultwarden") ? { vaultwarden = true } : {}
   tls_secret_name = var.tls_secret_name
   smtp_password   = var.vaultwarden_smtp_password
+  tier            = local.tiers.edge
 }
 
 module "reverse-proxy" {
@@ -474,6 +507,7 @@ module "send" {
   source          = "./send"
   for_each        = contains(local.active_modules, "send") ? { send = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -482,12 +516,14 @@ module "redis" {
   source          = "./redis"
   for_each        = contains(local.active_modules, "redis") ? { redis = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.core
 }
 
 module "ytdlp" {
   source          = "./youtube_dl"
   for_each        = contains(local.active_modules, "ytdlp") ? { ytdlp = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -499,12 +535,14 @@ module "immich" {
   postgresql_password = var.immich_postgresql_password
   frame_api_key       = var.immich_frame_api_key
   homepage_token      = var.homepage_credentials["immich"]["token"]
+  tier                = local.tiers.gpu
 
   depends_on = [null_resource.core_services]
 }
 
 module "nginx-ingress" {
   source                      = "./nginx-ingress"
+  tier                        = local.tiers.core
   for_each                    = contains(local.active_modules, "nginx-ingress") ? { nginx-ingress = true } : {}
   honeypotapikey              = var.ingress_honeypotapikey
   crowdsec_api_key            = var.ingress_crowdsec_api_key
@@ -514,6 +552,7 @@ module "nginx-ingress" {
 
 module "crowdsec" {
   source                         = "./crowdsec"
+  tier                           = local.tiers.cluster
   for_each                       = contains(local.active_modules, "crowdsec") ? { crowdsec = true } : {}
   tls_secret_name                = var.tls_secret_name
   homepage_username              = var.homepage_credentials["crowdsec"]["username"]
@@ -537,6 +576,7 @@ module "uptime-kuma" {
   source          = "./uptime-kuma"
   for_each        = contains(local.active_modules, "uptime-kuma") ? { uptime-kuma = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.cluster
 
   depends_on = [null_resource.core_services]
 }
@@ -547,6 +587,7 @@ module "calibre" {
   tls_secret_name   = var.tls_secret_name
   homepage_username = var.homepage_credentials["calibre-web"]["username"]
   homepage_password = var.homepage_credentials["calibre-web"]["password"]
+  tier              = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -561,6 +602,7 @@ module "audiobookshelf" {
   source          = "./audiobookshelf"
   for_each        = contains(local.active_modules, "audiobookshelf") ? { audiobookshelf = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -569,6 +611,7 @@ module "frigate" {
   source          = "./frigate"
   for_each        = contains(local.active_modules, "frigate") ? { frigate = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 
   depends_on = [null_resource.core_services]
 }
@@ -582,6 +625,7 @@ module "frigate" {
 
 module "cloudflared" {
   source = "./cloudflared"
+  tier   = local.tiers.core
   # for_each        = contains(local.active_modules, "cloudflared") ? { cloudflared = true } : {}
   tls_secret_name = var.tls_secret_name
 
@@ -616,6 +660,7 @@ module "cloudflared" {
 
 module "metrics-server" {
   source          = "./metrics-server"
+  tier            = local.tiers.cluster
   for_each        = contains(local.active_modules, "metrics-server") ? { metrics-server = true } : {}
   tls_secret_name = var.tls_secret_name
 }
@@ -628,6 +673,7 @@ module "paperless-ngx" {
   # homepage_token  = var.homepage_credentials["paperless-ngx"]["token"]
   homepage_username = var.homepage_credentials["paperless-ngx"]["username"]
   homepage_password = var.homepage_credentials["paperless-ngx"]["password"]
+  tier              = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -636,6 +682,7 @@ module "jsoncrack" {
   source          = "./jsoncrack"
   for_each        = contains(local.active_modules, "jsoncrack") ? { jsoncrack = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -644,6 +691,7 @@ module "servarr" {
   source          = "./servarr"
   for_each        = contains(local.active_modules, "servarr") ? { servarr = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on                            = [null_resource.core_services]
   aiostreams_database_connection_string = var.aiostreams_database_connection_string
@@ -658,6 +706,7 @@ module "ollama" { # Disabled as it requires too much resources...
   source          = "./ollama"
   for_each        = contains(local.active_modules, "ollama") ? { ollama = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 
   depends_on = [null_resource.core_services]
 }
@@ -666,6 +715,7 @@ module "ntfy" {
   source          = "./ntfy"
   for_each        = contains(local.active_modules, "ntfy") ? { ntfy = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -674,6 +724,7 @@ module "cyberchef" {
   source          = "./cyberchef"
   for_each        = contains(local.active_modules, "cyberchef") ? { cyberchef = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -684,6 +735,7 @@ module "diun" {
   tls_secret_name = var.tls_secret_name
   diun_nfty_token = var.diun_nfty_token
   diun_slack_url  = var.diun_slack_url
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -692,6 +744,7 @@ module "meshcentral" {
   source          = "./meshcentral"
   for_each        = contains(local.active_modules, "meshcentral") ? { meshcentral = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -699,6 +752,7 @@ module "netbox" {
   source          = "./netbox"
   for_each        = contains(local.active_modules, "netbox") ? { netbox = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 }
 
 module "nextcloud" {
@@ -706,12 +760,14 @@ module "nextcloud" {
   for_each        = contains(local.active_modules, "nextcloud") ? { nextcloud = true } : {}
   tls_secret_name = var.tls_secret_name
   db_password     = var.nextcloud_db_password
+  tier            = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
 
 module "homepage" {
   source          = "./homepage"
+  tier            = local.tiers.aux
   for_each        = contains(local.active_modules, "homepage") ? { homepage = true } : {}
   tls_secret_name = var.tls_secret_name
 
@@ -722,12 +778,14 @@ module "matrix" {
   source          = "./matrix"
   for_each        = contains(local.active_modules, "matrix") ? { matrix = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
 
 module "authentik" {
   source            = "./authentik"
+  tier              = local.tiers.core
   for_each          = contains(local.active_modules, "authentik") ? { authentik = true } : {}
   tls_secret_name   = var.tls_secret_name
   secret_key        = var.authentik_secret_key
@@ -741,6 +799,7 @@ module "linkwarden" {
   postgresql_password     = var.linkwarden_postgresql_password
   authentik_client_id     = var.linkwarden_authentik_client_id
   authentik_client_secret = var.linkwarden_authentik_client_secret
+  tier                    = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -749,6 +808,7 @@ module "actualbudget" {
   source          = "./actualbudget"
   for_each        = contains(local.active_modules, "actualbudget") ? { actualbudget = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -758,6 +818,7 @@ module "owntracks" {
   for_each              = contains(local.active_modules, "owntracks") ? { owntracks = true } : {}
   tls_secret_name       = var.tls_secret_name
   owntracks_credentials = var.owntracks_credentials
+  tier                  = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -768,6 +829,7 @@ module "dawarich" {
   tls_secret_name   = var.tls_secret_name
   database_password = var.dawarich_database_password
   geoapify_api_key  = var.geoapify_api_key
+  tier              = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -776,6 +838,7 @@ module "changedetection" {
   source          = "./changedetection"
   for_each        = contains(local.active_modules, "changedetection") ? { changedetection = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -785,6 +848,7 @@ module "tandoor" {
   tls_secret_name           = var.tls_secret_name
   tandoor_database_password = var.tandoor_database_password
   tandoor_email_password    = var.tandoor_email_password
+  tier                      = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -794,6 +858,7 @@ module "n8n" {
   for_each            = contains(local.active_modules, "n8n") ? { n8n = true } : {}
   tls_secret_name     = var.tls_secret_name
   postgresql_password = var.n8n_postgresql_password
+  tier                = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -804,6 +869,7 @@ module "real-estate-crawler" {
   tls_secret_name       = var.tls_secret_name
   db_password           = var.realestate_crawler_db_password
   notification_settings = var.realestate_crawler_notification_settings
+  tier                  = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -812,6 +878,7 @@ module "tor-proxy" {
   source          = "./tor-proxy"
   for_each        = contains(local.active_modules, "tor-proxy") ? { tor-proxy = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -828,6 +895,7 @@ module "onlyoffice" {
   tls_secret_name = var.tls_secret_name
   db_password     = var.onlyoffice_db_password
   jwt_token       = var.onlyoffice_jwt_token
+  tier            = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -837,6 +905,7 @@ module "forgejo" {
   source          = "./forgejo"
   for_each        = contains(local.active_modules, "forgejo") ? { forgejo = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -845,6 +914,7 @@ module "xray" {
   source          = "./xray"
   for_each        = contains(local.active_modules, "xray") ? { xray = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   xray_reality_clients     = var.xray_reality_clients
   xray_reality_private_key = var.xray_reality_private_key
@@ -857,6 +927,7 @@ module "freshrss" {
   source          = "./freshrss"
   for_each        = contains(local.active_modules, "freshrss") ? { freshrss = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -865,6 +936,7 @@ module "navidrome" {
   source          = "./navidrome"
   for_each        = contains(local.active_modules, "navidrome") ? { navidrome = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -873,6 +945,7 @@ module "networking-toolbox" {
   source          = "./networking-toolbox"
   for_each        = contains(local.active_modules, "networking-toolbox") ? { networking-toolbox = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -881,6 +954,7 @@ module "tuya-bridge" {
   source          = "./tuya-bridge"
   for_each        = contains(local.active_modules, "tuya-bridge") ? { tuya-bridge = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.cluster
 
   tiny_tuya_api_key        = var.tiny_tuya_api_key
   tiny_tuya_api_secret     = var.tiny_tuya_api_secret
@@ -895,6 +969,7 @@ module "stirling-pdf" {
   source          = "./stirling-pdf"
   for_each        = contains(local.active_modules, "stirling-pdf") ? { stirling-pdf = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -902,6 +977,7 @@ module "stirling-pdf" {
 module "isponsorblocktv" {
   source   = "./isponsorblocktv"
   for_each = contains(local.active_modules, "isponsorblocktv") ? { isponsorblocktv = true } : {}
+  tier     = local.tiers.edge
 
   depends_on = [null_resource.core_services]
 }
@@ -910,12 +986,14 @@ module "nvidia" {
   source          = "./nvidia"
   for_each        = contains(local.active_modules, "nvidia") ? { nvidia = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 }
 
 module "ebook2audiobook" {
   source          = "./ebook2audiobook"
   for_each        = contains(local.active_modules, "ebook2audiobook") ? { ebook2audiobook = true } : {}
   tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 }
 
 module "rybbit" {
@@ -924,6 +1002,7 @@ module "rybbit" {
   tls_secret_name     = var.tls_secret_name
   clickhouse_password = var.clickhouse_password
   postgres_password   = var.clickhouse_postgres_password
+  tier                = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
@@ -933,6 +1012,13 @@ module "wealthfolio" {
   for_each                  = contains(local.active_modules, "wealthfolio") ? { wealthfolio = true } : {}
   tls_secret_name           = var.tls_secret_name
   wealthfolio_password_hash = var.wealthfolio_password_hash
+  tier                      = local.tiers.aux
 
+  depends_on = [null_resource.core_services]
+}
+
+module "kyverno" {
+  source     = "./kyverno"
+  for_each   = contains(local.active_modules, "kyverno") ? { kyverno = true } : {}
   depends_on = [null_resource.core_services]
 }

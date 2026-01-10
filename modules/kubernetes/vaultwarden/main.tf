@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "smtp_password" {}
 
 resource "kubernetes_namespace" "vaultwarden" {
@@ -21,7 +22,8 @@ resource "kubernetes_deployment" "vaultwarden" {
     name      = "vaultwarden"
     namespace = kubernetes_namespace.vaultwarden.metadata[0].name
     labels = {
-      app = "vaultwarden"
+      app  = "vaultwarden"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

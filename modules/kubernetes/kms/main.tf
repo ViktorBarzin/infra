@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "kms" {
   metadata {
@@ -32,6 +33,7 @@ resource "kubernetes_deployment" "kms-web-page" {
     labels = {
       "app"                           = "kms-web-page"
       "kubernetes.io/cluster-service" = "true"
+      tier                            = var.tier
     }
   }
   spec {
@@ -121,7 +123,8 @@ resource "kubernetes_deployment" "windows_kms" {
     name      = "kms"
     namespace = kubernetes_namespace.kms.metadata[0].name
     labels = {
-      app = "kms-service"
+      app  = "kms-service"
+      tier = var.tier
     }
   }
   spec {

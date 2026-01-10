@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "tor-proxy" {
   metadata {
@@ -34,7 +35,8 @@ resource "kubernetes_deployment" "tor-proxy" {
     name      = "tor-proxy"
     namespace = "tor-proxy"
     labels = {
-      app = "tor-proxy"
+      app  = "tor-proxy"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

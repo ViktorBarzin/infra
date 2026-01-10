@@ -20,6 +20,9 @@ resource "kubernetes_deployment" "pve_exporter" {
   metadata {
     name      = "proxmox-exporter"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels = {
+      tier = var.tier
+    }
   }
 
   spec {

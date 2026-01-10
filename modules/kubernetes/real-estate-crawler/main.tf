@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "notification_settings" {
   type = map(string)
   default = {
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     name      = "realestate-crawler-ui"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
-      app = "realestate-crawler-ui"
+      app  = "realestate-crawler-ui"
+      tier = var.tier
     }
   }
   spec {
@@ -42,8 +44,7 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     template {
       metadata {
         labels = {
-          app                             = "realestate-crawler-ui"
-          "kubernetes.io/cluster-service" = "true"
+          app = "realestate-crawler-ui"
         }
       }
       spec {
@@ -97,7 +98,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     name      = "realestate-crawler-api"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
     labels = {
-      app = "realestate-crawler-api"
+      app  = "realestate-crawler-api"
+      tier = var.tier
     }
   }
   spec {

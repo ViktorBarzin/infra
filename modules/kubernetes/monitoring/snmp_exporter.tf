@@ -29,7 +29,8 @@ resource "kubernetes_deployment" "snmp-exporter" {
     name      = "snmp-exporter"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
-      app = "snmp-exporter"
+      app  = "snmp-exporter"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

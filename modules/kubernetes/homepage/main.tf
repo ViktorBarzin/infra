@@ -1,5 +1,5 @@
-
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -12,6 +12,7 @@ resource "kubernetes_namespace" "homepage" {
     name = "homepage"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

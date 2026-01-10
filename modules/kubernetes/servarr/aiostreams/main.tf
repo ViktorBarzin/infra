@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
 
 resource "kubernetes_namespace" "aiostreams" {
@@ -19,7 +20,8 @@ resource "kubernetes_deployment" "aiostreams" {
     name      = "aiostreams"
     namespace = kubernetes_namespace.aiostreams.metadata[0].name
     labels = {
-      app = "aiostreams"
+      app  = "aiostreams"
+      tier = var.tier
     }
   }
   spec {

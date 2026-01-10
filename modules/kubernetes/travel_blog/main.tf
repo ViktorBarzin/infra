@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "travel-blog" {
   metadata {
@@ -26,20 +27,21 @@ resource "kubernetes_deployment" "blog" {
     name      = "travel-blog"
     namespace = kubernetes_namespace.travel-blog.metadata[0].name
     labels = {
-      run = "travel-blog"
+      app  = "travel-blog"
+      tier = var.tier
     }
   }
   spec {
     replicas = 3
     selector {
       match_labels = {
-        run = "travel-blog"
+        app = "travel-blog"
       }
     }
     template {
       metadata {
         labels = {
-          run = "travel-blog"
+          app = "travel-blog"
         }
       }
       spec {
@@ -79,7 +81,7 @@ resource "kubernetes_service" "travel-blog" {
     name      = "travel-blog"
     namespace = kubernetes_namespace.travel-blog.metadata[0].name
     labels = {
-      "run" = "travel-blog"
+      app = "travel-blog"
     }
     annotations = {
       "prometheus.io/scrape" = "true"
@@ -90,7 +92,7 @@ resource "kubernetes_service" "travel-blog" {
 
   spec {
     selector = {
-      run = "travel-blog"
+      app = "travel-blog"
     }
     port {
       name        = "http"

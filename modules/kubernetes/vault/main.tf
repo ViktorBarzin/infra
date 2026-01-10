@@ -2,10 +2,14 @@ variable "tls_secret_name" {}
 variable "host" {
   default = "vault.viktorbarzin.me"
 }
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "vault" {
   metadata {
     name = "vault"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 
@@ -34,9 +38,9 @@ resource "kubernetes_persistent_volume" "vault_data" {
 }
 
 resource "helm_release" "vault" {
-  namespace        = kubernetes_namespace.vault.metadata[0].name
-  name             = "vault"
-  atomic           = true
+  namespace = kubernetes_namespace.vault.metadata[0].name
+  name      = "vault"
+  atomic    = true
 
   repository = "https://helm.releases.hashicorp.com"
   chart      = "vault"

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "uptime-kuma" {
     name      = "uptime-kuma"
     namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
     labels = {
-      app = "uptime-kuma"
+      app  = "uptime-kuma"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

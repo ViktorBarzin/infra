@@ -14,12 +14,14 @@ variable "tiny_tuya_service_secret" { type = string }
 variable "haos_api_token" { type = string }
 variable "pve_password" { type = string }
 variable "grafana_db_password" { type = string }
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
     name = "monitoring"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

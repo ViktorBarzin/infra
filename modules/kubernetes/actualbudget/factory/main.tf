@@ -3,13 +3,15 @@ variable "name" {}
 variable "tag" {
   default = "latest"
 }
+variable "tier" { type = string }
 
 resource "kubernetes_deployment" "actualbudget" {
   metadata {
     name      = "actualbudget-${var.name}"
     namespace = "actualbudget"
     labels = {
-      app = "actualbudget-${var.name}"
+      app  = "actualbudget-${var.name}"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

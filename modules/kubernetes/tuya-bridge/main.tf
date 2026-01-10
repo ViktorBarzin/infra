@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "tiny_tuya_api_key" { type = string }
 variable "tiny_tuya_api_secret" { type = string }
 variable "tiny_tuya_service_secret" { type = string }
@@ -24,7 +25,8 @@ resource "kubernetes_deployment" "tuya-bridge" {
     name      = "tuya-bridge"
     namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
     labels = {
-      app = "tuya-bridge"
+      app  = "tuya-bridge"
+      tier = var.tier
     }
   }
   spec {

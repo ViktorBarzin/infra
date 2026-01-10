@@ -1,5 +1,6 @@
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -235,7 +236,8 @@ resource "kubernetes_deployment" "audiblez" {
     name      = "audiblez"
     namespace = kubernetes_namespace.ebook2audiobook.metadata[0].name
     labels = {
-      app = "audiblez"
+      app  = "audiblez"
+      tier = var.tier
     }
   }
   spec {

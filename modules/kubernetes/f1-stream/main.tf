@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
@@ -14,7 +15,8 @@ resource "kubernetes_deployment" "f1-stream" {
     name      = "f1-stream"
     namespace = kubernetes_namespace.f1-stream.metadata[0].name
     labels = {
-      app = "f1-stream"
+      app  = "f1-stream"
+      tier = var.tier
     }
   }
   spec {

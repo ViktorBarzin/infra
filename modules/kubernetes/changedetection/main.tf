@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "changedetection" {
   metadata {
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "changedetection" {
     name      = "changedetection"
     namespace = kubernetes_namespace.changedetection.metadata[0].name
     labels = {
-      app = "changedetection"
+      app  = "changedetection"
+      tier = var.tier
     }
   }
   spec {

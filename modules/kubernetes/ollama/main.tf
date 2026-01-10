@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "ollama" {
   metadata {
@@ -64,7 +65,8 @@ resource "kubernetes_deployment" "ollama" {
     name      = "ollama"
     namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
-      app = "ollama"
+      app  = "ollama"
+      tier = var.tier
     }
   }
   spec {
@@ -162,7 +164,8 @@ resource "kubernetes_deployment" "ollama-ui" {
     name      = "ollama-ui"
     namespace = kubernetes_namespace.ollama.metadata[0].name
     labels = {
-      app = "ollama-ui"
+      app  = "ollama-ui"
+      tier = var.tier
     }
   }
   spec {

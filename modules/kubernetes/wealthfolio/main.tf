@@ -6,6 +6,7 @@
 # Note that currently wealthfolio doesn't dedup (https://github.com/afadil/wealthfolio/issues/476)
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "wealthfolio_password_hash" {}
 
 resource "kubernetes_namespace" "wealthfolio" {
@@ -33,7 +34,8 @@ resource "kubernetes_deployment" "wealthfolio" {
     name      = "wealthfolio"
     namespace = kubernetes_namespace.wealthfolio.metadata[0].name
     labels = {
-      app = "wealthfolio"
+      app  = "wealthfolio"
+      tier = var.tier
     }
   }
   spec {
