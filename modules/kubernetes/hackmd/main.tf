@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "hackmd_db_password" {}
 
 resource "kubernetes_namespace" "hackmd" {
@@ -23,6 +24,7 @@ resource "kubernetes_deployment" "hackmd" {
     labels = {
       app                             = "hackmd"
       "kubernetes.io/cluster-service" = "true"
+      tier                            = var.tier
     }
   }
   spec {

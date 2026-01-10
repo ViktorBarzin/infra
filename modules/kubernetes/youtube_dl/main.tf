@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "ytdlp" {
   metadata {
@@ -21,7 +22,8 @@ resource "kubernetes_deployment" "ytdlp" {
     name      = "ytdlp"
     namespace = kubernetes_namespace.ytdlp.metadata[0].name
     labels = {
-      app = "ytdlp"
+      app  = "ytdlp"
+      tier = var.tier
     }
     annotations = {
       "diun.enable" = "true"

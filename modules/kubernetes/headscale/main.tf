@@ -1,5 +1,6 @@
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "headscale_config" {}
 variable "headscale_acl" {}
 
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "headscale" {
     name      = "headscale"
     namespace = kubernetes_namespace.headscale.metadata[0].name
     labels = {
-      app = "headscale"
+      app  = "headscale"
+      tier = var.tier
       # scare to try but probably non-http will fail
       # "istio-injection" : "enabled"
     }

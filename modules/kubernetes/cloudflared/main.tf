@@ -7,6 +7,7 @@ resource "kubernetes_namespace" "cloudflared" {
     name = "cloudflared"
   }
 }
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -19,7 +20,8 @@ resource "kubernetes_deployment" "cloudflared" {
     name      = "cloudflared"
     namespace = kubernetes_namespace.cloudflared.metadata[0].name
     labels = {
-      app = "cloudflared"
+      app  = "cloudflared"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "db_password" { type = string }
 variable "jwt_token" { type = string }
 
@@ -22,7 +23,8 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
     name      = "onlyoffice-document-server"
     namespace = kubernetes_namespace.onlyoffice.metadata[0].name
     labels = {
-      app = "onlyoffice-document-server"
+      app  = "onlyoffice-document-server"
+      tier = var.tier
     }
   }
   spec {

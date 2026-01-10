@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "github_client_id" {}
 variable "github_client_secret" {}
 variable "rpc_secret" {}
@@ -43,7 +44,8 @@ resource "kubernetes_deployment" "drone_server" {
     name      = "drone-server"
     namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
-      app = "drone"
+      app  = "drone"
+      tier = var.tier
     }
   }
   spec {
@@ -211,7 +213,8 @@ resource "kubernetes_deployment" "drone_runner" {
     name      = "drone-runner"
     namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
-      app = "drone-runner"
+      app  = "drone-runner"
+      tier = var.tier
     }
   }
   spec {
@@ -286,7 +289,8 @@ resource "kubernetes_deployment" "drone_runner_secret" {
     name      = "drone-runner-secret"
     namespace = kubernetes_namespace.drone.metadata[0].name
     labels = {
-      app = "drone-runner-secret"
+      app  = "drone-runner-secret"
+      tier = var.tier
     }
   }
   spec {

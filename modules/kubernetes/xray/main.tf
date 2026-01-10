@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" { type = string }
 variable "xray_reality_short_ids" { type = list(string) }
@@ -48,7 +49,8 @@ resource "kubernetes_deployment" "xray" {
     name      = "xray"
     namespace = kubernetes_namespace.xray.metadata[0].name
     labels = {
-      app = "xray"
+      app  = "xray"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

@@ -41,6 +41,9 @@ resource "kubernetes_deployment" "immich-frame" {
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
+    labels = {
+      tier = var.tier
+    }
   }
 
   spec {

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "diun_nfty_token" {}
 variable "diun_slack_url" {}
 
@@ -56,7 +57,8 @@ resource "kubernetes_deployment" "diun" {
     name      = "diun"
     namespace = kubernetes_namespace.diun.metadata[0].name
     labels = {
-      app = "diun"
+      app  = "diun"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

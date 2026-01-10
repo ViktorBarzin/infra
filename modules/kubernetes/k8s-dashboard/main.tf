@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "client_certificate_secret_name" {}
+variable "tier" { type = string }
 
 resource "random_password" "csrf_token" {
   length           = 16
@@ -25,6 +26,7 @@ resource "kubernetes_namespace" "k8s-dashboard" {
     name = "kubernetes-dashboard"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

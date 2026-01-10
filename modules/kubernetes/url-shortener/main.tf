@@ -5,6 +5,7 @@
 ## to the mysql tier
 
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "geolite_license_key" {}
 variable "api_key" {}
 variable "mysql_password" {}
@@ -76,7 +77,8 @@ resource "kubernetes_deployment" "shlink" {
     name      = "shlink"
     namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
-      run = "shlink"
+      run  = "shlink"
+      tier = var.tier
     }
   }
   spec {
@@ -213,7 +215,8 @@ resource "kubernetes_deployment" "shlink-web" {
     name      = "shlink-web"
     namespace = kubernetes_namespace.shlink.metadata[0].name
     labels = {
-      run = "shlink-web"
+      run  = "shlink-web"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "owntracks_credentials" {
   type = map(string)
   default = {
@@ -47,7 +48,8 @@ resource "kubernetes_deployment" "owntracks" {
     name      = "owntracks"
     namespace = kubernetes_namespace.owntracks.metadata[0].name
     labels = {
-      app = "owntracks"
+      app  = "owntracks"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "matrix" {
   metadata {
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "matrix" {
     name      = "matrix"
     namespace = kubernetes_namespace.matrix.metadata[0].name
     labels = {
-      app = "matrix"
+      app  = "matrix"
+      tier = var.tier
     }
   }
   spec {

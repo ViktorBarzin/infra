@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "privatebin" {
   metadata {
@@ -20,8 +21,8 @@ resource "kubernetes_deployment" "privatebin" {
     name      = "privatebin"
     namespace = kubernetes_namespace.privatebin.metadata[0].name
     labels = {
-      app                             = "privatebin"
-      "kubernetes.io/cluster-service" = "true"
+      app  = "privatebin"
+      tier = var.tier
     }
   }
   spec {
@@ -37,8 +38,7 @@ resource "kubernetes_deployment" "privatebin" {
     template {
       metadata {
         labels = {
-          app                             = "privatebin"
-          "kubernetes.io/cluster-service" = "true"
+          app = "privatebin"
         }
       }
       spec {

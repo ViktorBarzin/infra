@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "excalidraw" {
   metadata {
@@ -21,7 +22,8 @@ resource "kubernetes_deployment" "excalidraw" {
     name      = "excalidraw"
     namespace = kubernetes_namespace.excalidraw.metadata[0].name
     labels = {
-      app = "excalidraw"
+      app  = "excalidraw"
+      tier = var.tier
     }
   }
   spec {

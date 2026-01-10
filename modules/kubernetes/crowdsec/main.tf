@@ -6,6 +6,7 @@ variable "enroll_key" {}
 variable "crowdsec_dash_api_key" { type = string }          # used for web dash
 variable "crowdsec_dash_machine_id" { type = string }       # used for web dash
 variable "crowdsec_dash_machine_password" { type = string } # used for web dash
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -16,6 +17,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "crowdsec" {
   metadata {
     name = "crowdsec"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 
@@ -84,6 +88,7 @@ resource "kubernetes_deployment" "crowdsec-web" {
     labels = {
       app                             = "crowdsec_web"
       "kubernetes.io/cluster-service" = "true"
+      tier                            = var.tier
     }
   }
   spec {

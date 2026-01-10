@@ -1,5 +1,5 @@
 variable "tls_secret_name" {}
-# variable "dockerhub_password" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "city-guesser" {
   metadata {
@@ -16,18 +16,13 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "dockerhub_creds" {
-#   source    = "../dockerhub_secret"
-#   namespace = "website"
-#   password  = var.dockerhub_password
-# }
-
 resource "kubernetes_deployment" "city-guesser" {
   metadata {
     name      = "city-guesser"
     namespace = "city-guesser"
     labels = {
-      run = "city-guesser"
+      run  = "city-guesser"
+      tier = var.tier
     }
   }
   spec {

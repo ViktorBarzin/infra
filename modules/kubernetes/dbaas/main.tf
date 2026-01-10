@@ -1,5 +1,6 @@
 # DB as a service. Installs MySQL operator
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "dbaas_root_password" {}
 variable "cluster_master_service" {
   default = "mysql"
@@ -98,6 +99,9 @@ resource "kubernetes_deployment" "mysql" {
     namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/search" = "true"
+    }
+    labels = {
+      tier = var.tier
     }
   }
   spec {
@@ -358,6 +362,7 @@ resource "kubernetes_deployment" "phpmyadmin" {
     namespace = kubernetes_namespace.dbaas.metadata[0].name
     labels = {
       "app" = "phpmyadmin"
+      tier  = var.tier
 
     }
     annotations = {
@@ -684,6 +689,9 @@ resource "kubernetes_deployment" "postgres" {
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
+    labels = {
+      tier = var.tier
+    }
   }
   spec {
     selector {
@@ -776,6 +784,9 @@ resource "kubernetes_deployment" "pgadmin" {
     namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "reloader.stakater.com/search" = "true"
+    }
+    labels = {
+      tier = var.tier
     }
   }
   spec {
