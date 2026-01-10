@@ -552,7 +552,7 @@ module "nginx-ingress" {
 
 module "crowdsec" {
   source                         = "./crowdsec"
-  tier                           = local.tiers.cluster
+  tier                           = local.tiers.core
   for_each                       = contains(local.active_modules, "crowdsec") ? { crowdsec = true } : {}
   tls_secret_name                = var.tls_secret_name
   homepage_username              = var.homepage_credentials["crowdsec"]["username"]
