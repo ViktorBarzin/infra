@@ -32,6 +32,7 @@ resource "kubernetes_deployment" "roundcubemail" {
     namespace = "mailserver"
     labels = {
       "app" = "roundcubemail"
+      tier  = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

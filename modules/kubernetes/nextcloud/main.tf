@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "db_password" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -12,6 +13,7 @@ resource "kubernetes_namespace" "nextcloud" {
     name = "nextcloud"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
@@ -49,7 +51,8 @@ resource "kubernetes_deployment" "whiteboard" {
     name      = "whiteboard"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name
     labels = {
-      app = "whiteboard"
+      app  = "whiteboard"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

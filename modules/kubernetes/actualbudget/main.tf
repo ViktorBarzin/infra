@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 # To create a new deployment:
 /**
@@ -30,6 +31,7 @@ module "viktor" {
   tag             = "edge"
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.actualbudget]
+  tier            = var.tier
 }
 
 # https://budget-anca.viktorbarzin.me/
@@ -39,4 +41,5 @@ module "anca" {
   tag             = "edge"
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.actualbudget]
+  tier            = var.tier
 }

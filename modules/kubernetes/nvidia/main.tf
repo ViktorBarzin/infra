@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -11,6 +12,7 @@ resource "kubernetes_namespace" "nvidia" {
     name = "nvidia"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
@@ -59,7 +61,8 @@ resource "kubernetes_deployment" "nvidia-exporter" {
     name      = "nvidia-exporter"
     namespace = kubernetes_namespace.nvidia.metadata[0].name
     labels = {
-      app = "nvidia-exporter"
+      app  = "nvidia-exporter"
+      tier = var.tier
     }
   }
   spec {
@@ -167,4 +170,52 @@ module "ingress" {
 #       }
 #     }
 #   }
+# }
+
+
+# resource "kubernetes_deployment" "gpu-container" {
+#   metadata {
+#     name      = "gpu-container"
+#     namespace = kubernetes_namespace.nvidia.metadata[0].name
+#     labels = {
+#       app = "gpu-container"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     selector {
+#       match_labels = {
+#         app = "gpu-container"
+#       }
+#     }
+#     template {
+#       metadata {
+#         labels = {
+#           app = "gpu-container"
+#         }
+#       }
+#       spec {
+#         node_selector = {
+#           "gpu" : "true"
+#         }
+#         container {
+#           image   = "ubuntu"
+#           name    = "gpu-container"
+#           command = ["/usr/bin/sleep", "3600"]
+#           # security_context {
+#           #   privileged = true
+#           #   capabilities {
+#           #     add = ["SYS_ADMIN"]
+#           #   }
+#           # }
+#           resources {
+#             limits = {
+#               "nvidia.com/gpu" = "1"
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+#   depends_on = [helm_release.nvidia-gpu-operator]
 # }

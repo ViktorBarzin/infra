@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "homepage_token" {}
 
 resource "kubernetes_namespace" "technitium" {
@@ -23,7 +24,8 @@ resource "kubernetes_deployment" "technitium" {
     name      = "technitium"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     labels = {
-      app = "technitium"
+      app  = "technitium"
+      tier = var.tier
     }
   }
   spec {

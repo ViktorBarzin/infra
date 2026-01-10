@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "db_password" {}
 # variable "homepage_token" {}
 variable "homepage_username" {}
@@ -25,7 +26,8 @@ resource "kubernetes_deployment" "paperless-ngx" {
     name      = "paperless-ngx"
     namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
     labels = {
-      app = "paperless-ngx"
+      app  = "paperless-ngx"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

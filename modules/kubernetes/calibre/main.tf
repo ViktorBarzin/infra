@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "homepage_username" {
   default = ""
 }
@@ -99,7 +100,8 @@ resource "kubernetes_deployment" "calibre-web-automated" {
     name      = "calibre-web-automated"
     namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
-      app = "calibre-web-automated"
+      app  = "calibre-web-automated"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -250,7 +252,8 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
     name      = "annas-archive-stacks"
     namespace = kubernetes_namespace.calibre.metadata[0].name
     labels = {
-      app = "annas-archive-stacks"
+      app  = "annas-archive-stacks"
+      tier = var.tier
     }
   }
   spec {

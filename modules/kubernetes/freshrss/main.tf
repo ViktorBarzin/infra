@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -20,6 +21,7 @@ resource "kubernetes_deployment" "freshrss" {
     labels = {
       app                             = "freshrss"
       "kubernetes.io/cluster-service" = "true"
+      tier                            = var.tier
     }
   }
   spec {

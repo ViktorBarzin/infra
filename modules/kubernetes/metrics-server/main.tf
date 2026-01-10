@@ -1,11 +1,12 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "metrics-server" {
   metadata {
     name = "metrics-server"
-    # labels = {
-    #   "istio-injection" : "enabled"
-    # }
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

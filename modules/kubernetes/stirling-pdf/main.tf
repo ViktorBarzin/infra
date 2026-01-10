@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "stirling-pdf" {
   metadata {
@@ -20,7 +21,8 @@ resource "kubernetes_deployment" "stirling-pdf" {
     name      = "stirling-pdf"
     namespace = kubernetes_namespace.stirling-pdf.metadata[0].name
     labels = {
-      app = "stirling-pdf"
+      app  = "stirling-pdf"
+      tier = var.tier
     }
   }
   spec {

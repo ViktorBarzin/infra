@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "clickhouse_password" { type = string }
 variable "postgres_password" { type = string }
 
@@ -29,7 +30,8 @@ resource "kubernetes_deployment" "clickhouse" {
     name      = "clickhouse"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
-      app = "clickhouse"
+      app  = "clickhouse"
+      tier = var.tier
     }
   }
   spec {
@@ -110,7 +112,8 @@ resource "kubernetes_deployment" "rybbit" {
     name      = "rybbit"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
-      app = "rybbit"
+      app  = "rybbit"
+      tier = var.tier
     }
   }
   spec {
@@ -222,7 +225,8 @@ resource "kubernetes_deployment" "rybbit-client" {
     name      = "rybbit-client"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
     labels = {
-      app = "rybbit-client"
+      app  = "rybbit-client"
+      tier = var.tier
     }
   }
   spec {

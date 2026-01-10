@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 # variable "dockerhub_password" {}
 
 resource "kubernetes_namespace" "website" {
@@ -27,7 +28,8 @@ resource "kubernetes_deployment" "blog" {
     name      = "blog"
     namespace = kubernetes_namespace.website.metadata[0].name
     labels = {
-      run = "blog"
+      run  = "blog"
+      tier = var.tier
     }
   }
   spec {

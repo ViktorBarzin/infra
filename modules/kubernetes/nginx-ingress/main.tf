@@ -12,6 +12,8 @@ variable "honeypotapikey" {
 variable "crowdsec_api_key" {}
 variable "crowdsec_captcha_secret_key" {}
 variable "crowdsec_captcha_site_key" {}
+variable "tier" { type = string }
+
 resource "kubernetes_namespace" "ingress_nginx" {
   metadata {
     name = "ingress-nginx"
@@ -469,6 +471,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
       "app.kubernetes.io/name"      = "ingress-nginx"
       "app.kubernetes.io/part-of"   = "ingress-nginx"
       "app.kubernetes.io/version"   = "1.13.1"
+      tier                          = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

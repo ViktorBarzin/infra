@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "database_password" {}
 variable "geoapify_api_key" {}
 variable "image_version" {
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "dawarich" {
     name      = "dawarich"
     namespace = kubernetes_namespace.dawarich.metadata[0].name
     labels = {
-      app = "dawarich"
+      app  = "dawarich"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

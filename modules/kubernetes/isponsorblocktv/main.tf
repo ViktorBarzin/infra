@@ -1,4 +1,5 @@
 # https://github.com/dmunozv04/iSponsorBlockTV
+variable "tier" { type = string }
 
 resource "kubernetes_namespace" "isponsorblocktv" {
   metadata {
@@ -17,7 +18,8 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
     name      = "isponsorblocktv-vermont"
     namespace = kubernetes_namespace.isponsorblocktv.metadata[0].name
     labels = {
-      app = "isponsorblocktv-vermont"
+      app  = "isponsorblocktv-vermont"
+      tier = var.tier
     }
   }
   spec {

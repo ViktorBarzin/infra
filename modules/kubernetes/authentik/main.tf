@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "secret_key" {}
 variable "postgres_password" {}
+variable "tier" { type = string }
 
 
 module "tls_secret" {
@@ -12,6 +13,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "authentik" {
   metadata {
     name = "authentik"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

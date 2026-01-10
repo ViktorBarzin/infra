@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "tier" { type = string }
 variable "postgresql_password" {}
 variable "homepage_token" {}
 variable "immich_version" {
@@ -26,7 +27,8 @@ resource "kubernetes_deployment" "immich_server" {
     namespace = kubernetes_namespace.immich.metadata[0].name
 
     labels = {
-      app = "immich-server"
+      app  = "immich-server"
+      tier = var.tier
     }
   }
 
@@ -235,6 +237,9 @@ resource "kubernetes_deployment" "immich-postgres" {
   metadata {
     name      = "immich-postgresql"
     namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      tier = var.tier
+    }
   }
   spec {
     replicas = 1
@@ -334,6 +339,9 @@ resource "kubernetes_deployment" "immich-machine-learning" {
   metadata {
     name      = "immich-machine-learning"
     namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      tier = var.tier
+    }
   }
   spec {
     replicas = 1

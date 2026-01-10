@@ -1,4 +1,5 @@
 variable "password" {}
+variable "tier" { type = string }
 variable "method" {
   default = "chacha20-ietf-poly1305"
 }
@@ -19,6 +20,7 @@ resource "kubernetes_deployment" "shadowsocks" {
     namespace = kubernetes_namespace.shadowsocks.metadata[0].name
     labels = {
       "app" = "shadowsocks"
+      tier  = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -64,7 +66,7 @@ resource "kubernetes_deployment" "shadowsocks" {
   }
 }
 
-resource "kubernetes_service" "mailserver" {
+resource "kubernetes_service" "mailserver" { # rename me
   metadata {
     name      = "shadowsocks"
     namespace = kubernetes_namespace.shadowsocks.metadata[0].name
