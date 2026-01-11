@@ -35,7 +35,7 @@ resource "kubernetes_deployment" "pgbouncer" {
   }
 
   spec {
-    replicas = 1
+    replicas = 3
 
     selector {
       match_labels = {
@@ -51,6 +51,20 @@ resource "kubernetes_deployment" "pgbouncer" {
       }
 
       spec {
+        affinity {
+          pod_anti_affinity {
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_expressions {
+                  key      = "component"
+                  operator = "In"
+                  values   = ["server"]
+                }
+              }
+              topology_key = "kubernetes.io/hostname"
+            }
+          }
+        }
         container {
           name              = "pgbouncer"
           image             = "edoburu/pgbouncer:latest"
