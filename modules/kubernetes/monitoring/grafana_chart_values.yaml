@@ -1,5 +1,6 @@
 deploymentStrategy:
-  type: Recreate
+  type: RollingUpdate
+replicas: 3
 persistence:
   enabled: false # using external mysql
   existingClaim: "grafana-pvc"
