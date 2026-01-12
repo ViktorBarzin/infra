@@ -7,7 +7,7 @@
     server_name: "keyserver.viktorbarzin.me"
     key_filename: "truenas.key"
     htpasswd_user: "truenas"
-    htpasswd_password: "3RgTvqHWeiae7drCUBGyj6XZSIP" # replace with vault
+    htpasswd_password: "" # replace with vault
     ssl_cert_path: "/etc/ssl/certs/keyserver.crt"
     ssl_key_path: "/etc/ssl/private/keyserver.key"
     local_ssl_cert: "../../../secrets/fullchain.pem"        # LOCAL path
