@@ -133,6 +133,7 @@ variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
+variable "speedtest_db_password" { type = string }
 
 
 provider "kubernetes" {
@@ -182,12 +183,13 @@ module "k8s-node-template" {
   snippet_name    = local.k8s_cloud_init_snippet_name
   # Add mirror registry
   containerd_config_update_command = <<-EOF
-  echo '[plugins.\"io.containerd.grpc.v1.cri\".registry.mirrors.\"docker.io\"]' >> /etc/containerd/config.toml && echo '  endpoint = [\"http://10.0.20.10:5000\"]' >> /etc/containerd/config.toml # docker registry vm
+  # BELOW IS DEPRECATED - replace with config_path version!!!!
+  echo '[plugins.\"io.containerd.grpc.v1.cri\".registry.mirrors.\"*\"]' >> /etc/containerd/config.toml && echo '  endpoint = [\"http://10.0.20.10:5000\"]' >> /etc/containerd/config.toml # docker registry vm
 
   sed -i 's/.*max_concurrent_downloads = 3/max_concurrent_downloads = 20/g' /etc/containerd/config.toml # Enable multiple concurrent downloads
   sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
   sudo sed -i '/maxParallelImagePulls:/d' /var/lib/kubelet/config.yaml && \
-  echo -e 'serializeImagePulls: false\nmaxParallelImagePulls: 50' | sudo tee -a /var/lib/kubelet/config.yaml && \
+  echo -e 'serializeImagePulls: false\nmaxParallelImagePulls: 50' | sudo tee -a /var/lib/kubelet/config.yaml
   EOF
   k8s_join_command                 = var.k8s_join_command
 }
@@ -556,6 +558,8 @@ module "kubernetes_cluster" {
   aiostreams_database_connection_string = var.aiostreams_database_connection_string
 
   actualbudget_credentials = var.actualbudget_credentials
+
+  speedtest_db_password = var.speedtest_db_password
 }
 
 
