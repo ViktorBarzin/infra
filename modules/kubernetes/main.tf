@@ -112,6 +112,7 @@ variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
+variable "speedtest_db_password" { type = string }
 
 
 variable "defcon_level" {
@@ -137,7 +138,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest"
     ],
   }
   active_modules = distinct(flatten([
@@ -1023,4 +1024,13 @@ module "kyverno" {
   source     = "./kyverno"
   for_each   = contains(local.active_modules, "kyverno") ? { kyverno = true } : {}
   depends_on = [null_resource.core_services]
+}
+
+module "speedtest" {
+  source          = "./speedtest"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
+  for_each        = contains(local.active_modules, "speedtest") ? { speedtest = true } : {}
+  depends_on      = [null_resource.core_services]
+  db_password     = var.speedtest_db_password
 }
