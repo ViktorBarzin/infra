@@ -48,3 +48,15 @@ module "anca" {
   budget_encryption_password = lookup(var.credentials["anca"], "password", null)
   sync_id                    = lookup(var.credentials["anca"], "sync_id", null)
 }
+
+# https://budget-emo.viktorbarzin.me/
+module "emo" {
+  source                     = "./factory"
+  name                       = "emo"
+  tag                        = "edge"
+  tls_secret_name            = var.tls_secret_name
+  depends_on                 = [kubernetes_namespace.actualbudget]
+  tier                       = var.tier
+  budget_encryption_password = lookup(var.credentials["emo"], "password", null)
+  sync_id                    = lookup(var.credentials["emo"], "sync_id", null)
+}
