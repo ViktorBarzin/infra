@@ -113,6 +113,7 @@ variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
 variable "speedtest_db_password" { type = string }
+variable "freedify_credentials" { type = map(any) }
 
 
 variable "defcon_level" {
@@ -138,7 +139,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify"
     ],
   }
   active_modules = distinct(flatten([
@@ -569,6 +570,8 @@ module "crowdsec" {
 # Seems like it needs S3 even if pg is local...
 # module "resume" {
 #   source          = "./resume"
+#   tier            = local.tiers.aux
+#   for_each        = contains(local.active_modules, "resume") ? { resume = true } : {}
 #   tls_secret_name = var.tls_secret_name
 #   redis_url       = var.resume_redis_url
 #   database_url    = var.resume_database_url
@@ -1033,4 +1036,12 @@ module "speedtest" {
   for_each        = contains(local.active_modules, "speedtest") ? { speedtest = true } : {}
   depends_on      = [null_resource.core_services]
   db_password     = var.speedtest_db_password
+}
+
+module "freedify" {
+  source                 = "./freedify"
+  tls_secret_name        = var.tls_secret_name
+  tier                   = local.tiers.aux
+  for_each               = contains(local.active_modules, "freedify") ? { freedify = true } : {}
+  additional_credentials = var.freedify_credentials
 }
