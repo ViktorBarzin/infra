@@ -23,10 +23,18 @@ nextcloud:
     # - name: loglevel
     #   value: "0"
 
-externalDatabase:
+# internalDatabase:
+#   enabled: false
+
+externalRedis:
   enabled: true
+  host: redis.redis.svc.cluster.local
+
+# Currently not in use; we use the nextcloud.db sqlite3
+externalDatabase:
+  enabled: false
   type: mysql
-  host: mysql.dbaas
+  host: mysql.dbaas.svc.cluster.local
   user: nextcloud
   password: ${db_password}
   databse: nextcloud
