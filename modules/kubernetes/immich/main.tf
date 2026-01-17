@@ -373,6 +373,10 @@ resource "kubernetes_deployment" "immich-machine-learning" {
             name           = "immich-ml"
           }
           env {
+            name  = "MACHINE_LEARNING_MODEL_TTL"
+            value = 0
+          }
+          env {
             name  = "TRANSFORMERS_CACHE"
             value = "/cache"
           }
