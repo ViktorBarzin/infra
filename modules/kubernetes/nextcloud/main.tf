@@ -182,3 +182,153 @@ module "whiteboard_ingress" {
     "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
   }
 }
+
+resource "kubernetes_config_map" "backup-script" {
+  metadata {
+    name      = "nextcloud-backup-script"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  data = {
+    "backup.sh" = <<-EOF
+      #!/bin/bash
+      set -e
+
+      BACKUP_DIR="/backup"
+      DATA_DIR="/nextcloud-data"
+      DATE=$(date +%Y%m%d_%H%M%S)
+      BACKUP_PATH="$BACKUP_DIR/$DATE"
+
+      echo "Starting Nextcloud backup at $(date)"
+
+      # Note: Maintenance mode is skipped because occ is not available in the NFS mount.
+      # For a proper backup with maintenance mode, exec into the nextcloud pod:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --on
+
+      # Create backup directory
+      mkdir -p "$BACKUP_PATH"
+
+      # Backup everything (config, data, custom_apps, themes, etc.)
+      echo "Backing up Nextcloud installation..."
+      rsync -a "$DATA_DIR/" "$BACKUP_PATH/"
+
+      # Keep only last 7 backups
+      echo "Cleaning old backups..."
+      cd "$BACKUP_DIR"
+      ls -dt */ | tail -n +8 | xargs -r rm -rf
+
+      echo "Backup completed at $(date)"
+      echo "Backup stored at: $BACKUP_PATH"
+    EOF
+
+    "restore.sh" = <<-EOF
+      #!/bin/bash
+      # Restore script - run manually when needed
+      # Usage: ./restore.sh <backup_date>
+      # Example: ./restore.sh 20250117_030000
+      #
+      # Before restoring, enable maintenance mode:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --on
+      # After restoring, disable it:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --off
+
+      set -e
+
+      if [ -z "$1" ]; then
+        echo "Usage: $0 <backup_date>"
+        echo "Available backups:"
+        ls -1 /backup/
+        exit 1
+      fi
+
+      BACKUP_PATH="/backup/$1"
+      DATA_DIR="/nextcloud-data"
+
+      if [ ! -d "$BACKUP_PATH" ]; then
+        echo "Backup not found: $BACKUP_PATH"
+        exit 1
+      fi
+
+      echo "Restoring from $BACKUP_PATH"
+
+      # Restore everything
+      echo "Restoring Nextcloud installation..."
+      rsync -a "$BACKUP_PATH/" "$DATA_DIR/"
+
+      echo "Restore completed!"
+      echo "Remember to run: kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --off"
+    EOF
+  }
+}
+
+resource "kubernetes_cron_job_v1" "nextcloud-backup" {
+  metadata {
+    name      = "nextcloud-backup"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  spec {
+    schedule                      = "0 3 * * 0" # Sunday at 3 AM
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+
+            container {
+              name  = "backup"
+              image = "alpine:latest"
+
+              command = ["/bin/sh", "-c", "apk add --no-cache rsync bash && /scripts/backup.sh"]
+
+              volume_mount {
+                name       = "nextcloud-data"
+                mount_path = "/nextcloud-data"
+              }
+
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+
+              volume_mount {
+                name       = "scripts"
+                mount_path = "/scripts"
+              }
+            }
+
+            volume {
+              name = "nextcloud-data"
+              nfs {
+                server = "10.0.10.15"
+                path   = "/mnt/main/nextcloud"
+              }
+            }
+
+            volume {
+              name = "backup"
+              nfs {
+                server = "10.0.10.15"
+                path   = "/mnt/main/nextcloud-backup"
+              }
+            }
+
+            volume {
+              name = "scripts"
+              config_map {
+                name         = kubernetes_config_map.backup-script.metadata[0].name
+                default_mode = "0755"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
