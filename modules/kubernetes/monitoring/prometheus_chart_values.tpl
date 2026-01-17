@@ -199,13 +199,6 @@ serverFiles:
               severity: page
             annotations:
               summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
-          - alert: HighRAMUsage
-            expr: clamp_min((1 - (node_memory_MemAvailable_bytes{instance="pve-node-r730"} / node_memory_MemTotal_bytes{instance="pve-node-r730"})) * 100, 0) > 90
-            for: 30m
-            labels:
-              severity: page
-            annotations:
-              summary: "High memory usage: {{ $value }}. Risk of OOM-ing."
           - alert: HighSystemLoad
             expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
             for: 30m
@@ -310,7 +303,7 @@ serverFiles:
             annotations:
               summary: "High CPU usage on {{ $labels.node }} - {{ $value }}"
           - alert: NodeLowFreeMemory
-            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.9
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.95
             for: 10m
             labels:
               severity: page
