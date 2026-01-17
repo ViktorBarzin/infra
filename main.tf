@@ -134,7 +134,7 @@ variable "wealthfolio_password_hash" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
 variable "speedtest_db_password" { type = string }
-
+variable "freedify_credentials" { type = map(any) }
 
 provider "kubernetes" {
   config_path = var.prod ? "" : "~/.kube/config"
@@ -560,6 +560,7 @@ module "kubernetes_cluster" {
   actualbudget_credentials = var.actualbudget_credentials
 
   speedtest_db_password = var.speedtest_db_password
+  freedify_credentials  = var.freedify_credentials
 }
 
 
