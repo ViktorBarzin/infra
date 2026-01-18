@@ -36,3 +36,12 @@ override.tf.json
 git_crypt.key
 
 modules/kubernetes/frigate/config.yaml
+
+# Claude Code - temporary/sensitive files
+.claude/cmd_input.txt
+.claude/cmd_output.txt
+.claude/cmd_status.txt
+.claude/settings.local.json
+.claude/._*
+
+._*
