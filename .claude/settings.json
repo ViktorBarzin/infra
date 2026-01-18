@@ -1,0 +1,12 @@
+{
+  "project": {
+    "name": "Home Infrastructure",
+    "type": "terraform",
+    "description": "Kubernetes cluster on Proxmox with self-hosted services"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)"
+    ]
+  }
+}
