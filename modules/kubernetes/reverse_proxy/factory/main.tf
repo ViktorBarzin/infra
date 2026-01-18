@@ -85,6 +85,16 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/auth-response-headers" : var.protected ? "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid" : null
       "nginx.ingress.kubernetes.io/auth-snippet" : var.protected ? "proxy_set_header X-Forwarded-Host $http_host;" : null
 
+      # # 2. Local Basic Auth Config
+      # nginx.ingress.kubernetes.io/auth-type: basic
+      # nginx.ingress.kubernetes.io/auth-secret: emergency-basic-auth
+      # nginx.ingress.kubernetes.io/auth-realm: "Authentik Down - Use Emergency Login"
+
+      # # 3. The Fallback Magic
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   satisfy any;
+      #   allow all;
+
       "nginx.ingress.kubernetes.io/proxy-body-size" : var.max_body_size
       "nginx.ingress.kubernetes.io/use-proxy-protocol" : var.use_proxy_protocol
       "nginx.ingress.kubernetes.io/proxy-connect-timeout" : var.proxy_timeout
