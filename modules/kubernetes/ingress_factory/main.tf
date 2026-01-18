@@ -119,6 +119,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
       limit_req_status 429;
       limit_conn_status 429;
+      # Prevent iframe embedding (clickjacking protection) - allow subdomains only
+      add_header Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me" always;
       ${var.rybbit_site_id != null ? <<-JS
         # Rybbit Analytics
         # Only modify HTML
