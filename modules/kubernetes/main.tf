@@ -61,6 +61,7 @@ variable "crowdsec_dash_machine_id" { type = string }
 variable "crowdsec_dash_machine_password" { type = string }
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
+variable "resume_database_password" {}
 variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
@@ -575,6 +576,7 @@ module "crowdsec" {
 #   tls_secret_name = var.tls_secret_name
 #   redis_url       = var.resume_redis_url
 #   database_url    = var.resume_database_url
+#   db_password     = var.resume_database_password
 # }
 
 module "uptime-kuma" {
