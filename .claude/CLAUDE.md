@@ -142,6 +142,26 @@ Edge/Aux (tier 3-4):
 
 ## Infrastructure
 - Proxmox hypervisor for VMs
-- Kubernetes cluster with GPU node
+- Kubernetes cluster with GPU node (5 nodes: k8s-master + k8s-node1-4, running v1.34.2)
 - NFS server at 10.0.10.15 for storage
 - Redis shared service at `redis.redis.svc.cluster.local`
+
+## Git Operations (IMPORTANT)
+- **Git is slow** on this repo due to many files - commands can take 30+ seconds
+- Use `GIT_OPTIONAL_LOCKS=0` prefix if git hangs
+- **Local SSH is blocked** - use remote executor to push: `echo "git push origin master" > .claude/cmd_input.txt`
+- Always commit only specific files you changed, not everything
+
+## Prometheus Alerts
+- Alert rules are in `modules/kubernetes/monitoring/prometheus_chart_values.tpl`
+- Under `serverFiles.alerting_rules.yml.groups`
+- Groups: "R730 Host", "Nvidia Tesla T4 GPU", "Power", "Cluster"
+- kube-state-metrics provides: `kube_deployment_*`, `kube_statefulset_*`, `kube_daemonset_*`
+
+## DEFCON Levels
+Services are organized by criticality in `modules/kubernetes/main.tf`:
+- Level 1 (Critical): wireguard, technitium, headscale, nginx-ingress, xray, authentik, cloudflare, monitoring
+- Level 2 (Storage): vaultwarden, redis, immich, nvidia, metrics-server, uptime-kuma, crowdsec, kyverno
+- Level 3 (Admin): k8s-dashboard, reverse-proxy
+- Level 4 (Active): mailserver, shadowsocks, dawarich, nextcloud, calibre, actualbudget, etc.
+- Level 5 (Optional): blog, drone, hackmd, ollama, servarr, paperless-ngx, etc.
