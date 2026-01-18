@@ -6,12 +6,23 @@
 - **Use `/update-knowledge` command**: Or edit this file directly to add learnings
 
 ## Execution Environment (CRITICAL)
-- **File operations** (Read, Edit, Write, Glob, Grep): Run locally at `/Volumes/wizard/code/infra`
-- **Git commands**: Run locally (git status, git log, git diff, etc.)
-- **ALL other commands**: Use the remote executor relay (kubectl, terraform, helm, python, etc.)
+- **Prefer running commands directly first** - only use remote executor as fallback if local execution fails
 
-### Remote Command Execution (ALWAYS USE THIS)
-For any command that is not file editing or git, use the file-based relay:
+### Commands that work LOCALLY (macOS)
+- **File operations**: Read, Edit, Write, Glob, Grep tools
+- **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
+- **Basic shell**: ls, cat, head, tail, find, grep, etc.
+
+### Commands that REQUIRE REMOTE EXECUTOR
+- **terraform**: apply, plan, init, state - needs cluster access
+- **kubectl**: all k8s commands - needs cluster access
+- **helm**: chart operations - needs cluster access
+- **docker**: container operations on remote hosts
+- **ssh**: connections to infrastructure nodes
+- **Any command interacting with**: Proxmox, Kubernetes cluster, NFS server, other infrastructure
+
+### Remote Command Execution (FALLBACK)
+For commands that fail locally, use the file-based relay:
 
 **To execute a remote command:**
 ```bash
@@ -151,6 +162,7 @@ Edge/Aux (tier 3-4):
 - Use `GIT_OPTIONAL_LOCKS=0` prefix if git hangs
 - **Local SSH is blocked** - use remote executor to push: `echo "git push origin master" > .claude/cmd_input.txt`
 - Always commit only specific files you changed, not everything
+- **ALWAYS ask user before pushing to remote** - never push without explicit confirmation
 
 ## Prometheus Alerts
 - Alert rules are in `modules/kubernetes/monitoring/prometheus_chart_values.tpl`
