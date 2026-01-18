@@ -1,6 +1,8 @@
-variable "tls_secret_name" {}
-variable "database_url" {}
-variable "redis_url" {}
+variable "tls_secret_name" { type = string }
+variable "tier" { type = string }
+variable "database_url" { type = string }
+variable "redis_url" { type = string }
+variable "db_password" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -14,12 +16,18 @@ resource "kubernetes_namespace" "resume" {
   }
 }
 
+resource "random_string" "random" {
+  length = 32
+  lower  = true
+}
+
 resource "kubernetes_deployment" "resume" {
   metadata {
     name      = "resume"
     namespace = kubernetes_namespace.resume.metadata[0].name
     labels = {
-      app = "resume"
+      app  = "resume"
+      tier = var.tier
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -58,9 +66,34 @@ resource "kubernetes_deployment" "resume" {
             name  = "PUBLIC_SERVER_URL"
             value = "https://resume.viktorbarzin.me"
           }
+
+          env {
+            name  = "POSTGRES_HOST"
+            value = "postgresql.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "POSTGRES_DB"
+            value = "resume"
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "resume"
+          }
+          env {
+            name  = "POSTGRES_PASSWORD"
+            value = var.db_password
+          }
           env {
             name  = "JWT_SECRET"
-            value = "kek"
+            value = random_string.random.result
+          }
+          env {
+            name  = "AUTH_SECRET"
+            value = random_string.random.result
+          }
+          env {
+            name  = "SECRET_KEY"
+            value = random_string.random.result
           }
           env {
             name  = "JWT_EXPIRY_TIME"
@@ -70,28 +103,46 @@ resource "kubernetes_deployment" "resume" {
             name  = "STORAGE_ENDPOINT"
             value = "https://resume.viktorbarzin.me"
           }
-          env {
-            name  = "STORAGE_PORT"
-            value = 443
-          }
           // There's a tone of these... I give up...
           // check https://github.com/AmruthPillai/Reactive-Resume/blob/main/.env.example
 
           port {
             container_port = 3000
           }
-          # volume_mount {
-          #   name       = "config"
-          #   mount_path = "/app/public/"
-          # }
+          port {
+            container_port = 3100
+          }
         }
-        # volume {
-        #   name = "config"
-        #   config_map {
-        #     name = "config"
-        #   }
-        # }
       }
     }
   }
+}
+
+
+resource "kubernetes_service" "resume" {
+  metadata {
+    name      = "resume"
+    namespace = kubernetes_namespace.resume.metadata[0].name
+    labels = {
+      "app" = "resume"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "resume"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 3000
+    }
+  }
+}
+
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.resume.metadata[0].name
+  name            = "resume"
+  tls_secret_name = var.tls_secret_name
 }
