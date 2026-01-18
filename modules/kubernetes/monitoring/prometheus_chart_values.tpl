@@ -318,13 +318,39 @@ serverFiles:
           #       severity: page
           #     annotations:
           #       summary: Pod stuck not ready.
-          #- alert: ReadyPodsInDeploymentLessThanSpec
-          #  expr: kube_deployment_status_replicas_available - on(namespace, deployment) kube_deployment_spec_replicas < 0
-          #  for: 10m
-          #  labels:
-          #    severity: page
-          #  annotations:
-          #    summary: Number of ready pods in {{ $labels.deployment }} is less than what is defined in spec.
+          - alert: DeploymentReplicasMismatch
+            expr: |
+              (
+                kube_deployment_spec_replicas
+                - on(namespace, deployment) kube_deployment_status_replicas_available
+              ) > 0
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has {{ $value }} unavailable replicas"
+          - alert: StatefulSetReplicasMismatch
+            expr: |
+              (
+                kube_statefulset_replicas
+                - on(namespace, statefulset) kube_statefulset_status_replicas_ready
+              ) > 0
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has {{ $value }} unavailable replicas"
+          - alert: DaemonSetMissingPods
+            expr: |
+              (
+                kube_daemonset_status_desired_number_scheduled
+                - on(namespace, daemonset) kube_daemonset_status_number_ready
+              ) > 0
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has {{ $value }} missing pods"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
