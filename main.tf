@@ -77,6 +77,7 @@ variable "crowdsec_dash_machine_id" { type = string }
 variable "crowdsec_dash_machine_password" { type = string }
 variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
+variable "resume_database_password" {}
 variable "resume_redis_url" {}
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
@@ -485,8 +486,9 @@ module "kubernetes_cluster" {
 
   vaultwarden_smtp_password = var.vaultwarden_smtp_password
 
-  resume_redis_url    = var.resume_redis_url
-  resume_database_url = var.resume_database_url
+  resume_redis_url         = var.resume_redis_url
+  resume_database_password = var.resume_database_password
+  resume_database_url      = var.resume_database_url
 
   frigate_valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 
