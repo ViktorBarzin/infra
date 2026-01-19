@@ -145,7 +145,7 @@ resource "kubernetes_service" "ollama" {
   }
 }
 
-# Allow ollama to be connected to from external apps
+# Allow ollama to be connected to from external apps (internal LAN only)
 module "ollama-ingress" {
   source                  = "../ingress_factory"
   namespace               = kubernetes_namespace.ollama.metadata[0].name
@@ -156,6 +156,20 @@ module "ollama-ingress" {
   allow_local_access_only = true
   ssl_redirect            = false
   port                    = 11434
+}
+
+# Ollama API ingress for Claude Code access (restricted to LAN/VPN)
+module "ollama-api-ingress" {
+  source                  = "../ingress_factory"
+  namespace               = kubernetes_namespace.ollama.metadata[0].name
+  name                    = "ollama-api"
+  service_name            = "ollama"
+  root_domain             = "viktorbarzin.lan"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true # Restricts to 10.0.0.0/8, 192.168.1.0/24
+  ssl_redirect            = false
+  port                    = 11434
+  proxy_timeout           = 300 # Longer timeout for model inference
 }
 
 # Web UI
