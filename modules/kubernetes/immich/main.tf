@@ -374,7 +374,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
           }
           env {
             name  = "MACHINE_LEARNING_MODEL_TTL"
-            value = 0
+            value = "0"
           }
           env {
             name  = "TRANSFORMERS_CACHE"
@@ -388,9 +388,23 @@ resource "kubernetes_deployment" "immich-machine-learning" {
             name  = "MPLCONFIGDIR"
             value = "/cache/matplotlib-config"
           }
+          # Preload CLIP models (for smart search)
           env {
-            name  = "MACHINE_LEARNING_PRELOAD__CLIP"
+            name  = "MACHINE_LEARNING_PRELOAD__CLIP__TEXTUAL"
             value = "ViT-B-16-SigLIP2__webli"
+          }
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__CLIP__VISUAL"
+            value = "ViT-B-16-SigLIP2__webli"
+          }
+          # Preload facial recognition models
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__DETECTION"
+            value = "buffalo_l"
+          }
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__RECOGNITION"
+            value = "buffalo_l"
           }
 
           volume_mount {
