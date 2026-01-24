@@ -1,9 +1,9 @@
-variable namespace {}
-variable password {}
-variable dockerhub_creds_secret_name {
+variable "namespace" {}
+variable "password" {}
+variable "dockerhub_creds_secret_name" {
   default = "dockerhub-creds"
 }
-variable username {
+variable "username" {
   default = "viktorbarzin"
 }
 
