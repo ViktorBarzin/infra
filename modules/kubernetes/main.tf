@@ -115,6 +115,9 @@ variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
 variable "speedtest_db_password" { type = string }
 variable "freedify_credentials" { type = map(any) }
+variable "mcaptcha_postgresql_password" { type = string }
+variable "mcaptcha_cookie_secret" { type = string }
+variable "mcaptcha_captcha_salt" { type = string }
 
 
 variable "defcon_level" {
@@ -140,7 +143,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha"
     ],
   }
   active_modules = distinct(flatten([
@@ -331,6 +334,18 @@ module "privatebin" {
 
   depends_on = [null_resource.core_services]
 }
+
+# module "mcaptcha" {
+#   source              = "./mcaptcha"
+#   for_each            = contains(local.active_modules, "mcaptcha") ? { mcaptcha = true } : {}
+#   tls_secret_name     = var.tls_secret_name
+#   tier                = local.tiers.edge
+#   postgresql_password = var.mcaptcha_postgresql_password
+#   cookie_secret       = var.mcaptcha_cookie_secret
+#   captcha_salt        = var.mcaptcha_captcha_salt
+
+#   depends_on = [null_resource.core_services]
+# }
 
 # module "vault" {
 #   source          = "./vault"
