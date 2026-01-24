@@ -82,11 +82,11 @@ resource "kubernetes_service" "snmp-exporter" {
     labels = {
       "app" = "snmp-exporter"
     }
-    annotations = {
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/snmp?auth=Public0&target=tcp%3A%2F%2F192.%3A161"
-      "prometheus.io/port"   = "9116"
-    }
+    # annotations = {
+    #   "prometheus.io/scrape" = "true"
+    #   "prometheus.io/path"   = "/snmp?auth=Public0&target=tcp%3A%2F%2F192.%3A161"
+    #   "prometheus.io/port"   = "9116"
+    # }
   }
 
   spec {

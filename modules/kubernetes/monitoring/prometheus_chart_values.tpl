@@ -474,6 +474,8 @@ extraScrapeConfigs: |
           - "crowdsec-service.crowdsec.svc.cluster.local:6060"
     metrics_path: '/metrics'
   - job_name: 'snmp-idrac'
+    scrape_interval: 1m
+    scrape_timeout: 45s
     static_configs:
         - targets:
           - "idrac.viktorbarzin.lan:161"
@@ -492,7 +494,7 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
-    scrape_interval: 1m
+    scrape_interval: 3m
     scrape_timeout: 45s
     metrics_path: /metrics
     static_configs:

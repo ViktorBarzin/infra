@@ -21,6 +21,14 @@ resource "kubernetes_config_map" "redfish-config" {
           password: calvin
       metrics:
         all: true
+        # system: true
+        # sensors: true
+        # power: true
+        # sel: false        # Disable SEL - often slow
+        # storage: true    # Disable storage - slowest endpoint
+        # memory: true
+        # network: false    # Disable network adapters
+        # firmware: false   # Don't need this frequently
     EOF
   }
 }
@@ -83,11 +91,11 @@ resource "kubernetes_service" "idrac-redfish-exporter" {
     labels = {
       "app" = "idrac-redfish-exporter"
     }
-    annotations = {
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "9090"
-    }
+    # annotations = {
+    #   "prometheus.io/scrape" = "true"
+    #   "prometheus.io/path"   = "/metrics"
+    #   "prometheus.io/port"   = "9090"
+    # }
   }
 
   spec {
