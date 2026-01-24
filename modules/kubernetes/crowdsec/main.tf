@@ -64,6 +64,28 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
   }
 }
 
+# Whitelist for trusted IPs that should never be blocked
+resource "kubernetes_config_map" "crowdsec_whitelist" {
+  metadata {
+    name      = "crowdsec-whitelist"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name" = "crowdsec"
+    }
+  }
+
+  data = {
+    "whitelist.yaml" = <<-YAML
+      name: crowdsecurity/whitelist-trusted-ips
+      description: "Whitelist for trusted IPs that should never be blocked"
+      whitelist:
+        reason: "Trusted IP - never block"
+        ip:
+          - "176.12.22.76"
+    YAML
+  }
+}
+
 
 resource "helm_release" "crowdsec" {
   namespace        = kubernetes_namespace.crowdsec.metadata[0].name
