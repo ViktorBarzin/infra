@@ -31,10 +31,17 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
       subPath: "http-429-abuse.yaml"
       readonly: true
+    - name: whitelist
+      mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
+      subPath: "whitelist.yaml"
+      readonly: true
   extraVolumes:
     - name: custom-scenarios
       configMap:
         name: crowdsec-custom-scenarios
+    - name: whitelist
+      configMap:
+        name: crowdsec-whitelist
 lapi:
   replicas: 3
   extraSecrets:
@@ -117,6 +124,34 @@ lapi:
     type: RollingUpdate
   
 config:
+  # Custom profiles: captcha for rate limiting, ban for attacks
+  profiles.yaml: |
+    # Captcha for rate limiting and 403 abuse (user can unblock themselves)
+    name: captcha_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() in ["crowdsecurity/http-429-abuse", "crowdsecurity/http-403-abuse", "crowdsecurity/http-crawl-non_statics", "crowdsecurity/http-sensitive-files"]
+    decisions:
+      - type: captcha
+        duration: 4h
+    on_success: break
+    ---
+    # Default: Ban for serious attacks (CVE exploits, scanners, brute force)
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    on_success: break
+    ---
+    name: default_range_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Range"
+    decisions:
+      - type: ban
+        duration: 4h
+    on_success: break
+
   config.yaml.local: |
     db_config:
       type:     mysql
