@@ -539,7 +539,7 @@ resource "kubernetes_deployment" "ingress_nginx_controller" {
           }
           env {
             name  = "CAPTCHA_PROVIDER"
-            value = "recaptcha"
+            value = "hcaptcha"
           }
           env {
             name  = "BOUNCING_ON_TYPE"
