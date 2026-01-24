@@ -136,6 +136,9 @@ variable "aiostreams_database_connection_string" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
 variable "speedtest_db_password" { type = string }
 variable "freedify_credentials" { type = map(any) }
+variable "mcaptcha_postgresql_password" { type = string }
+variable "mcaptcha_cookie_secret" { type = string }
+variable "mcaptcha_captcha_salt" { type = string }
 
 provider "kubernetes" {
   config_path = var.prod ? "" : "~/.kube/config"
@@ -563,6 +566,10 @@ module "kubernetes_cluster" {
 
   speedtest_db_password = var.speedtest_db_password
   freedify_credentials  = var.freedify_credentials
+
+  mcaptcha_postgresql_password = var.mcaptcha_postgresql_password
+  mcaptcha_cookie_secret       = var.mcaptcha_cookie_secret
+  mcaptcha_captcha_salt        = var.mcaptcha_captcha_salt
 }
 
 
