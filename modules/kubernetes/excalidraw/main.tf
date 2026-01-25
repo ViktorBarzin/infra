@@ -39,14 +39,37 @@ resource "kubernetes_deployment" "excalidraw" {
           app = "excalidraw"
         }
         annotations = {
-          "diun.enable"       = "false"
+          "diun.enable"       = "true"
           "diun.include_tags" = "^latest$"
         }
       }
       spec {
         container {
-          image = "docker.io/excalidraw/excalidraw:latest"
-          name  = "excalidraw"
+          image             = "viktorbarzin/excalidraw-library:v4"
+          image_pull_policy = "IfNotPresent"
+          name              = "excalidraw"
+          port {
+            container_port = 8080
+          }
+          env {
+            name  = "DATA_DIR"
+            value = "/data"
+          }
+          env {
+            name  = "PORT"
+            value = "8080"
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/excalidraw"
+          }
         }
       }
     }
@@ -67,8 +90,9 @@ resource "kubernetes_service" "draw" {
       app = "excalidraw"
     }
     port {
-      name = "http"
-      port = "80"
+      name        = "http"
+      port        = 80
+      target_port = 8080
     }
   }
 }
@@ -78,5 +102,8 @@ module "ingress" {
   namespace       = kubernetes_namespace.excalidraw.metadata[0].name
   name            = "draw"
   tls_secret_name = var.tls_secret_name
+  protected       = true
+  extra_annotations = {
+    "nginx.ingress.kubernetes.io/auth-response-headers" = "X-authentik-username,X-authentik-email,X-authentik-name"
+  }
 }
-
