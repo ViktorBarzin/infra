@@ -118,6 +118,10 @@ variable "freedify_credentials" { type = map(any) }
 variable "mcaptcha_postgresql_password" { type = string }
 variable "mcaptcha_cookie_secret" { type = string }
 variable "mcaptcha_captcha_salt" { type = string }
+variable "openrouter_api_key" { type = string }
+variable "slack_bot_token" { type = string }
+variable "slack_channel" { type = string }
+variable "affine_postgresql_password" { type = string }
 
 
 variable "defcon_level" {
@@ -143,7 +147,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine"
     ],
   }
   active_modules = distinct(flatten([
@@ -539,10 +543,13 @@ module "redis" {
 }
 
 module "ytdlp" {
-  source          = "./youtube_dl"
-  for_each        = contains(local.active_modules, "ytdlp") ? { ytdlp = true } : {}
-  tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.aux
+  source             = "./youtube_dl"
+  for_each           = contains(local.active_modules, "ytdlp") ? { ytdlp = true } : {}
+  tls_secret_name    = var.tls_secret_name
+  tier               = local.tiers.aux
+  openrouter_api_key = var.openrouter_api_key
+  slack_bot_token    = var.slack_bot_token
+  slack_channel      = var.slack_channel
 
   depends_on = [null_resource.core_services]
 }
@@ -1061,4 +1068,15 @@ module "freedify" {
   tier                   = local.tiers.aux
   for_each               = contains(local.active_modules, "freedify") ? { freedify = true } : {}
   additional_credentials = var.freedify_credentials
+}
+
+module "affine" {
+  source              = "./affine"
+  for_each            = contains(local.active_modules, "affine") ? { affine = true } : {}
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.affine_postgresql_password
+  smtp_password       = var.mailserver_accounts["info@viktorbarzin.me"]
+  tier                = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
 }

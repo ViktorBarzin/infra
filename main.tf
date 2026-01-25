@@ -139,6 +139,10 @@ variable "freedify_credentials" { type = map(any) }
 variable "mcaptcha_postgresql_password" { type = string }
 variable "mcaptcha_cookie_secret" { type = string }
 variable "mcaptcha_captcha_salt" { type = string }
+variable "openrouter_api_key" { type = string }
+variable "slack_bot_token" { type = string }
+variable "slack_channel" { type = string }
+variable "affine_postgresql_password" { type = string }
 
 provider "kubernetes" {
   config_path = var.prod ? "" : "~/.kube/config"
@@ -570,6 +574,12 @@ module "kubernetes_cluster" {
   mcaptcha_postgresql_password = var.mcaptcha_postgresql_password
   mcaptcha_cookie_secret       = var.mcaptcha_cookie_secret
   mcaptcha_captcha_salt        = var.mcaptcha_captcha_salt
+
+  openrouter_api_key = var.openrouter_api_key
+  slack_bot_token    = var.slack_bot_token
+  slack_channel      = var.slack_channel
+
+  affine_postgresql_password = var.affine_postgresql_password
 }
 
 
