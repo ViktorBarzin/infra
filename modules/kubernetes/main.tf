@@ -63,6 +63,7 @@ variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_database_password" {}
 variable "resume_redis_url" {}
+variable "resume_auth_secret" { type = string }
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
@@ -590,16 +591,15 @@ module "crowdsec" {
   crowdsec_dash_machine_password = var.crowdsec_dash_machine_password
 }
 
-# Seems like it needs S3 even if pg is local...
-# module "resume" {
-#   source          = "./resume"
-#   tier            = local.tiers.aux
-#   for_each        = contains(local.active_modules, "resume") ? { resume = true } : {}
-#   tls_secret_name = var.tls_secret_name
-#   redis_url       = var.resume_redis_url
-#   database_url    = var.resume_database_url
-#   db_password     = var.resume_database_password
-# }
+module "resume" {
+  source          = "./resume"
+  for_each        = contains(local.active_modules, "resume") ? { resume = true } : {}
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
+  database_url    = var.resume_database_url
+  auth_secret     = var.resume_auth_secret
+  smtp_password   = var.mailserver_accounts["info@viktorbarzin.me"]
+}
 
 module "uptime-kuma" {
   source          = "./uptime-kuma"

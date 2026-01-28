@@ -79,6 +79,7 @@ variable "vaultwarden_smtp_password" {}
 variable "resume_database_url" {}
 variable "resume_database_password" {}
 variable "resume_redis_url" {}
+variable "resume_auth_secret" { type = string }
 variable "frigate_valchedrym_camera_credentials" { default = "" }
 variable "paperless_db_password" {}
 variable "diun_nfty_token" {}
@@ -496,6 +497,7 @@ module "kubernetes_cluster" {
   resume_redis_url         = var.resume_redis_url
   resume_database_password = var.resume_database_password
   resume_database_url      = var.resume_database_url
+  resume_auth_secret       = var.resume_auth_secret
 
   frigate_valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 
