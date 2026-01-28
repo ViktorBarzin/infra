@@ -202,3 +202,144 @@ module "ingress" {
   rybbit_site_id = "d09137795ccc"
 }
 
+# CronJob to import public blocklists into CrowdSec
+# https://github.com/wolffcatskyy/crowdsec-blocklist-import
+# Uses kubectl exec to run in an existing CrowdSec agent pod that's already registered
+resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
+  metadata {
+    name      = "crowdsec-blocklist-import"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app  = "crowdsec-blocklist-import"
+      tier = var.tier
+    }
+  }
+
+  spec {
+    # Run daily at 4 AM
+    schedule                      = "0 4 * * *"
+    timezone                      = "Europe/London"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "crowdsec-blocklist-import"
+        }
+      }
+
+      spec {
+        backoff_limit = 3
+        template {
+          metadata {
+            labels = {
+              app = "crowdsec-blocklist-import"
+            }
+          }
+
+          spec {
+            service_account_name = kubernetes_service_account.blocklist_import.metadata[0].name
+            restart_policy       = "OnFailure"
+
+            container {
+              name  = "blocklist-import"
+              image = "bitnami/kubectl:latest"
+
+              command = ["/bin/bash", "-c"]
+              args = [
+                <<-EOF
+                set -e
+
+                echo "Finding CrowdSec agent pod..."
+                AGENT_POD=$(kubectl get pods -n crowdsec -l k8s-app=crowdsec,type=agent -o jsonpath='{.items[0].metadata.name}')
+
+                if [ -z "$AGENT_POD" ]; then
+                  echo "ERROR: Could not find CrowdSec agent pod"
+                  exit 1
+                fi
+
+                echo "Using agent pod: $AGENT_POD"
+
+                # Download the import script
+                echo "Downloading blocklist import script..."
+                curl -fsSL -o /tmp/import.sh \
+                  https://raw.githubusercontent.com/wolffcatskyy/crowdsec-blocklist-import/main/import.sh
+                chmod +x /tmp/import.sh
+
+                # Copy script to agent pod and execute
+                echo "Copying script to agent pod and executing..."
+                kubectl cp /tmp/import.sh crowdsec/$AGENT_POD:/tmp/import.sh
+
+                kubectl exec -n crowdsec "$AGENT_POD" -- /bin/bash -c '
+                  set -e
+
+                  # Run with native mode since we are inside the CrowdSec container
+                  export MODE=native
+                  export DECISION_DURATION=24h
+                  export FETCH_TIMEOUT=60
+                  export LOG_LEVEL=INFO
+
+                  /tmp/import.sh
+
+                  # Cleanup
+                  rm -f /tmp/import.sh
+                '
+
+                echo "Blocklist import completed successfully!"
+                EOF
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# Service account for the blocklist import job (needs kubectl exec permissions)
+resource "kubernetes_service_account" "blocklist_import" {
+  metadata {
+    name      = "crowdsec-blocklist-import"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "blocklist_import" {
+  metadata {
+    name      = "crowdsec-blocklist-import"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "blocklist_import" {
+  metadata {
+    name      = "crowdsec-blocklist-import"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.blocklist_import.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.blocklist_import.metadata[0].name
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+}
+
