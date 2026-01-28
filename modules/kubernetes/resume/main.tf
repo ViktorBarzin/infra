@@ -160,7 +160,11 @@ resource "kubernetes_deployment" "resume" {
           }
           env {
             name  = "PRINTER_ENDPOINT"
-            value = "http://printer.${local.namespace}.svc.cluster.local:3000"
+            value = "ws://printer.${local.namespace}.svc.cluster.local:3000"
+          }
+          env {
+            name  = "PRINTER_APP_URL"
+            value = "http://resume.${local.namespace}.svc.cluster.local"
           }
           env {
             name  = "AUTH_SECRET"
