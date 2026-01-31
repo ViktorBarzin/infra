@@ -623,4 +623,9 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'nvidia_tesla_t4_$${1}'
+  - job_name: 'gpu-pod-memory'
+    static_configs:
+        - targets:
+          - "gpu-pod-exporter.nvidia.svc.cluster.local"
+    metrics_path: '/metrics'
     
