@@ -37,6 +37,7 @@ variable "dbaas_pgadmin_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
+variable "drone_webhook_secret" {}
 variable "dockerhub_registry_password" {}
 variable "oauth2_proxy_client_id" {}
 variable "oauth2_proxy_client_secret" {}
@@ -442,6 +443,7 @@ module "kubernetes_cluster" {
   drone_github_client_id     = var.drone_github_client_id
   drone_github_client_secret = var.drone_github_client_secret
   drone_rpc_secret           = var.drone_rpc_secret
+  drone_webhook_secret       = var.drone_webhook_secret
 
   # Oauth proxy
   oauth2_proxy_client_id            = var.oauth2_proxy_client_id
