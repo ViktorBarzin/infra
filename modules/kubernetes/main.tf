@@ -22,6 +22,7 @@ variable "dbaas_pgadmin_password" {}
 variable "drone_github_client_id" {}
 variable "drone_github_client_secret" {}
 variable "drone_rpc_secret" {}
+variable "drone_webhook_secret" {}
 variable "oauth2_proxy_client_id" {}
 variable "oauth2_proxy_client_secret" {}
 variable "oauth2_proxy_authenticated_emails" {}
@@ -220,6 +221,7 @@ module "drone" {
   github_client_id     = var.drone_github_client_id
   github_client_secret = var.drone_github_client_secret
   rpc_secret           = var.drone_rpc_secret
+  webhook_secret       = var.drone_webhook_secret
   server_host          = "drone.viktorbarzin.me"
   server_proto         = "https"
   tier                 = local.tiers.edge

@@ -3,6 +3,7 @@ variable "tier" { type = string }
 variable "github_client_id" {}
 variable "github_client_secret" {}
 variable "rpc_secret" {}
+variable "webhook_secret" {}
 variable "server_host" {}
 variable "server_proto" {}
 variable "rpc_host" {
@@ -97,6 +98,10 @@ resource "kubernetes_deployment" "drone_server" {
           env {
             name  = "DRONE_RPC_SECRET"
             value = var.rpc_secret
+          }
+          env {
+            name  = "DRONE_WEBHOOK_SECRET"
+            value = var.webhook_secret
           }
           env {
             name  = "DRONE_SERVER_HOST"
