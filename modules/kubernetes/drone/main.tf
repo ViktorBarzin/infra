@@ -11,7 +11,7 @@ variable "rpc_host" {
 }
 variable "allowed_users" {
   # comma separated list
-  default = "viktorbarzin"
+  default = "viktorbarzin,ancamilea"
 }
 
 resource "kubernetes_namespace" "drone" {
@@ -67,7 +67,7 @@ resource "kubernetes_deployment" "drone_server" {
       }
       spec {
         container {
-          image = "drone/drone"
+          image = "drone/drone:2.27.0"
           name  = "drone-server"
           # resources {
           #   limits = {
@@ -118,6 +118,18 @@ resource "kubernetes_deployment" "drone_server" {
           env {
             name  = "DRONE_CRON_INTERVAL"
             value = "1m"
+          }
+          env {
+            name  = "DRONE_LOGS_TRACE"
+            value = "true"
+          }
+          env {
+            name  = "DRONE_LOGS_PRETTY"
+            value = "true"
+          }
+          env {
+            name  = "DRONE_LOGS_TEXT"
+            value = "true"
           }
 
         }

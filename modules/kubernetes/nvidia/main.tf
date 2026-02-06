@@ -254,10 +254,97 @@ import subprocess
 import time
 import re
 import os
+import json
+import urllib.request
+import ssl
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 METRICS_PORT = 9401
 SCRAPE_INTERVAL = 15
+
+# Kubernetes API configuration
+K8S_API = "https://kubernetes.default.svc"
+TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+# Cache for container ID to pod info mapping
+container_cache = {}
+cache_refresh_time = 0
+CACHE_TTL = 60  # Refresh cache every 60 seconds
+
+def get_k8s_token():
+    """Read Kubernetes service account token."""
+    try:
+        with open(TOKEN_PATH, 'r') as f:
+            return f.read().strip()
+    except:
+        return None
+
+def refresh_container_cache():
+    """Refresh the container ID to pod mapping from Kubernetes API."""
+    global container_cache, cache_refresh_time
+
+    token = get_k8s_token()
+    if not token:
+        return
+
+    try:
+        # Create SSL context with K8s CA
+        ctx = ssl.create_default_context()
+        if os.path.exists(CA_PATH):
+            ctx.load_verify_locations(CA_PATH)
+
+        # Get all pods on this node
+        node_name = os.environ.get('NODE_NAME', '')
+        url = f"{K8S_API}/api/v1/pods?fieldSelector=spec.nodeName={node_name}"
+
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'Bearer {token}',
+            'Accept': 'application/json'
+        })
+
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+
+        new_cache = {}
+        for pod in data.get('items', []):
+            pod_name = pod['metadata']['name']
+            namespace = pod['metadata']['namespace']
+
+            # Get container statuses
+            for status in pod.get('status', {}).get('containerStatuses', []):
+                container_id = status.get('containerID', '')
+                # Extract the ID part (e.g., "containerd://abc123..." -> "abc123")
+                if '://' in container_id:
+                    container_id = container_id.split('://')[-1]
+                if container_id:
+                    short_id = container_id[:12]
+                    new_cache[short_id] = {
+                        'pod': pod_name,
+                        'namespace': namespace,
+                        'container': status.get('name', 'unknown')
+                    }
+
+        container_cache = new_cache
+        cache_refresh_time = time.time()
+        print(f"Refreshed container cache: {len(new_cache)} containers")
+
+    except Exception as e:
+        print(f"Error refreshing container cache: {e}")
+
+def get_pod_info(container_id):
+    """Look up pod info for a container ID."""
+    global cache_refresh_time
+
+    # Refresh cache if stale
+    if time.time() - cache_refresh_time > CACHE_TTL:
+        refresh_container_cache()
+
+    return container_cache.get(container_id, {
+        'pod': 'unknown',
+        'namespace': 'unknown',
+        'container': 'unknown'
+    })
 
 def get_gpu_processes():
     """Run nvidia-smi to get GPU process info."""
@@ -294,11 +381,9 @@ def get_container_id(pid):
         with open(cgroup_path, 'r') as f:
             for line in f:
                 # Match container ID patterns (docker, containerd, cri-o)
-                # e.g., /kubepods/pod.../containerid or /docker/containerid
                 match = re.search(r'[:/]([a-f0-9]{64})', line)
                 if match:
-                    return match.group(1)[:12]  # Return short container ID
-                # Also check for cri-containerd pattern
+                    return match.group(1)[:12]
                 match = re.search(r'cri-containerd-([a-f0-9]{64})', line)
                 if match:
                     return match.group(1)[:12]
@@ -317,11 +402,15 @@ def collect_metrics():
 
     for proc in processes:
         container_id = get_container_id(proc['pid'])
+        pod_info = get_pod_info(container_id)
         metrics.append({
             'container_id': container_id,
             'pid': proc['pid'],
             'process_name': proc['process_name'],
-            'memory_bytes': proc['memory_bytes']
+            'memory_bytes': proc['memory_bytes'],
+            'pod': pod_info['pod'],
+            'namespace': pod_info['namespace'],
+            'container': pod_info['container']
         })
 
     current_metrics = metrics
@@ -329,13 +418,19 @@ def collect_metrics():
 def format_metrics():
     """Format metrics in Prometheus exposition format."""
     lines = [
-        "# HELP gpu_pod_memory_used_bytes GPU memory used by container",
+        "# HELP gpu_pod_memory_used_bytes GPU memory used by pod",
         "# TYPE gpu_pod_memory_used_bytes gauge"
     ]
 
     for m in current_metrics:
-        labels = f'container_id="{m["container_id"]}",pid="{m["pid"]}",process_name="{m["process_name"]}"'
-        lines.append(f"gpu_pod_memory_used_bytes{{{labels}}} {m['memory_bytes']}")
+        labels = ','.join([
+            f'namespace="{m["namespace"]}"',
+            f'pod="{m["pod"]}"',
+            f'container="{m["container"]}"',
+            f'process_name="{m["process_name"]}"',
+            f'pid="{m["pid"]}"'
+        ])
+        lines.append(f'gpu_pod_memory_used_bytes{{{labels}}} {m["memory_bytes"]}')
 
     return '\n'.join(lines) + '\n'
 
@@ -370,12 +465,50 @@ def background_collector():
 
 if __name__ == '__main__':
     print(f"Starting GPU Pod Memory Exporter on port {METRICS_PORT}")
+    refresh_container_cache()  # Initial cache load
     collect_metrics()  # Initial collection
     background_collector()
 
     server = HTTPServer(('', METRICS_PORT), MetricsHandler)
     server.serve_forever()
 EOF
+  }
+}
+
+resource "kubernetes_service_account" "gpu_pod_exporter" {
+  metadata {
+    name      = "gpu-pod-exporter"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role" "gpu_pod_exporter" {
+  metadata {
+    name = "gpu-pod-exporter"
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "gpu_pod_exporter" {
+  metadata {
+    name = "gpu-pod-exporter"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.gpu_pod_exporter.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.gpu_pod_exporter.metadata[0].name
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
   }
 }
 
@@ -404,7 +537,8 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
       }
 
       spec {
-        host_pid = true
+        host_pid             = true
+        service_account_name = kubernetes_service_account.gpu_pod_exporter.metadata[0].name
 
         node_selector = {
           "gpu" : "true"
@@ -425,6 +559,15 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
           args = [
             "python3 /scripts/exporter.py"
           ]
+
+          env {
+            name = "NODE_NAME"
+            value_from {
+              field_ref {
+                field_path = "spec.nodeName"
+              }
+            }
+          }
 
           port {
             container_port = 9401

@@ -17,5 +17,12 @@ ollama:
 persistentVolume:
   enabled: true
   existingClaim: "ollama-pvc"
-# nodeSelector:
-#   kubernetes.io/hostname: k8s-node1
+
+nodeSelector:
+  gpu: "true"
+
+tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
