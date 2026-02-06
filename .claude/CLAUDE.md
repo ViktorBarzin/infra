@@ -3,7 +3,7 @@
 ## Instructions for Claude
 - **When the user says "remember" something**: Always update this file (`.claude/CLAUDE.md`) with the information so it persists across sessions
 - **When discovering new patterns or versions**: Add them to the appropriate section below
-- **Use `/update-knowledge` command**: Or edit this file directly to add learnings
+- **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
 
 ## Execution Environment (CRITICAL)
 - **Prefer running commands directly first** - only use remote executor as fallback if local execution fails
@@ -19,32 +19,97 @@
 - **helm**: chart operations - needs cluster access
 - **docker**: container operations on remote hosts
 - **ssh**: connections to infrastructure nodes
+- **python/pip**: ALL Python and pip commands must run via remote executor
 - **Any command interacting with**: Proxmox, Kubernetes cluster, NFS server, other infrastructure
 
 ### Remote Command Execution (FALLBACK)
-For commands that fail locally, use the file-based relay:
+For commands that fail locally, use the file-based relay. Uses a **shared executor** at `~/.claude/` on the remote VM.
 
-**To execute a remote command:**
+**IMPORTANT: Always use multi-session mode** - create a session at the start of each conversation.
+
+#### Shared Executor Architecture
+The executor lives at `~/.claude/` on the remote VM (wizard@10.0.10.10) and serves all projects:
+- `~/.claude/remote-executor.sh` - The shared command executor
+- `~/.claude/session-exec.sh` - Shared session management
+- `~/.claude/sessions/` → symlink to project sessions (or shared sessions directory)
+
+Each session includes a `workdir.txt` specifying which project directory to use.
+
+#### Multi-Session Mode (REQUIRED)
+Each Claude session gets isolated command execution:
+
 ```bash
-# 1. Write command
-echo "your-command-here" > /Volumes/wizard/code/infra/.claude/cmd_input.txt
-# 2. Wait and check status
-sleep 1 && cat /Volumes/wizard/code/infra/.claude/cmd_status.txt
-# 3. Read output (when status is "done:*")
-cat /Volumes/wizard/code/infra/.claude/cmd_output.txt
+# 1. Create a session (once per Claude session)
+SESSION_ID=$(.claude/session-exec.sh)
+
+# 2. Write command to your session
+echo "your-command-here" > .claude/sessions/$SESSION_ID/cmd_input.txt
+
+# 3. Wait and check status
+sleep 1 && cat .claude/sessions/$SESSION_ID/cmd_status.txt
+
+# 4. Read output (when status is "done:*")
+cat .claude/sessions/$SESSION_ID/cmd_output.txt
+
+# 5. Cleanup when done (optional - auto-cleaned after 24h)
+.claude/session-exec.sh $SESSION_ID cleanup
 ```
 
 **Status values:** `ready` | `running` | `done:N` (N = exit code)
 
-**Requires user to start executor in another terminal:**
+**Requires user to start shared executor in another terminal:**
 ```bash
-.claude/remote-executor.sh wizard@10.0.10.10 /home/wizard/code/infra
+# On wizard@10.0.10.10:
+~/.claude/remote-executor.sh
 ```
+
+**Session helper commands:**
+- `.claude/session-exec.sh` - Create new session (returns session ID)
+- `.claude/session-exec.sh <id> status` - Check session status
+- `.claude/session-exec.sh <id> cleanup` - Remove a session
+- `.claude/session-exec.sh _ list` - List all active sessions
 
 ---
 
 ## Overview
 Terraform-based infrastructure repository managing a home Kubernetes cluster on Proxmox VMs. Uses git-crypt for secrets encryption.
+
+## Static File Paths (NEVER CHANGE)
+- **Main config**: `terraform.tfvars` - All secrets, DNS, Cloudflare config, WireGuard peers
+- **Root terraform**: `main.tf` - Proxmox provider, VM templates, kubernetes_cluster module
+- **K8s services**: `modules/kubernetes/main.tf` - All service module definitions
+- **Secrets**: `secrets/` - git-crypt encrypted TLS certs and keys
+
+## Network Topology (Static IPs)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 10.0.10.0/24 - Management Network                               │
+├─────────────────────────────────────────────────────────────────┤
+│ 10.0.10.10  - Wizard (main server / remote executor host)       │
+│ 10.0.10.15  - NFS Server (TrueNAS) - /mnt/main/*                │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 10.0.20.0/24 - Kubernetes Network                               │
+├─────────────────────────────────────────────────────────────────┤
+│ 10.0.20.1   - pfSense Gateway                                   │
+│ 10.0.20.10  - Docker Registry VM (MAC: DE:AD:BE:EF:22:22)       │
+│ 10.0.20.100 - k8s-master                                        │
+│ 10.0.20.101 - Technitium DNS                                    │
+│ 10.0.20.102 - MetalLB IP Pool Start                             │
+│ 10.0.20.200 - MetalLB IP Pool End                               │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 192.168.1.0/24 - Physical Network                               │
+├─────────────────────────────────────────────────────────────────┤
+│ 192.168.1.127 - Proxmox Hypervisor                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Domains
+- **Public**: `viktorbarzin.me` (Cloudflare-managed)
+- **Internal**: `viktorbarzin.lan` (Technitium DNS)
 
 ## Directory Structure
 - `main.tf` - Main Terraform entry point, imports all modules
@@ -77,6 +142,11 @@ volume {
 ```
 Only use PV/PVC when the Helm chart requires `existingClaim` (like the Nextcloud Helm chart).
 
+### Adding NFS Exports
+To add a new NFS exported directory (on the remote VM via executor):
+1. Edit `nfs_directories.txt` - add the new directory path, keep the list sorted
+2. Run `nfs_exports.sh` to create the NFS export
+
 ### Factory Pattern (for multi-user services)
 Used when a service needs one instance per user. Structure:
 ```
@@ -92,6 +162,33 @@ To add a new user:
 2. Add Cloudflare route in tfvars
 3. Add module block in main.tf calling factory
 
+### Init Container Pattern (for database migrations)
+Use when a service needs to run database migrations before starting:
+```hcl
+init_container {
+  name    = "migration"
+  image   = "service-image:tag"
+  command = ["sh", "-c", "migration-command"]
+
+  dynamic "env" {
+    for_each = local.common_env
+    content {
+      name  = env.value.name
+      value = env.value.value
+    }
+  }
+}
+```
+Example: AFFiNE runs `node ./scripts/self-host-predeploy.js` in init container.
+
+### SMTP/Email Configuration
+When configuring services to use the mailserver:
+- **Use public hostname**: `mail.viktorbarzin.me` (for TLS cert validation)
+- **Do NOT use**: `mailserver.mailserver.svc.cluster.local` (TLS cert mismatch)
+- **Port**: 587 (STARTTLS)
+- **Credentials**: Use existing accounts from `mailserver_accounts` in tfvars
+- **Common email**: `info@viktorbarzin.me` for service notifications
+
 ## Common Variables
 - `tls_secret_name` - TLS certificate secret name
 - `tier` - Deployment tier label
@@ -100,6 +197,7 @@ To add a new user:
 ## Service Versions (as of 2025-01)
 - Immich: v2.4.1
 - Freedify: latest (music streaming, factory pattern)
+- AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
 
 ## Useful Commands
 ```bash
@@ -124,26 +222,137 @@ Top-level modules in `main.tf`:
 - `module.docker-registry-vm` - Docker registry VM
 - `module.kubernetes_cluster` - Main K8s cluster (contains all services)
 
-### Kubernetes Services (under module.kubernetes_cluster.module.*)
-Core (tier 0-1):
-- `metallb`, `dbaas`, `technitium`, `nginx-ingress`, `crowdsec`, `cloudflared`
-- `redis`, `metrics-server`, `authentik`, `nvidia`, `vaultwarden`, `reverse-proxy`
-- `wireguard`, `headscale`, `xray`, `monitoring`
+---
 
-GPU (tier 2):
-- `immich`, `frigate`, `ollama`, `ebook2audiobook`
+## Complete Service Catalog
 
-Edge/Aux (tier 3-4):
-- `blog`, `drone`, `hackmd`, `mailserver`, `privatebin`, `shadowsocks`
-- `city-guesser`, `echo`, `url`, `webhook_handler`, `excalidraw`, `travel_blog`
-- `dashy`, `send`, `ytdlp`, `uptime-kuma`, `calibre`, `audiobookshelf`
-- `paperless-ngx`, `jsoncrack`, `servarr`, `ntfy`, `cyberchef`, `diun`
-- `meshcentral`, `nextcloud`, `homepage`, `matrix`, `linkwarden`, `actualbudget`
-- `owntracks`, `dawarich`, `changedetection`, `tandoor`, `n8n`, `real-estate-crawler`
-- `tor-proxy`, `onlyoffice`, `forgejo`, `freshrss`, `navidrome`, `networking-toolbox`
-- `tuya-bridge`, `stirling-pdf`, `isponsorblocktv`, `rybbit`, `wealthfolio`
-- `kyverno`, `speedtest`, `freedify`, `netbox`, `f1-stream`, `kms`, `k8s-dashboard`
-- `descheduler`, `reloader`, `infra-maintenance`
+### DEFCON Level 1 (Critical - Network & Auth)
+| Service | Description | Tier |
+|---------|-------------|------|
+| wireguard | VPN server | core |
+| technitium | DNS server (10.0.20.101) | core |
+| headscale | Tailscale control server | core |
+| nginx-ingress | Ingress controller | core |
+| xray | Proxy/tunnel | core |
+| authentik | Identity provider (SSO) | core |
+| cloudflared | Cloudflare tunnel | core |
+| authelia | Auth middleware | core |
+| monitoring | Prometheus/Grafana stack | core |
+
+### DEFCON Level 2 (Storage & Security)
+| Service | Description | Tier |
+|---------|-------------|------|
+| vaultwarden | Bitwarden-compatible password manager | cluster |
+| redis | Shared Redis at `redis.redis.svc.cluster.local` | cluster |
+| immich | Photo management (GPU) | gpu |
+| nvidia | GPU device plugin | gpu |
+| metrics-server | K8s metrics | cluster |
+| uptime-kuma | Status monitoring | cluster |
+| crowdsec | Security/WAF | cluster |
+| kyverno | Policy engine | cluster |
+
+### DEFCON Level 3 (Admin)
+| Service | Description | Tier |
+|---------|-------------|------|
+| k8s-dashboard | Kubernetes dashboard | edge |
+| reverse-proxy | Generic reverse proxy | edge |
+
+### DEFCON Level 4 (Active Use)
+| Service | Description | Tier |
+|---------|-------------|------|
+| mailserver | Email (docker-mailserver) | edge |
+| shadowsocks | Proxy | edge |
+| webhook_handler | Webhook processing | edge |
+| tuya-bridge | Smart home bridge | edge |
+| dawarich | Location history | edge |
+| owntracks | Location tracking | edge |
+| nextcloud | File sync/share | edge |
+| calibre | E-book management | edge |
+| onlyoffice | Document editing | edge |
+| f1-stream | F1 streaming | edge |
+| rybbit | Analytics | edge |
+| isponsorblocktv | SponsorBlock for TV | edge |
+| actualbudget | Budgeting (factory pattern) | aux |
+
+### DEFCON Level 5 (Optional)
+| Service | Description | Tier |
+|---------|-------------|------|
+| blog | Personal blog | aux |
+| descheduler | Pod descheduler | aux |
+| drone | CI/CD | aux |
+| hackmd | Collaborative markdown | aux |
+| kms | Key management | aux |
+| privatebin | Encrypted pastebin | aux |
+| vault | HashiCorp Vault | aux |
+| reloader | ConfigMap/Secret reloader | aux |
+| city-guesser | Game | aux |
+| echo | Echo server | aux |
+| url | URL shortener | aux |
+| excalidraw | Whiteboard | aux |
+| travel_blog | Travel blog | aux |
+| dashy | Dashboard | aux |
+| send | Firefox Send | aux |
+| ytdlp | YouTube downloader | aux |
+| wealthfolio | Finance tracking | aux |
+| audiobookshelf | Audiobook server | aux |
+| paperless-ngx | Document management | aux |
+| jsoncrack | JSON visualizer | aux |
+| servarr | Media automation (Sonarr/Radarr/etc) | aux |
+| ntfy | Push notifications | aux |
+| cyberchef | Data transformation | aux |
+| diun | Docker image update notifier | aux |
+| meshcentral | Remote management | aux |
+| homepage | Dashboard/startpage | aux |
+| matrix | Matrix chat server | aux |
+| linkwarden | Bookmark manager | aux |
+| changedetection | Web change detection | aux |
+| tandoor | Recipe manager | aux |
+| n8n | Workflow automation | aux |
+| real-estate-crawler | Property crawler | aux |
+| tor-proxy | Tor proxy | aux |
+| forgejo | Git forge | aux |
+| freshrss | RSS reader | aux |
+| navidrome | Music streaming | aux |
+| networking-toolbox | Network tools | aux |
+| stirling-pdf | PDF tools | aux |
+| speedtest | Speed testing | aux |
+| freedify | Music streaming (factory pattern) | aux |
+| netbox | Network documentation | aux |
+| infra-maintenance | Maintenance jobs | aux |
+| ollama | LLM server (GPU) | gpu |
+| frigate | NVR/camera (GPU) | gpu |
+| ebook2audiobook | E-book to audio (GPU) | gpu |
+| affine | Visual canvas/whiteboard (PostgreSQL + Redis) | aux |
+
+---
+
+## Cloudflare Domains
+
+### Proxied (CDN + WAF enabled)
+```
+blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
+audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
+changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
+travel, netbox
+```
+
+### Non-Proxied (Direct DNS)
+```
+mail, wg, headscale, immich, calibre, vaultwarden, drone,
+mailserver-antispam, mailserver-admin, webhook, uptime,
+owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
+onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
+isponsorblocktv, speedtest, freedify, rybbit, paperless,
+servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
+jellyfin, jellyseerr, tdarr, affine
+```
+
+### Special Subdomains
+- `*.viktor.actualbudget` - Actualbudget factory instances
+- `*.freedify` - Freedify factory instances
+- `mailserver.*` - Mail server components (antispam, admin)
+
+---
 
 ## CI/CD
 - Drone CI (`.drone.yml`) for automated deployments
@@ -152,10 +361,19 @@ Edge/Aux (tier 3-4):
 - **After committing, run `git push origin master`** to sync changes
 
 ## Infrastructure
-- Proxmox hypervisor for VMs
+- Proxmox hypervisor for VMs (192.168.1.127)
 - Kubernetes cluster with GPU node (5 nodes: k8s-master + k8s-node1-4, running v1.34.2)
 - NFS server at 10.0.10.15 for storage
 - Redis shared service at `redis.redis.svc.cluster.local`
+- Docker registry at 10.0.20.10
+
+### GPU Node (k8s-node1)
+- **Taint**: `nvidia.com/gpu=true:NoSchedule` - Only GPU workloads can run here
+- **Label**: `gpu=true`
+- GPU workloads must have both:
+  - `node_selector = { "gpu": "true" }`
+  - `toleration { key = "nvidia.com/gpu", operator = "Equal", value = "true", effect = "NoSchedule" }`
+- Taint is applied via `null_resource.gpu_node_taint` in `modules/kubernetes/nvidia/main.tf`
 
 ## Git Operations (IMPORTANT)
 - **Git is slow** on this repo due to many files - commands can take 30+ seconds
@@ -170,10 +388,72 @@ Edge/Aux (tier 3-4):
 - Groups: "R730 Host", "Nvidia Tesla T4 GPU", "Power", "Cluster"
 - kube-state-metrics provides: `kube_deployment_*`, `kube_statefulset_*`, `kube_daemonset_*`
 
-## DEFCON Levels
-Services are organized by criticality in `modules/kubernetes/main.tf`:
-- Level 1 (Critical): wireguard, technitium, headscale, nginx-ingress, xray, authentik, cloudflare, monitoring
-- Level 2 (Storage): vaultwarden, redis, immich, nvidia, metrics-server, uptime-kuma, crowdsec, kyverno
-- Level 3 (Admin): k8s-dashboard, reverse-proxy
-- Level 4 (Active): mailserver, shadowsocks, dawarich, nextcloud, calibre, actualbudget, etc.
-- Level 5 (Optional): blog, drone, hackmd, ollama, servarr, paperless-ngx, etc.
+## Tier System
+- **0-core**: Critical infrastructure (ingress, DNS, VPN, auth)
+- **1-cluster**: Cluster services (Redis, metrics, security)
+- **2-gpu**: GPU workloads (Immich, Ollama, Frigate)
+- **3-edge**: User-facing services
+- **4-aux**: Optional/auxiliary services
+
+---
+
+## User Preferences
+
+### Calendar
+- **Default calendar**: Nextcloud (always use unless otherwise specified)
+- **Nextcloud URL**: `https://nextcloud.viktorbarzin.me`
+- **CalDAV endpoint**: `https://nextcloud.viktorbarzin.me/remote.php/dav/calendars/<username>/<calendar-name>/`
+
+### Home Assistant
+- **Default smart home**: Home Assistant (always use for smart home control)
+- **HA URL**: `https://ha-london.viktorbarzin.me`
+- **Script**: `.claude/home-assistant.py`
+- **Aliases**: "ha" or "HA" = Home Assistant
+
+### Remote Executor
+- **Always use multi-session mode** - never use legacy single-file mode
+- Create a session at the start of each conversation with `.claude/session-exec.sh`
+- Use session files at `.claude/sessions/$SESSION_ID/` for all remote commands
+
+### Development
+- **Frontend framework**: Svelte (user is learning it, so use Svelte for all new web apps)
+
+---
+
+## Skills & Workflows
+
+Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
+
+### Available Skills
+
+**setup-project** (`.claude/skills/setup-project.md`)
+- Deploy new self-hosted services from GitHub repos
+- Automated workflow: Docker image → Terraform module → Deploy
+- Handles database setup, ingress, DNS configuration
+- **When to use**: User provides GitHub URL or wants to deploy a new service
+- **Example**: "Deploy [GitHub repo] to the cluster"
+
+**setup-remote-executor** (`.claude/skills/setup-remote-executor.md`)
+- Set up shared remote executor in new projects
+- Creates session-exec.sh wrapper for the shared executor
+- **When to use**: Adding Claude Code support to a new project
+- **Example**: "Set up remote executor for this project"
+
+---
+
+## Service-Specific Notes
+
+### AFFiNE (Visual Canvas)
+- **Image**: `ghcr.io/toeverything/affine:stable`
+- **Port**: 3010
+- **Requires**: PostgreSQL + Redis
+- **Migration**: Init container runs `node ./scripts/self-host-predeploy.js`
+- **Storage**: NFS at `/mnt/main/affine` mounted to `/root/.affine/storage` and `/root/.affine/config`
+- **Key env vars**:
+  - `AFFINE_SERVER_EXTERNAL_URL` - Public URL (e.g., `https://affine.viktorbarzin.me`)
+  - `AFFINE_SERVER_HTTPS` - Set to `true` behind TLS ingress
+  - `DATABASE_URL` - PostgreSQL connection string
+  - `REDIS_SERVER_HOST` - Redis hostname
+  - `MAILER_*` - SMTP configuration for email invites
+- **Local-first**: Data stored in browser by default; syncs to server when user creates account
+- **Docs**: https://docs.affine.pro/self-host-affine
