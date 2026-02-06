@@ -5,7 +5,7 @@ variable "homepage_token" {}
 variable "immich_version" {
   type = string
   # Change me to upgrade
-  default = "v2.5.0"
+  default = "v2.5.2"
 }
 
 
@@ -362,6 +362,12 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       spec {
         node_selector = {
           "gpu" : "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
         }
         container {
           # image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}"
