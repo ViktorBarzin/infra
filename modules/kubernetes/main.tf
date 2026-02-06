@@ -149,7 +149,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book"
     ],
   }
   active_modules = distinct(flatten([
@@ -1079,6 +1079,15 @@ module "affine" {
   postgresql_password = var.affine_postgresql_password
   smtp_password       = var.mailserver_accounts["info@viktorbarzin.me"]
   tier                = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "plotting-book" {
+  source          = "./plotting-book"
+  for_each        = contains(local.active_modules, "plotting-book") ? { plotting-book = true } : {}
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
