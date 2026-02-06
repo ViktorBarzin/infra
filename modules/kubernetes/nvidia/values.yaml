@@ -17,3 +17,11 @@ driver:
   devicePlugin:
     config:
       name: time-slicing-config
+
+# Tolerate GPU node taint for all GPU operator components
+daemonsets:
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
