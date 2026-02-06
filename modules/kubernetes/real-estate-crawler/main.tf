@@ -121,8 +121,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
       }
       spec {
         container {
-          name  = "realestate-crawler-ui"
-          image = "viktorbarzin/realestatecrawler:latest"
+          name              = "realestate-crawler-api"
+          image             = "viktorbarzin/realestatecrawler:latest"
+          image_pull_policy = "Always"
           env {
             name  = "ENV"
             value = "prod"
@@ -250,7 +251,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       host = "wrongmove.viktorbarzin.me"
       http {
         path {
-          path = "/"
+          path      = "/"
+          path_type = "Prefix"
           backend {
             service {
               name = "realestate-crawler-ui"
@@ -261,7 +263,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
           }
         }
         path {
-          path = "/api"
+          path      = "/api"
+          path_type = "Prefix"
           backend {
             service {
               name = "realestate-crawler-api"
@@ -276,6 +279,143 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
   }
 }
 
+
+# Celery worker for background task processing
+resource "kubernetes_deployment" "realestate-crawler-celery" {
+  metadata {
+    name      = "realestate-crawler-celery"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+    labels = {
+      app  = "realestate-crawler-celery"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "realestate-crawler-celery"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "realestate-crawler-celery"
+        }
+      }
+      spec {
+        container {
+          name              = "celery-worker"
+          image             = "viktorbarzin/realestatecrawler:latest"
+          image_pull_policy = "Always"
+          command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info"]
+          env {
+            name  = "ENV"
+            value = "prod"
+          }
+          env {
+            name  = "DB_CONNECTION_STRING"
+            value = "mysql://wrongmove:${var.db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+          }
+          env {
+            name  = "CELERY_BROKER_URL"
+            value = "redis://redis.redis.svc.cluster.local:6379/0"
+          }
+          env {
+            name  = "CELERY_RESULT_BACKEND"
+            value = "redis://redis.redis.svc.cluster.local:6379/1"
+          }
+          env {
+            name  = "SLACK_WEBHOOK_URL"
+            value = lookup(var.notification_settings, "slack", "")
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            path   = "/mnt/main/real-estate-crawler"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+# Celery beat for scheduled task management
+resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
+  metadata {
+    name      = "realestate-crawler-celery-beat"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+    labels = {
+      app  = "realestate-crawler-celery-beat"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate" # Only one beat instance should run at a time
+    }
+    selector {
+      match_labels = {
+        app = "realestate-crawler-celery-beat"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "realestate-crawler-celery-beat"
+        }
+      }
+      spec {
+        container {
+          name    = "celery-beat"
+          image   = "viktorbarzin/realestatecrawler:latest"
+          command = ["python", "-m", "celery", "-A", "celery_app", "beat", "--loglevel=info"]
+          env {
+            name  = "ENV"
+            value = "prod"
+          }
+          env {
+            name  = "DB_CONNECTION_STRING"
+            value = "mysql://wrongmove:${var.db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+          }
+          env {
+            name  = "CELERY_BROKER_URL"
+            value = "redis://redis.redis.svc.cluster.local:6379/0"
+          }
+          env {
+            name  = "CELERY_RESULT_BACKEND"
+            value = "redis://redis.redis.svc.cluster.local:6379/1"
+          }
+          env {
+            name  = "SCRAPE_SCHEDULES"
+            value = lookup(var.notification_settings, "scrape_schedules", "")
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/app/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            path   = "/mnt/main/real-estate-crawler"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
 
 resource "kubernetes_cron_job_v1" "scrape-rightmove" {
   metadata {
