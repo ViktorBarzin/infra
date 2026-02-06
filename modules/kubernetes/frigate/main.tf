@@ -48,6 +48,12 @@ resource "kubernetes_deployment" "frigate" {
         node_selector = {
           "gpu" : true
         }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         container {
           # image = "ghcr.io/blakeblackshear/frigate:stable"
           # image = "ghcr.io/blakeblackshear/frigate:stable-tensorrt"
