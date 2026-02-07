@@ -173,6 +173,32 @@ resource "kubernetes_manifest" "servers_transport_insecure" {
   depends_on = [helm_release.traefik]
 }
 
+# Strip Authentik auth headers/cookies before forwarding to backend
+# Useful for backends (iDRAC, TP-Link) that break when receiving extra headers
+resource "kubernetes_manifest" "middleware_strip_auth_headers" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "strip-auth-headers"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-authentik-username" = ""
+          "X-authentik-uid"      = ""
+          "X-authentik-email"    = ""
+          "X-authentik-name"     = ""
+          "X-authentik-groups"   = ""
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Immich-specific rate limit (higher limits for photo uploads)
 resource "kubernetes_manifest" "middleware_immich_rate_limit" {
   manifest = {
