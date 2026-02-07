@@ -402,7 +402,7 @@ jellyfin, jellyseerr, tdarr, affine
 - **Default smart home**: Home Assistant (always use for smart home control)
 - **Two deployments**:
   - **ha-london** (default): `https://ha-london.viktorbarzin.me` | Script: `.claude/home-assistant.py`
-  - **ha-sofia**: `https://ha-sofia.viktorbarzin.me` | Script: `.claude/home-assistant-sofia.py` | SSH: `ssh vbarzin@ha-sofia.viktorbarzin.lan` (resolve via `192.168.1.2`), config at `/config/`
+  - **ha-sofia**: `https://ha-sofia.viktorbarzin.me` | Script: `.claude/home-assistant-sofia.py` | SSH: `ssh vbarzin@192.168.1.8`, config at `/config/`
 - **Aliases**: "ha" or "HA" = ha-london. "ha sofia" or "ha-sofia" = ha-sofia.
 
 ### Development

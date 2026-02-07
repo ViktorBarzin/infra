@@ -156,13 +156,7 @@ ha-sofia supports SSH for direct configuration management.
 
 ### Connection
 ```bash
-# DNS resolves via 192.168.1.2
-ssh vbarzin@ha-sofia.viktorbarzin.lan
-```
-
-If DNS resolution fails (e.g., not on the local network), use the DNS server directly:
-```bash
-ssh vbarzin@$(dig +short ha-sofia.viktorbarzin.lan @192.168.1.2)
+ssh vbarzin@192.168.1.8
 ```
 
 ### Configuration Path
@@ -172,21 +166,29 @@ ssh vbarzin@$(dig +short ha-sofia.viktorbarzin.lan @192.168.1.2)
 
 ### Common SSH Tasks
 ```bash
-# Edit configuration
-ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
+# Read configuration
+ssh vbarzin@192.168.1.8 "cat /config/configuration.yaml"
 
-# Check HA logs
-ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/home-assistant.log | tail -50"
+# Check HA logs (note: live log is inside HA Core container, not always accessible)
+ssh vbarzin@192.168.1.8 "tail -50 /config/home-assistant.log.1"
 
-# List automations
-ssh vbarzin@ha-sofia.viktorbarzin.lan "ls /config/automations.yaml"
+# List config files
+ssh vbarzin@192.168.1.8 "ls /config/*.yaml"
 
-# Restart HA (after config changes)
-ssh vbarzin@ha-sofia.viktorbarzin.lan "ha core restart"
+# Read automations/scenes/scripts
+ssh vbarzin@192.168.1.8 "cat /config/automations.yaml"
+ssh vbarzin@192.168.1.8 "cat /config/scenes.yaml"
+ssh vbarzin@192.168.1.8 "cat /config/scripts.yaml"
 
-# Check config validity
-ssh vbarzin@ha-sofia.viktorbarzin.lan "ha core check"
+# Check secrets (keys only, not values)
+ssh vbarzin@192.168.1.8 "cat /config/secrets.yaml"
 ```
+
+### SSH Limitations
+- The SSH add-on runs in a separate container — `ha core logs` returns 401
+- Docker socket is not accessible — can't use `docker logs`
+- Live `home-assistant.log` may not be visible (written inside HA Core container)
+- Rotated logs (`.log.1`, `.log.old`) are accessible
 
 ## Complete Example
 
