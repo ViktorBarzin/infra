@@ -113,26 +113,13 @@ resource "kubernetes_ingress_v1" "blog" {
     name      = "blog-ingress"
     namespace = kubernetes_namespace.website.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class"                       = "nginx"
-      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOT
-        # Only modify HTML
-        sub_filter_types text/html;
-        sub_filter_once off;
-
-        # Disable compression so sub_filter works
-        proxy_set_header Accept-Encoding "";
-
-        # Inject analytics before </head>
-        sub_filter '</head>' '
-         <script src="https://rybbit.viktorbarzin.me/api/script.js"
-              data-site-id="da853a2438d0"
-              defer></script> 
-        </head>';
-      EOT
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,website-rybbit-analytics@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -166,6 +153,28 @@ resource "kubernetes_ingress_v1" "blog" {
               }
             }
           }
+        }
+      }
+    }
+  }
+}
+
+# Rybbit analytics middleware for blog
+resource "kubernetes_manifest" "rybbit_analytics" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rybbit-analytics"
+      namespace = kubernetes_namespace.website.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        rewritebody = {
+          rewrites = [{
+            regex       = "</head>"
+            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"da853a2438d0\" defer></script></head>"
+          }]
         }
       }
     }

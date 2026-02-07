@@ -126,10 +126,6 @@ module "ingress" {
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
   host            = "yt"
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-  }
 }
 
 # ----------------------
@@ -321,8 +317,4 @@ module "highlights_ingress" {
   tls_secret_name = var.tls_secret_name
   host            = "yt-highlights"
   protected       = true
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-read-timeout" : "300"
-    "nginx.ingress.kubernetes.io/proxy-send-timeout" : "300"
-  }
 }

@@ -93,11 +93,7 @@ module "ingress" {
   namespace       = "actualbudget"
   name            = "budget-${var.name}"
   tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-  }
-  rybbit_site_id = "3e6b6b68088a"
+  rybbit_site_id  = "3e6b6b68088a"
 }
 
 

@@ -103,7 +103,4 @@ module "ingress" {
   name            = "draw"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/auth-response-headers" = "X-authentik-username,X-authentik-email,X-authentik-name"
-  }
 }

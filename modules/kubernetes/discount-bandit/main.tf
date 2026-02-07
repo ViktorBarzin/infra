@@ -103,11 +103,13 @@ resource "kubernetes_ingress_v1" "discount-bandit" {
     name      = "discount-bandit"
     namespace = kubernetes_namespace.discount-bandit.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["discount.viktorbarzin.me"]
       secret_name = var.tls_secret_name

@@ -188,14 +188,13 @@ resource "kubernetes_ingress_v1" "ingress" {
     namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray"
     annotations = {
-      "kubernetes.io/ingress.class"                  = "nginx"
-      "nginx.ingress.kubernetes.io/backend-protocol" = "HTTP"
-      "nginx.org/websocket-services" : "xray"
-      "nginx.ingress.kubernetes.io/enable-access-log" = "false"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["xray-ws.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -224,15 +223,14 @@ resource "kubernetes_ingress_v1" "ingress-grpc" {
     namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray-grpc"
     annotations = {
-      "kubernetes.io/ingress.class"                    = "nginx"
-      "nginx.ingress.kubernetes.io/enable-access-log"  = "false"
-      "nginx.ingress.kubernetes.io/backend-protocol"   = "GRPC"
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" = "3600"
-      "nginx.ingress.kubernetes.io/proxy-send-timeout" = "3600"
+      "traefik.ingress.kubernetes.io/router.middlewares"    = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints"    = "websecure"
+      "traefik.ingress.kubernetes.io/service.serversscheme" = "h2c"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["xray-grpc.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -262,11 +260,13 @@ resource "kubernetes_ingress_v1" "ingress-vless" {
     namespace = kubernetes_namespace.xray.metadata[0].name
     name      = "xray-vless"
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["xray-vless.viktorbarzin.me"]
       secret_name = var.tls_secret_name

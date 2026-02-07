@@ -114,9 +114,5 @@ module "ingress" {
   name            = "send"
   tls_secret_name = var.tls_secret_name
   port            = 1443
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-  }
-  rybbit_site_id = "c1b8f8aa831b"
+  rybbit_site_id  = "c1b8f8aa831b"
 }

@@ -211,7 +211,4 @@ module "ingress" {
   name            = "affine"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "500m"
-  }
 }

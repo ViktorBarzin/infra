@@ -169,7 +169,6 @@ module "ollama-api-ingress" {
   allow_local_access_only = true # Restricts to 10.0.0.0/8, 192.168.1.0/24
   ssl_redirect            = false
   port                    = 11434
-  proxy_timeout           = 300 # Longer timeout for model inference
 }
 
 # Web UI

@@ -98,9 +98,8 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   service_name    = "uptime-kuma"
   extra_annotations = {
-    "nginx.org/websocket-services" = "uptime-kuma"
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/description"  = "Uptime monitor"
+    "gethomepage.dev/enabled"     = "true"
+    "gethomepage.dev/description" = "Uptime monitor"
     # gethomepage.dev/group: Media
     "gethomepage.dev/icon" : "uptime-kuma.png"
     "gethomepage.dev/name"         = "Uptime Kuma"

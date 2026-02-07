@@ -460,66 +460,8 @@ resource "kubernetes_ingress_v1" "ingress" {
     namespace = kubernetes_namespace.immich.metadata[0].name
     name      = "immich"
     annotations = {
-      # NOTE: when changing - test video playback from mobile and web!
-      # Easy to break!
-
-      "kubernetes.io/ingress.class"                  = "nginx"
-      "nginx.ingress.kubernetes.io/backend-protocol" = "HTTP"
-
-      # As per https://immich.app/docs/administration/reverse-proxy
-      "nginx.org/websocket-services" : "immich-server"
-      # Websockets
-      "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
-      "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade" # this makes a difference for web!!!
-      "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
-      # Timeouts
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000s",
-      "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
-
-      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : "60s"
-
-      # Allow big uploads
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
-      "nginx.ingress.kubernetes.io/proxy-buffering" : "off"
-      "nginx.ingress.kubernetes.io/proxy-request-buffering" : "off"
-      "nginx.ingress.kubernetes.io/proxy-http-version" : "1.1"
-      # "nginx.ingress.kubernetes.io/client-body-buffer-size" : "512m"
-      # "nginx.ingress.kubernetes.io/proxy-buffers-number" : "4"
-
-      # More lenient DDOS protection as to not confuse with image loading
-      "nginx.ingress.kubernetes.io/limit-connections" : 5000
-      "nginx.ingress.kubernetes.io/limit-rps" : 100
-      "nginx.ingress.kubernetes.io/limit-rpm" : 6000
-      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 10
-
-      # good for downloading big files - https://www.pdxdev.com/nginx-content-delivery/configuring-nginx-for-large-file-transfers/
-      "nginx.ingress.kubernetes.io/configuration-snippet" : <<EOF
-        directio 4m;
-        sendfile off;
-        aio on;
-
-        limit_req_status 429;
-        limit_conn_status 429;
-
-        # Rybbit Analytics
-        # Only modify HTML
-        sub_filter_types text/html;
-        sub_filter_once off;
-
-        # Disable compression so sub_filter works
-        proxy_set_header Accept-Encoding "";
-
-        # Inject analytics before </head>
-        sub_filter '</head>' '
-        <script src="https://rybbit.viktorbarzin.me/api/script.js"
-              data-site-id="35eedb7a3d2b"
-              defer></script> 
-        </head>';
-      EOF
-
-      "nginx.ingress.kubernetes.io/enable-modsecurity" : "false" # this is important!!!; setting it to true enables buffering and can lead to ooms when ploading big files
-      "nginx.ingress.kubernetes.io/enable-owasp-modsecurity-crs" : "false"
-
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-immich-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,immich-rybbit-analytics@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
 
       "gethomepage.dev/enabled"      = "true"
       "gethomepage.dev/description"  = "Photos library"
@@ -533,6 +475,7 @@ resource "kubernetes_ingress_v1" "ingress" {
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["immich.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -723,4 +666,26 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 #   tls_secret_name = var.tls_secret_name
 #   protected       = true
 # }
+
+# Rybbit analytics middleware for Immich
+resource "kubernetes_manifest" "rybbit_analytics" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rybbit-analytics"
+      namespace = kubernetes_namespace.immich.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        rewritebody = {
+          rewrites = [{
+            regex       = "</head>"
+            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"35eedb7a3d2b\" defer></script></head>"
+          }]
+        }
+      }
+    }
+  }
+}
 

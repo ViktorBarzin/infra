@@ -169,13 +169,14 @@ resource "kubernetes_ingress_v1" "pihole" {
     name      = "pihole-ingress"
     namespace = kubernetes_namespace.pihole.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
-      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+      "traefik.ingress.kubernetes.io/router.tls.options" = "traefik-mtls@kubernetescrd"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["pihole.viktorbarzin.me"]
       secret_name = var.tls_secret_name

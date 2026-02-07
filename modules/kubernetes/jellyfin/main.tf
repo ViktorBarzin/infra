@@ -113,12 +113,13 @@ resource "kubernetes_ingress_v1" "jellyfin" {
     name      = "jellyfin"
     namespace = kubernetes_namespace.jellyfin.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["jellyfin.viktorbarzin.me"]
       secret_name = var.tls_secret_name
