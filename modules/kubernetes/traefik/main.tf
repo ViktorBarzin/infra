@@ -142,6 +142,8 @@ resource "helm_release" "traefik" {
       "--api.insecure=true",
       "--global.checknewversion=false",
       "--global.sendanonymoususage=false",
+      # Skip TLS verification for self-signed backend certs (proxmox, idrac, etc.)
+      "--serversTransport.insecureSkipVerify=true",
       # Increase timeouts for services like Immich
       "--serversTransport.forwardingTimeouts.dialTimeout=60s",
       "--serversTransport.forwardingTimeouts.responseHeaderTimeout=0s",

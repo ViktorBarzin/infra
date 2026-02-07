@@ -49,7 +49,7 @@ resource "kubernetes_service" "proxied-service" {
     external_name = var.external_name
 
     port {
-      name        = "${var.name}-web"
+      name        = var.backend_protocol == "HTTPS" ? "https-${var.name}" : "${var.name}-web"
       port        = var.port
       protocol    = "TCP"
       target_port = var.port
@@ -70,7 +70,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ]))
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+      "traefik.ingress.kubernetes.io/router.entrypoints"    = "websecure"
+      "traefik.ingress.kubernetes.io/service.serversscheme"  = var.backend_protocol == "HTTPS" ? "https" : null
+      "traefik.ingress.kubernetes.io/service.serverstransport" = var.backend_protocol == "HTTPS" ? "traefik-insecure-skip-verify@kubernetescrd" : null
     }, var.extra_annotations)
   }
 
