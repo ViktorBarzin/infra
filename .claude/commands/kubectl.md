@@ -3,7 +3,7 @@
 Run kubectl commands on the cluster.
 
 ```bash
-kubectl $ARGUMENTS
+kubectl --kubeconfig $(pwd)/config $ARGUMENTS
 ```
 
 Examples:
