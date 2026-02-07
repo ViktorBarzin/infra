@@ -7,6 +7,7 @@
 - **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
 - **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
+- **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`.
 
 ## Execution Environment
 
@@ -15,15 +16,8 @@
 - **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
 - **Basic shell**: ls, cat, head, tail, find, grep, etc.
 
-### Remote Commands (via `/remote` skill)
-**NEVER use SSH directly** (e.g., `ssh wizard@10.0.10.10`). SSH is not allowed.
-For commands that need cluster access, use the `/remote` skill or the `tf-apply`/`tf-plan` skills:
-- **terraform**: Use `/remote terraform apply ...` or the `tf-apply`/`tf-plan` skills
-- **kubectl**: Use `/remote kubectl ...` or the `kubectl` skill
-- **helm**: Use `/remote helm ...`
-- **docker**: Use `/remote docker ...`
-- **python/pip**: Use `/remote python ...`
-- **Any command interacting with**: Proxmox, Kubernetes cluster, NFS server, other infrastructure
+### Remote Commands
+For commands that need cluster access (terraform, kubectl, helm, docker, python), run them directly. These tools are available in the local environment.
 
 ---
 
