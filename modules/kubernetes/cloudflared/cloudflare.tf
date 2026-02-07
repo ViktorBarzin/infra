@@ -148,3 +148,12 @@ resource "cloudflare_record" "keyserver" {
   priority = 1
   zone_id  = var.cloudflare_zone_id
 }
+
+# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
+resource "cloudflare_zone_settings_override" "http3" {
+  zone_id = var.cloudflare_zone_id
+
+  settings {
+    http3 = "on"
+  }
+}
