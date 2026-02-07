@@ -420,7 +420,20 @@ Named plugs with power/energy tracking:
 - **hildebrandglow_dcc**: UK smart meter DCC energy data (HACS)
 
 ### Integrations
-ESPHome, TP-Link Kasa, Tapo, UptimeRobot, Cowboy, Hildebrand Glow DCC, Oral-B BLE, Ookla Speedtest, HACS
+ESPHome, TP-Link Kasa, Tapo, UptimeRobot, Cowboy, Hildebrand Glow DCC, Oral-B BLE, Ookla Speedtest, HACS, OpenRouter (multiple free LLMs), Piper (local TTS), Whisper (local STT), Android TV/ADB
+
+### AI / Voice Assistants
+- 5 free LLM conversation agents: Google Gemma 3 27B, Meta Llama 3.2 3B, Mistral Devstral 2, OpenAI GPT-OSS-20B, Z.AI GLM 4.5 Air
+- Local voice: Piper (TTS) + Whisper (STT)
+- Google Translate TTS
+
+### Automations (10)
+- Water cooler on/off scheduling (07:00 on, 00:30 off)
+- Michelle plug auto-off when idle (<70W)
+- Apollo AIR-1 RGB LED: CO2 indicator (on in morning, off at 22:00)
+- Cowboy e-bike low battery notification (ntfy + iPhone push)
+- Anca arrival/departure notifications
+- Night scene: turns off Livia + Michelle
 
 ### Docker Setup
 ```bash
