@@ -51,10 +51,7 @@ variable "headscale_config" {}
 variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
 variable "immich_frame_api_key" {}
-variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
-variable "ingress_crowdsec_captcha_secret_key" {}
-variable "ingress_crowdsec_captcha_site_key" {}
 variable "crowdsec_enroll_key" { type = string }
 variable "crowdsec_db_password" { type = string }
 variable "crowdsec_dash_api_key" { type = string }
@@ -136,9 +133,9 @@ variable "defcon_level" {
 }
 locals {
   defcon_modules = {
-    1 : ["wireguard", "technitium", "headscale", "nginx-ingress", "xray", "authentik", "cloudflare", "authelia", "monitoring"], # Critical connectivity services
-    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec", "kyverno"],                   # Storage and other db services
-    3 : ["k8s-dashboard", "reverse-proxy"],                                                                                     # Cluster admin services
+    1 : ["wireguard", "technitium", "headscale", "traefik", "xray", "authentik", "cloudflare", "authelia", "monitoring"], # Critical connectivity services
+    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec", "kyverno"],                              # Storage and other db services
+    3 : ["reverse-proxy"], # Cluster admin services (k8s-dashboard chart repo still 404)
     4 : [
       "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
       "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget"
@@ -170,7 +167,7 @@ resource "null_resource" "core_services" {
   # List all the core modules that must be provisioned first
   depends_on = [
     module.metallb, module.dbaas, module.technitium, module.vaultwarden, module.reverse-proxy,
-    module.redis, module.nginx-ingress, module.crowdsec, module.cloudflared, module.metrics-server, module.authentik,
+    module.redis, module.traefik, module.crowdsec, module.cloudflared, module.metrics-server, module.authentik,
     module.nvidia,
   ]
 }
@@ -569,14 +566,12 @@ module "immich" {
   depends_on = [null_resource.core_services]
 }
 
-module "nginx-ingress" {
-  source                      = "./nginx-ingress"
-  tier                        = local.tiers.core
-  for_each                    = contains(local.active_modules, "nginx-ingress") ? { nginx-ingress = true } : {}
-  honeypotapikey              = var.ingress_honeypotapikey
-  crowdsec_api_key            = var.ingress_crowdsec_api_key
-  crowdsec_captcha_secret_key = var.ingress_crowdsec_captcha_secret_key
-  crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
+module "traefik" {
+  source           = "./traefik"
+  tier             = local.tiers.core
+  for_each         = contains(local.active_modules, "traefik") ? { traefik = true } : {}
+  crowdsec_api_key = var.ingress_crowdsec_api_key
+  tls_secret_name  = var.tls_secret_name
 }
 
 module "crowdsec" {
