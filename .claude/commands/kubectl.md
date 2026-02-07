@@ -1,12 +1,9 @@
 # Kubectl Command
 
-Run kubectl commands on the cluster via the remote executor.
+Run kubectl commands on the cluster via the `/remote` skill.
 
-Use the remote executor relay:
-```bash
-echo "kubectl $ARGUMENTS" > /System/Volumes/Data/mnt/code/infra/.claude/cmd_input.txt
-sleep 2 && cat /System/Volumes/Data/mnt/code/infra/.claude/cmd_status.txt
-cat /System/Volumes/Data/mnt/code/infra/.claude/cmd_output.txt
+```
+/remote kubectl $ARGUMENTS
 ```
 
 Examples:

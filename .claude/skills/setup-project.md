@@ -284,7 +284,7 @@ smtp_password = var.mailserver_accounts["info@viktorbarzin.me"]
 ### 6. Apply Terraform
 
 ```bash
-# Via remote executor
+# Via /remote skill
 terraform init
 terraform apply -target=module.kubernetes_cluster.module.<service> -auto-approve
 ```
