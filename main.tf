@@ -276,6 +276,12 @@ module "docker-registry-template" {
         templatefile("${path.root}/modules/docker-registry/nginx_registry.conf", {})
       )
     ),
+    "docker run -d --restart always --net host --name registry-ui -e NGINX_LISTEN_PORT=8080 -e NGINX_PROXY_PASS_URL=http://127.0.0.1:5000 -e DELETE_IMAGES=true -e SINGLE_REGISTRY=true -e SHOW_CONTENT_DIGEST=true -e SHOW_CATALOG_NB_TAGS=true -e CATALOG_ELEMENTS_LIMIT=1000 -e TAGLIST_PAGE_SIZE=100 -e REGISTRY_TITLE=viktorbarzin.me joxit/docker-registry-ui:latest",
+    # Deploy tag cleanup script (keep last 10 tags per image) and schedule daily at 2am before weekly GC
+    format("echo %s | base64 -d > /etc/docker-registry/cleanup-tags.sh && chmod +x /etc/docker-registry/cleanup-tags.sh",
+      base64encode(file("${path.root}/modules/docker-registry/cleanup-tags.sh"))
+    ),
+    "( crontab -l 2>/dev/null; echo '0 2 * * * /etc/docker-registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
   ]
 }
 
@@ -298,7 +304,8 @@ module "docker-registry-vm" {
   # ports:
   # 5000 -> registry
   # 5001 -> metrics
-  # 5002 -> ngin proxy <-- use this to prevent races on the same blobs
+  # 5002 -> nginx proxy <-- use this to prevent races on the same blobs
+  # 8080 -> registry-ui (joxit/docker-registry-ui)
 }
 
 # module that provisions the proxmox host?
