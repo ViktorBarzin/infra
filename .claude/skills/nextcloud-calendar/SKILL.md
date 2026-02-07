@@ -23,7 +23,6 @@ Need to create, query, or manage calendar events in the user's Nextcloud calenda
 - Default calendar is always Nextcloud unless otherwise specified
 
 ## Prerequisites
-- Remote executor must be running (Python commands require remote execution)
 - The `~/.venvs/claude` virtualenv must have `caldav` and `icalendar` packages installed
 - Environment variables `NEXTCLOUD_USER` and `NEXTCLOUD_APP_PASSWORD` must be set in the venv activation script
 
@@ -35,10 +34,10 @@ Need to create, query, or manage calendar events in the user's Nextcloud calenda
 ```
 
 ### Execution Pattern (CRITICAL)
-Always use the remote executor with venv activation to get environment variables:
+Always activate the venv to get environment variables, then run via `/remote` skill:
 
 ```bash
-source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py [command] [options]
+/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py [command] [options]
 ```
 
 ### Available Commands
@@ -99,23 +98,12 @@ python .claude/calendar-query.py today --json
 python .claude/calendar-query.py week
 ```
 
-## Complete Example via Remote Executor
+## Complete Example
 
 To create an event "Team offsite" from March 20-22, 2026:
 
-1. Write command to remote executor:
 ```bash
-echo 'source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day' > /System/Volumes/Data/mnt/wizard/code/infra/.claude/cmd_input.txt
-```
-
-2. Wait and check status:
-```bash
-sleep 3 && cat /System/Volumes/Data/mnt/wizard/code/infra/.claude/cmd_status.txt
-```
-
-3. Read output:
-```bash
-cat /System/Volumes/Data/mnt/wizard/code/infra/.claude/cmd_output.txt
+/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day
 ```
 
 ## Important Notes
