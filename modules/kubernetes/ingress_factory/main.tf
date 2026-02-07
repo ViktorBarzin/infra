@@ -32,14 +32,6 @@ variable "max_body_size" {
   type    = string
   default = "50m"
 }
-variable "use_proxy_protocol" {
-  type    = bool
-  default = true
-}
-variable "proxy_timeout" {
-  type    = number
-  default = 60
-}
 variable "extra_annotations" {
   default = {}
 }
@@ -59,9 +51,13 @@ variable "rybbit_site_id" {
   default = null
   type    = string
 }
-variable "additional_configuration_snippet" {
+variable "custom_content_security_policy" {
   type    = string
-  default = ""
+  default = null
+}
+variable "exclude_crowdsec" {
+  type    = bool
+  default = false
 }
 
 
@@ -93,79 +89,40 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     name      = var.name
     namespace = var.namespace
     annotations = merge({
-      "kubernetes.io/ingress.class"                  = "nginx"
-      "nginx.ingress.kubernetes.io/backend-protocol" = "${var.backend_protocol}"
-
-      "nginx.ingress.kubernetes.io/auth-url" : var.protected ? "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx" : null
-      "nginx.ingress.kubernetes.io/auth-signin" : var.protected ? "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri" : null
-      "nginx.ingress.kubernetes.io/auth-snippet" : var.protected ? "proxy_set_header X-Forwarded-Host $http_host;" : null
-      "nginx.ingress.kubernetes.io/auth-response-headers" : var.protected ? "X-authentik-username,X-authentik-uid,X-authentik-email,X-authentik-name,X-authentik-groups" : null
-
-      "nginx.ingress.kubernetes.io/proxy-body-size" : var.max_body_size
-      "nginx.ingress.kubernetes.io/use-proxy-protocol" : var.use_proxy_protocol
-      "nginx.ingress.kubernetes.io/proxy-connect-timeout" : var.proxy_timeout
-      "nginx.ingress.kubernetes.io/proxy-send-timeout" : var.proxy_timeout
-      "nginx.ingress.kubernetes.io/proxy-read-timeout" : var.proxy_timeout
-      "nginx.ingress.kubernetes.io/proxy-buffering" : "on"
-
-      "nginx.ingress.kubernetes.io/whitelist-source-range" : var.allow_local_access_only ? "192.168.1.0/24, 10.0.0.0/8, ::1/128, fc00::/7, fe80::/10" : "0.0.0.0/0, ::/0"
-      "nginx.ingress.kubernetes.io/ssl-redirect" : "${var.ssl_redirect}"
-
-      # DDOS protection
-      "nginx.ingress.kubernetes.io/limit-connections" : 100
-      "nginx.ingress.kubernetes.io/limit-rps" : 5
-      "nginx.ingress.kubernetes.io/limit-rpm" : 100
-      "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50
-      "nginx.ingress.kubernetes.io/limit-rate-after" : 100
-      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
-      limit_req_status 429;
-      limit_conn_status 429;
-      # Prevent iframe embedding (clickjacking protection) - allow subdomains only
-      add_header Content-Security-Policy "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me" always;
-      ${var.rybbit_site_id != null ? <<-JS
-        # Rybbit Analytics
-        # Only modify HTML
-        sub_filter_types text/html;
-        sub_filter_once off;
-
-        # Disable compression so sub_filter works
-        proxy_set_header Accept-Encoding "";
-
-        # Inject analytics before </head>
-        sub_filter '</head>' '
-        <script src="https://rybbit.viktorbarzin.me/api/script.js"
-              data-site-id="${var.rybbit_site_id}"
-              defer></script>
-        </head>';
-          JS
-      : ""
-      }
-      ${var.additional_configuration_snippet}
-      EOF
-
-  }, var.extra_annotations)
-}
-
-spec {
-  tls {
-    hosts       = ["${var.name}.${var.root_domain}"] # TODO: refactor me to be easier to use
-    secret_name = var.tls_secret_name
+      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact([
+        "traefik-rate-limit@kubernetescrd",
+        var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
+        var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
+        var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
+        var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
+        var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
+        var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
+      ]))
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+    }, var.extra_annotations)
   }
-  rule {
-    host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
-    http {
-      dynamic "path" {
-        # for_each = { for pr in var.ingress_path : pr => pr }
-        for_each = var.ingress_path
 
-        content {
-          path = path.value
-          backend {
-            service {
+  spec {
+    ingress_class_name = "traefik"
+    tls {
+      hosts       = ["${var.name}.${var.root_domain}"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
+      http {
+        dynamic "path" {
+          for_each = var.ingress_path
 
-              name = var.service_name != null ? var.service_name : var.name
-              port {
-                number = var.port
+          content {
+            path = path.value
+            backend {
+              service {
+
+                name = var.service_name != null ? var.service_name : var.name
+                port {
+                  number = var.port
+                }
               }
             }
           }
@@ -174,5 +131,46 @@ spec {
     }
   }
 }
+
+# Rybbit analytics middleware (rewritebody plugin) - created per service when rybbit_site_id is set
+resource "kubernetes_manifest" "rybbit_analytics" {
+  count = var.rybbit_site_id != null ? 1 : 0
+
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rybbit-analytics-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      plugin = {
+        rewritebody = {
+          rewrites = [{
+            regex       = "</head>"
+            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"${var.rybbit_site_id}\" defer></script></head>"
+          }]
+        }
+      }
+    }
+  }
 }
 
+# Custom CSP headers middleware - created per service when custom_content_security_policy is set
+resource "kubernetes_manifest" "custom_csp" {
+  count = var.custom_content_security_policy != null ? 1 : 0
+
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "custom-csp-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      headers = {
+        contentSecurityPolicy = var.custom_content_security_policy
+      }
+    }
+  }
+}
