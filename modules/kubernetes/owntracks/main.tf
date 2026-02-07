@@ -140,8 +140,22 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 443
   extra_annotations = {
-    "nginx.ingress.kubernetes.io/auth-type"   = "basic" # support only basic auth; can't use authentik
-    "nginx.ingress.kubernetes.io/auth-secret" = kubernetes_secret.basic_auth.metadata[0].name
-    "nginx.ingress.kubernetes.io/auth-realm"  = "Authentication Required"
+    "traefik.ingress.kubernetes.io/router.middlewares" = "owntracks-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+  }
+}
+
+resource "kubernetes_manifest" "basic_auth_middleware" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "basic-auth"
+      namespace = kubernetes_namespace.owntracks.metadata[0].name
+    }
+    spec = {
+      basicAuth = {
+        secret = kubernetes_secret.basic_auth.metadata[0].name
+      }
+    }
   }
 }

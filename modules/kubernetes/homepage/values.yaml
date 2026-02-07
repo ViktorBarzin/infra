@@ -45,7 +45,7 @@ ingress:
       gethomepage.dev/description: "A modern, secure, highly customizable application dashboard."
       gethomepage.dev/group: "A New Group"
       gethomepage.dev/icon: "homepage.png"
-    ingressClassName: "nginx"
+    ingressClassName: "traefik"
     hosts:
       - host: &host "home.viktorbarzin.me"
         paths:

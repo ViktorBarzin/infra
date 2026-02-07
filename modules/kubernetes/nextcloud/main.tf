@@ -154,13 +154,7 @@ module "ingress" {
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name
   port            = 8080
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-    "nginx.ingress.kubernetes.io/limit-rps" : 1000 # Increased to allow webdav syncing
-    "nginx.ingress.kubernetes.io/limit-rpm" : 60000
-  }
-  rybbit_site_id = "5a3bfe59a3fe"
+  rybbit_site_id  = "5a3bfe59a3fe"
 }
 
 module "whiteboard_ingress" {
@@ -169,18 +163,6 @@ module "whiteboard_ingress" {
   name            = "whiteboard"
   tls_secret_name = var.tls_secret_name
   port            = 80
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-
-    # Websockets
-    # "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
-    # "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade" # this makes a difference for web!!!
-
-    # Timeouts
-    "nginx.ingress.kubernetes.io/proxy-read-timeout" : "6000s",
-    "nginx.ingress.kubernetes.io/proxy-send-timeout" : "6000s",
-  }
 }
 
 resource "kubernetes_config_map" "backup-script" {

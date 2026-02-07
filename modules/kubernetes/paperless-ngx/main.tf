@@ -154,10 +154,6 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 80
   extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0"
-    # see https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md#rate-limiting for all annotations
-    # "nginx.ingress.kubernetes.io/limit-rpm": "5"
-
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Document library"
     # gethomepage.dev/group: Media
