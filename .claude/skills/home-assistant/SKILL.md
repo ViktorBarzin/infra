@@ -38,10 +38,10 @@ Need to control smart home devices, check sensor states, or run automations via 
 ```
 
 ### Execution Pattern (CRITICAL)
-Always activate the venv to get environment variables, then run via `/remote` skill:
+Always activate the venv to get environment variables:
 
 ```bash
-/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py [command] [options]
+source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py [command] [options]
 ```
 
 ### Available Commands
@@ -134,7 +134,7 @@ python .claude/home-assistant.py notify "Hello" --target notify.mobile_app
 To turn on the living room light:
 
 ```bash
-/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py on light.living_room
+source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py on light.living_room
 ```
 
 ## Common Entity Domains

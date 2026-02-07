@@ -1,9 +1,9 @@
 # Kubectl Command
 
-Run kubectl commands on the cluster via the `/remote` skill.
+Run kubectl commands on the cluster.
 
-```
-/remote kubectl $ARGUMENTS
+```bash
+kubectl $ARGUMENTS
 ```
 
 Examples:
