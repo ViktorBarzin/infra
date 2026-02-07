@@ -51,8 +51,9 @@ resource "helm_release" "traefik" {
         publishedService           = { enabled = true }
       }
       kubernetesCRD = {
-        enabled                   = true
-        allowExternalNameServices = true
+        enabled                    = true
+        allowExternalNameServices  = true
+        allowCrossNamespace        = true
       }
     }
 
@@ -93,6 +94,7 @@ resource "helm_release" "traefik" {
         port        = 5353
         exposedPort = 53
         protocol    = "UDP"
+        expose      = { default = true }
       }
     }
 
