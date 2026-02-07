@@ -281,7 +281,7 @@ module "docker-registry-template" {
     format("echo %s | base64 -d > /etc/docker-registry/cleanup-tags.sh && chmod +x /etc/docker-registry/cleanup-tags.sh",
       base64encode(file("${path.root}/modules/docker-registry/cleanup-tags.sh"))
     ),
-    "( crontab -l 2>/dev/null; echo '0 2 * * * /etc/docker-registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '0 2 * * * python3 /etc/docker-registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
   ]
 }
 
