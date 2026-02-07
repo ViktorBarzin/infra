@@ -19,6 +19,14 @@ variable "containerd_config_update_command" {
   description = "Command to execute to update containerd config.toml; e.g add mirror"
 }
 variable "is_k8s_template" { type = bool }
+variable "ssh_private_key" {
+  type    = string
+  default = ""
+}
+variable "ssh_public_key" {
+  type    = string
+  default = ""
+}
 variable "provision_cmds" {
   type    = list(string)
   default = []
@@ -30,7 +38,7 @@ resource "null_resource" "create_template_remote" {
     type        = "ssh"
     user        = var.proxmox_user
     host        = var.proxmox_host
-    private_key = file("~/.ssh/id_ed25519")
+    private_key = var.ssh_private_key
   }
 
   # Commands executed *on Proxmox host*
@@ -61,7 +69,7 @@ resource "null_resource" "upload_cloud_init" {
     type        = "ssh"
     host        = var.proxmox_host
     user        = var.proxmox_user
-    private_key = file("~/.ssh/id_ed25519")
+    private_key = var.ssh_private_key
   }
 
   provisioner "remote-exec" {
@@ -72,7 +80,7 @@ resource "null_resource" "upload_cloud_init" {
     destination = "/var/lib/vz/snippets/${var.snippet_name}"
     content = templatefile("${path.module}/cloud_init.yaml", {
       is_k8s_template                  = var.is_k8s_template,
-      authorized_ssh_key               = file("~/.ssh/id_ed25519.pub"),
+      authorized_ssh_key               = var.ssh_public_key,
       passwd                           = var.user_passwd,
       provision_cmds                   = var.provision_cmds,
       k8s_join_command                 = var.k8s_join_command,
