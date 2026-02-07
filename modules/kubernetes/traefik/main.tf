@@ -87,7 +87,8 @@ resource "helm_release" "traefik" {
           }
         }
         http3 = {
-          enabled = true
+          enabled        = true
+          advertisedPort = 443
         }
       }
       dns-udp = {
