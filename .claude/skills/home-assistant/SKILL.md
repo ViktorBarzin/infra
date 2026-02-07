@@ -8,10 +8,11 @@ description: |
   (4) User asks to run a scene or script,
   (5) User asks "what devices are on?" or "is the door locked?",
   (6) User mentions smart home, IoT, or home automation.
+  There are TWO Home Assistant deployments: ha-london (default) and ha-sofia.
   Always use Home Assistant for smart home control.
 author: Claude Code
-version: 1.0.0
-date: 2025-01-25
+version: 2.0.0
+date: 2026-02-07
 ---
 
 # Home Assistant Control
@@ -26,22 +27,42 @@ Need to control smart home devices, check sensor states, or run automations via 
 - User mentions turning things on/off
 - User asks about smart home devices
 
+## Deployments
+
+There are **two** Home Assistant instances:
+
+| Instance | URL | SSH | Default? |
+|----------|-----|-----|----------|
+| **ha-london** | `https://ha-london.viktorbarzin.me` | N/A (runs on K8s cluster) | Yes |
+| **ha-sofia** | `https://ha-sofia.viktorbarzin.me` | `ssh vbarzin@ha-sofia.viktorbarzin.lan` (resolve via `192.168.1.2`) | No |
+
+- **Default**: ha-london (use unless user specifies "sofia" or "ha-sofia")
+- **Aliases**: "ha" or "HA" = ha-london. "ha sofia" or "ha-sofia" = ha-sofia.
+
 ## Prerequisites
 - The `~/.venvs/claude` virtualenv must have `requests` package installed
-- Environment variables `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN` must be set in the venv activation script
+- Environment variables for each instance must be set in the venv activation script:
+  - **ha-london**: `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN`
+  - **ha-sofia**: `HOME_ASSISTANT_SOFIA_URL` and `HOME_ASSISTANT_SOFIA_TOKEN`
 
-## Solution
+## API Control
 
-### Script Location
-```
-/home/wizard/code/infra/.claude/home-assistant.py
-```
+### Scripts
+
+| Instance | Script |
+|----------|--------|
+| ha-london | `.claude/home-assistant.py` |
+| ha-sofia | `.claude/home-assistant-sofia.py` |
 
 ### Execution Pattern (CRITICAL)
 Always activate the venv to get environment variables:
 
 ```bash
+# ha-london (default)
 source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py [command] [options]
+
+# ha-sofia
+source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant-sofia.py [command] [options]
 ```
 
 ### Available Commands
@@ -129,12 +150,54 @@ python .claude/home-assistant.py notify "Motion detected" --title "Security Aler
 python .claude/home-assistant.py notify "Hello" --target notify.mobile_app
 ```
 
+## SSH Access (ha-sofia only)
+
+ha-sofia supports SSH for direct configuration management.
+
+### Connection
+```bash
+# DNS resolves via 192.168.1.2
+ssh vbarzin@ha-sofia.viktorbarzin.lan
+```
+
+If DNS resolution fails (e.g., not on the local network), use the DNS server directly:
+```bash
+ssh vbarzin@$(dig +short ha-sofia.viktorbarzin.lan @192.168.1.2)
+```
+
+### Configuration Path
+```
+/config/
+```
+
+### Common SSH Tasks
+```bash
+# Edit configuration
+ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
+
+# Check HA logs
+ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/home-assistant.log | tail -50"
+
+# List automations
+ssh vbarzin@ha-sofia.viktorbarzin.lan "ls /config/automations.yaml"
+
+# Restart HA (after config changes)
+ssh vbarzin@ha-sofia.viktorbarzin.lan "ha core restart"
+
+# Check config validity
+ssh vbarzin@ha-sofia.viktorbarzin.lan "ha core check"
+```
+
 ## Complete Example
 
-To turn on the living room light:
-
+To turn on the living room light on ha-london:
 ```bash
 source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py on light.living_room
+```
+
+To check ha-sofia configuration:
+```bash
+ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 ```
 
 ## Common Entity Domains
@@ -175,4 +238,5 @@ source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-as
 1. **Entity IDs are case-sensitive** - use `search` to find exact IDs
 2. **Token must have sufficient permissions** - ensure token has access to all entities
 3. **Some entities require specific data** - use `services` command to see required fields
-4. **HA URL**: `https://ha-london.viktorbarzin.me`
+4. **Two instances**: ha-london (default, K8s), ha-sofia (SSH + API)
+5. **ha-sofia SSH**: Uses default SSH key, user `vbarzin`, resolve DNS via `192.168.1.2`
