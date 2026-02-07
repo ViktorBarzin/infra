@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "affine" {
         init_container {
           name    = "migration"
           image   = "ghcr.io/toeverything/affine:stable"
-          command = ["sh", "-c", "node ./scripts/self-host-predeploy.js"]
+          command = ["sh", "-c", "npx prisma migrate deploy && SERVER_FLAVOR=script node ./dist/main.js run"]
 
           dynamic "env" {
             for_each = local.common_env
