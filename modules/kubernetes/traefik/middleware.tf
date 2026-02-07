@@ -156,6 +156,23 @@ resource "kubernetes_manifest" "tls_option_mtls" {
   depends_on = [helm_release.traefik]
 }
 
+# ServersTransport for backends with self-signed certificates
+resource "kubernetes_manifest" "servers_transport_insecure" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = "insecure-skip-verify"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      insecureSkipVerify = true
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Immich-specific rate limit (higher limits for photo uploads)
 resource "kubernetes_manifest" "middleware_immich_rate_limit" {
   manifest = {
