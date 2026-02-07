@@ -85,6 +85,10 @@ resource "helm_release" "traefik" {
             enabled = true
           }
         }
+        http3 = {
+          enabled = true
+        }
+        advertisedPort = 443
       }
       dns-udp = {
         port        = 5353
@@ -136,6 +140,7 @@ resource "helm_release" "traefik" {
     }
 
     additionalArguments = [
+      "--api.insecure=true",
       "--global.checknewversion=false",
       "--global.sendanonymoususage=false",
       # Increase timeouts for services like Immich
