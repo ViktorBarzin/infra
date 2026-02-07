@@ -224,8 +224,6 @@ module "ingress" {
   name            = "calibre"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "5000m"
-
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Book library"
     # gethomepage.dev/group: Media
@@ -239,10 +237,8 @@ module "ingress" {
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional
   }
-  rybbit_site_id                   = "17a5c7fbb077"
-  additional_configuration_snippet = <<-EOF
-    more_set_headers "Content-Security-Policy: script-src 'self' 'unsafe-inline' 'unsafe-eval' https://rybbit.viktorbarzin.me";
-  EOF
+  rybbit_site_id                 = "17a5c7fbb077"
+  custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://rybbit.viktorbarzin.me"
 }
 
 # Stacks - Anna's Archive Download Manager

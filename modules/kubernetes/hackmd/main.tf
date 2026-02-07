@@ -150,7 +150,4 @@ module "ingress" {
   namespace       = kubernetes_namespace.hackmd.metadata[0].name
   name            = "hackmd"
   tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
-  }
 }

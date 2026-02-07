@@ -97,13 +97,4 @@ module "ingress" {
   namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   name            = "tuya-bridge"
   tls_secret_name = var.tls_secret_name
-
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/server-snippet" : <<-EOF
-      location /metrics {
-        deny all;
-        return 403;
-      }
-      EOF
-  }
 }

@@ -87,9 +87,5 @@ module "ingress" {
   namespace       = kubernetes_namespace.f1-stream.metadata[0].name
   name            = "f1"
   tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/force-ssl-redirect" : "false"
-    "nginx.ingress.kubernetes.io/ssl-redirect" : "false"
-  }
-  rybbit_site_id = "7e69786f66d5"
+  rybbit_site_id  = "7e69786f66d5"
 }

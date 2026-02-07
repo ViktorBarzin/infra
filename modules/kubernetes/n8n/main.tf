@@ -134,7 +134,4 @@ module "ingress" {
   namespace       = kubernetes_namespace.n8n.metadata[0].name
   name            = "n8n"
   tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
-  }
 }

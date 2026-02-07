@@ -173,19 +173,12 @@ resource "kubernetes_service" "shlink" {
 }
 
 module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = kubernetes_namespace.shlink.metadata[0].name
-  name            = "url"
-  service_name    = "shlink"
-  tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/configuration-snippet" : <<-EOF
-          more_set_headers "Host: $host";
-          more_set_headers "X-Real-IP: $remote_addr";
-          more_set_headers "X-Forwarded-For: $proxy_add_x_forwarded_for";
-          more_set_headers "X-Forwarded-Proto: $scheme";
-        EOF
-  }
+  source            = "../ingress_factory"
+  namespace         = kubernetes_namespace.shlink.metadata[0].name
+  name              = "url"
+  service_name      = "shlink"
+  tls_secret_name   = var.tls_secret_name
+  extra_annotations = {}
 }
 
 

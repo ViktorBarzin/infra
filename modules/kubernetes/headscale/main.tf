@@ -189,14 +189,13 @@ resource "kubernetes_ingress_v1" "headscale" {
     namespace = kubernetes_namespace.headscale.metadata[0].name
     annotations = {
       // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
-      "kubernetes.io/ingress.class"              = "nginx"
-      "nginx.ingress.kubernetes.io/ssl-redirect" = false # Disable SSL redirection for this Ingress
-      "nginx.org/websocket-services"             = "headscale"
-
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["headscale.viktorbarzin.me"]
       secret_name = var.tls_secret_name

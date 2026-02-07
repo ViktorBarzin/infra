@@ -140,7 +140,4 @@ module "ingress" {
   name            = "qbittorrent"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
-  }
 }

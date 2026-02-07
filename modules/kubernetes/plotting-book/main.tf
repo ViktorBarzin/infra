@@ -89,9 +89,5 @@ module "ingress" {
   name            = "plotting-book"
   tls_secret_name = var.tls_secret_name
 
-  additional_configuration_snippet = <<-EOF
-    # Override CSP to allow data: URIs and blob: for database/workers
-    proxy_hide_header Content-Security-Policy;
-    add_header Content-Security-Policy "default-src 'self' blob: data:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' blob:; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me" always;
-  EOF
+  custom_content_security_policy = "default-src 'self' blob: data:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' blob:; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
 }

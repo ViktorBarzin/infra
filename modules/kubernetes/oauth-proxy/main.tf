@@ -215,11 +215,13 @@ resource "kubernetes_ingress_v1" "oauth" {
     name      = "oauth2"
     namespace = "oauth2"
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["oauth2.viktorbarzin.me"]
       secret_name = var.tls_secret_name

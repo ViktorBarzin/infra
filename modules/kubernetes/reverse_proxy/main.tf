@@ -76,34 +76,28 @@ module "nas-files" {
 
 # https://idrac.viktorbarzin.me/
 module "idrac" {
-  source           = "./factory"
-  name             = "idrac"
-  external_name    = "idrac.viktorbarzin.lan"
-  port             = 443
-  tls_secret_name  = var.tls_secret_name
-  backend_protocol = "HTTPS"
-  extra_annotations = {
-    # authentik causes 413; we don't need the header below
-    "nginx.ingress.kubernetes.io/auth-response-headers" : null
-  }
-  depends_on = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "idrac"
+  external_name     = "idrac.viktorbarzin.lan"
+  port              = 443
+  tls_secret_name   = var.tls_secret_name
+  backend_protocol  = "HTTPS"
+  extra_annotations = {}
+  depends_on        = [kubernetes_namespace.reverse-proxy]
 }
 
 # Can either listen on https or http; can't do both :/
 # TODO: Not working yet
 module "tp-link-gateway" {
-  source           = "./factory"
-  name             = "gw"
-  external_name    = "gw.viktorbarzin.lan"
-  port             = 443
-  tls_secret_name  = var.tls_secret_name
-  backend_protocol = "HTTPS"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
-  protected        = true
-  extra_annotations = {
-    # authentik causes 413; we don't need the header below
-    "nginx.ingress.kubernetes.io/auth-response-headers" : null
-  }
+  source            = "./factory"
+  name              = "gw"
+  external_name     = "gw.viktorbarzin.lan"
+  port              = 443
+  tls_secret_name   = var.tls_secret_name
+  backend_protocol  = "HTTPS"
+  depends_on        = [kubernetes_namespace.reverse-proxy]
+  protected         = true
+  extra_annotations = {}
 }
 
 # https://truenas.viktorbarzin.me/

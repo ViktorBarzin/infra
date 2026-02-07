@@ -75,17 +75,36 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
   }
 }
 
+resource "kubernetes_manifest" "status_redirect_middleware" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "status-redirect"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+    }
+    spec = {
+      redirectRegex = {
+        regex       = ".*"
+        replacement = "https://hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/"
+        permanent   = true
+      }
+    }
+  }
+}
+
 resource "kubernetes_ingress_v1" "status" {
   metadata {
     name      = "hetrix-redirect-ingress"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class"                    = "nginx"
-      "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "monitoring-status-redirect@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["status.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -99,11 +118,29 @@ resource "kubernetes_ingress_v1" "status" {
             service {
               name = "not-used"
               port {
-                number = 80 # redirected by annotation
+                number = 80 # redirected by middleware
               }
             }
           }
         }
+      }
+    }
+  }
+}
+
+resource "kubernetes_manifest" "yotovski_redirect_middleware" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "yotovski-redirect"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+    }
+    spec = {
+      redirectRegex = {
+        regex       = ".*"
+        replacement = "https://hetrixtools.com/r/2ba9d7a5e017794db0fd91f0115a8b3b/"
+        permanent   = true
       }
     }
   }
@@ -114,12 +151,13 @@ resource "kubernetes_ingress_v1" "status_yotovski" {
     name      = "hetrix-yotovski-redirect-ingress"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class"                    = "nginx"
-      "nginx.ingress.kubernetes.io/permanent-redirect" = "https://hetrixtools.com/r/2ba9d7a5e017794db0fd91f0115a8b3b/"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "monitoring-yotovski-redirect@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["yotovski-status.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -131,7 +169,7 @@ resource "kubernetes_ingress_v1" "status_yotovski" {
           path = "/"
           backend {
             service {
-              name = "not-used" # redirected by annotation
+              name = "not-used" # redirected by middleware
               port {
                 number = 80
               }

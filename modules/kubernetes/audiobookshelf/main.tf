@@ -129,10 +129,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.audiobookshelf.metadata[0].name
   name            = "audiobookshelf"
   tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "0",
-    "nginx.ingress.kubernetes.io/client-max-body-size" : "0"
-  }
-  rybbit_site_id = "b38fda4285df"
+  rybbit_site_id  = "b38fda4285df"
 }
 

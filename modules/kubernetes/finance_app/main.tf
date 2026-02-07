@@ -252,16 +252,13 @@ resource "kubernetes_ingress_v1" "finance_app" {
     name      = "finance-app"
     namespace = kubernetes_namespace.finance_app.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class" = "nginx"
-      #"nginx.ingress.kubernetes.io/auth-url"= "https://oauth-provider/auth"
-      #"nginx.ingress.kubernetes.io/auth-signin"= "https://oauth-provider/sign_in?rd=$request_uri"
-      "nginx.ingress.kubernetes.io/proxy-connect-timeout" = "600"
-      "nginx.ingress.kubernetes.io/proxy-send-timeout"    = "600"
-      "nginx.ingress.kubernetes.io/proxy-read-timeout"    = "600"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["finance.viktorbarzin.me"]
       secret_name = var.tls_secret_name

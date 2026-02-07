@@ -11,19 +11,10 @@ alertmanager:
   baseURL: "https://alertmanager.viktorbarzin.me"
   ingress:
     enabled: true
+    ingressClassName: "traefik"
     annotations:
-      kubernetes.io/ingress.class: nginx
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-      # Enable client certificate authentication
-      # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
-      # Create the secret containing the trusted ca certificates
-      # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
-      # nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-      nginx.ingress.kubernetes.io/auth-url: "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
-      nginx.ingress.kubernetes.io/auth-signin: "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
-      nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
-      nginx.ingress.kubernetes.io/auth-snippet: "proxy_set_header X-Forwarded-Host $http_host;"
+      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+      traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
     tls:
       - secretName: "tls-secret"
         hosts:
@@ -100,19 +91,10 @@ server:
       mountPath: /data/wal  # Standard path for the chart
   ingress:
     enabled: true
+    ingressClassName: "traefik"
     annotations:
-      kubernetes.io/ingress.class: nginx
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-      # Enable client certificate authentication
-      # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
-      # Create the secret containing the trusted ca certificates
-      # nginx.ingress.kubernetes.io/auth-tls-secret: "default/ca-secret"
-      # nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
-      # nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
-      "nginx.ingress.kubernetes.io/auth-url": "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
-      "nginx.ingress.kubernetes.io/auth-signin": "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
-      "nginx.ingress.kubernetes.io/auth-response-headers": "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
-      "nginx.ingress.kubernetes.io/auth-snippet": "proxy_set_header X-Forwarded-Host $http_host;"
+      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+      traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
 
       gethomepage.dev/enabled: "true"
       gethomepage.dev/description: "Prometheus"

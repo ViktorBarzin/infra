@@ -206,14 +206,14 @@ resource "kubernetes_ingress_v1" "home-assistant-ui" {
     name      = "home-assistant-ui-ingress"
     namespace = kubernetes_namespace.home_assistant.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class"                        = "nginx"
-      "nginx.ingress.kubernetes.io/force-ssl-redirect"     = "true"
-      "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
-      "nginx.ingress.kubernetes.io/auth-tls-secret"        = var.client_certificate_secret_name
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+      "traefik.ingress.kubernetes.io/router.tls.options" = "traefik-mtls@kubernetescrd"
     }
   }
 
   spec {
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["home-assistant.viktorbarzin.me"]
       secret_name = var.tls_secret_name

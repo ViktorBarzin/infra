@@ -293,35 +293,13 @@ resource "kubernetes_ingress_v1" "rybbit" {
     namespace = kubernetes_namespace.rybbit.metadata[0].name
 
     annotations = {
-      "kubernetes.io/ingress.class"           = "nginx"
-      "nginx.ingress.kubernetes.io/use-regex" = "true"
-      # Optional: enable SSL redirect
-      #"nginx.ingress.kubernetes.io/force-ssl-redirect" = "true"
-
-      "nginx.ingress.kubernetes.io/configuration-snippet" = <<-EOF
-        limit_req_status 429;
-        limit_conn_status 429;
-
-        # Rybbit Analytics
-        # Only modify HTML
-        sub_filter_types text/html;
-        sub_filter_once off;
-
-        # Disable compression so sub_filter works
-        proxy_set_header Accept-Encoding "";
-
-        # Inject analytics before </head>
-        sub_filter '</head>' '
-        <script src="https://rybbit.viktorbarzin.me/api/script.js"
-              data-site-id="3c476801a777"
-              defer></script> 
-        </head>';
-      EOF
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,rybbit-rybbit-analytics@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }
   }
 
   spec {
-    ingress_class_name = "nginx"
+    ingress_class_name = "traefik"
     tls {
       hosts       = ["rybbit.viktorbarzin.me"]
       secret_name = var.tls_secret_name
@@ -332,7 +310,8 @@ resource "kubernetes_ingress_v1" "rybbit" {
       http {
         # API backend
         path {
-          path = "/api(/|$)(.*)"
+          path      = "/api"
+          path_type = "Prefix"
           backend {
             service {
               name = "rybbit"
@@ -356,6 +335,28 @@ resource "kubernetes_ingress_v1" "rybbit" {
               }
             }
           }
+        }
+      }
+    }
+  }
+}
+
+# Rybbit analytics middleware for self-tracking
+resource "kubernetes_manifest" "rybbit_analytics" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rybbit-analytics"
+      namespace = kubernetes_namespace.rybbit.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        rewritebody = {
+          rewrites = [{
+            regex       = "</head>"
+            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"3c476801a777\" defer></script></head>"
+          }]
         }
       }
     }

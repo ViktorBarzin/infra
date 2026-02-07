@@ -196,20 +196,7 @@ module "ingress" {
   name            = "frigate"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
-    # Websockets
-    "nginx.org/websocket-services" : "frigate"
-    "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
-    "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade"
-    "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
-
-    "nginx.ingress.kubernetes.io/limit-rps" : 50000
-    "nginx.ingress.kubernetes.io/limit-rpm" : 1000000
-    "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50000
-    "nginx.ingress.kubernetes.io/limit-rate-after" : 100000
-  }
-  rybbit_site_id = "0d4044069ff5"
+  rybbit_site_id  = "0d4044069ff5"
 }
 
 module "ingress-internal" {
@@ -222,17 +209,4 @@ module "ingress-internal" {
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true
   ssl_redirect            = false
-  extra_annotations = {
-    "nginx.ingress.kubernetes.io/proxy-body-size" : "20000m"
-    # Websockets
-    "nginx.org/websocket-services" : "frigate"
-    "nginx.ingress.kubernetes.io/proxy-set-header" : "Upgrade $http_upgrade"
-    "nginx.ingress.kubernetes.io/proxy-set-header" : "Connection $connection_upgrade"
-    "nginx.ingress.kubernetes.io/proxy-redirect-from" : "off"
-
-    "nginx.ingress.kubernetes.io/limit-rps" : 50000
-    "nginx.ingress.kubernetes.io/limit-rpm" : 1000000
-    "nginx.ingress.kubernetes.io/limit-burst-multiplier" : 50000
-    "nginx.ingress.kubernetes.io/limit-rate-after" : 100000
-  }
 }

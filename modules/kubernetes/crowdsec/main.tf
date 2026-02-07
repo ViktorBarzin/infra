@@ -181,25 +181,13 @@ resource "kubernetes_service" "crowdsec-web" {
   }
 }
 module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = kubernetes_namespace.crowdsec.metadata[0].name
-  name            = "crowdsec-web"
-  protected       = true
-  tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    # "crowdsec.io/bouncer-mode" : "bypass"
-    "nginx.ingress.kubernetes.io/server-snippet" : <<-EOF
-      # --- Disable CrowdSec for this host ---
-      set $crowdsec_bypass 1;
-      access_by_lua_block {
-        -- Skip calling CrowdSec for this server
-        if ngx.var.crowdsec_bypass == "1" then
-          return
-        end
-      }
-    EOF
-  }
-  rybbit_site_id = "d09137795ccc"
+  source           = "../ingress_factory"
+  namespace        = kubernetes_namespace.crowdsec.metadata[0].name
+  name             = "crowdsec-web"
+  protected        = true
+  tls_secret_name  = var.tls_secret_name
+  exclude_crowdsec = true
+  rybbit_site_id   = "d09137795ccc"
 }
 
 # CronJob to import public blocklists into CrowdSec

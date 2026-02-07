@@ -405,6 +405,5 @@ module "audiblez-web-ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   max_body_size   = "500m" # Allow large EPUB uploads
-  proxy_timeout   = 3600   # Long timeout for conversions
 }
 
