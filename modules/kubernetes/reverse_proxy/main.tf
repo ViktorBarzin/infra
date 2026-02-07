@@ -151,6 +151,20 @@ module "proxmox" {
   rybbit_site_id   = "190a7ad3e1c7"
 }
 
+# https://registry.viktorbarzin.me/
+module "docker-registry-ui" {
+  source          = "./factory"
+  name            = "registry"
+  external_name   = "docker-registry.viktorbarzin.lan"
+  port            = 8080
+  tls_secret_name = var.tls_secret_name
+  depends_on      = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = {
+    # Override middleware chain to remove rate-limit; the UI fires many API calls to list repos/tags
+    "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+  }
+}
+
 # https://valchedrym.viktorbarzin.me/
 module "valchedrym" {
   source           = "./factory"
