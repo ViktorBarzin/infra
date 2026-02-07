@@ -16,12 +16,13 @@
 - **Basic shell**: ls, cat, head, tail, find, grep, etc.
 
 ### Remote Commands (via `/remote` skill)
-For commands that need cluster access, use the `/remote` skill:
-- **terraform**: apply, plan, init, state
-- **kubectl**: all k8s commands
-- **helm**: chart operations
-- **docker**: container operations on remote hosts
-- **python/pip**: Python and pip commands
+**NEVER use SSH directly** (e.g., `ssh wizard@10.0.10.10`). SSH is not allowed.
+For commands that need cluster access, use the `/remote` skill or the `tf-apply`/`tf-plan` skills:
+- **terraform**: Use `/remote terraform apply ...` or the `tf-apply`/`tf-plan` skills
+- **kubectl**: Use `/remote kubectl ...` or the `kubectl` skill
+- **helm**: Use `/remote helm ...`
+- **docker**: Use `/remote docker ...`
+- **python/pip**: Use `/remote python ...`
 - **Any command interacting with**: Proxmox, Kubernetes cluster, NFS server, other infrastructure
 
 ---
@@ -80,7 +81,7 @@ Terraform-based infrastructure repository managing a home Kubernetes cluster on 
 - Each service in `modules/kubernetes/<service>/main.tf` defines its own namespace, deployments, services, and ingress
 - NFS storage from `10.0.10.15` for persistent data
 - TLS secrets managed via `setup_tls_secret` module
-- Ingress uses nginx-ingress with annotations for customization
+- Ingress uses Traefik (Helm chart, 3 replicas) with Middleware CRDs for rate limiting, auth, CSP headers, CrowdSec bouncer, and analytics injection
 - GPU workloads use `node_selector = { "gpu": "true" }`
 - Services expose to `*.viktorbarzin.me` domains
 
@@ -187,7 +188,7 @@ Top-level modules in `main.tf`:
 | wireguard | VPN server | core |
 | technitium | DNS server (10.0.20.101) | core |
 | headscale | Tailscale control server | core |
-| nginx-ingress | Ingress controller | core |
+| traefik | Ingress controller (Helm) | core |
 | xray | Proxy/tunnel | core |
 | authentik | Identity provider (SSO) | core |
 | cloudflared | Cloudflare tunnel | core |
