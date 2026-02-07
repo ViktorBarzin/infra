@@ -10,14 +10,14 @@
 - **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`.
 
 ## Execution Environment
-
-### Local Commands (macOS)
 - **File operations**: Read, Edit, Write, Glob, Grep tools
 - **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
-- **Basic shell**: ls, cat, head, tail, find, grep, etc.
-
-### Remote Commands
-For commands that need cluster access (terraform, kubectl, helm, docker, python), run them directly. These tools are available in the local environment.
+- **Shell commands**: All tools (terraform, kubectl, helm, python, etc.) are available locally
+- **CRITICAL: Always run terraform locally**, never on the remote server via SSH. Use `-var="kube_config_path=$(pwd)/config"` when applying:
+  ```bash
+  terraform apply -target=module.kubernetes_cluster.module.<service> -var="kube_config_path=$(pwd)/config" -auto-approve
+  ```
+- **kubectl**: Use `kubectl --kubeconfig $(pwd)/config` for cluster access
 
 ---
 
