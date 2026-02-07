@@ -8,6 +8,14 @@ variable "proxmox_pm_api_token_secret" { type = string }
 variable "k8s_join_command" { type = string }
 variable "vm_wizard_password" { type = string }
 variable "proxmox_host" { type = string }
+variable "ssh_private_key" {
+  type    = string
+  default = ""
+}
+variable "ssh_public_key" {
+  type    = string
+  default = ""
+}
 variable "tls_secret_name" {}
 variable "tls_crt" {
   default = ""
@@ -67,10 +75,7 @@ variable "headscale_config" {}
 variable "headscale_acl" {}
 variable "immich_postgresql_password" {}
 variable "immich_frame_api_key" {}
-variable "ingress_honeypotapikey" {}
 variable "ingress_crowdsec_api_key" {}
-variable "ingress_crowdsec_captcha_secret_key" {}
-variable "ingress_crowdsec_captcha_site_key" {}
 variable "crowdsec_enroll_key" { type = string }
 variable "crowdsec_db_password" { type = string }
 variable "crowdsec_dash_api_key" { type = string }
@@ -146,13 +151,18 @@ variable "slack_bot_token" { type = string }
 variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
 
+variable "kube_config_path" {
+  type    = string
+  default = "~/.kube/config"
+}
+
 provider "kubernetes" {
-  config_path = var.prod ? "" : "~/.kube/config"
+  config_path = var.prod ? "" : var.kube_config_path
 }
 
 provider "helm" {
   kubernetes = {
-    config_path = var.prod ? "" : "~/.kube/config"
+    config_path = var.prod ? "" : var.kube_config_path
   }
 }
 
@@ -183,6 +193,9 @@ module "k8s-node-template" {
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
 
+  ssh_private_key = var.ssh_private_key
+  ssh_public_key  = var.ssh_public_key
+
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.k8s_cloud_init_image_path
   template_id     = 2000
@@ -209,6 +222,9 @@ module "non-k8s-node-template" {
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
 
+  ssh_private_key = var.ssh_private_key
+  ssh_public_key  = var.ssh_public_key
+
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.non_k8s_cloud_init_image_path
   template_id     = 1000
@@ -224,6 +240,9 @@ module "docker-registry-template" {
 
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
+
+  ssh_private_key = var.ssh_private_key
+  ssh_public_key  = var.ssh_public_key
 
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.non_k8s_cloud_init_image_path # keke
@@ -484,10 +503,7 @@ module "kubernetes_cluster" {
   immich_postgresql_password = var.immich_postgresql_password
   immich_frame_api_key       = var.immich_frame_api_key
 
-  ingress_honeypotapikey              = var.ingress_honeypotapikey
   ingress_crowdsec_api_key            = var.ingress_crowdsec_api_key
-  ingress_crowdsec_captcha_secret_key = var.ingress_crowdsec_captcha_secret_key
-  ingress_crowdsec_captcha_site_key   = var.ingress_crowdsec_captcha_site_key
   crowdsec_enroll_key                 = var.crowdsec_enroll_key
   crowdsec_db_password                = var.crowdsec_db_password
   crowdsec_dash_api_key               = var.crowdsec_dash_api_key
