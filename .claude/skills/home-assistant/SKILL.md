@@ -315,13 +315,27 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 #### 12. Ventilation (Pax BLE)
 - `sensor.ventilator_mokro_2_*` — bathroom fan with humidity/light sensors
 
-#### 13. Other Devices
+#### 13. Synology NAS
+- **NAS_Barzini**: CPU 2%, Memory 26%, 2 drives (39C/41C)
+- Volume 1: 87.2% used (5.02 TB), status "attention"
+- DSM update available
+
+#### 14. Printer
+- **HP ColorLaserJet M253-M254**: Black 49%, Cyan 88%, Magenta 91%, Yellow 90%
+
+#### 15. Dell R730 Server (via iDRAC)
+- CPU temp 57C, Power 192W, Inlet 24C, Exhaust 29C
+- Tesla T4 GPU: 41C, 4% util, 4183MB VRAM, 32W
+
+#### 16. Other Devices
 - **Dehumidifier** (Tuya): `humidifier.arete_*`
-- **Robot vacuum** (Rumi): `vacuum.rumi`
+- **Robot vacuum** (Rumi): `vacuum.rumi` — docked, 100% battery, 227 missions
 - **Tuya lights**: `light.krushka_*` (4 bulbs, currently offline)
+- **AC unit** (MELCloud): `climate.klimatik` — off, 23C
+- **Mistral AI**: Conversation integration (Devstral 2)
 
 ### Integrations
-HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya
+HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya, MELCloud, Synology DSM, HP Printer (IPP)
 
 ### Add-ons
 Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client
