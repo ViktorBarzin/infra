@@ -318,7 +318,51 @@ jellyfin, jellyseerr, tdarr, affine
 - Redis shared service at `redis.redis.svc.cluster.local`
 - Docker registry at 10.0.20.10
 
+### Proxmox Host Hardware
+- **CPU**: Intel Xeon E5-2699 v4 @ 2.20GHz (22 cores / 44 threads, single socket)
+- **RAM**: 142 GB (Dell R730 server)
+- **GPU**: NVIDIA Tesla T4 (PCIe passthrough to k8s-node1)
+- **Disks**: 1.1TB + 931GB + 10.7TB (local storage)
+- **Proxmox access**: `ssh root@192.168.1.127`
+
+### Proxmox Network Bridges
+- **vmbr0**: Physical bridge on `eno1`, IP `192.168.1.127/24` — connects to physical/home network (192.168.1.0/24)
+- **vmbr1**: Internal-only bridge (no physical port), VLAN-aware — carries VLAN 10 (management 10.0.10.0/24) and VLAN 20 (kubernetes 10.0.20.0/24)
+
+### Proxmox VM Inventory
+
+| VMID | Name | Status | CPUs | RAM | Network | Disk | Notes |
+|------|------|--------|------|-----|---------|------|-------|
+| 101 | pfsense | running | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall, routes between all networks |
+| 102 | devvm | running | 16 | 8GB | vmbr1:vlan10 | 100G | Development VM on management network |
+| 103 | home-assistant | running | 8 | 16GB | vmbr1:vlan10(down), vmbr0 | 32G | Home Assistant, net0 link disabled, uses vmbr0 |
+| 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup Server (not in use) |
+| 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Kubernetes control plane (10.0.20.100) |
+| 201 | k8s-node1 | running | 16 | 24GB | vmbr1:vlan20 | 128G | GPU node, Tesla T4 passthrough (hostpci0) |
+| 202 | k8s-node2 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
+| 203 | k8s-node3 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
+| 204 | k8s-node4 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
+| 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | Terraform-managed, MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
+| 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM on physical network |
+| 9000 | truenas | running | 16 | 16GB | vmbr1:vlan10 | 32G+7×256G+1T | NFS server (10.0.10.15), multiple data disks |
+
+#### VM Templates (stopped, used for cloning)
+| VMID | Name | Purpose |
+|------|------|---------|
+| 1000 | ubuntu-2404-cloudinit-non-k8s-template | Base template for non-K8s VMs |
+| 1001 | docker-registry-template | Template for docker registry VM |
+| 2000 | ubuntu-2404-cloudinit-k8s-template | Base template for K8s nodes |
+
+#### Network Connectivity Summary
+- **pfSense (101)** bridges all three networks: physical (vmbr0), management VLAN 10, and kubernetes VLAN 20
+- **K8s cluster** (200-204) + **docker-registry** (220) are all on VLAN 20 (kubernetes network)
+- **TrueNAS** (9000) + **devvm** (102) + **PBS** (105) are on VLAN 10 (management network)
+- **Home Assistant** (103) is on physical network (vmbr0), with a disabled VLAN 10 interface
+- **Windows10** (300) is on physical network (vmbr0) only
+
 ### GPU Node (k8s-node1)
+- **VMID**: 201
+- **PCIe Passthrough**: `0000:06:00.0` (NVIDIA Tesla T4)
 - **Taint**: `nvidia.com/gpu=true:NoSchedule` - Only GPU workloads can run here
 - **Label**: `gpu=true`
 - GPU workloads must have both:
