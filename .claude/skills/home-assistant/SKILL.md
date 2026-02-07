@@ -239,4 +239,106 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 2. **Token must have sufficient permissions** - ensure token has access to all entities
 3. **Some entities require specific data** - use `services` command to see required fields
 4. **Two instances**: ha-london (default, K8s), ha-sofia (SSH + API)
-5. **ha-sofia SSH**: Uses default SSH key, user `vbarzin`, resolve DNS via `192.168.1.2`
+5. **ha-sofia SSH**: Uses default SSH key, user `vbarzin`, resolve DNS via `192.168.1.2`. Only reachable from local Sofia network (not remotely).
+
+---
+
+## ha-sofia Knowledge Map
+
+### Overview
+- **1,087 entities** across 29 domains, **128 devices**, **13 areas**, **43 automations**
+- **Location**: Sofia, Bulgaria (Вермонт / Vermont neighborhood)
+- **4 tracked people**: Viktor Barzin, Emil Barzin, Valia Barzina, MQTT
+
+### Key Systems
+
+#### 1. Heating & Gas Boiler (EMS-ESP)
+- Buderus/Bosch gas boiler via EMS-ESP integration
+- Entities: `sensor.boiler_*`, `number.boiler_*`, `switch.boiler_*`
+- DHW (hot water), heating curves, burner stats, gas metering
+- Outside temp: `sensor.boiler_outside_temperature`
+
+#### 2. Climate / Thermostats (4 rooms + bathroom)
+| Room | Entity | Bulgarian |
+|------|--------|-----------|
+| Children's room | `climate.thermostat_children_room` | Детска |
+| Office | `climate.thermostat_office_room` | Кабинет |
+| Living room | `climate.thermostat_living_room` | Хол |
+| Master bedroom | `climate.thermostat_master_bedroom` | род. Спалня |
+| Bathroom (Valchedram) | `climate.bania_vlchedrm` | Баня Вълчедръм |
+
+#### 3. Solar / Photovoltaic (Solarman)
+- Inverter: `sensor.fv_b_*` (FV = фотоволтаици)
+- Battery, grid/self-use EMS mode, solar forecast
+- Energy totals tracked per grid/inverter
+
+#### 4. ATS (Automatic Transfer Switch)
+- Grid ↔ inverter switching: `sensor.ats_*`
+- Load power, grid/inverter voltage, energy totals
+
+#### 5. Security / Alarm (Paradox EVOHD+)
+- 3 alarm partitions: Apartment, Garage, Valchedram
+- PIR zones, door contacts, tamper sensors, PGMs for garage doors/doorbells
+
+#### 6. Cameras / NVR / Frigate
+- Hikvision NVR (DS-7632NXI) with 9 cameras
+- Frigate NVR with object detection:
+  - **Vermont** (home): cameras 10, 15, 16 — car/plate recognition
+  - **Valchedram** (country): cameras 1, 2 — person detection
+  - Object tracking: vehicles (Emo Skoda), cats (Мичка)
+
+#### 7. Smart Appliances (Home Connect / Bosch-Siemens)
+| Appliance | Entity prefix | Bulgarian |
+|-----------|--------------|-----------|
+| Dishwasher | `*.miialna_mashina_*` | Миялна машина |
+| Washing machine | `*.peralnia_*` | Пералня (with i-Dos) |
+| Dryer | `*.sushilnia_*` | Сушилня |
+
+#### 8. LED Strip Controllers (6-channel each)
+- Kitchen upper/lower: `light.kukhnia_*_socket_1-6`
+- Children's wardrobe: `light.led_detska_garderob_socket_1-6`
+- Hall wardrobe: `light.led_garderob_khol_socket_1-6`
+- Corridor wardrobe: `light.led_garderob_koridor_socket_1-6` (offline)
+- Master bedroom wardrobe: `light.led_garderob_rod_spalnia_socket_1-6` (offline)
+
+#### 9. Media
+- Sony BRAVIA XR-65A80L (AirPlay + DLNA)
+- Marantz ND8006 (AirPlay + DLNA)
+
+#### 10. Networking
+- TP-Link Archer AX6000 (main router)
+- TP-Link Archer MR200 (LTE backup)
+
+#### 11. UPS
+- `sensor.ups_*` — battery, load, voltage, remaining time
+
+#### 12. Ventilation (Pax BLE)
+- `sensor.ventilator_mokro_2_*` — bathroom fan with humidity/light sensors
+
+#### 13. Other Devices
+- **Dehumidifier** (Tuya): `humidifier.arete_*`
+- **Robot vacuum** (Rumi): `vacuum.rumi`
+- **Tuya lights**: `light.krushka_*` (4 bulbs, currently offline)
+
+### Integrations
+HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya
+
+### Add-ons
+Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client
+
+### Zones
+- **Вермонт** (Vermont) — Home
+- **Вълчедръм** (Valchedram) — Country house
+
+### Bulgarian ↔ English Room Names
+| Bulgarian | English | Entity prefix |
+|-----------|---------|---------------|
+| Детска | Children's room | `detska` |
+| Кабинет | Office | `kabinet` |
+| Хол | Living room | `khol` |
+| Спалня / род. Спалня | Master bedroom | `rod_spalnia` |
+| Кухня | Kitchen | `kukhnia` |
+| Коридор | Corridor | `koridor` |
+| Баня | Bathroom | `bania` |
+| Гараж | Garage | `garaj` |
+| Мазе | Basement | `maze` |
