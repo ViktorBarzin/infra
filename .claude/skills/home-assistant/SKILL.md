@@ -33,8 +33,8 @@ There are **two** Home Assistant instances:
 
 | Instance | URL | SSH | Default? |
 |----------|-----|-----|----------|
-| **ha-london** | `https://ha-london.viktorbarzin.me` | N/A (runs on K8s cluster) | Yes |
-| **ha-sofia** | `https://ha-sofia.viktorbarzin.me` | `ssh vbarzin@ha-sofia.viktorbarzin.lan` (resolve via `192.168.1.2`) | No |
+| **ha-london** | `https://ha-london.viktorbarzin.me` | `ssh pi@192.168.8.104` | Yes |
+| **ha-sofia** | `https://ha-sofia.viktorbarzin.me` | `ssh vbarzin@192.168.1.8` | No |
 
 - **Default**: ha-london (use unless user specifies "sofia" or "ha-sofia")
 - **Aliases**: "ha" or "HA" = ha-london. "ha sofia" or "ha-sofia" = ha-sofia.
@@ -358,3 +358,91 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 | Баня | Bathroom | `bania` |
 | Гараж | Garage | `garaj` |
 | Мазе | Basement | `maze` |
+
+---
+
+## ha-london Knowledge Map
+
+### Overview
+- **HA Version**: 2025.9.1 (Docker container on Raspberry Pi)
+- **Location**: London, UK
+- **Platform**: Raspberry Pi 4, Docker rootless mode (`--network=host`)
+- **SSH**: `ssh pi@192.168.8.104`
+- **Config path**: `/home/pi/docker/homeAssistant/`
+- **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
+- **Zone**: London (home)
+
+### Key Systems
+
+#### 1. Smart Plugs (TP-Link Kasa) — Energy Monitoring
+Named plugs with power/energy tracking:
+
+| Name | Entity | Usage/month | Purpose |
+|------|--------|-------------|---------|
+| Thor | `switch.thor` | 6.4 kWh | Server/NAS |
+| Pikkachu | `switch.pikkachu` | 4.8 kWh | Water cooler |
+| Michelle | `switch.emeter_plug` | 0.3 kWh | — |
+| Livia | `switch.livia` | 0.07 kWh | — |
+| Jinx | `switch.jinx` | 0.02 kWh | — |
+| Projector plug | `switch.tapo_p100` | unavailable | Tapo P100 |
+
+#### 2. Air Quality (Apollo AIR-1 via ESPHome)
+- `sensor.apollo_air_1_fa2d34_co2`: CO2 level
+- `sensor.apollo_air_1_fa2d34_sen55_temperature`: Temperature
+- `sensor.apollo_air_1_fa2d34_sen55_humidity`: Humidity
+- PM1.0/2.5/4.0/10 particulate sensors
+- VOC, NOx, ammonia, CO, ethanol, hydrogen, methane, NO2 gas sensors
+
+#### 3. Cowboy E-Bike
+- `sensor.bike_state_of_charge`: Battery %
+- `sensor.bike_total_distance`: Total km
+- `sensor.bike_total_co2_saved`: CO2 saved (grams)
+
+#### 4. Uptime Monitoring (UptimeRobot)
+- `sensor.blog`: blog uptime
+- `sensor.valchedrym`: Valchedram site uptime
+- `switch.blog`, `switch.valchedrym`: monitoring toggles
+
+#### 5. Oral-B Toothbrush (BLE)
+- `sensor.smart_series_6000_83d3_*`: mode, pressure, sector, time
+
+#### 6. Network Device Tracking (~100 devices)
+- Router-based MAC tracking (many unnamed)
+- Named: Viktor's iPhone15Pro, Anca's iPhone13Pro, Apple Watch, Amazon Fire, iRobot, Portal, Living-Room TV
+
+#### 7. Media & Entertainment
+- Projector + debug bridge: unavailable (Tapo plug off)
+- Scripts: `script.start_netflix`, `script.start_stremio`
+- Scene: `scene.night` (turns off Livia + Michelle plugs)
+
+### Custom Components
+- **cowboy**: Cowboy e-bike integration (HACS)
+- **hildebrandglow_dcc**: UK smart meter DCC energy data (HACS)
+
+### Integrations
+ESPHome, TP-Link Kasa, Tapo, UptimeRobot, Cowboy, Hildebrand Glow DCC, Oral-B BLE, Ookla Speedtest, HACS
+
+### Docker Setup
+```bash
+docker run -d --name homeassistant --privileged \
+  -e TZ=Europe/London \
+  -v /home/pi/docker/homeAssistant:/config \
+  -v /run/dbus:/run/dbus:ro \
+  --network=host --restart=unless-stopped \
+  homeassistant/home-assistant:2025.9
+```
+
+### SSH Access
+```bash
+# Read config
+ssh pi@192.168.8.104 "cat /home/pi/docker/homeAssistant/configuration.yaml"
+
+# Check logs
+ssh pi@192.168.8.104 "tail -50 /home/pi/docker/homeAssistant/home-assistant.log"
+
+# Restart HA container
+ssh pi@192.168.8.104 "docker restart homeassistant"
+
+# View Docker logs
+ssh pi@192.168.8.104 "docker logs homeassistant --tail 50"
+```
