@@ -34,10 +34,10 @@ Need to create, query, or manage calendar events in the user's Nextcloud calenda
 ```
 
 ### Execution Pattern (CRITICAL)
-Always activate the venv to get environment variables, then run via `/remote` skill:
+Always activate the venv to get environment variables:
 
 ```bash
-/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py [command] [options]
+source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/calendar-query.py [command] [options]
 ```
 
 ### Available Commands
@@ -103,7 +103,7 @@ python .claude/calendar-query.py week
 To create an event "Team offsite" from March 20-22, 2026:
 
 ```bash
-/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day
+source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day
 ```
 
 ## Important Notes
