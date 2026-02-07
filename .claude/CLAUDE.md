@@ -3,71 +3,26 @@
 ## Instructions for Claude
 - **When the user says "remember" something**: Always update this file (`.claude/CLAUDE.md`) with the information so it persists across sessions
 - **When discovering new patterns or versions**: Add them to the appropriate section below
+- **When making infrastructure changes**: Always update this file to reflect the current state (new services, removed services, version changes, config changes)
+- **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
+- **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
 
-## Execution Environment (CRITICAL)
-- **Prefer running commands directly first** - only use remote executor as fallback if local execution fails
+## Execution Environment
 
-### Commands that work LOCALLY (macOS)
+### Local Commands (macOS)
 - **File operations**: Read, Edit, Write, Glob, Grep tools
 - **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
 - **Basic shell**: ls, cat, head, tail, find, grep, etc.
 
-### Commands that REQUIRE REMOTE EXECUTOR
-- **terraform**: apply, plan, init, state - needs cluster access
-- **kubectl**: all k8s commands - needs cluster access
-- **helm**: chart operations - needs cluster access
+### Remote Commands (via `/remote` skill)
+For commands that need cluster access, use the `/remote` skill:
+- **terraform**: apply, plan, init, state
+- **kubectl**: all k8s commands
+- **helm**: chart operations
 - **docker**: container operations on remote hosts
-- **ssh**: connections to infrastructure nodes
-- **python/pip**: ALL Python and pip commands must run via remote executor
+- **python/pip**: Python and pip commands
 - **Any command interacting with**: Proxmox, Kubernetes cluster, NFS server, other infrastructure
-
-### Remote Command Execution (FALLBACK)
-For commands that fail locally, use the file-based relay. Uses a **shared executor** at `~/.claude/` on the remote VM.
-
-**IMPORTANT: Always use multi-session mode** - create a session at the start of each conversation.
-
-#### Shared Executor Architecture
-The executor lives at `~/.claude/` on the remote VM (wizard@10.0.10.10) and serves all projects:
-- `~/.claude/remote-executor.sh` - The shared command executor
-- `~/.claude/session-exec.sh` - Shared session management
-- `~/.claude/sessions/` → symlink to project sessions (or shared sessions directory)
-
-Each session includes a `workdir.txt` specifying which project directory to use.
-
-#### Multi-Session Mode (REQUIRED)
-Each Claude session gets isolated command execution:
-
-```bash
-# 1. Create a session (once per Claude session)
-SESSION_ID=$(.claude/session-exec.sh)
-
-# 2. Write command to your session
-echo "your-command-here" > .claude/sessions/$SESSION_ID/cmd_input.txt
-
-# 3. Wait and check status
-sleep 1 && cat .claude/sessions/$SESSION_ID/cmd_status.txt
-
-# 4. Read output (when status is "done:*")
-cat .claude/sessions/$SESSION_ID/cmd_output.txt
-
-# 5. Cleanup when done (optional - auto-cleaned after 24h)
-.claude/session-exec.sh $SESSION_ID cleanup
-```
-
-**Status values:** `ready` | `running` | `done:N` (N = exit code)
-
-**Requires user to start shared executor in another terminal:**
-```bash
-# On wizard@10.0.10.10:
-~/.claude/remote-executor.sh
-```
-
-**Session helper commands:**
-- `.claude/session-exec.sh` - Create new session (returns session ID)
-- `.claude/session-exec.sh <id> status` - Check session status
-- `.claude/session-exec.sh <id> cleanup` - Remove a session
-- `.claude/session-exec.sh _ list` - List all active sessions
 
 ---
 
@@ -85,7 +40,7 @@ Terraform-based infrastructure repository managing a home Kubernetes cluster on 
 ┌─────────────────────────────────────────────────────────────────┐
 │ 10.0.10.0/24 - Management Network                               │
 ├─────────────────────────────────────────────────────────────────┤
-│ 10.0.10.10  - Wizard (main server / remote executor host)       │
+│ 10.0.10.10  - Wizard (main server)                               │
 │ 10.0.10.15  - NFS Server (TrueNAS) - /mnt/main/*                │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -143,7 +98,7 @@ volume {
 Only use PV/PVC when the Helm chart requires `existingClaim` (like the Nextcloud Helm chart).
 
 ### Adding NFS Exports
-To add a new NFS exported directory (on the remote VM via executor):
+To add a new NFS exported directory:
 1. Edit `nfs_directories.txt` - add the new directory path, keep the list sorted
 2. Run `nfs_exports.sh` to create the NFS export
 
@@ -378,7 +333,6 @@ jellyfin, jellyseerr, tdarr, affine
 ## Git Operations (IMPORTANT)
 - **Git is slow** on this repo due to many files - commands can take 30+ seconds
 - Use `GIT_OPTIONAL_LOCKS=0` prefix if git hangs
-- **Local SSH is blocked** - use remote executor to push: `echo "git push origin master" > .claude/cmd_input.txt`
 - Always commit only specific files you changed, not everything
 - **ALWAYS ask user before pushing to remote** - never push without explicit confirmation
 
@@ -410,11 +364,6 @@ jellyfin, jellyseerr, tdarr, affine
 - **Script**: `.claude/home-assistant.py`
 - **Aliases**: "ha" or "HA" = Home Assistant
 
-### Remote Executor
-- **Always use multi-session mode** - never use legacy single-file mode
-- Create a session at the start of each conversation with `.claude/session-exec.sh`
-- Use session files at `.claude/sessions/$SESSION_ID/` for all remote commands
-
 ### Development
 - **Frontend framework**: Svelte (user is learning it, so use Svelte for all new web apps)
 
@@ -432,12 +381,6 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 - Handles database setup, ingress, DNS configuration
 - **When to use**: User provides GitHub URL or wants to deploy a new service
 - **Example**: "Deploy [GitHub repo] to the cluster"
-
-**setup-remote-executor** (`.claude/skills/setup-remote-executor.md`)
-- Set up shared remote executor in new projects
-- Creates session-exec.sh wrapper for the shared executor
-- **When to use**: Adding Claude Code support to a new project
-- **Example**: "Set up remote executor for this project"
 
 ---
 
