@@ -27,7 +27,6 @@ Need to control smart home devices, check sensor states, or run automations via 
 - User asks about smart home devices
 
 ## Prerequisites
-- Remote executor must be running (Python commands require remote execution)
 - The `~/.venvs/claude` virtualenv must have `requests` package installed
 - Environment variables `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN` must be set in the venv activation script
 
@@ -39,10 +38,10 @@ Need to control smart home devices, check sensor states, or run automations via 
 ```
 
 ### Execution Pattern (CRITICAL)
-Always use the remote executor with venv activation to get environment variables:
+Always activate the venv to get environment variables, then run via `/remote` skill:
 
 ```bash
-source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py [command] [options]
+/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py [command] [options]
 ```
 
 ### Available Commands
@@ -130,24 +129,12 @@ python .claude/home-assistant.py notify "Motion detected" --title "Security Aler
 python .claude/home-assistant.py notify "Hello" --target notify.mobile_app
 ```
 
-## Complete Example via Remote Executor
+## Complete Example
 
 To turn on the living room light:
 
-1. Write command to remote executor:
 ```bash
-# Using Write tool to write to cmd_input.txt:
-source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py on light.living_room
-```
-
-2. Wait and check status:
-```bash
-sleep 2 && cat /System/Volumes/Data/mnt/wizard/code/infra/.claude/cmd_status.txt
-```
-
-3. Read output:
-```bash
-cat /System/Volumes/Data/mnt/wizard/code/infra/.claude/cmd_output.txt
+/remote source ~/.venvs/claude/bin/activate && cd /home/wizard/code/infra && python .claude/home-assistant.py on light.living_room
 ```
 
 ## Common Entity Domains
