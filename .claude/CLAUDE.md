@@ -75,7 +75,8 @@ Terraform-based infrastructure repository managing a home Kubernetes cluster on 
 - Each service in `modules/kubernetes/<service>/main.tf` defines its own namespace, deployments, services, and ingress
 - NFS storage from `10.0.10.15` for persistent data
 - TLS secrets managed via `setup_tls_secret` module
-- Ingress uses Traefik (Helm chart, 3 replicas) with Middleware CRDs for rate limiting, auth, CSP headers, CrowdSec bouncer, and analytics injection
+- Ingress uses Traefik (Helm chart, 3 replicas) with HTTP/3 (QUIC) enabled, Middleware CRDs for rate limiting, auth, CSP headers, CrowdSec bouncer, and analytics injection
+- HTTP/3 enabled on Traefik (`http3.enabled=true`, `advertisedPort=443` on websecure entrypoint) and Cloudflare (`cloudflare_zone_settings_override` with `http3="on"`)
 - GPU workloads use `node_selector = { "gpu": "true" }`
 - Services expose to `*.viktorbarzin.me` domains
 
