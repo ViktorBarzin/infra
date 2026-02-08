@@ -103,6 +103,12 @@ resource "helm_release" "traefik" {
         protocol    = "TCP"
         expose      = { default = true }
       }
+      piper-tcp = {
+        port        = 10200
+        exposedPort = 10200
+        protocol    = "TCP"
+        expose      = { default = true }
+      }
     }
 
     service = {
