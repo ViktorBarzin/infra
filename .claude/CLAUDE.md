@@ -150,6 +150,7 @@ When configuring services to use the mailserver:
 - Freedify: latest (music streaming, factory pattern)
 - AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
 - Wyoming Whisper: latest (STT for Home Assistant, CPU on GPU node)
+- Health: latest (Apple Health data dashboard, Svelte + FastAPI + Caddy, uses PostgreSQL)
 
 ## Useful Commands
 ```bash
@@ -275,6 +276,7 @@ Top-level modules in `main.tf`:
 | frigate | NVR/camera (GPU) | gpu |
 | ebook2audiobook | E-book to audio (GPU) | gpu |
 | affine | Visual canvas/whiteboard (PostgreSQL + Redis) | aux |
+| health | Apple Health data dashboard (PostgreSQL) | aux |
 | whisper | Wyoming Faster Whisper STT (CPU on GPU node) | gpu |
 
 ---
@@ -297,7 +299,7 @@ owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine
+jellyfin, jellyseerr, tdarr, affine, health
 ```
 
 ### Special Subdomains
