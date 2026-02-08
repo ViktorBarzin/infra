@@ -121,3 +121,113 @@ resource "kubernetes_manifest" "whisper_tcp_ingressroute" {
     }
   }
 }
+
+# Piper TTS
+resource "kubernetes_deployment" "piper" {
+  metadata {
+    name      = "piper"
+    namespace = kubernetes_namespace.whisper.metadata[0].name
+    labels = {
+      app  = "piper"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "piper"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "piper"
+        }
+      }
+      spec {
+        node_selector = {
+          "gpu" : "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
+
+        container {
+          name  = "piper"
+          image = "rhasspy/wyoming-piper:latest"
+          args  = ["--voice", "en_US-lessac-medium"]
+
+          port {
+            container_port = 10200
+            protocol       = "TCP"
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+        }
+
+        volume {
+          name = "data"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/whisper"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "piper" {
+  metadata {
+    name      = "piper"
+    namespace = kubernetes_namespace.whisper.metadata[0].name
+    labels = {
+      app = "piper"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "piper"
+    }
+    port {
+      name        = "wyoming"
+      port        = 10200
+      target_port = 10200
+      protocol    = "TCP"
+    }
+  }
+}
+
+# TCP passthrough from Traefik to piper service
+resource "kubernetes_manifest" "piper_tcp_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRouteTCP"
+    metadata = {
+      name      = "piper-tcp"
+      namespace = "traefik"
+    }
+    spec = {
+      entryPoints = ["piper-tcp"]
+      routes = [{
+        match = "HostSNI(`*`)"
+        services = [{
+          name      = "piper"
+          namespace = "whisper"
+          port      = 10200
+        }]
+      }]
+    }
+  }
+}
