@@ -231,3 +231,26 @@ resource "kubernetes_manifest" "piper_tcp_ingressroute" {
     }
   }
 }
+
+# TCP passthrough from Traefik to ollama service (for HA voice pipeline)
+resource "kubernetes_manifest" "ollama_tcp_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRouteTCP"
+    metadata = {
+      name      = "ollama-tcp"
+      namespace = "traefik"
+    }
+    spec = {
+      entryPoints = ["ollama-tcp"]
+      routes = [{
+        match = "HostSNI(`*`)"
+        services = [{
+          name      = "ollama"
+          namespace = "ollama"
+          port      = 11434
+        }]
+      }]
+    }
+  }
+}
