@@ -46,14 +46,14 @@ resource "helm_release" "traefik" {
 
     providers = {
       kubernetesIngress = {
-        enabled                    = true
-        allowExternalNameServices  = true
-        publishedService           = { enabled = true }
+        enabled                   = true
+        allowExternalNameServices = true
+        publishedService          = { enabled = true }
       }
       kubernetesCRD = {
-        enabled                    = true
-        allowExternalNameServices  = true
-        allowCrossNamespace        = true
+        enabled                   = true
+        allowExternalNameServices = true
+        allowCrossNamespace       = true
       }
     }
 
@@ -95,6 +95,12 @@ resource "helm_release" "traefik" {
         port        = 5353
         exposedPort = 53
         protocol    = "UDP"
+        expose      = { default = true }
+      }
+      whisper-tcp = {
+        port        = 10300
+        exposedPort = 10300
+        protocol    = "TCP"
         expose      = { default = true }
       }
     }
