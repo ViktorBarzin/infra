@@ -261,6 +261,7 @@ module "ingress" {
   source          = "../ingress_factory"
   namespace       = kubernetes_namespace.grampsweb.metadata[0].name
   name            = "family"
+  service_name    = "grampsweb"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
 }
