@@ -149,6 +149,7 @@ When configuring services to use the mailserver:
 - Immich: v2.4.1
 - Freedify: latest (music streaming, factory pattern)
 - AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
+- Wyoming Whisper: latest (STT for Home Assistant, CPU on GPU node)
 
 ## Useful Commands
 ```bash
@@ -274,6 +275,7 @@ Top-level modules in `main.tf`:
 | frigate | NVR/camera (GPU) | gpu |
 | ebook2audiobook | E-book to audio (GPU) | gpu |
 | affine | Visual canvas/whiteboard (PostgreSQL + Redis) | aux |
+| whisper | Wyoming Faster Whisper STT (CPU on GPU node) | gpu |
 
 ---
 
@@ -441,3 +443,14 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
   - `MAILER_*` - SMTP configuration for email invites
 - **Local-first**: Data stored in browser by default; syncs to server when user creates account
 - **Docs**: https://docs.affine.pro/self-host-affine
+
+### Wyoming Whisper (STT for Home Assistant)
+- **Image**: `rhasspy/wyoming-whisper:latest`
+- **Port**: 10300/TCP (Wyoming protocol)
+- **Model**: `small-int8` (CPU-optimized, no CUDA variant available from upstream)
+- **Runs on**: GPU node (node_selector gpu=true + nvidia toleration) but uses CPU only
+- **Storage**: NFS at `/mnt/main/whisper` → `/data` (model cache)
+- **Exposure**: Internal only via Traefik TCP entrypoint `whisper-tcp` → IngressRouteTCP
+- **Access**: `10.0.20.202:10300` (Traefik LB IP, no public DNS)
+- **HA Integration**: Wyoming Protocol integration in ha-london, host `10.0.20.202`, port `10300`
+- **No GPU acceleration**: Official image is CPU-only (Debian + PyTorch CPU). The `mib1185/wyoming-faster-whisper-cuda` image exists but requires self-build.

@@ -83,6 +83,7 @@ variable "public_ip" {}
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "owntracks_credentials" {}
+variable "ollama_api_credentials" {}
 variable "dawarich_database_password" {}
 variable "geoapify_api_key" {}
 variable "tandoor_database_password" {}
@@ -134,8 +135,8 @@ variable "defcon_level" {
 locals {
   defcon_modules = {
     1 : ["wireguard", "technitium", "headscale", "traefik", "xray", "authentik", "cloudflare", "authelia", "monitoring"], # Critical connectivity services
-    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec", "kyverno"],                              # Storage and other db services
-    3 : ["reverse-proxy"], # Cluster admin services (k8s-dashboard chart repo still 404)
+    2 : ["vaultwarden", "redis", "immich", "nvidia", "metrics-server", "uptime-kuma", "crowdsec", "kyverno"],             # Storage and other db services
+    3 : ["reverse-proxy"],                                                                                                # Cluster admin services (k8s-dashboard chart repo still 404)
     4 : [
       "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
       "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget"
@@ -146,7 +147,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper"
     ],
   }
   active_modules = distinct(flatten([
@@ -729,10 +730,11 @@ module "servarr" {
 # }
 
 module "ollama" { # Disabled as it requires too much resources...
-  source          = "./ollama"
-  for_each        = contains(local.active_modules, "ollama") ? { ollama = true } : {}
-  tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.gpu
+  source                 = "./ollama"
+  for_each               = contains(local.active_modules, "ollama") ? { ollama = true } : {}
+  tls_secret_name        = var.tls_secret_name
+  tier                   = local.tiers.gpu
+  ollama_api_credentials = var.ollama_api_credentials
 
   depends_on = [null_resource.core_services]
 }
@@ -1083,6 +1085,15 @@ module "plotting-book" {
   for_each        = contains(local.active_modules, "plotting-book") ? { plotting-book = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "whisper" {
+  source          = "./whisper"
+  for_each        = contains(local.active_modules, "whisper") ? { whisper = true } : {}
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 
   depends_on = [null_resource.core_services]
 }
