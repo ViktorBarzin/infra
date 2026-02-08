@@ -313,8 +313,14 @@ smtp_password = var.mailserver_accounts["info@viktorbarzin.me"]
 
 ```bash
 terraform init
-terraform apply -target=module.kubernetes_cluster.module.<service> -auto-approve
+terraform apply -target=module.kubernetes_cluster.module.<service> -var="kube_config_path=$(pwd)/config" -auto-approve
 ```
+
+**IMPORTANT: Also apply the cloudflared module to create the Cloudflare DNS record:**
+```bash
+terraform apply -target=module.kubernetes_cluster.module.cloudflared -var="kube_config_path=$(pwd)/config" -auto-approve
+```
+Without this step, the DNS record won't be created even though it's defined in `terraform.tfvars`.
 
 ### 8. Verification
 
