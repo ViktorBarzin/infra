@@ -122,6 +122,8 @@ variable "openrouter_api_key" { type = string }
 variable "slack_bot_token" { type = string }
 variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
+variable "health_postgresql_password" { type = string }
+variable "health_secret_key" { type = string }
 
 
 variable "defcon_level" {
@@ -143,7 +145,7 @@ locals {
     ], # Activel used services
     # Optional services
     5 : [
-      "blog", "descheduler", "drone", "hackmd", "kms", "privatebin", "vault", "reloader", "city-guesser", "echo",
+      "blog", "descheduler", "drone", "hackmd", "health", "kms", "privatebin", "vault", "reloader", "city-guesser", "echo",
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
@@ -1085,6 +1087,17 @@ module "plotting-book" {
   for_each        = contains(local.active_modules, "plotting-book") ? { plotting-book = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "health" {
+  source              = "./health"
+  for_each            = contains(local.active_modules, "health") ? { health = true } : {}
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.health_postgresql_password
+  secret_key          = var.health_secret_key
+  tier                = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
