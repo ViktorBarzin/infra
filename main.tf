@@ -115,6 +115,7 @@ variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "cloudflare_tunnel_token" {}
 variable "owntracks_credentials" {}
+variable "ollama_api_credentials" {}
 variable "dawarich_database_password" {}
 variable "geoapify_api_key" {}
 variable "tandoor_database_password" {}
@@ -150,6 +151,8 @@ variable "openrouter_api_key" { type = string }
 variable "slack_bot_token" { type = string }
 variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
+variable "health_postgresql_password" { type = string }
+variable "health_secret_key" { type = string }
 
 variable "kube_config_path" {
   type    = string
@@ -510,12 +513,12 @@ module "kubernetes_cluster" {
   immich_postgresql_password = var.immich_postgresql_password
   immich_frame_api_key       = var.immich_frame_api_key
 
-  ingress_crowdsec_api_key            = var.ingress_crowdsec_api_key
-  crowdsec_enroll_key                 = var.crowdsec_enroll_key
-  crowdsec_db_password                = var.crowdsec_db_password
-  crowdsec_dash_api_key               = var.crowdsec_dash_api_key
-  crowdsec_dash_machine_id            = var.crowdsec_dash_machine_id
-  crowdsec_dash_machine_password      = var.crowdsec_dash_machine_password
+  ingress_crowdsec_api_key       = var.ingress_crowdsec_api_key
+  crowdsec_enroll_key            = var.crowdsec_enroll_key
+  crowdsec_db_password           = var.crowdsec_db_password
+  crowdsec_dash_api_key          = var.crowdsec_dash_api_key
+  crowdsec_dash_machine_id       = var.crowdsec_dash_machine_id
+  crowdsec_dash_machine_password = var.crowdsec_dash_machine_password
 
   vaultwarden_smtp_password = var.vaultwarden_smtp_password
 
@@ -557,6 +560,8 @@ module "kubernetes_cluster" {
   cloudflare_tunnel_token      = var.cloudflare_tunnel_token
 
   owntracks_credentials = var.owntracks_credentials
+
+  ollama_api_credentials = var.ollama_api_credentials
 
   dawarich_database_password = var.dawarich_database_password
   geoapify_api_key           = var.geoapify_api_key
@@ -607,6 +612,8 @@ module "kubernetes_cluster" {
   slack_channel      = var.slack_channel
 
   affine_postgresql_password = var.affine_postgresql_password
+  health_postgresql_password = var.health_postgresql_password
+  health_secret_key          = var.health_secret_key
 }
 
 
