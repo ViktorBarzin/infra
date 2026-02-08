@@ -151,6 +151,7 @@ When configuring services to use the mailserver:
 - AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
 - Wyoming Whisper: latest (STT for Home Assistant, CPU on GPU node)
 - Health: latest (Apple Health data dashboard, Svelte + FastAPI + Caddy, uses PostgreSQL)
+- Gramps Web: latest (genealogy, uses Redis + Celery)
 
 ## Useful Commands
 ```bash
@@ -278,6 +279,7 @@ Top-level modules in `main.tf`:
 | affine | Visual canvas/whiteboard (PostgreSQL + Redis) | aux |
 | health | Apple Health data dashboard (PostgreSQL) | aux |
 | whisper | Wyoming Faster Whisper STT (CPU on GPU node) | gpu |
+| grampsweb | Genealogy web app (Gramps Web) | aux |
 
 ---
 
@@ -299,7 +301,7 @@ owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine, health
+jellyfin, jellyseerr, tdarr, affine, health, family
 ```
 
 ### Special Subdomains
@@ -456,3 +458,21 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 - **Access**: `10.0.20.202:10300` (Traefik LB IP, no public DNS)
 - **HA Integration**: Wyoming Protocol integration in ha-london, host `10.0.20.202`, port `10300`
 - **No GPU acceleration**: Official image is CPU-only (Debian + PyTorch CPU). The `mib1185/wyoming-faster-whisper-cuda` image exists but requires self-build.
+
+### Gramps Web (Genealogy)
+- **Image**: `ghcr.io/gramps-project/grampsweb:latest`
+- **Port**: 5000
+- **URL**: `https://family.viktorbarzin.me`
+- **Components**: Web app + Celery worker (2 containers in 1 pod)
+- **Requires**: Shared Redis (DB 2 for Celery broker/backend, DB 3 for rate limiting)
+- **Storage**: NFS at `/mnt/main/grampsweb` with sub_paths: users, indexdir, thumbnail_cache, cache, secret, grampsdb, media, tmp
+- **Key env vars**:
+  - `GRAMPSWEB_SECRET_KEY` - Flask secret key (generated via `random_password`)
+  - `GRAMPSWEB_TREE` - Tree name
+  - `GRAMPSWEB_BASE_URL` - Public URL
+  - `GRAMPSWEB_CELERY_CONFIG__broker_url` / `result_backend` - Redis connection
+  - `GRAMPSWEB_REGISTRATION_DISABLED` - Set to `True`
+  - `GRAMPSWEB_EMAIL_*` - SMTP configuration
+  - `GRAMPSWEB_LLM_*` - Ollama AI integration
+- **Celery command**: `celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2`
+- **Registration**: Disabled; first user created via UI setup wizard

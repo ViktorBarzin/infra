@@ -149,7 +149,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb"
     ],
   }
   active_modules = distinct(flatten([
@@ -1107,6 +1107,16 @@ module "whisper" {
   for_each        = contains(local.active_modules, "whisper") ? { whisper = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.gpu
+
+  depends_on = [null_resource.core_services]
+}
+
+module "grampsweb" {
+  source          = "./grampsweb"
+  for_each        = contains(local.active_modules, "grampsweb") ? { grampsweb = true } : {}
+  tls_secret_name = var.tls_secret_name
+  smtp_password   = var.mailserver_accounts["info@viktorbarzin.me"]
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }
