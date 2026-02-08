@@ -168,6 +168,12 @@ kubectl get pods -A
 - `terraform apply -target=module.docker-registry-vm` - Apply docker registry VM
 - Only skip `-target` when explicitly told to apply everything
 
+**IMPORTANT: When deploying a new service**, you must ALSO apply the `cloudflared` module to create the Cloudflare DNS record:
+```bash
+terraform apply -target=module.kubernetes_cluster.module.cloudflared -var="kube_config_path=$(pwd)/config" -auto-approve
+```
+Adding a name to `cloudflare_non_proxied_names` or `cloudflare_proxied_names` in `terraform.tfvars` only defines the record — it won't be created until the `cloudflared` module is applied.
+
 ## Module Structure
 Top-level modules in `main.tf`:
 - `module.k8s-node-template` - K8s node VM template
