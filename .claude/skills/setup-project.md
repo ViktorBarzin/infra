@@ -53,7 +53,35 @@
 
 **IMPORTANT**: Never create databases yourself - always ask user for credentials to use.
 
-### 3. Terraform Module Creation
+### 3. NFS Storage Setup (if service needs persistent data)
+
+**IMPORTANT**: NFS directories must exist and be exported on the NFS server BEFORE deploying the service. If the directory doesn't exist, the pod will fail to mount the volume and get stuck in `ContainerCreating`.
+
+**Steps**:
+
+1. **Create the directory on the NFS server**:
+```bash
+ssh root@10.0.10.15 'mkdir -p /mnt/main/<service> && chmod 777 /mnt/main/<service>'
+```
+
+2. **Export the directory via TrueNAS**:
+   - The NFS export must be configured in TrueNAS so Kubernetes nodes can mount it
+   - Create the export via TrueNAS WebUI or API, allowing access from the Kubernetes network (10.0.20.0/24)
+   - Verify the export is accessible:
+```bash
+# From a k8s node or the dev VM
+showmount -e 10.0.10.15 | grep <service>
+```
+
+3. **Verify the mount works before proceeding**:
+```bash
+# Quick test from a k8s node
+ssh root@10.0.20.100 'mount -t nfs 10.0.10.15:/mnt/main/<service> /tmp/test-mount && ls /tmp/test-mount && umount /tmp/test-mount'
+```
+
+**Only proceed to Terraform module creation after confirming the NFS export is accessible.**
+
+### 4. Terraform Module Creation
 
 **Create module directory**:
 ```bash
@@ -194,7 +222,7 @@ module "ingress" {
 }
 ```
 
-### 4. Update Main Terraform Files
+### 5. Update Main Terraform Files
 
 **Add to `modules/kubernetes/main.tf`**:
 
@@ -254,7 +282,7 @@ cloudflare_non_proxied_names = [
 ]
 ```
 
-### 5. Email/SMTP Configuration (if needed)
+### 6. Email/SMTP Configuration (if needed)
 
 If service needs to send emails:
 ```hcl
@@ -281,14 +309,14 @@ Add to module call:
 smtp_password = var.mailserver_accounts["info@viktorbarzin.me"]
 ```
 
-### 6. Apply Terraform
+### 7. Apply Terraform
 
 ```bash
 terraform init
 terraform apply -target=module.kubernetes_cluster.module.<service> -auto-approve
 ```
 
-### 7. Verification
+### 8. Verification
 
 ```bash
 kubectl get pods -n <service>
@@ -297,7 +325,7 @@ kubectl logs -n <service> -l app=<service> --tail=50
 
 Test URL: `https://<service>.viktorbarzin.me`
 
-### 8. Commit Changes
+### 9. Commit Changes
 
 ```bash
 git add modules/kubernetes/<service>/ main.tf modules/kubernetes/main.tf terraform.tfvars
@@ -359,6 +387,8 @@ env {
 - [ ] Find official Docker image or docker-compose
 - [ ] Identify dependencies (DB, Redis, etc.)
 - [ ] Ask user for database credentials (never create yourself)
+- [ ] Create NFS directory and export on TrueNAS (if persistent storage needed)
+- [ ] Verify NFS mount is accessible from k8s nodes
 - [ ] Create `modules/kubernetes/<service>/main.tf`
 - [ ] Update `modules/kubernetes/main.tf` (variables, DEFCON level, module block)
 - [ ] Update `main.tf` (variable, pass to module)
@@ -378,6 +408,7 @@ env {
 
 ## Notes
 
+- **Always create NFS directories and exports BEFORE deploying** - pods will get stuck in `ContainerCreating` if the NFS path doesn't exist or isn't exported
 - **Always use official documentation** as the source of truth
 - **Prefer stable/latest tags** over specific versions for self-hosted
 - **Use shared infrastructure**: PostgreSQL at `postgresql.dbaas.svc.cluster.local`, Redis at `redis.redis.svc.cluster.local`
