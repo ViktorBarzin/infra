@@ -95,8 +95,8 @@ Only use PV/PVC when the Helm chart requires `existingClaim` (like the Nextcloud
 
 ### Adding NFS Exports
 To add a new NFS exported directory:
-1. Edit `nfs_directories.txt` - add the new directory path, keep the list sorted
-2. Run `nfs_exports.sh` to create the NFS export
+1. Edit `secrets/nfs_directories.txt` - add the new directory path, keep the list sorted
+2. Run `secrets/nfs_exports.sh` from the `secrets/` directory to update the NFS share via TrueNAS API
 
 ### Factory Pattern (for multi-user services)
 Used when a service needs one instance per user. Structure:
