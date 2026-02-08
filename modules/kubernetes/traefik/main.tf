@@ -109,6 +109,12 @@ resource "helm_release" "traefik" {
         protocol    = "TCP"
         expose      = { default = true }
       }
+      ollama-tcp = {
+        port        = 11434
+        exposedPort = 11434
+        protocol    = "TCP"
+        expose      = { default = true }
+      }
     }
 
     service = {
