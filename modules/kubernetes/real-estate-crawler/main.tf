@@ -64,6 +64,11 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
       }
     }
   }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].container[0].image
+    ]
+  }
 }
 
 resource "kubernetes_service" "realestate-crawler-ui" {
@@ -158,6 +163,14 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             name  = "SLACK_WEBHOOK_URL"
             value = var.notification_settings["slack"]
           }
+          env {
+            name  = "WEBAUTHN_RP_ID"
+            value = "wrongmove.viktorbarzin.me"
+          }
+          env {
+            name  = "WEBAUTHN_ORIGIN"
+            value = "https://wrongmove.viktorbarzin.me"
+          }
           port {
             name           = "http"
             container_port = 5001
@@ -177,6 +190,11 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
         }
       }
     }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].container[0].image
+    ]
   }
 }
 resource "kubernetes_service" "realestate-crawler-api" {
