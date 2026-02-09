@@ -48,7 +48,7 @@ resource "kubernetes_config_map" "time_slicing_config" {
           failRequestsGreaterThanOne: false
           resources:
             - name: nvidia.com/gpu
-              replicas: 20
+              replicas: 100
     EOF
   }
   depends_on = [kubernetes_namespace.nvidia]
