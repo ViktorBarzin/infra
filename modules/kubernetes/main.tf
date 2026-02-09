@@ -149,7 +149,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing"
     ],
   }
   active_modules = distinct(flatten([
@@ -901,6 +901,15 @@ module "real-estate-crawler" {
   db_password           = var.realestate_crawler_db_password
   notification_settings = var.realestate_crawler_notification_settings
   tier                  = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "osm_routing" {
+  source          = "./osm-routing"
+  for_each        = contains(local.active_modules, "osm-routing") ? { osm-routing = true } : {}
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
 }

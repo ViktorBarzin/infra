@@ -160,6 +160,18 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             value = "debug"
           }
           env {
+            name  = "OSRM_FOOT_URL"
+            value = "http://osrm-foot.osm-routing.svc.cluster.local:5000"
+          }
+          env {
+            name  = "OSRM_BICYCLE_URL"
+            value = "http://osrm-bicycle.osm-routing.svc.cluster.local:5000"
+          }
+          env {
+            name  = "OTP_URL"
+            value = "http://otp.osm-routing.svc.cluster.local:8080"
+          }
+          env {
             name  = "SLACK_WEBHOOK_URL"
             value = var.notification_settings["slack"]
           }
@@ -324,6 +336,18 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           env {
             name  = "SLACK_WEBHOOK_URL"
             value = lookup(var.notification_settings, "slack", "")
+          }
+          env {
+            name  = "OSRM_FOOT_URL"
+            value = "http://osrm-foot.osm-routing.svc.cluster.local:5000"
+          }
+          env {
+            name  = "OSRM_BICYCLE_URL"
+            value = "http://osrm-bicycle.osm-routing.svc.cluster.local:5000"
+          }
+          env {
+            name  = "OTP_URL"
+            value = "http://otp.osm-routing.svc.cluster.local:8080"
           }
           volume_mount {
             name       = "data"
