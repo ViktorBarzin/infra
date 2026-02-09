@@ -43,7 +43,7 @@ resource "kubernetes_deployment" "health" {
           image = "viktorbarzin/health:latest"
 
           port {
-            container_port = 80
+            container_port = 3000
           }
 
           env {
@@ -115,7 +115,7 @@ resource "kubernetes_service" "health" {
     port {
       name        = "http"
       port        = 80
-      target_port = 80
+      target_port = 3000
     }
   }
 }
