@@ -186,6 +186,25 @@ deschedulerPolicy:
             - RemovePodsViolatingInterPodAntiAffinity
             - PodLifeTime
             - RemoveFailedPods
+    - name: idrac-restart
+      pluginConfig:
+        - name: DefaultEvictor
+          args:
+            ignorePvcPods: true
+            evictLocalStoragePods: true
+        - name: PodLifeTime
+          args:
+            maxPodLifeTimeSeconds: 21600
+            namespaces:
+              include:
+                - "monitoring"
+            labelSelector:
+              matchLabels:
+                app: idrac-redfish-exporter
+      plugins:
+        deschedule:
+          enabled:
+            - PodLifeTime
 
 priorityClassName: system-cluster-critical
 
