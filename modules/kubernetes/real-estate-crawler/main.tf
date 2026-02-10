@@ -33,9 +33,13 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
   }
   spec {
     replicas = 1
-    # strategy {
-    #   type = "RollingUpdate" # DB is external so we can roll
-    # }
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
+    }
     selector {
       match_labels = {
         app = "realestate-crawler-ui"
@@ -102,7 +106,11 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   spec {
     replicas = 1
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
     }
     selector {
       match_labels = {
