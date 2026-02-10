@@ -189,37 +189,10 @@ resource "kubernetes_service" "webhook_handler" {
   }
 }
 
-resource "kubernetes_ingress_v1" "webhook_handler" {
-  metadata {
-    name      = "webhook-handler-ingress"
-    namespace = kubernetes_namespace.webhook-handler.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["webhook.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "webhook.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "webhook-handler"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
+  name            = "webhook-handler"
+  host            = "webhook"
+  tls_secret_name = var.tls_secret_name
 }

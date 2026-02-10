@@ -118,37 +118,11 @@ resource "kubernetes_service" "readarr" {
   }
 }
 
-resource "kubernetes_ingress_v1" "readarr" {
-  metadata {
-    name      = "readarr"
-    namespace = "readarr"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["readarr.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "readarr.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "readarr"
-              port {
-                number = 8787
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../../ingress_factory"
+  namespace       = "readarr"
+  name            = "readarr"
+  port            = 8787
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }

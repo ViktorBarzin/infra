@@ -210,39 +210,11 @@ resource "kubernetes_service" "oauth_proxy" {
   }
 }
 
-resource "kubernetes_ingress_v1" "oauth" {
-  metadata {
-    name      = "oauth2"
-    namespace = "oauth2"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["oauth2.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "oauth2.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "oauth2"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "oauth2"
+  name            = "oauth2"
+  tls_secret_name = var.tls_secret_name
 }
 
 

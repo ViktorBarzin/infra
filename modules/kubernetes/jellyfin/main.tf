@@ -108,38 +108,10 @@ resource "kubernetes_service" "jellyfin" {
   }
 }
 
-resource "kubernetes_ingress_v1" "jellyfin" {
-  metadata {
-    name      = "jellyfin"
-    namespace = kubernetes_namespace.jellyfin.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["jellyfin.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "jellyfin.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "jellyfin"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.jellyfin.metadata[0].name
+  name            = "jellyfin"
+  tls_secret_name = var.tls_secret_name
 }
 
