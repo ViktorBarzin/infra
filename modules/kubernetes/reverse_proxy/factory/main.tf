@@ -111,7 +111,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
   }
 }
 
-# Rybbit analytics middleware (rewritebody plugin) - created per service when rybbit_site_id is set
+# Rybbit analytics middleware (rewrite-body plugin with content-type filtering) - created per service when rybbit_site_id is set
 resource "kubernetes_manifest" "rybbit_analytics" {
   count = var.rybbit_site_id != null ? 1 : 0
 
@@ -124,11 +124,14 @@ resource "kubernetes_manifest" "rybbit_analytics" {
     }
     spec = {
       plugin = {
-        rewritebody = {
+        rewrite-body = {
           rewrites = [{
             regex       = "</head>"
             replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"${var.rybbit_site_id}\" defer></script></head>"
           }]
+          monitoring = {
+            types = ["text/html"]
+          }
         }
       }
     }

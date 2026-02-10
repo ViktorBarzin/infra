@@ -1,5 +1,9 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "ollama_api_credentials" {
+  type    = map(string)
+  default = {}
+}
 
 resource "kubernetes_namespace" "ollama" {
   metadata {
@@ -158,17 +162,57 @@ module "ollama-ingress" {
   port                    = 11434
 }
 
-# Ollama API ingress for Claude Code access (restricted to LAN/VPN)
+# Ollama API ingress for external access (basicAuth protected)
+locals {
+  ollama_api_htpasswd = join("\n", [for name, pass in var.ollama_api_credentials : "${name}:${bcrypt(pass, 10)}"])
+}
+
+resource "kubernetes_secret" "ollama_api_basic_auth" {
+  count = length(var.ollama_api_credentials) > 0 ? 1 : 0
+  metadata {
+    name      = "ollama-api-basic-auth-secret"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
+  }
+
+  data = {
+    auth = local.ollama_api_htpasswd
+  }
+
+  type = "Opaque"
+  lifecycle {
+    ignore_changes = [data]
+  }
+}
+
+resource "kubernetes_manifest" "ollama_api_basic_auth_middleware" {
+  count = length(var.ollama_api_credentials) > 0 ? 1 : 0
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "ollama-api-basic-auth"
+      namespace = kubernetes_namespace.ollama.metadata[0].name
+    }
+    spec = {
+      basicAuth = {
+        secret = kubernetes_secret.ollama_api_basic_auth[0].metadata[0].name
+      }
+    }
+  }
+}
+
 module "ollama-api-ingress" {
-  source                  = "../ingress_factory"
-  namespace               = kubernetes_namespace.ollama.metadata[0].name
-  name                    = "ollama-api"
-  service_name            = "ollama"
-  root_domain             = "viktorbarzin.lan"
-  tls_secret_name         = var.tls_secret_name
-  allow_local_access_only = true # Restricts to 10.0.0.0/8, 192.168.1.0/24
-  ssl_redirect            = false
-  port                    = 11434
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.ollama.metadata[0].name
+  name            = "ollama-api"
+  service_name    = "ollama"
+  root_domain     = "viktorbarzin.me"
+  tls_secret_name = var.tls_secret_name
+  ssl_redirect    = true
+  port            = 11434
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.middlewares" = "ollama-ollama-api-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-crowdsec@kubernetescrd"
+  }
 }
 
 # Web UI
