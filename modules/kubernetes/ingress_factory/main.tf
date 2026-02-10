@@ -59,6 +59,22 @@ variable "exclude_crowdsec" {
   type    = bool
   default = false
 }
+variable "full_host" {
+  type    = string
+  default = null
+}
+variable "extra_middlewares" {
+  type    = list(string)
+  default = []
+}
+variable "skip_default_rate_limit" {
+  type    = bool
+  default = false
+}
+
+locals {
+  effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -89,15 +105,15 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     name      = var.name
     namespace = var.namespace
     annotations = merge({
-      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact([
-        "traefik-rate-limit@kubernetescrd",
+      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
+        var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
-      ]))
+      ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
     }, var.extra_annotations)
   }
@@ -105,11 +121,11 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
   spec {
     ingress_class_name = "traefik"
     tls {
-      hosts       = ["${var.name}.${var.root_domain}"]
+      hosts       = [local.effective_host]
       secret_name = var.tls_secret_name
     }
     rule {
-      host = "${var.host != null ? var.host : var.name}.${var.root_domain}"
+      host = local.effective_host
       http {
         dynamic "path" {
           for_each = var.ingress_path
@@ -132,7 +148,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
   }
 }
 
-# Rybbit analytics middleware (rewritebody plugin) - created per service when rybbit_site_id is set
+# Rybbit analytics middleware (rewrite-body plugin with content-type filtering) - created per service when rybbit_site_id is set
 resource "kubernetes_manifest" "rybbit_analytics" {
   count = var.rybbit_site_id != null ? 1 : 0
 
@@ -145,11 +161,14 @@ resource "kubernetes_manifest" "rybbit_analytics" {
     }
     spec = {
       plugin = {
-        rewritebody = {
+        rewrite-body = {
           rewrites = [{
             regex       = "</head>"
             replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"${var.rybbit_site_id}\" defer></script></head>"
           }]
+          monitoring = {
+            types = ["text/html"]
+          }
         }
       }
     }

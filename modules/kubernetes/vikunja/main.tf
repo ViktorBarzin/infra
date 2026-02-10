@@ -195,49 +195,22 @@ resource "kubernetes_service" "api" {
   }
 }
 
-resource "kubernetes_ingress_v1" "vikunja" {
-  metadata {
-    name      = "vikunja"
-    namespace = kubernetes_namespace.vikunja.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.vikunja.metadata[0].name
+  name            = "vikunja"
+  host            = "todo"
+  tls_secret_name = var.tls_secret_name
+}
 
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["todo.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "todo.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "vikunja"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-        path {
-          path = "/api/"
-          backend {
-            service {
-              name = "api"
-              port {
-                number = 3456
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress-api" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.vikunja.metadata[0].name
+  name            = "vikunja-api"
+  host            = "todo"
+  service_name    = "api"
+  port            = 3456
+  ingress_path    = ["/api/"]
+  tls_secret_name = var.tls_secret_name
 }
 

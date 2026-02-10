@@ -89,14 +89,6 @@ resource "kubernetes_service" "realestate-crawler-ui" {
     }
   }
 }
-# module "ingress" {
-#   source          = "../ingress_factory"
-#  namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
-#   name            = "wrongmove"
-#   service_name    = "realestate-crawler-ui"
-#   tls_secret_name = var.tls_secret_name
-#   protected       = true
-# }
 
 resource "kubernetes_deployment" "realestate-crawler-api" {
   metadata {
@@ -228,60 +220,24 @@ resource "kubernetes_service" "realestate-crawler-api" {
     }
   }
 }
-# module "ingress-api" {
-#   source          = "../ingress_factory"
-#  namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
-#   name            = "wrongmove-api"
-#   service_name    = "realestate-crawler-api"
-#   tls_secret_name = var.tls_secret_name
-# }
 
-resource "kubernetes_ingress_v1" "proxied-ingress" {
-  metadata {
-    name      = "realestate-crawler"
-    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,realestate-crawler-rybbit-analytics@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name            = "wrongmove"
+  service_name    = "realestate-crawler-ui"
+  tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "edee05de453d"
+}
 
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["wrongmove.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "wrongmove.viktorbarzin.me"
-      http {
-        path {
-          path      = "/"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "realestate-crawler-ui"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-        path {
-          path      = "/api"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "realestate-crawler-api"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress-api" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name            = "wrongmove-api"
+  host            = "wrongmove"
+  service_name    = "realestate-crawler-api"
+  ingress_path    = ["/api"]
+  tls_secret_name = var.tls_secret_name
 }
 
 
@@ -485,28 +441,6 @@ resource "kubernetes_cron_job_v1" "scrape-rightmove" {
               }
             }
           }
-        }
-      }
-    }
-  }
-}
-
-# Rybbit analytics middleware for real-estate-crawler
-resource "kubernetes_manifest" "rybbit_analytics" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "rybbit-analytics"
-      namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        rewritebody = {
-          rewrites = [{
-            regex       = "</head>"
-            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"edee05de453d\" defer></script></head>"
-          }]
         }
       }
     }

@@ -455,47 +455,25 @@ resource "kubernetes_service" "immich-machine-learning" {
   }
 }
 
-resource "kubernetes_ingress_v1" "ingress" {
-  metadata {
-    namespace = kubernetes_namespace.immich.metadata[0].name
-    name      = "immich"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-immich-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,immich-rybbit-analytics@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-
-      "gethomepage.dev/enabled"      = "true"
-      "gethomepage.dev/description"  = "Photos library"
-      "gethomepage.dev/icon"         = "immich.png"
-      "gethomepage.dev/name"         = "Immich"
-      "gethomepage.dev/widget.type"  = "immich"
-      "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
-      "gethomepage.dev/pod-selector" = ""
-      "gethomepage.dev/widget.key"   = var.homepage_token
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["immich.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "immich.viktorbarzin.me"
-      http {
-        path {
-          backend {
-            service {
-              name = "immich-server"
-              port {
-                number = 2283
-
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress-immich" {
+  source                  = "../ingress_factory"
+  namespace               = kubernetes_namespace.immich.metadata[0].name
+  name                    = "immich"
+  service_name            = "immich-server"
+  port                    = 2283
+  tls_secret_name         = var.tls_secret_name
+  rybbit_site_id          = "35eedb7a3d2b"
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/description"  = "Photos library"
+    "gethomepage.dev/icon"         = "immich.png"
+    "gethomepage.dev/name"         = "Immich"
+    "gethomepage.dev/widget.type"  = "immich"
+    "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
+    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.key"   = var.homepage_token
   }
 }
 
@@ -666,26 +644,4 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 #   tls_secret_name = var.tls_secret_name
 #   protected       = true
 # }
-
-# Rybbit analytics middleware for Immich
-resource "kubernetes_manifest" "rybbit_analytics" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "rybbit-analytics"
-      namespace = kubernetes_namespace.immich.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        rewritebody = {
-          rewrites = [{
-            regex       = "</head>"
-            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"35eedb7a3d2b\" defer></script></head>"
-          }]
-        }
-      }
-    }
-  }
-}
 

@@ -35,50 +35,21 @@ resource "helm_release" "authentik" {
 }
 
 
-resource "kubernetes_ingress_v1" "authentik" {
-  metadata {
-    name      = "authentik"
-    namespace = kubernetes_namespace.authentik.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.authentik.metadata[0].name
+  name            = "authentik"
+  service_name    = "goauthentik-server"
+  tls_secret_name = var.tls_secret_name
+}
 
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["authentik.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "authentik.viktorbarzin.me"
-      http {
-        path {
-          path      = "/outpost.goauthentik.io"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "ak-outpost-authentik-embedded-outpost"
-              port {
-                number = 9000
-              }
-            }
-          }
-        }
-        path {
-          path      = "/"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "goauthentik-server"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress-outpost" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.authentik.metadata[0].name
+  name            = "authentik-outpost"
+  host            = "authentik"
+  service_name    = "ak-outpost-authentik-embedded-outpost"
+  port            = 9000
+  ingress_path    = ["/outpost.goauthentik.io"]
+  tls_secret_name = var.tls_secret_name
 }

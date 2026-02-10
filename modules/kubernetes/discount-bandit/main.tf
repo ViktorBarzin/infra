@@ -98,37 +98,10 @@ resource "kubernetes_service" "discount-bandit" {
   }
 }
 
-resource "kubernetes_ingress_v1" "discount-bandit" {
-  metadata {
-    name      = "discount-bandit"
-    namespace = kubernetes_namespace.discount-bandit.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["discount.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "discount.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "discount-bandit"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.discount-bandit.metadata[0].name
+  name            = "discount-bandit"
+  host            = "discount"
+  tls_secret_name = var.tls_secret_name
 }
