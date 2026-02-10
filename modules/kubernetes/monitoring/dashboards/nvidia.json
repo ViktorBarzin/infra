@@ -109,7 +109,7 @@
                     "sort": "none"
                 }
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -183,7 +183,7 @@
                 "showThresholdMarkers": true,
                 "sizing": "auto"
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -287,7 +287,7 @@
                     "sort": "none"
                 }
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -361,7 +361,7 @@
                 "showThresholdMarkers": true,
                 "sizing": "auto"
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -469,7 +469,7 @@
                     "sort": "none"
                 }
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -572,7 +572,7 @@
                     "sort": "none"
                 }
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -676,7 +676,7 @@
                     "sort": "none"
                 }
             },
-            "pluginVersion": "12.3.0",
+            "pluginVersion": "12.3.1",
             "targets": [
                 {
                     "datasource": {
@@ -695,6 +695,106 @@
             ],
             "title": "GPU SM Clocks",
             "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "barWidthFactor": 0.6,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "auto",
+                        "showValues": false,
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": 0
+                            },
+                            {
+                                "color": "red",
+                                "value": 80
+                            }
+                        ]
+                    },
+                    "unit": "bytes"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 24
+            },
+            "id": 19,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "hideZeros": false,
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "12.3.1",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "PBFA97CFB590B2093"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum by (namespace) (gpu_pod_memory_used_bytes)",
+                    "instant": false,
+                    "legendFormat": "{{namespace}}",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "GPU Memory per Application",
+            "type": "timeseries"
         }
     ],
     "preload": false,
@@ -705,12 +805,12 @@
         "list": []
     },
     "time": {
-        "from": "now-3h",
+        "from": "now-12h",
         "to": "now"
     },
     "timepicker": {},
     "timezone": "",
     "title": "NVIDIA DCGM Exporter Dashboard",
     "uid": "Oxed_c6Wz",
-    "version": 8
+    "version": 9
 }

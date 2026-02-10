@@ -135,9 +135,9 @@ resource "helm_release" "traefik" {
           moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
           version    = "v1.4.2"
         }
-        rewritebody = {
-          moduleName = "github.com/traefik/plugin-rewritebody"
-          version    = "v0.3.1"
+        rewrite-body = {
+          moduleName = "github.com/packruler/rewrite-body"
+          version    = "v1.2.0"
         }
       }
     }
