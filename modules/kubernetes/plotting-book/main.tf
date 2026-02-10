@@ -25,6 +25,11 @@ resource "kubernetes_deployment" "plotting-book" {
       tier = var.tier
     }
   }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].container[0].image,
+    ]
+  }
   spec {
     replicas = 1
     selector {
@@ -40,9 +45,10 @@ resource "kubernetes_deployment" "plotting-book" {
       }
       spec {
         container {
-          # image = "ancamilea/book-plotter:7"
-          image = "viktorbarzin/book-plotter:7"
-          name  = "plotting-book"
+          image = "ancamilea/book-plotter:latest"
+          # image = "viktorbarzin/book-plotter:7"
+          name              = "plotting-book"
+          image_pull_policy = "Always"
           port {
             container_port = 3001
           }
