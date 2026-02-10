@@ -78,37 +78,10 @@ resource "kubernetes_service" "openid_help_page" {
   }
 }
 
-resource "kubernetes_ingress_v1" "openid_help_page" {
-  metadata {
-    name      = "openid-help-page"
-    namespace = "openid-help-page"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["kubectl.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "kubectl.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "openid-help-page"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = "openid-help-page"
+  name            = "openid-help-page"
+  host            = "kubectl"
+  tls_secret_name = var.tls_secret_name
 }

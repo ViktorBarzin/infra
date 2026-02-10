@@ -183,52 +183,23 @@ resource "kubernetes_service" "headscale" {
   }
 }
 
-resource "kubernetes_ingress_v1" "headscale" {
-  metadata {
-    name      = "headscale-ingress"
-    namespace = kubernetes_namespace.headscale.metadata[0].name
-    annotations = {
-      // DO NOT ADD CLIENT TLS AUTH as this breaks vpn auth
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.headscale.metadata[0].name
+  name            = "headscale"
+  port            = 8080
+  tls_secret_name = var.tls_secret_name
+}
 
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["headscale.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "headscale.viktorbarzin.me"
-      http {
-        path {
-          path = "/web"
-          # path = "/admin"
-          backend {
-            service {
-              name = "headscale"
-              port {
-                number = 8081
-              }
-            }
-          }
-        }
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "headscale"
-              port {
-                number = 8080
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress-ui" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.headscale.metadata[0].name
+  name            = "headscale-ui"
+  host            = "headscale"
+  service_name    = "headscale"
+  port            = 8081
+  ingress_path    = ["/web"]
+  tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_service" "headscale-server" {

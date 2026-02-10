@@ -108,75 +108,22 @@ resource "kubernetes_service" "blog" {
   }
 }
 
-resource "kubernetes_ingress_v1" "blog" {
-  metadata {
-    name      = "blog-ingress"
-    namespace = kubernetes_namespace.website.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,website-rybbit-analytics@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "blog"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-    rule {
-      host = "www.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "blog"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.website.metadata[0].name
+  name            = "blog"
+  service_name    = "blog"
+  full_host       = "viktorbarzin.me"
+  tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "da853a2438d0"
 }
 
-# Rybbit analytics middleware for blog
-resource "kubernetes_manifest" "rybbit_analytics" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "rybbit-analytics"
-      namespace = kubernetes_namespace.website.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        rewritebody = {
-          rewrites = [{
-            regex       = "</head>"
-            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"da853a2438d0\" defer></script></head>"
-          }]
-        }
-      }
-    }
-  }
+module "ingress-www" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.website.metadata[0].name
+  name            = "blog-www"
+  service_name    = "blog"
+  full_host       = "www.viktorbarzin.me"
+  tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "da853a2438d0"
 }

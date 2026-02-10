@@ -286,79 +286,21 @@ resource "kubernetes_service" "rybbit-client" {
   }
 }
 
-
-resource "kubernetes_ingress_v1" "rybbit" {
-  metadata {
-    name      = "rybbit"
-    namespace = kubernetes_namespace.rybbit.metadata[0].name
-
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,rybbit-rybbit-analytics@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["rybbit.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "rybbit.viktorbarzin.me"
-
-      http {
-        # API backend
-        path {
-          path      = "/api"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "rybbit"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-
-        # Frontend
-        path {
-          path      = "/"
-          path_type = "Prefix"
-
-          backend {
-            service {
-              name = "rybbit-client"
-              port {
-                number = 80
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.rybbit.metadata[0].name
+  name            = "rybbit"
+  service_name    = "rybbit-client"
+  tls_secret_name = var.tls_secret_name
+  rybbit_site_id  = "3c476801a777"
 }
 
-# Rybbit analytics middleware for self-tracking
-resource "kubernetes_manifest" "rybbit_analytics" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "rybbit-analytics"
-      namespace = kubernetes_namespace.rybbit.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        rewritebody = {
-          rewrites = [{
-            regex       = "</head>"
-            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"3c476801a777\" defer></script></head>"
-          }]
-        }
-      }
-    }
-  }
+module "ingress-api" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.rybbit.metadata[0].name
+  name            = "rybbit-api"
+  host            = "rybbit"
+  service_name    = "rybbit"
+  ingress_path    = ["/api"]
+  tls_secret_name = var.tls_secret_name
 }
