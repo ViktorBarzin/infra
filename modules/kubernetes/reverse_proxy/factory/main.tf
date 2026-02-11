@@ -37,6 +37,10 @@ variable "strip_auth_headers" {
   type    = bool
   default = false
 }
+variable "extra_middlewares" {
+  type    = list(string)
+  default = []
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -66,15 +70,16 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     name      = var.name
     namespace = var.namespace
     annotations = merge({
-      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact([
+      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
         "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.strip_auth_headers ? "traefik-strip-auth-headers@kubernetescrd" : null,
+        var.rybbit_site_id != null ? "traefik-strip-accept-encoding@kubernetescrd" : null,
         var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
-      ]))
+      ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"
       "traefik.ingress.kubernetes.io/service.serversscheme"    = var.backend_protocol == "HTTPS" ? "https" : null
       "traefik.ingress.kubernetes.io/service.serverstransport" = var.backend_protocol == "HTTPS" ? "traefik-insecure-skip-verify@kubernetescrd" : null
