@@ -7,6 +7,7 @@ variable "crowdsec_dash_api_key" { type = string }          # used for web dash
 variable "crowdsec_dash_machine_id" { type = string }       # used for web dash
 variable "crowdsec_dash_machine_password" { type = string } # used for web dash
 variable "tier" { type = string }
+variable "slack_webhook_url" { type = string }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
@@ -97,7 +98,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key })]
+  values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url })]
   timeout = 3600
 }
 

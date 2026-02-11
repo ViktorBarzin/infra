@@ -5,19 +5,19 @@ agent:
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
     # The namespace where the pod is located
-    - namespace: ingress-nginx
+    - namespace: traefik
       # The pod name
-      podName: ingress-nginx-controller-*
+      podName: traefik-*
       # as in crowdsec configuration, we need to specify the program name so the parser will match and parse logs
-      program: nginx
+      program: traefik
   # Those are ENV variables
   env:
     # As it's a test, we don't want to share signals with CrowdSec so disable the Online API.
     # - name: DISABLE_ONLINE_API
     #   value: "true"
-    # As we are running Nginx, we want to install the Nginx collection
+    # As we are running Traefik, we want to install the Traefik collection
     - name: COLLECTIONS
-      value: "crowdsecurity/nginx crowdsecurity/base-http-scenarios crowdsecurity/http-cve"
+      value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/http-cve"
     - name: SCENARIOS
       value: ""
       # value: "crowdsecurity/http-crawl-aggressive"
@@ -133,6 +133,8 @@ config:
     decisions:
       - type: captcha
         duration: 4h
+    notifications:
+      - slack_alerts
     on_success: break
     ---
     # Default: Ban for serious attacks (CVE exploits, scanners, brute force)
@@ -142,6 +144,8 @@ config:
     decisions:
       - type: ban
         duration: 4h
+    notifications:
+      - slack_alerts
     on_success: break
     ---
     name: default_range_remediation
@@ -150,6 +154,8 @@ config:
     decisions:
       - type: ban
         duration: 4h
+    notifications:
+      - slack_alerts
     on_success: break
 
   config.yaml.local: |
@@ -170,3 +176,19 @@ config:
             - "192.168.0.0/16"
             - "10.0.0.0/8"
             - "172.16.0.0/12"
+
+  notifications:
+    slack.yaml: |
+      type: slack
+      name: slack_alerts
+      log_level: info
+      format: |
+        :rotating_light: *CrowdSec Alert*
+        {{range .}}
+        *Scenario:* {{.Alert.Scenario}}
+        *Source IP:* {{.Alert.Source.IP}} ({{.Alert.Source.Cn}})
+        *Decisions:*
+        {{range .Alert.Decisions}}  - {{.Type}} for {{.Duration}} (scope: {{.Scope}}, value: {{.Value}})
+        {{end}}
+        {{end}}
+      webhook: ${SLACK_WEBHOOK_URL}

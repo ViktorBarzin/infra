@@ -589,6 +589,7 @@ module "crowdsec" {
   crowdsec_dash_api_key          = var.crowdsec_dash_api_key
   crowdsec_dash_machine_id       = var.crowdsec_dash_machine_id
   crowdsec_dash_machine_password = var.crowdsec_dash_machine_password
+  slack_webhook_url              = var.alertmanager_slack_api_url
 }
 
 module "resume" {
