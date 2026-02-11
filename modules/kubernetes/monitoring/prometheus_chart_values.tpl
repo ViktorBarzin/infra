@@ -56,8 +56,9 @@ alertmanager:
         slack_configs:
           - send_resolved: true
             channel: "#alerts"
-            title: "{{ range .Alerts }}[{{ toUpper .Status }}]{{ .Annotations.summary }}\n{{ end }}"
-            text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+            color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+            title: '{{ range .Alerts }}[{{ toUpper .Status }}] {{ .Labels.alertname }}{{ end }}'
+            text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
             # text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
@@ -159,35 +160,35 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "High CPU Temperature: {{ $value }}."
+              summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 60°C)"
           - alert: SSDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: "High write rate on SSD - {{ $value }}MB"
+              summary: "SSD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 2 MB/s)"
           - alert: HDDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 # sdc is 11TB HDD; value in MB
             for: 20m
             labels:
               severity: page
             annotations:
-              summary: "High write rate on HDD - {{ $value }}MB"
+              summary: "HDD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 10 MB/s)"
           - alert: NoiDRACData
             expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
             for: 30m
             labels:
               severity: page
             annotations:
-              summary: No iDRAC amperage reading. Can signal that prometheus is not scraping
+              summary: "No iDRAC data for 30m - check Prometheus scraping"
           - alert: HighSystemLoad
             expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
             for: 30m
             labels:
               severity: page
             annotations:
-              summary: "High system load: {{ $value }}. Can signal runaway process."
+              summary: "System load: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -196,28 +197,28 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "High GPU Temperature {{$value}}"
+              summary: "GPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 65°C)"
           - alert: HighPowerUsage
             expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 50
             for: 30m
             labels:
               severity: page
             annotations:
-              summary: "High GPU power usage {{$value}}"
+              summary: "GPU power: {{ $value | printf \"%.0f\" }}W (threshold: 50W)"
           - alert: HighUtilization
             expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_UTIL > 50
             for: 30m
             labels:
               severity: page
             annotations:
-              summary: "High GPU utilization {{$value}}"
+              summary: "GPU util: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: HighMemoryUsage
             expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 12
             for: 5m
             labels:
               severity: page
             annotations:
-              summary: "High VRAM usage {{$value}}"
+              summary: "VRAM used: {{ $value | printf \"%.1f\" }} GB (threshold: 12 GB)"
       - name: Power
         rules:
           - alert: OnBattery
@@ -226,34 +227,34 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "UPS on battery for {{ $value }} seconds"
+              summary: "UPS on battery: {{ $value | printf \"%.0f\" }}s"
           - alert: LowUPSBattery
             expr: ups_upsEstimatedMinutesRemaining < 25 and on(instance) ups_upsInputVoltage < 150
             for: 1m
             labels:
               severity: critical
             annotations:
-              summary: "UPS battery running out - {{ $value }} minutes remaining"
+              summary: "UPS battery low: {{ $value | printf \"%.0f\" }} min remaining (threshold: 25 min)"
           - alert: PowerOutage
             expr: ups_upsInputVoltage < 150
             labels:
               severity: page
             annotations:
-              summary: Power voltage on a power supply is {{ $value }} indicating power outage.
+              summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
           - alert: HighPowerUsage
             expr: r730_idrac_idrac_power_control_consumed_watts > 200
             for: 60m
             labels:
               severity: page
             annotations:
-              summary: "High server power usage - {{$value}} watts"
+              summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 200W)"
           - alert: UsingInverterEnergyForTooLong
             expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
             for: 24h
             labels:
               severity: page
             annotations:
-              summary: "Running on inverter for too long: {{ $value }}%. Maybe switching to grid does not work."
+              summary: "On inverter for >24h - check grid switchover"
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -262,35 +263,35 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: Node {{$labels.instance}} down.
+              summary: "Node down: {{ $labels.instance }}"
           - alert: DockerRegistryDown
             expr: (registry_process_start_time_seconds or on() vector(0)) == 0
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: "Docker registry is down"
+              summary: "Docker registry down for 10m"
           - alert: RegistryLowCacheHitRate
             expr: (sum by (job) (rate(registry_registry_storage_cache_total{type="Hit"}[15m]))) / (sum by (job) (rate(registry_registry_storage_cache_total{type="Request"}[15m]))) * 100 < 50
             for: 12h
             labels:
               severity: page
             annotations:
-              summary: "Low registry cache hit rate"
+              summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: NodeHighCPUUsage
-            expr: pve_cpu_usage_ratio > 0.3
+            expr: pve_cpu_usage_ratio * 100 > 30
             for: 6h
             labels:
               severity: page
             annotations:
-              summary: "High CPU usage on {{ $labels.node }} - {{ $value }}"
+              summary: "CPU usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 30%)"
           - alert: NodeLowFreeMemory
-            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) or on() vector(1)) > 0.95
+            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) or on() vector(1)) * 100 > 95
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: "Low free memory on {{ $labels.node }} - {{ $value }}"
+              summary: "Memory usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 95%)"
           # - name: PodStuckNotReady
           #   rules:
           #   - alert: PodStuckNotReady
@@ -310,7 +311,7 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has {{ $value }} unavailable replicas"
+              summary: "{{ $labels.namespace }}/{{ $labels.deployment }}: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: StatefulSetReplicasMismatch
             expr: |
               (
@@ -321,7 +322,7 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has {{ $value }} unavailable replicas"
+              summary: "{{ $labels.namespace }}/{{ $labels.statefulset }}: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: DaemonSetMissingPods
             expr: |
               (
@@ -332,28 +333,28 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: "DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has {{ $value }} missing pods"
+              summary: "{{ $labels.namespace }}/{{ $labels.daemonset }}: {{ $value | printf \"%.0f\" }} pod(s) missing"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
             labels:
               severity: page
             annotations:
-              summary: No node load data. Can signal that prometheus is not scraping
+              summary: "No node load data for 10m - check Prometheus scraping"
           - alert: HighIngressPermissionErrors
             expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
             for: 20m
             labels:
               severity: page
             annotations:
-              summary: "High permission error rate for {{ $labels.ingress }}: {{ $value }}%."
+              summary: "4xx rate on {{ $labels.ingress }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
           - alert: HighIngressServerErrors
             expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*", ingress!="nextcloud", ingress!="grafana", ingress!="matrix"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100)  > 10
             for: 20m
             labels:
               severity: page
             annotations:
-              summary: "High server failiure rate for {{ $labels.ingress }}: {{ $value }}%."
+              summary: "5xx rate on {{ $labels.ingress }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
@@ -417,7 +418,7 @@ serverFiles:
             labels:
               severity: page
             annotations:
-              summary: New tailscale client registered
+              summary: "New Tailscale client registered"
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'
