@@ -55,7 +55,7 @@ resource "kubernetes_deployment" "meshcentral" {
           image = "typhonragewind/meshcentral:latest"
           name  = "meshcentral"
           port {
-            name           = "https"
+            name           = "http"
             container_port = 443
           }
           env {
@@ -133,7 +133,7 @@ resource "kubernetes_service" "meshcentral" {
       app = "meshcentral"
     }
     port {
-      name     = "https"
+      name     = "http"
       port     = 443
       protocol = "TCP"
     }

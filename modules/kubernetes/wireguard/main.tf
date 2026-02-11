@@ -84,6 +84,7 @@ resource "kubernetes_deployment" "wireguard" {
         }
         annotations = {
           "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "9586"
         }
       }
       spec {

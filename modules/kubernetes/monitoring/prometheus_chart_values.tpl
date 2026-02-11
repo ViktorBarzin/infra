@@ -155,12 +155,12 @@ serverFiles:
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
-            expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 60
+            expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 75
             for: 30m
             labels:
               severity: page
             annotations:
-              summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 60°C)"
+              summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
           - alert: SSDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
             for: 10m
@@ -361,12 +361,12 @@ serverFiles:
             annotations:
               summary: "Docker registry down for 10m"
           - alert: RegistryLowCacheHitRate
-            expr: (sum by (job) (rate(registry_registry_storage_cache_total{type="Hit"}[15m]))) / (sum by (job) (rate(registry_registry_storage_cache_total{type="Request"}[15m]))) * 100 < 50
+            expr: (sum by (job) (rate(registry_registry_storage_cache_total{type="Hit"}[15m]))) / (sum by (job) (rate(registry_registry_storage_cache_total{type="Request"}[15m]))) * 100 < 25
             for: 12h
             labels:
               severity: page
             annotations:
-              summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
+              summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 25%)"
           - alert: NodeHighCPUUsage
             expr: pve_cpu_usage_ratio * 100 > 30
             for: 6h
@@ -446,6 +446,7 @@ serverFiles:
                 / sum(rate(traefik_service_requests_total[5m])) by (service)
                 * 100
               ) > 10
+              and sum(rate(traefik_service_requests_total[5m])) by (service) > 0.1
             for: 5m
             labels:
               severity: page
@@ -458,6 +459,7 @@ serverFiles:
                 / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service)
                 * 100
               ) > 30
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service) > 0.1
             for: 10m
             labels:
               severity: page

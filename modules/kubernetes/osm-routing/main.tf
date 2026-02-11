@@ -165,7 +165,7 @@ resource "kubernetes_deployment" "otp" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down: TfL GTFS data expired, OTP crash-loops on build
     strategy {
       type = "Recreate"
     }
