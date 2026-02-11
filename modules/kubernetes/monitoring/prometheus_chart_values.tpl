@@ -316,6 +316,13 @@ serverFiles:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
       - name: Infrastructure Health
         rules:
+          - alert: HomeAssistantDown
+            expr: up{job="haos"} == 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "Home Assistant down: {{ $labels.instance }}"
           - alert: CoreDNSErrors
             expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1
             for: 10m
