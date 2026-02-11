@@ -111,6 +111,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
+        var.rybbit_site_id != null ? "traefik-strip-accept-encoding@kubernetescrd" : null,
         var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
