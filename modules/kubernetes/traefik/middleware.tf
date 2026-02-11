@@ -218,3 +218,26 @@ resource "kubernetes_manifest" "middleware_immich_rate_limit" {
 
   depends_on = [helm_release.traefik]
 }
+
+# Strip Accept-Encoding header so backends send uncompressed responses.
+# Used alongside rewrite-body plugin (rybbit analytics) which fails to
+# decompress certain gzip responses (flate: corrupt input before offset 5).
+resource "kubernetes_manifest" "middleware_strip_accept_encoding" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "strip-accept-encoding"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "Accept-Encoding" = ""
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
