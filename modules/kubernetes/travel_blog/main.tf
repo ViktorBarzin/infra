@@ -83,11 +83,6 @@ resource "kubernetes_service" "travel-blog" {
     labels = {
       app = "travel-blog"
     }
-    annotations = {
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "9113"
-    }
   }
 
   spec {
@@ -98,11 +93,6 @@ resource "kubernetes_service" "travel-blog" {
       name        = "http"
       port        = "80"
       target_port = "80"
-    }
-    port {
-      name        = "prometheus"
-      port        = "9113"
-      target_port = "9113"
     }
   }
 }

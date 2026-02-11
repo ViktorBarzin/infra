@@ -52,9 +52,6 @@ resource "kubernetes_deployment" "dawarich" {
         annotations = {
           # "diun.enable"          = "true"
           # "diun.include_tags"    = "latest"
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/path"   = "/metrics"
-          "prometheus.io/port"   = 9394
         }
       }
       spec {
