@@ -189,6 +189,13 @@ serverFiles:
               severity: page
             annotations:
               summary: "System load: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
+          - alert: FanFailure
+            expr: r730_idrac_redfish_chassis_fan_health != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "Fan unhealthy on R730 - check iDRAC"
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -255,6 +262,88 @@ serverFiles:
               severity: page
             annotations:
               summary: "On inverter for >24h - check grid switchover"
+      - name: Storage
+        rules:
+          - alert: NodeFilesystemFull
+            expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes) * 100 < 10
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
+          - alert: PVFillingUp
+            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 85%)"
+      - name: K8s Health
+        rules:
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}: {{ $value | printf \"%.0f\" }} restarts in 1h"
+          - alert: ContainerOOMKilled
+            expr: increase(container_oom_events_total{container!=""}[15m]) > 0
+            labels:
+              severity: page
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: OOM killed"
+          - alert: NodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "Node {{ $labels.node }} is NotReady"
+          - alert: NodeConditionBad
+            expr: kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "Node {{ $labels.node }}: {{ $labels.condition }}"
+          - alert: JobFailed
+            expr: kube_job_status_failed > 0
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+      - name: Infrastructure Health
+        rules:
+          - alert: CoreDNSErrors
+            expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "CoreDNS SERVFAIL rate: {{ $value | printf \"%.1f\" }}/s (threshold: 1/s)"
+          - alert: ScrapeTargetDown
+            expr: up{job!~"istiod|envoy-stats|openwrt"} == 0
+            for: 15m
+            labels:
+              severity: page
+            annotations:
+              summary: "Scrape target down: {{ $labels.job }}/{{ $labels.instance }}"
+          - alert: PrometheusStorageFull
+            expr: (prometheus_tsdb_storage_blocks_bytes / (1024*1024*1024)) > 50
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              summary: "Prometheus TSDB: {{ $value | printf \"%.0f\" }} GiB (threshold: 50 GiB)"
+          - alert: PrometheusNotificationsFailing
+            expr: rate(prometheus_notifications_errors_total[5m]) > 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -341,20 +430,63 @@ serverFiles:
               severity: page
             annotations:
               summary: "No node load data for 10m - check Prometheus scraping"
-          - alert: HighIngressPermissionErrors
-            expr: (sum(rate(nginx_ingress_controller_requests{status=~"4.*", ingress!="nextcloud", ingress!="grafana"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100) > 10
-            for: 20m
+      - name: "Traefik Ingress"
+        rules:
+          - alert: TraefikDown
+            expr: up{job="traefik"} == 0
+            for: 2m
             labels:
               severity: page
             annotations:
-              summary: "4xx rate on {{ $labels.ingress }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
-          - alert: HighIngressServerErrors
-            expr: (sum(rate(nginx_ingress_controller_requests{status=~"5.*", ingress!="nextcloud", ingress!="grafana", ingress!="matrix"}[2m])) by (ingress) / sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)  * 100)  > 10
-            for: 20m
+              summary: "Traefik pod {{ $labels.instance }} is down"
+          - alert: HighServiceErrorRate
+            expr: |
+              (
+                sum(rate(traefik_service_requests_total{code=~"5.."}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total[5m])) by (service)
+                * 100
+              ) > 10
+            for: 5m
             labels:
               severity: page
             annotations:
-              summary: "5xx rate on {{ $labels.ingress }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
+              summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
+          - alert: HighService4xxRate
+            expr: |
+              (
+                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service)
+                * 100
+              ) > 30
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              summary: "4xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 30%)"
+          - alert: HighServiceLatency
+            expr: |
+              histogram_quantile(0.99,
+                sum(rate(traefik_service_request_duration_seconds_bucket[5m])) by (service, le)
+              ) > 10
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "p99 latency on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}s (threshold: 10s)"
+          - alert: TLSCertExpiringSoon
+            expr: (traefik_tls_certs_not_after - time()) / 86400 < 7
+            for: 1h
+            labels:
+              severity: page
+            annotations:
+              summary: "TLS cert {{ $labels.cn }} expires in {{ $value | printf \"%.0f\" }} days"
+          - alert: TraefikHighOpenConnections
+            expr: sum(traefik_service_open_connections) by (service) > 500
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: "{{ $labels.service }} has {{ $value | printf \"%.0f\" }} open connections (threshold: 500)"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
@@ -611,4 +743,16 @@ extraScrapeConfigs: |
         - targets:
           - "gpu-pod-exporter.nvidia.svc.cluster.local"
     metrics_path: '/metrics'
-    
+  - job_name: 'traefik'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - traefik
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: metrics
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance
+
