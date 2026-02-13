@@ -10,22 +10,37 @@ loki:
         index:
           prefix: loki_index_
           period: 24h
+  ingester:
+    chunk_idle_period: 12h
+    max_chunk_age: 24h
+    chunk_retain_period: 1m
+    chunk_target_size: 1572864
+    wal:
+      dir: /loki-wal
   pattern_ingester:
     enabled: true
   limits_config:
     allow_structured_metadata: true
     volume_enabled: true
+    retention_period: 168h
+  compactor:
+    retention_enabled: true
+    working_directory: /loki/compactor
+    compaction_interval: 1h
+    delete_request_store: filesystem
   ruler:
     enable_api: true
+    storage:
+      type: local
+      local:
+        directory: /loki/rules
+    alertmanager_url: http://alertmanager.monitoring.svc.cluster.local:9093
+    ring:
+      kvstore:
+        store: inmemory
+    rule_path: /loki/scratch
   storage:
     type: "filesystem"
-    persistence:
-      enabled: true
-      size: 15Gi
-      accessModes:
-        - ReadWriteOnce
-  # Auth requires a revers proxy providing basic auth
-  # https://grafana.com/docs/loki/latest/operations/authentication/
   auth_enabled: false
 
 minio:
@@ -35,6 +50,30 @@ deploymentMode: SingleBinary
 
 singleBinary:
   replicas: 1
+  persistence:
+    enabled: true
+    size: 15Gi
+    storageClass: ""
+  extraVolumes:
+    - name: wal
+      emptyDir:
+        medium: Memory
+        sizeLimit: 2Gi
+    - name: rules
+      configMap:
+        name: loki-alert-rules
+  extraVolumeMounts:
+    - name: wal
+      mountPath: /loki-wal
+    - name: rules
+      mountPath: /loki/rules/fake
+  resources:
+    requests:
+      cpu: 250m
+      memory: 4Gi
+    limits:
+      cpu: "1"
+      memory: 6Gi
 
 # Zero out replica counts of other deployment modes
 backend:
@@ -43,7 +82,6 @@ read:
   replicas: 0
 write:
   replicas: 0
-
 ingester:
   replicas: 0
 querier:
