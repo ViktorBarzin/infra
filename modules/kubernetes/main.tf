@@ -124,6 +124,7 @@ variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
+variable "moltbot_ssh_key" { type = string }
 
 
 variable "defcon_level" {
@@ -149,7 +150,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing", "moltbot"
     ],
   }
   active_modules = distinct(flatten([
@@ -1126,6 +1127,16 @@ module "grampsweb" {
   for_each        = contains(local.active_modules, "grampsweb") ? { grampsweb = true } : {}
   tls_secret_name = var.tls_secret_name
   smtp_password   = var.mailserver_accounts["info@viktorbarzin.me"]
+  tier            = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "moltbot" {
+  source          = "./moltbot"
+  for_each        = contains(local.active_modules, "moltbot") ? { moltbot = true } : {}
+  tls_secret_name = var.tls_secret_name
+  ssh_key         = var.moltbot_ssh_key
   tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]
