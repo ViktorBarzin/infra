@@ -25,7 +25,7 @@ loki:
     retention_period: 168h
   compactor:
     retention_enabled: true
-    working_directory: /loki/compactor
+    working_directory: /var/loki/compactor
     compaction_interval: 1h
     delete_request_store: filesystem
   ruler:
@@ -38,7 +38,7 @@ loki:
     ring:
       kvstore:
         store: inmemory
-    rule_path: /loki/scratch
+    rule_path: /var/loki/scratch
   storage:
     type: "filesystem"
   auth_enabled: false
