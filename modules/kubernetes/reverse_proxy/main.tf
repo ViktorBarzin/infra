@@ -283,3 +283,13 @@ module "pi-lights" {
 #     # "nginx.ingress.kubernetes.io/proxy-set-header" : "Host: <>",
 #   }
 # }
+
+module "mbp14" {
+  source          = "./factory"
+  name            = "mbp14"
+  external_name   = "mbp14.viktorbarzin.lan"
+  port            = 4020
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  depends_on      = [kubernetes_namespace.reverse-proxy]
+}
