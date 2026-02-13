@@ -435,6 +435,12 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 - **When to use**: User provides GitHub URL or wants to deploy a new service
 - **Example**: "Deploy [GitHub repo] to the cluster"
 
+**extend-vm-storage** (`.claude/skills/extend-vm-storage.md`)
+- Extend disk storage on K8s node VMs (Proxmox-hosted)
+- Automates: drain → shutdown → resize → boot → expand filesystem → uncordon
+- **When to use**: A k8s node needs more disk space
+- **Example**: "Extend storage on k8s-node2 by 64G"
+
 ---
 
 ## Service-Specific Notes
