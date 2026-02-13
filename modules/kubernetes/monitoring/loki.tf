@@ -7,6 +7,7 @@ resource "helm_release" "loki" {
   chart      = "loki"
 
   values  = [templatefile("${path.module}/loki.yaml", {})]
+  atomic  = true
   timeout = 300
 
   depends_on = [kubernetes_config_map.loki_alert_rules]

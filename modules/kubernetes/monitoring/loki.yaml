@@ -34,7 +34,7 @@ loki:
       type: local
       local:
         directory: /loki/rules
-    alertmanager_url: http://alertmanager.monitoring.svc.cluster.local:9093
+    alertmanager_url: http://prometheus-alertmanager.monitoring.svc.cluster.local:9093
     ring:
       kvstore:
         store: inmemory

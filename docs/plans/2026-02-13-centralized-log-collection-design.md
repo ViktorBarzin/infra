@@ -62,7 +62,7 @@ Single-binary deployment. Existing Helm chart config in `loki.yaml`, updated wit
 
 **Ruler:**
 - Evaluates LogQL alert rules in real-time (before chunk flush)
-- Fires to `http://alertmanager.monitoring.svc.cluster.local:9093`
+- Fires to `http://prometheus-alertmanager.monitoring.svc.cluster.local:9093`
 
 **Storage:**
 - NFS PV/PVC at `/mnt/main/loki/loki` (15Gi, existing)
@@ -70,7 +70,7 @@ Single-binary deployment. Existing Helm chart config in `loki.yaml`, updated wit
 
 **Resources:**
 - Memory: 6Gi limit
-- CPU: 500m limit
+- CPU: 1 limit
 
 ### 3. Alloy (Helm Release)
 
@@ -82,7 +82,7 @@ DaemonSet log collector. Existing config in `alloy.yaml` is complete:
 
 **Resources per pod:**
 - Memory: 128Mi limit
-- CPU: 100m limit
+- CPU: 200m limit
 
 ### 4. Grafana Datasource
 
