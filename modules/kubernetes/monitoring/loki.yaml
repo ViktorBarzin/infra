@@ -104,8 +104,6 @@ bloomGateway:
 # Disable optional components for single binary mode
 gateway:
   enabled: false
-lokiCanary:
-  enabled: false
 chunksCache:
   enabled: false
 resultsCache:
