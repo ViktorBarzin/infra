@@ -153,6 +153,7 @@ variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
+variable "moltbot_ssh_key" { type = string }
 
 variable "kube_config_path" {
   type    = string
@@ -614,6 +615,7 @@ module "kubernetes_cluster" {
   affine_postgresql_password = var.affine_postgresql_password
   health_postgresql_password = var.health_postgresql_password
   health_secret_key          = var.health_secret_key
+  moltbot_ssh_key            = var.moltbot_ssh_key
 }
 
 
