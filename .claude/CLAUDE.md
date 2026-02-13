@@ -152,6 +152,8 @@ When configuring services to use the mailserver:
 - Wyoming Whisper: latest (STT for Home Assistant, CPU on GPU node)
 - Health: latest (Apple Health data dashboard, Svelte + FastAPI + Caddy, uses PostgreSQL)
 - Gramps Web: latest (genealogy, uses Redis + Celery)
+- Loki: 3.6.5 (log aggregation, single binary, 6Gi RAM, 24h in-memory chunks)
+- Alloy: v1.13.0 (log collector DaemonSet, forwards to Loki)
 
 ## Useful Commands
 ```bash
@@ -197,7 +199,7 @@ Top-level modules in `main.tf`:
 | authentik | Identity provider (SSO) | core |
 | cloudflared | Cloudflare tunnel | core |
 | authelia | Auth middleware | core |
-| monitoring | Prometheus/Grafana stack | core |
+| monitoring | Prometheus/Grafana/Loki stack | core |
 
 ### DEFCON Level 2 (Storage & Security)
 | Service | Description | Tier |
@@ -488,3 +490,22 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
   - `GRAMPSWEB_LLM_*` - Ollama AI integration
 - **Celery command**: `celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2`
 - **Registration**: Disabled; first user created via UI setup wizard
+
+### Loki + Alloy (Centralized Log Collection)
+- **Loki image**: `grafana/loki:3.6.5` (Helm chart, single binary mode)
+- **Alloy image**: `grafana/alloy:v1.13.0` (Helm chart, DaemonSet)
+- **Config files**: `modules/kubernetes/monitoring/loki.tf`, `loki.yaml`, `alloy.yaml`
+- **Port**: 3100/TCP (Loki API)
+- **Storage**: NFS PV at `/mnt/main/loki/loki` (15Gi), WAL on tmpfs (2Gi in-memory)
+- **Memory**: Loki 6Gi limit, Alloy 128Mi per pod (4 worker nodes)
+- **Disk-friendly tuning**: `max_chunk_age: 24h`, `chunk_idle_period: 12h` — holds chunks in memory, flushes ~once/day
+- **Retention**: 7 days (`retention_period: 168h`), compactor enforces deletion
+- **Crash policy**: WAL on tmpfs — up to 24h log loss on crash (alerts still fire in real-time)
+- **Ruler**: Evaluates LogQL alert rules, fires to `http://prometheus-alertmanager.monitoring.svc.cluster.local:9093`
+- **Alert rules**: HighErrorRate, PodCrashLoopBackOff, OOMKilled (ConfigMap `loki-alert-rules`)
+- **Grafana**: Datasource UID `P8E80F9AEF21F6940`, dashboard "Loki Kubernetes Logs" (stored in MySQL, not file-provisioned)
+- **Sysctl DaemonSet**: `sysctl-inotify` sets `fs.inotify.max_user_watches=1048576` on all nodes (required for Alloy fsnotify)
+- **Disabled components**: gateway, chunksCache, resultsCache (not needed for single binary)
+- **Key paths**: Compactor at `/var/loki/compactor`, ruler scratch at `/var/loki/scratch` (must be under `/var/loki` — root FS is read-only)
+- **Querying**: Grafana Explore with LogQL, e.g. `{namespace="monitoring"} |= "error"`
+- **Troubleshooting**: If "entry too far behind" errors on first start, restart Alloy DaemonSet (`kubectl rollout restart ds -n monitoring alloy`) — Alloy reads historical logs on first boot, which Loki rejects; clears after restart
