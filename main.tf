@@ -210,8 +210,28 @@ module "k8s-node-template" {
   snippet_name    = local.k8s_cloud_init_snippet_name
   # Add mirror registry
   containerd_config_update_command = <<-EOF
-  # BELOW IS DEPRECATED - replace with config_path version!!!!
-  echo '[plugins.\"io.containerd.grpc.v1.cri\".registry.mirrors.\"*\"]' >> /etc/containerd/config.toml && echo '  endpoint = [\"http://10.0.20.10:5000\"]' >> /etc/containerd/config.toml # docker registry vm
+  # Set up config_path for per-registry mirror configuration
+  sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
+
+  # Create hosts.toml for docker.io (Docker Hub)
+  mkdir -p /etc/containerd/certs.d/docker.io
+  printf 'server = "https://registry-1.docker.io"\n\n[host."http://10.0.20.10:5000"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/docker.io/hosts.toml
+
+  # Create hosts.toml for ghcr.io
+  mkdir -p /etc/containerd/certs.d/ghcr.io
+  printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
+
+  # Create hosts.toml for quay.io
+  mkdir -p /etc/containerd/certs.d/quay.io
+  printf 'server = "https://quay.io"\n\n[host."http://10.0.20.10:5020"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/quay.io/hosts.toml
+
+  # Create hosts.toml for registry.k8s.io
+  mkdir -p /etc/containerd/certs.d/registry.k8s.io
+  printf 'server = "https://registry.k8s.io"\n\n[host."http://10.0.20.10:5030"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/registry.k8s.io/hosts.toml
+
+  # Create hosts.toml for reg.kyverno.io
+  mkdir -p /etc/containerd/certs.d/reg.kyverno.io
+  printf 'server = "https://reg.kyverno.io"\n\n[host."http://10.0.20.10:5040"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/reg.kyverno.io/hosts.toml
 
   sed -i 's/.*max_concurrent_downloads = 3/max_concurrent_downloads = 20/g' /etc/containerd/config.toml # Enable multiple concurrent downloads
   sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
@@ -270,8 +290,56 @@ module "docker-registry-template" {
       )
     ),
     "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    "( crontab -l 2>/dev/null; echo '0 * * * * /usr/bin/docker restart registry' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '0 * * * * /usr/bin/docker restart registry registry-ghcr registry-quay registry-k8s registry-kyverno' ) | crontab -",
     "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2",
+    # ghcr.io proxy
+    "mkdir -p /etc/docker-registry/ghcr",
+    format("echo %s | base64 -d > /etc/docker-registry/ghcr/config.yml",
+      base64encode(
+        templatefile("./modules/docker-registry/config-proxy.yaml.tpl", {
+          name       = "ghcr"
+          remote_url = "https://ghcr.io"
+        })
+      )
+    ),
+    "docker run -p 5010:5000 -d --restart always --name registry-ghcr -v /etc/docker-registry/ghcr/config.yml:/etc/docker/registry/config.yml registry:2",
+    "( crontab -l 2>/dev/null; echo '5 3 * * 0 /usr/bin/docker exec registry-ghcr registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
+    # quay.io proxy
+    "mkdir -p /etc/docker-registry/quay",
+    format("echo %s | base64 -d > /etc/docker-registry/quay/config.yml",
+      base64encode(
+        templatefile("./modules/docker-registry/config-proxy.yaml.tpl", {
+          name       = "quay"
+          remote_url = "https://quay.io"
+        })
+      )
+    ),
+    "docker run -p 5020:5000 -d --restart always --name registry-quay -v /etc/docker-registry/quay/config.yml:/etc/docker/registry/config.yml registry:2",
+    "( crontab -l 2>/dev/null; echo '10 3 * * 0 /usr/bin/docker exec registry-quay registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
+    # registry.k8s.io proxy
+    "mkdir -p /etc/docker-registry/k8s",
+    format("echo %s | base64 -d > /etc/docker-registry/k8s/config.yml",
+      base64encode(
+        templatefile("./modules/docker-registry/config-proxy.yaml.tpl", {
+          name       = "k8s"
+          remote_url = "https://registry.k8s.io"
+        })
+      )
+    ),
+    "docker run -p 5030:5000 -d --restart always --name registry-k8s -v /etc/docker-registry/k8s/config.yml:/etc/docker/registry/config.yml registry:2",
+    "( crontab -l 2>/dev/null; echo '15 3 * * 0 /usr/bin/docker exec registry-k8s registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
+    # reg.kyverno.io proxy
+    "mkdir -p /etc/docker-registry/kyverno",
+    format("echo %s | base64 -d > /etc/docker-registry/kyverno/config.yml",
+      base64encode(
+        templatefile("./modules/docker-registry/config-proxy.yaml.tpl", {
+          name       = "kyverno"
+          remote_url = "https://reg.kyverno.io"
+        })
+      )
+    ),
+    "docker run -p 5040:5000 -d --restart always --name registry-kyverno -v /etc/docker-registry/kyverno/config.yml:/etc/docker/registry/config.yml registry:2",
+    "( crontab -l 2>/dev/null; echo '20 3 * * 0 /usr/bin/docker exec registry-kyverno registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
     # Setup the registry nginx config; We want clients to connect via the nginx to serialize requests for the same blobs
     # Otherwise race conditions lead to corrupt blobs
     "mkdir -p /var/cache/nginx/registry",
@@ -305,10 +373,15 @@ module "docker-registry-vm" {
   vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
   bridge         = "vmbr1"
   vlan_tag       = "20"
+  ipconfig0      = "ip=10.0.20.10/24,gw=10.0.20.1"
   # ports:
-  # 5000 -> registry
+  # 5000 -> registry (docker.io proxy)
   # 5001 -> metrics
   # 5002 -> nginx proxy <-- use this to prevent races on the same blobs
+  # 5010 -> registry-ghcr (ghcr.io proxy)
+  # 5020 -> registry-quay (quay.io proxy)
+  # 5030 -> registry-k8s (registry.k8s.io proxy)
+  # 5040 -> registry-kyverno (reg.kyverno.io proxy)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
 }
 

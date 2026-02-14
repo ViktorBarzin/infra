@@ -30,6 +30,10 @@ variable "vlan_tag" {
   type    = string
   default = null
 }
+variable "ipconfig0" {
+  type    = string
+  default = "ip=dhcp,ip6=dhcp"
+}
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
   vmid             = var.vmid
@@ -48,7 +52,7 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   cicustom           = "vendor=local:snippets/${var.cisnippet_name}"
   ciupgrade          = true
   nameserver         = "1.1.1.1 8.8.8.8"
-  ipconfig0          = "ip=dhcp,ip6=dhcp"
+  ipconfig0          = var.ipconfig0
   skip_ipv6          = true
   ciuser             = "root"
   cipassword         = "root"

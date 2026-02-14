@@ -330,7 +330,14 @@ jellyfin, jellyseerr, tdarr, affine, health, family
 - Kubernetes cluster with GPU node (5 nodes: k8s-master + k8s-node1-4, running v1.34.2)
 - NFS server at 10.0.10.15 for storage
 - Redis shared service at `redis.redis.svc.cluster.local`
-- Docker registry at 10.0.20.10
+- Docker registry pull-through cache at 10.0.20.10 (static IP via cloud-init)
+  - Port 5000: docker.io (Docker Hub, with auth)
+  - Port 5010: ghcr.io
+  - Port 5020: quay.io
+  - Port 5030: registry.k8s.io
+  - Port 5040: reg.kyverno.io
+  - Worker nodes use `config_path = "/etc/containerd/certs.d"` with per-registry `hosts.toml` files
+  - k8s-master does NOT use pull-through cache (containerd 1.6.x incompatibility with config_path + mirrors)
 
 ### Proxmox Host Hardware
 - **CPU**: Intel Xeon E5-2699 v4 @ 2.20GHz (22 cores / 44 threads, single socket)
