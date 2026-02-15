@@ -7,7 +7,7 @@
 - **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
 - **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
-- **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`.
+- **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`. The real cluster state must never deviate from what's defined in Terraform — if a manual change is unavoidable (e.g., containerd config on running nodes), document it and ensure the Terraform templates match so future provisioning is consistent. Use `kubectl` only for read-only operations (get, describe, logs) and ephemeral debugging (run --rm, delete stuck pods), never for persistent state changes.
 
 ## Execution Environment
 - **File operations**: Read, Edit, Write, Glob, Grep tools
