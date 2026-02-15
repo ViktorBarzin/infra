@@ -605,6 +605,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
             }
             initial_delay_seconds = 30
             period_seconds        = 30
+            timeout_seconds       = 5
           }
         }
 
