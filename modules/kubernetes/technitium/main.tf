@@ -18,6 +18,65 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# CoreDNS Corefile - manages cluster DNS resolution
+# The viktorbarzin.lan block forwards to Technitium via NodePort.
+# The cluster.local.viktorbarzin.lan block short-circuits junk queries caused by
+# ndots:5 search domain expansion (e.g. redis.redis.svc.cluster.local.viktorbarzin.lan)
+# which would otherwise flood Technitium with NxDomain queries.
+resource "kubernetes_config_map" "coredns" {
+  metadata {
+    name      = "coredns"
+    namespace = "kube-system"
+  }
+
+  data = {
+    Corefile = <<-EOF
+      .:53 {
+        #log
+          errors
+          health {
+              lameduck 5s
+          }
+          ready
+          kubernetes cluster.local in-addr.arpa ip6.arpa {
+              pods insecure
+              fallthrough in-addr.arpa ip6.arpa
+              ttl 30
+          }
+          prometheus :9153
+          #forward . 1.1.1.1
+          forward . 10.0.20.1
+          #forward . /etc/resolv.conf
+          cache {
+            success 10000 300 6
+            denial 10000 300 60
+          }
+          loop
+          reload
+          loadbalance
+      }
+      cluster.local.viktorbarzin.lan:53 {
+        errors
+        template ANY ANY {
+          rcode NXDOMAIN
+        }
+        cache {
+          denial 10000 3600
+        }
+      }
+      viktorbarzin.lan:53 {
+        #log
+        errors
+        forward . 10.0.20.101:30053 # Technitium NodePort
+        cache {
+          success 10000 300 6
+          denial 10000 300 60
+        }
+      }
+    EOF
+  }
+}
+
 resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
