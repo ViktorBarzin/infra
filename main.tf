@@ -266,7 +266,7 @@ module "docker-registry-template" {
   proxmox_user = "root" # SSH user on Proxmox host
 
   ssh_private_key = var.ssh_private_key
-  ssh_public_key  = var.ssh_public_key
+  ssh_public_key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx devvm"
 
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.non_k8s_cloud_init_image_path # keke
@@ -290,7 +290,8 @@ module "docker-registry-template" {
       )
     ),
     "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    "( crontab -l 2>/dev/null; echo '0 * * * * /usr/bin/docker restart registry registry-ghcr registry-quay registry-k8s registry-kyverno' ) | crontab -",
+    # Hourly restart cron removed - it wiped the in-memory blobdescriptor cache every hour,
+    # causing low cache hit rates on the pull-through proxy. Docker containers use --restart always.
     "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2",
     # ghcr.io proxy
     "mkdir -p /etc/docker-registry/ghcr",
