@@ -391,6 +391,27 @@ jellyfin, jellyseerr, tdarr, affine, health, family
   - `toleration { key = "nvidia.com/gpu", operator = "Equal", value = "true", effect = "NoSchedule" }`
 - Taint is applied via `null_resource.gpu_node_taint` in `modules/kubernetes/nvidia/main.tf`
 
+### Future: Terraform State Splitting (TODO)
+The current monolithic architecture (826 resources, 14MB state, 85 modules in one root) makes `terraform plan/apply` slow. Plan to split into separate root modules ("stacks") with independent state files:
+
+**Why it's slow:**
+- Single state file (14MB) loaded on every plan/apply
+- 85 service modules evaluated even when changing one service
+- `null_resource.core_services` creates serial dependency bottleneck blocking parallelism
+- 3 providers (kubernetes, helm, proxmox) all initialize on every run
+- DEFCON `contains()` evaluated on all 85 module blocks
+
+**Proposed split** (separate root modules, each with own state):
+- `stacks/infra/` — Proxmox VMs, docker-registry, templates
+- `stacks/core/` — traefik, metallb, calico, technitium, wireguard (~12 modules)
+- `stacks/auth/` — authentik, authelia, crowdsec, kyverno
+- `stacks/storage/` — redis, dbaas, vaultwarden
+- `stacks/media/` — immich, navidrome, calibre, audiobookshelf, servarr
+- `stacks/gpu/` — ollama, frigate, immich-ml, whisper
+- `stacks/apps/` — blog, hackmd, nextcloud, dashy, excalidraw, etc.
+
+**Cross-stack refs** via `terraform_remote_state` data source (local backend). No Terragrunt needed — plain Terraform + shell script for multi-stack operations. Migration via `terraform state mv` one tier at a time.
+
 ## Git Operations (IMPORTANT)
 - **Git is slow** on this repo due to many files - commands can take 30+ seconds
 - Use `GIT_OPTIONAL_LOCKS=0` prefix if git hangs
