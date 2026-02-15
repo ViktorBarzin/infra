@@ -21,7 +21,8 @@ resource "kubernetes_namespace" "monitoring" {
     name = "monitoring"
     labels = {
       "istio-injection" : "disabled"
-      tier = var.tier
+      tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
     }
   }
 }
@@ -181,3 +182,20 @@ resource "kubernetes_ingress_v1" "status_yotovski" {
   }
 }
 
+# Custom ResourceQuota for monitoring — larger than the default 1-cluster tier quota
+# because monitoring runs 29+ pods (Prometheus, Grafana, Loki, Alloy, exporters, etc.)
+resource "kubernetes_resource_quota" "monitoring" {
+  metadata {
+    name      = "monitoring-quota"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "16"
+      "requests.memory" = "16Gi"
+      "limits.cpu"      = "64"
+      "limits.memory"   = "128Gi"
+      pods              = "100"
+    }
+  }
+}
