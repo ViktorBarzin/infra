@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 13 diagnostic checks against the Kubernetes cluster and prints
+# Runs 14 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -38,14 +38,14 @@ section() {
     [[ "$JSON" == true ]] && return 0
     [[ "$QUIET" == true ]] && return 0
     echo ""
-    echo -e "${BOLD}[$num/13] $title${NC}"
+    echo -e "${BOLD}[$num/14] $title${NC}"
 }
 
 section_always() {
     local num="$1" title="$2"
     [[ "$JSON" == true ]] && return 0
     echo ""
-    echo -e "${BOLD}[$num/13] $title${NC}"
+    echo -e "${BOLD}[$num/14] $title${NC}"
 }
 
 json_add() {
@@ -579,6 +579,92 @@ except:
     fi
 }
 
+# --- 14. Uptime Kuma ---
+check_uptime_kuma() {
+    section 14 "Uptime Kuma Monitors"
+    local result
+
+    result=$(~/.venvs/claude/bin/python3 -c '
+import sys
+try:
+    from uptime_kuma_api import UptimeKumaApi
+except ImportError:
+    print("ERROR:uptime-kuma-api not installed")
+    sys.exit(0)
+
+try:
+    api = UptimeKumaApi("https://uptime.viktorbarzin.me")
+    api.login("admin", "EUxhLr4w4NFsGehy")
+
+    monitors = api.get_monitors()
+    down = []
+    up_count = 0
+    paused_count = 0
+
+    for m in monitors:
+        name = m.get("name", "unknown")
+        active = m.get("active", True)
+        if not active:
+            paused_count += 1
+            continue
+        # Check heartbeat list for latest status
+        try:
+            hb = api.get_monitor_beats(m["id"], 1)
+            if hb and len(hb) > 0:
+                status = hb[-1].get("status", 0)
+            else:
+                status = m.get("status", 0)
+        except Exception:
+            status = m.get("status", 0)
+        # status: 0=DOWN, 1=UP, 2=PENDING, 3=MAINTENANCE
+        if status == 1:
+            up_count += 1
+        elif status == 3:
+            paused_count += 1
+        else:
+            down.append(name)
+
+    api.disconnect()
+
+    down_count = len(down)
+    total_active = up_count + down_count
+    down_names = ", ".join(down) if down else ""
+    print(f"{down_count}:{up_count}:{paused_count}:{total_active}:{down_names}")
+except Exception as e:
+    print(f"CONN_ERROR:{e}")
+' 2>/dev/null) || result="CONN_ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
+        warn "Uptime Kuma: ${result#ERROR:}"
+        json_add "uptime_kuma" "WARN" "${result#ERROR:}"
+    elif [[ "$result" == "CONN_ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
+        warn "Cannot connect to Uptime Kuma: ${result#CONN_ERROR:}"
+        json_add "uptime_kuma" "WARN" "Connection failed"
+    else
+        local down_count up_count paused_count total_active down_names
+        down_count=$(echo "$result" | cut -d: -f1)
+        up_count=$(echo "$result" | cut -d: -f2)
+        paused_count=$(echo "$result" | cut -d: -f3)
+        total_active=$(echo "$result" | cut -d: -f4)
+        down_names=$(echo "$result" | cut -d: -f5-)
+
+        if [[ "$down_count" -eq 0 ]]; then
+            pass "All $total_active active monitors up ($paused_count paused)"
+            json_add "uptime_kuma" "PASS" "$total_active up, $paused_count paused"
+        elif [[ "$down_count" -le 3 ]]; then
+            [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
+            warn "$down_count/$total_active monitor(s) down: $down_names"
+            json_add "uptime_kuma" "WARN" "$down_count down: $down_names"
+        else
+            [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
+            fail "$down_count/$total_active monitors down: $down_names"
+            json_add "uptime_kuma" "FAIL" "$down_count down: $down_names"
+        fi
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -644,6 +730,7 @@ main() {
     check_crowdsec
     check_ingresses
     check_alerts
+    check_uptime_kuma
     print_summary
 
     # Exit code: 2 for failures, 1 for warnings, 0 for clean
