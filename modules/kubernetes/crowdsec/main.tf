@@ -19,7 +19,8 @@ resource "kubernetes_namespace" "crowdsec" {
   metadata {
     name = "crowdsec"
     labels = {
-      tier = var.tier
+      tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
     }
   }
 }
@@ -332,3 +333,20 @@ resource "kubernetes_role_binding" "blocklist_import" {
   }
 }
 
+# Custom ResourceQuota for CrowdSec — needs more than default 1-cluster quota
+# because it runs DaemonSet agents (1 per worker node) + 3 LAPI replicas + web UI
+resource "kubernetes_resource_quota" "crowdsec" {
+  metadata {
+    name      = "crowdsec-quota"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "8Gi"
+      "limits.cpu"      = "16"
+      "limits.memory"   = "16Gi"
+      pods              = "30"
+    }
+  }
+}
