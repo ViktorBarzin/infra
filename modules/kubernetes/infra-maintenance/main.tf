@@ -141,3 +141,72 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
     }
   }
 }
+
+# Clean up evicted/failed pods cluster-wide daily
+resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
+  metadata {
+    name      = "cleanup-failed-pods"
+    namespace = "default"
+  }
+  spec {
+    schedule                      = "0 2 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {
+        name = "cleanup-failed-pods"
+      }
+      spec {
+        template {
+          metadata {
+            name = "cleanup-failed-pods"
+          }
+          spec {
+            service_account_name = kubernetes_service_account.cleanup_sa.metadata[0].name
+            container {
+              name    = "cleanup"
+              image   = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c", "kubectl delete pods -A --field-selector=status.phase=Failed --ignore-not-found"]
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service_account" "cleanup_sa" {
+  metadata {
+    name      = "failed-pod-cleanup"
+    namespace = "default"
+  }
+}
+
+resource "kubernetes_cluster_role" "cleanup_role" {
+  metadata {
+    name = "failed-pod-cleanup"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list", "delete"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "cleanup_binding" {
+  metadata {
+    name = "failed-pod-cleanup"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.cleanup_role.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.cleanup_sa.metadata[0].name
+    namespace = "default"
+  }
+}
