@@ -410,6 +410,25 @@ jellyfin, jellyseerr, tdarr, affine, health, family
 - **3-edge**: User-facing services
 - **4-aux**: Optional/auxiliary services
 
+### Resource Governance (Kyverno-based)
+Four layers of noisy-neighbor protection, all defined in `modules/kubernetes/kyverno/resource-governance.tf`:
+
+1. **PriorityClasses**: `tier-0-core` (1M) through `tier-4-aux` (200K). `tier-4-aux` uses `preemption_policy=Never`.
+2. **LimitRange defaults** (Kyverno generate): Auto-creates `tier-defaults` LimitRange in namespaces based on tier label. Only affects containers without explicit resources.
+3. **ResourceQuotas** (Kyverno generate): Auto-creates `tier-quota` ResourceQuota in namespaces with tier labels. Excludes namespaces with `resource-governance/custom-quota=true` label.
+4. **Priority injection** (Kyverno mutate): Sets `priorityClassName` on Pods based on namespace tier label.
+
+**Custom quota override**: Add label `resource-governance/custom-quota: "true"` to namespace, then define a custom `kubernetes_resource_quota` in the service's Terraform module. Currently used by: monitoring, crowdsec.
+
+**LimitRange defaults by tier**:
+| Tier | Default Req | Default Limit | Max |
+|------|------------|--------------|-----|
+| 0-core | 100m/128Mi | 2/4Gi | 8/16Gi |
+| 1-cluster | 100m/128Mi | 2/4Gi | 4/8Gi |
+| 2-gpu | 100m/256Mi | 4/8Gi | 8/16Gi |
+| 3-edge | 50m/128Mi | 1/2Gi | 4/8Gi |
+| 4-aux | 25m/64Mi | 500m/1Gi | 2/4Gi |
+
 ---
 
 ## User Preferences
