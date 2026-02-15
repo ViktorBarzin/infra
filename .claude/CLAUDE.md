@@ -429,6 +429,9 @@ jellyfin, jellyseerr, tdarr, affine, health, family
 ### Development
 - **Frontend framework**: Svelte (user is learning it, so use Svelte for all new web apps)
 
+### Pod Monitoring After Updates
+- **Never use `sleep` to wait for pods** — instead, spawn a background subagent (Task tool with `run_in_background: true`) that continuously checks pod state (e.g., `kubectl get pods -n <namespace> -w`) and reports back when the pod is ready or if errors occur. This catches CrashLoopBackOff, ImagePullBackOff, and other failures much sooner than periodic sleep-based polling.
+
 ---
 
 ## Skills & Workflows
