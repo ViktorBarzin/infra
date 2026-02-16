@@ -59,6 +59,7 @@ variable "webhook_handler_fb_app_secret" {}
 variable "webhook_handler_git_user" {}
 variable "technitium_username" {}
 variable "technitium_password" {}
+variable "technitium_db_password" {}
 variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
 variable "monitoring_idrac_username" {}
@@ -154,6 +155,9 @@ variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
 variable "moltbot_ssh_key" { type = string }
+variable "gemini_api_key" { type = string }
+variable "llama_api_key" { type = string }
+variable "brave_api_key" { type = string }
 
 variable "kube_config_path" {
   type    = string
@@ -605,8 +609,9 @@ module "kubernetes_cluster" {
   frigate_valchedrym_camera_credentials = var.frigate_valchedrym_camera_credentials
 
   // updating technitium records
-  technitium_username = var.technitium_username
-  technitium_password = var.technitium_password
+  technitium_username    = var.technitium_username
+  technitium_password    = var.technitium_password
+  technitium_db_password = var.technitium_db_password
 
   paperless_db_password = var.paperless_db_password
 
@@ -690,6 +695,9 @@ module "kubernetes_cluster" {
   health_postgresql_password = var.health_postgresql_password
   health_secret_key          = var.health_secret_key
   moltbot_ssh_key            = var.moltbot_ssh_key
+  gemini_api_key             = var.gemini_api_key
+  llama_api_key              = var.llama_api_key
+  brave_api_key              = var.brave_api_key
 }
 
 

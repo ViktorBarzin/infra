@@ -1,0 +1,488 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "datasource", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Technitium DNS query logs from MySQL",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Total Queries",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) as total_queries FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Cached %",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN response_type = 3 THEN 1 ELSE 0 END) / COUNT(*) as cached_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Blocked %",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN response_type = 4 THEN 1 ELSE 0 END) / COUNT(*) as blocked_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "NxDomain %",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN rcode = 3 THEN 1 ELSE 0 END) / COUNT(*) as nxdomain_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Avg Response Time",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT AVG(response_rtt) as avg_rtt_ms FROM dns_logs WHERE $__timeFilter(timestamp) AND response_rtt IS NOT NULL",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Queries by Protocol",
+      "type": "stat",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN protocol = 0 THEN 1 ELSE 0 END) as UDP, SUM(CASE WHEN protocol = 1 THEN 1 ELSE 0 END) as TCP, SUM(CASE WHEN protocol = 3 THEN 1 ELSE 0 END) as DoH, SUM(CASE WHEN protocol = 4 THEN 1 ELSE 0 END) as DoT FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Queries Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeGroup(timestamp, $__interval) as time, SUM(CASE WHEN response_type = 1 THEN 1 ELSE 0 END) as Authoritative, SUM(CASE WHEN response_type = 2 THEN 1 ELSE 0 END) as Recursive, SUM(CASE WHEN response_type = 3 THEN 1 ELSE 0 END) as Cached, SUM(CASE WHEN response_type = 4 THEN 1 ELSE 0 END) as Blocked, SUM(CASE WHEN response_type = 5 THEN 1 ELSE 0 END) as Dropped FROM dns_logs WHERE $__timeFilter(timestamp) GROUP BY time ORDER BY time",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Response Codes",
+      "type": "piechart",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "NOERROR" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "NXDOMAIN" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "SERVFAIL" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "REFUSED" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN rcode = 0 THEN 1 ELSE 0 END) as NOERROR, SUM(CASE WHEN rcode = 2 THEN 1 ELSE 0 END) as SERVFAIL, SUM(CASE WHEN rcode = 3 THEN 1 ELSE 0 END) as NXDOMAIN, SUM(CASE WHEN rcode = 5 THEN 1 ELSE 0 END) as REFUSED, SUM(CASE WHEN rcode NOT IN (0,2,3,5) THEN 1 ELSE 0 END) as Other FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Response Types",
+      "type": "piechart",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Cached" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Blocked" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Recursive" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Authoritative" }, "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN response_type = 1 THEN 1 ELSE 0 END) as Authoritative, SUM(CASE WHEN response_type = 2 THEN 1 ELSE 0 END) as Recursive, SUM(CASE WHEN response_type = 3 THEN 1 ELSE 0 END) as Cached, SUM(CASE WHEN response_type = 4 THEN 1 ELSE 0 END) as Blocked, SUM(CASE WHEN response_type = 5 THEN 1 ELSE 0 END) as Dropped FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Query Types",
+      "type": "piechart",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(CASE WHEN qtype = 1 THEN 1 ELSE 0 END) as A, SUM(CASE WHEN qtype = 28 THEN 1 ELSE 0 END) as AAAA, SUM(CASE WHEN qtype = 5 THEN 1 ELSE 0 END) as CNAME, SUM(CASE WHEN qtype = 15 THEN 1 ELSE 0 END) as MX, SUM(CASE WHEN qtype = 16 THEN 1 ELSE 0 END) as TXT, SUM(CASE WHEN qtype = 33 THEN 1 ELSE 0 END) as SRV, SUM(CASE WHEN qtype = 12 THEN 1 ELSE 0 END) as PTR, SUM(CASE WHEN qtype = 6 THEN 1 ELSE 0 END) as SOA, SUM(CASE WHEN qtype = 2 THEN 1 ELSE 0 END) as NS, SUM(CASE WHEN qtype = 65 THEN 1 ELSE 0 END) as HTTPS, SUM(CASE WHEN qtype NOT IN (1,2,5,6,12,15,16,28,33,65) THEN 1 ELSE 0 END) as Other FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 20 Queried Domains",
+      "type": "table",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "count" }, "properties": [{ "id": "custom.width", "value": 100 }] }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "count" }]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT qname as domain, COUNT(*) as count FROM dns_logs WHERE $__timeFilter(timestamp) GROUP BY qname ORDER BY count DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 20 Clients",
+      "type": "table",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "count" }, "properties": [{ "id": "custom.width", "value": 100 }] }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "count" }]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT client_ip, COUNT(*) as count FROM dns_logs WHERE $__timeFilter(timestamp) GROUP BY client_ip ORDER BY count DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Average Response Time Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ms",
+          "custom": {
+            "axisBorderShow": false,
+            "axisLabel": "Response Time (ms)",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeGroup(timestamp, $__interval) as time, AVG(response_rtt) as avg_rtt, MAX(response_rtt) as max_rtt FROM dns_logs WHERE $__timeFilter(timestamp) AND response_rtt IS NOT NULL GROUP BY time ORDER BY time",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 20 NxDomain Domains",
+      "type": "table",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 38 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "count" }, "properties": [{ "id": "custom.width", "value": 100 }] }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "count" }]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT qname as domain, COUNT(*) as count FROM dns_logs WHERE $__timeFilter(timestamp) AND rcode = 3 GROUP BY qname ORDER BY count DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Top 20 Blocked Domains",
+      "type": "table",
+      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 38 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "filterable": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "count" }, "properties": [{ "id": "custom.width", "value": 100 }] }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "count" }]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT qname as domain, COUNT(*) as count FROM dns_logs WHERE $__timeFilter(timestamp) AND response_type = 4 GROUP BY qname ORDER BY count DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["dns", "technitium", "mysql"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Technitium DNS",
+  "uid": "technitium-dns",
+  "version": 1
+}
