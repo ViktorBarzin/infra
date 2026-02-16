@@ -20,10 +20,11 @@ module "tls_secret" {
 
 # CoreDNS Corefile - manages cluster DNS resolution
 # The viktorbarzin.lan block forwards to Technitium via LoadBalancer.
-# The cluster.local.viktorbarzin.lan and viktorbarzin.lan.viktorbarzin.lan blocks
-# short-circuit junk queries caused by ndots:5 search domain expansion
-# (e.g. redis.redis.svc.cluster.local.viktorbarzin.lan, idrac.viktorbarzin.lan.viktorbarzin.lan)
-# which would otherwise flood Technitium with NxDomain queries.
+# A template regex in the viktorbarzin.lan block short-circuits junk queries
+# caused by ndots:5 search domain expansion (e.g. www.cloudflare.com.viktorbarzin.lan,
+# redis.redis.svc.cluster.local.viktorbarzin.lan) by returning NXDOMAIN for any
+# query with 2+ labels before .viktorbarzin.lan. Legitimate single-label queries
+# (e.g. idrac.viktorbarzin.lan) fall through to Technitium.
 resource "kubernetes_config_map" "coredns" {
   metadata {
     name      = "coredns"
@@ -56,27 +57,14 @@ resource "kubernetes_config_map" "coredns" {
           reload
           loadbalance
       }
-      cluster.local.viktorbarzin.lan:53 {
-        errors
-        template ANY ANY {
-          rcode NXDOMAIN
-        }
-        cache {
-          denial 10000 3600
-        }
-      }
-      viktorbarzin.lan.viktorbarzin.lan:53 {
-        errors
-        template ANY ANY {
-          rcode NXDOMAIN
-        }
-        cache {
-          denial 10000 3600
-        }
-      }
       viktorbarzin.lan:53 {
         #log
         errors
+        template ANY ANY viktorbarzin.lan {
+          match ".*\..*\.viktorbarzin\.lan\.$"
+          rcode NXDOMAIN
+          fallthrough
+        }
         forward . 10.0.20.204 # Technitium LoadBalancer
         cache {
           success 10000 300 6
