@@ -29,6 +29,27 @@ resource "helm_release" "traefik" {
         "diun.enable"       = "true"
         "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
       }
+      initContainers = [{
+        name  = "download-plugins"
+        image = "alpine:3"
+        command = ["sh", "-c", join("", [
+          "set -e; ",
+          "STORAGE=/plugins-storage; ",
+          "mkdir -p \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\"; ",
+          "mkdir -p \"$STORAGE/archives/github.com/packruler/rewrite-body\"; ",
+          "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.4.2.zip\" ",
+          "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.4.2.zip\"; ",
+          "wget -q -T 30 -O \"$STORAGE/archives/github.com/packruler/rewrite-body/v1.2.0.zip\" ",
+          "\"https://github.com/packruler/rewrite-body/archive/refs/tags/v1.2.0.zip\"; ",
+          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\",\"github.com/packruler/rewrite-body\":\"v1.2.0\"}' ",
+          "> \"$STORAGE/archives/state.json\"; ",
+          "echo \"Plugins pre-downloaded successfully\"",
+        ])]
+        volumeMounts = [{
+          name      = "plugins"
+          mountPath = "/plugins-storage"
+        }]
+      }]
     }
 
     updateStrategy = {
@@ -91,12 +112,6 @@ resource "helm_release" "traefik" {
           advertisedPort = 443
         }
       }
-      dns-udp = {
-        port        = 5353
-        exposedPort = 53
-        protocol    = "UDP"
-        expose      = { default = true }
-      }
       whisper-tcp = {
         port        = 10300
         exposedPort = 10300
@@ -120,7 +135,6 @@ resource "helm_release" "traefik" {
     service = {
       type = "LoadBalancer"
       annotations = {
-        # Temporary IP during migration; will move to nginx's 10.0.20.202 once nginx is removed
         "metallb.universe.tf/loadBalancerIPs" = "10.0.20.202"
       }
       spec = {
@@ -187,30 +201,6 @@ resource "helm_release" "traefik" {
 
     tolerations = []
   })]
-}
-
-# DNS UDP passthrough to Technitium
-resource "kubernetes_manifest" "dns_udp_ingressroute" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRouteUDP"
-    metadata = {
-      name      = "dns-udp"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      entryPoints = ["dns-udp"]
-      routes = [{
-        services = [{
-          name      = "technitium-dns"
-          namespace = "technitium"
-          port      = 53
-        }]
-      }]
-    }
-  }
-
-  depends_on = [helm_release.traefik]
 }
 
 # Dashboard resources

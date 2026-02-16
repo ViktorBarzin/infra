@@ -19,7 +19,7 @@ module "tls_secret" {
 }
 
 # CoreDNS Corefile - manages cluster DNS resolution
-# The viktorbarzin.lan block forwards to Technitium via NodePort.
+# The viktorbarzin.lan block forwards to Technitium via LoadBalancer.
 # The cluster.local.viktorbarzin.lan block short-circuits junk queries caused by
 # ndots:5 search domain expansion (e.g. redis.redis.svc.cluster.local.viktorbarzin.lan)
 # which would otherwise flood Technitium with NxDomain queries.
@@ -67,7 +67,7 @@ resource "kubernetes_config_map" "coredns" {
       viktorbarzin.lan:53 {
         #log
         errors
-        forward . 10.0.20.101:30053 # Technitium NodePort
+        forward . 10.0.20.204 # Technitium LoadBalancer
         cache {
           success 10000 300 6
           denial 10000 300 60
@@ -109,8 +109,24 @@ resource "kubernetes_deployment" "technitium" {
         }
       }
       spec {
-        node_name = "k8s-node1" # Horrible hack but only way I found to preserve client ip
-        # if moved, update the corefile for coredns as that's forwarding queries for viktorbarzin.lan
+        # Prefer nodes running Traefik for network locality
+        affinity {
+          pod_affinity {
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100
+              pod_affinity_term {
+                label_selector {
+                  match_expressions {
+                    key      = "app.kubernetes.io/name"
+                    operator = "In"
+                    values   = ["traefik"]
+                  }
+                }
+                topology_key = "kubernetes.io/hostname"
+              }
+            }
+          }
+        }
         container {
           image = "technitium/dns-server:latest"
           name  = "technitium"
@@ -199,25 +215,18 @@ resource "kubernetes_service" "technitium-dns" {
     labels = {
       "app" = "technitium"
     }
-    annotations = {
-      "metallb.universe.tf/allow-shared-ip" : "shared"
-    }
   }
 
   spec {
-    # type = "LoadBalancer"
-    # external_traffic_policy = "Cluster"
-    type = "NodePort"
+    type = "LoadBalancer"
     port {
-      name      = "technitium-dns"
-      port      = 53
-      node_port = 30053
-      protocol  = "UDP"
+      name     = "technitium-dns"
+      port     = 53
+      protocol = "UDP"
     }
     external_traffic_policy = "Local"
     selector = {
       app = "technitium"
-
     }
   }
 }
