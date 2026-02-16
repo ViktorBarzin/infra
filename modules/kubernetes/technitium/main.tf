@@ -20,8 +20,9 @@ module "tls_secret" {
 
 # CoreDNS Corefile - manages cluster DNS resolution
 # The viktorbarzin.lan block forwards to Technitium via LoadBalancer.
-# The cluster.local.viktorbarzin.lan block short-circuits junk queries caused by
-# ndots:5 search domain expansion (e.g. redis.redis.svc.cluster.local.viktorbarzin.lan)
+# The cluster.local.viktorbarzin.lan and viktorbarzin.lan.viktorbarzin.lan blocks
+# short-circuit junk queries caused by ndots:5 search domain expansion
+# (e.g. redis.redis.svc.cluster.local.viktorbarzin.lan, idrac.viktorbarzin.lan.viktorbarzin.lan)
 # which would otherwise flood Technitium with NxDomain queries.
 resource "kubernetes_config_map" "coredns" {
   metadata {
@@ -56,6 +57,15 @@ resource "kubernetes_config_map" "coredns" {
           loadbalance
       }
       cluster.local.viktorbarzin.lan:53 {
+        errors
+        template ANY ANY {
+          rcode NXDOMAIN
+        }
+        cache {
+          denial 10000 3600
+        }
+      }
+      viktorbarzin.lan.viktorbarzin.lan:53 {
         errors
         template ANY ANY {
           rcode NXDOMAIN

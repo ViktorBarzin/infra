@@ -40,26 +40,64 @@ alertmanager:
     # templates:
     #   - "/etc/alertmanager/template/*.tmpl"
     route:
-      # group_by: ["alertname"]
-      group_by: [] # disable grouping
-      group_wait: 3s
-      group_interval: 5s # how long to wait before sending new alert for the same group
-      repeat_interval: 1h
-      receiver: ALL
+      group_by: ["alertname"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: slack-warning
+      routes:
+        - receiver: slack-critical
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
+          matchers:
+            - severity = critical
+          continue: false
+        - receiver: slack-info
+          group_wait: 5m
+          group_interval: 30m
+          repeat_interval: 12h
+          matchers:
+            - severity = info
+          continue: false
+    inhibit_rules:
+      # Node down makes node-condition alerts redundant
+      - source_matchers:
+          - alertname = NodeDown
+        target_matchers:
+          - alertname =~ "NodeNotReady|NodeConditionBad"
+      # Traefik down makes service-level alerts noise
+      - source_matchers:
+          - alertname = TraefikDown
+        target_matchers:
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections"
+      # Power outage makes on-battery alert redundant
+      - source_matchers:
+          - alertname = PowerOutage
+        target_matchers:
+          - alertname = OnBattery
     receivers:
-      - name: ALL
-        # email_configs:
-        #   - to: "me@viktorbarzin.me"
-        #     send_resolved: true
-        #     tls_config:
-        #       insecure_skip_verify: true
+      - name: slack-critical
         slack_configs:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
-            title: '{{ range .Alerts }}[{{ toUpper .Status }}] {{ .Labels.alertname }}{{ end }}'
-            text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
-            # text: "<!channel> {{ .CommonAnnotations.summary }}:\n{{ .CommonAnnotations.description }}"
+            title: '{{ if eq .Status "firing" }}[CRITICAL]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+      - name: slack-warning
+        slack_configs:
+          - send_resolved: true
+            channel: "#alerts"
+            color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+            title: '{{ if eq .Status "firing" }}[WARNING]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+      - name: slack-info
+        slack_configs:
+          - send_resolved: true
+            channel: "#alerts"
+            color: '{{ if eq .Status "firing" }}#439FE0{{ else }}good{{ end }}'
+            title: '[INFO] {{ .GroupLabels.alertname }}'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
@@ -158,42 +196,42 @@ serverFiles:
             expr: node_hwmon_temp_celsius{instance="pve-node-r730"} * on(chip) group_left(chip_name) node_hwmon_chip_names{instance="pve-node-r730"} > 75
             for: 30m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
           - alert: SSDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
             for: 10m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "SSD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 2 MB/s)"
           - alert: HDDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 # sdc is 11TB HDD; value in MB
             for: 20m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "HDD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 10 MB/s)"
           - alert: NoiDRACData
             expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
             for: 30m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "No iDRAC data for 30m - check Prometheus scraping"
           - alert: HighSystemLoad
             expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
             for: 30m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "System load: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: FanFailure
             expr: r730_idrac_redfish_chassis_fan_health != 1
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Fan unhealthy on R730 - check iDRAC"
       - name: Nvidia Tesla T4 GPU
@@ -202,28 +240,28 @@ serverFiles:
             expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
             for: 1m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "GPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 65°C)"
           - alert: HighPowerUsage
             expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 50
             for: 30m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "GPU power: {{ $value | printf \"%.0f\" }}W (threshold: 50W)"
           - alert: HighUtilization
             expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_UTIL > 50
             for: 30m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "GPU util: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: HighMemoryUsage
             expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 12
             for: 5m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "VRAM used: {{ $value | printf \"%.1f\" }} GB (threshold: 12 GB)"
       - name: Power
@@ -245,21 +283,21 @@ serverFiles:
           - alert: PowerOutage
             expr: ups_upsInputVoltage < 150
             labels:
-              severity: page
+              severity: critical
             annotations:
               summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
           - alert: HighPowerUsage
             expr: r730_idrac_idrac_power_control_consumed_watts > 200
             for: 60m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 200W)"
           - alert: UsingInverterEnergyForTooLong
             expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
             for: 24h
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "On inverter for >24h - check grid switchover"
       - name: Storage
@@ -268,14 +306,14 @@ serverFiles:
             expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes) * 100 < 10
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
           - alert: PVFillingUp
             expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
             for: 30m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 85%)"
       - name: K8s Health
@@ -284,34 +322,34 @@ serverFiles:
             expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}: {{ $value | printf \"%.0f\" }} restarts in 1h"
           - alert: ContainerOOMKilled
             expr: increase(container_oom_events_total{container!=""}[15m]) > 0
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: OOM killed"
           - alert: NodeNotReady
             expr: kube_node_status_condition{condition="Ready",status="true"} == 0
             for: 5m
             labels:
-              severity: page
+              severity: critical
             annotations:
               summary: "Node {{ $labels.node }} is NotReady"
           - alert: NodeConditionBad
             expr: kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Node {{ $labels.node }}: {{ $labels.condition }}"
           - alert: JobFailed
             expr: kube_job_status_failed > 0
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
       - name: Infrastructure Health
@@ -320,35 +358,35 @@ serverFiles:
             expr: up{job="haos"} == 0
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Home Assistant down: {{ $labels.instance }}"
           - alert: CoreDNSErrors
             expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "CoreDNS SERVFAIL rate: {{ $value | printf \"%.1f\" }}/s (threshold: 1/s)"
           - alert: ScrapeTargetDown
             expr: up{job!~"istiod|envoy-stats|openwrt"} == 0
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Scrape target down: {{ $labels.job }}/{{ $labels.instance }}"
           - alert: PrometheusStorageFull
             expr: (prometheus_tsdb_storage_blocks_bytes / (1024*1024*1024)) > 50
             for: 30m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Prometheus TSDB: {{ $value | printf \"%.0f\" }} GiB (threshold: 50 GiB)"
           - alert: PrometheusNotificationsFailing
             expr: rate(prometheus_notifications_errors_total[5m]) > 0
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
       - name: Cluster
@@ -357,35 +395,35 @@ serverFiles:
             expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
             for: 1m
             labels:
-              severity: page
+              severity: critical
             annotations:
               summary: "Node down: {{ $labels.instance }}"
           - alert: DockerRegistryDown
             expr: (registry_process_start_time_seconds or on() vector(0)) == 0
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Docker registry down for 10m"
           - alert: RegistryLowCacheHitRate
             expr: (sum by (job) (rate(registry_registry_storage_cache_total{type="Hit"}[15m]))) / (sum by (job) (rate(registry_registry_storage_cache_total{type="Request"}[15m]))) * 100 < 25
             for: 12h
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 25%)"
           - alert: NodeHighCPUUsage
             expr: pve_cpu_usage_ratio * 100 > 30
             for: 6h
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "CPU usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 30%)"
           - alert: NodeLowFreeMemory
             expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) or on() vector(1)) * 100 > 95
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "Memory usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 95%)"
           # - name: PodStuckNotReady
@@ -405,7 +443,7 @@ serverFiles:
               ) > 0
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.deployment }}: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: StatefulSetReplicasMismatch
@@ -416,7 +454,7 @@ serverFiles:
               ) > 0
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.statefulset }}: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: DaemonSetMissingPods
@@ -427,14 +465,14 @@ serverFiles:
               ) > 0
             for: 15m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.daemonset }}: {{ $value | printf \"%.0f\" }} pod(s) missing"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "No node load data for 10m - check Prometheus scraping"
       - name: "Traefik Ingress"
@@ -443,7 +481,7 @@ serverFiles:
             expr: up{job="traefik"} == 0
             for: 2m
             labels:
-              severity: page
+              severity: critical
             annotations:
               summary: "Traefik pod {{ $labels.instance }} is down"
           - alert: HighServiceErrorRate
@@ -456,7 +494,7 @@ serverFiles:
               and sum(rate(traefik_service_requests_total[5m])) by (service) > 0.1
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
           - alert: HighService4xxRate
@@ -469,7 +507,7 @@ serverFiles:
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service) > 0.1
             for: 10m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "4xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 30%)"
           - alert: HighServiceLatency
@@ -479,21 +517,21 @@ serverFiles:
               ) > 10
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "p99 latency on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}s (threshold: 10s)"
           - alert: TLSCertExpiringSoon
             expr: (traefik_tls_certs_not_after - time()) / 86400 < 7
             for: 1h
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "TLS cert {{ $labels.cn }} expires in {{ $value | printf \"%.0f\" }} days"
           - alert: TraefikHighOpenConnections
             expr: sum(traefik_service_open_connections) by (service) > 500
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: "{{ $labels.service }} has {{ $value | printf \"%.0f\" }} open connections (threshold: 500)"
           # - alert: OpenWRT High Memory Usage
@@ -557,7 +595,7 @@ serverFiles:
           - alert: New Tailscale client
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             labels:
-              severity: page
+              severity: info
             annotations:
               summary: "New Tailscale client registered"
 
@@ -602,7 +640,7 @@ extraScrapeConfigs: |
     scrape_timeout: 45s
     static_configs:
         - targets:
-          - "idrac.viktorbarzin.lan:161"
+          - "idrac.viktorbarzin.lan.:161"
     metrics_path: '/snmp'
     relabel_configs:
       - source_labels: [__address__]
@@ -663,7 +701,7 @@ extraScrapeConfigs: |
       module: [huawei]
     static_configs:
         - targets:
-          - "ups.viktorbarzin.lan:161"
+          - "ups.viktorbarzin.lan.:161"
     metrics_path: '/snmp'
     relabel_configs:
       - source_labels: [__address__]
@@ -733,7 +771,7 @@ extraScrapeConfigs: |
   - job_name: 'haos'
     static_configs:
         - targets:
-          - "ha-sofia.viktorbarzin.lan:8123"
+          - "ha-sofia.viktorbarzin.lan.:8123"
     metrics_path: '/api/prometheus'
     bearer_token: "${haos_api_token}"
   - job_name: 'nvidia'
@@ -764,4 +802,14 @@ extraScrapeConfigs: |
         regex: metrics
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: instance
+  - job_name: 'realestate-crawler-api'
+    static_configs:
+        - targets:
+          - "realestate-crawler-api.realestate-crawler.svc.cluster.local:80"
+    metrics_path: '/metrics'
+  - job_name: 'realestate-crawler-celery'
+    static_configs:
+        - targets:
+          - "realestate-crawler-celery-metrics.realestate-crawler.svc.cluster.local:9090"
+    metrics_path: '/metrics'
 
