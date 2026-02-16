@@ -157,12 +157,23 @@ When configuring services to use the mailserver:
 
 ## Useful Commands
 ```bash
+# Cluster health check — ALWAYS use this to check cluster status
+bash scripts/cluster_healthcheck.sh            # Full color report
+bash scripts/cluster_healthcheck.sh --quiet    # Only WARN/FAIL
+bash scripts/cluster_healthcheck.sh --json     # Machine-readable
+bash scripts/cluster_healthcheck.sh --fix      # Auto-delete evicted pods
+
 # ALWAYS use -target for terraform apply (speeds up execution)
 terraform apply -target=module.kubernetes_cluster.module.<service_name>
 terraform plan -target=module.kubernetes_cluster.module.<service_name>
 terraform fmt -recursive
 kubectl get pods -A
 ```
+
+**Cluster Health Check** (`scripts/cluster_healthcheck.sh`):
+- **ALWAYS use this script** when the user asks about cluster status, health, or "what's broken"
+- Runs 14 checks: nodes, resources, conditions, pods, evicted, DaemonSets, deployments, PVCs, HPAs, CronJobs, CrowdSec, ingress, Prometheus alerts, Uptime Kuma
+- **When adding new healthchecks or monitoring**: Always update this script to validate the new component
 
 **Terraform target examples:**
 - `terraform apply -target=module.kubernetes_cluster.module.monitoring` - Apply monitoring
