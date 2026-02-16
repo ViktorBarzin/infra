@@ -20,9 +20,8 @@ sidecar:
   datasources:
     enabled: "true"
   dashboards:
-    enabled: false
-    # label: "grafana_dashboard"
-    # folder: "/var/lib/grafana/dashboards"
+    enabled: true
+    label: "grafana_dashboard"
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1

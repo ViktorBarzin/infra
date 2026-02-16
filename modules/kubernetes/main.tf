@@ -37,6 +37,7 @@ variable "webhook_handler_git_token" {}
 variable "webhook_handler_ssh_key" {}
 variable "technitium_username" {}
 variable "technitium_password" {}
+variable "technitium_db_password" {}
 variable "idrac_username" {}
 variable "idrac_password" {}
 variable "alertmanager_slack_api_url" {}
@@ -125,6 +126,9 @@ variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
 variable "moltbot_ssh_key" { type = string }
+variable "gemini_api_key" { type = string }
+variable "llama_api_key" { type = string }
+variable "brave_api_key" { type = string }
 
 
 variable "defcon_level" {
@@ -481,11 +485,12 @@ module "travel_blog" {
 }
 
 module "technitium" {
-  source          = "./technitium"
-  for_each        = contains(local.active_modules, "technitium") ? { technitium = true } : {}
-  tls_secret_name = var.tls_secret_name
-  homepage_token  = var.homepage_credentials["technitium"]["token"]
-  tier            = local.tiers.core
+  source                 = "./technitium"
+  for_each               = contains(local.active_modules, "technitium") ? { technitium = true } : {}
+  tls_secret_name        = var.tls_secret_name
+  homepage_token         = var.homepage_credentials["technitium"]["token"]
+  technitium_db_password = var.technitium_db_password
+  tier                   = local.tiers.core
 }
 
 module "headscale" {
@@ -1137,6 +1142,9 @@ module "moltbot" {
   for_each        = contains(local.active_modules, "moltbot") ? { moltbot = true } : {}
   tls_secret_name = var.tls_secret_name
   ssh_key         = var.moltbot_ssh_key
+  gemini_api_key  = var.gemini_api_key
+  llama_api_key   = var.llama_api_key
+  brave_api_key   = var.brave_api_key
   tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]

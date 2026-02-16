@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "homepage_token" {}
+variable "technitium_db_password" {}
 
 resource "kubernetes_namespace" "technitium" {
   metadata {
@@ -258,5 +259,47 @@ module "ingress-doh" {
   tls_secret_name = var.tls_secret_name
   host            = "dns"
   service_name    = "technitium-web"
+}
+
+# Grafana datasource for Technitium DNS query logs in MySQL
+resource "kubernetes_config_map" "grafana_technitium_datasource" {
+  metadata {
+    name      = "grafana-technitium-datasource"
+    namespace = "monitoring"
+    labels = {
+      grafana_datasource = "1"
+    }
+  }
+  data = {
+    "technitium-datasource.yaml" = yamlencode({
+      apiVersion = 1
+      datasources = [{
+        name     = "Technitium MySQL"
+        type     = "mysql"
+        access   = "proxy"
+        url      = "mysql.dbaas.svc.cluster.local:3306"
+        database = "technitium"
+        user     = "technitium"
+        uid      = "technitium-mysql"
+        secureJsonData = {
+          password = var.technitium_db_password
+        }
+      }]
+    })
+  }
+}
+
+# Grafana dashboard for Technitium DNS query logs
+resource "kubernetes_config_map" "grafana_technitium_dashboard" {
+  metadata {
+    name      = "grafana-technitium-dashboard"
+    namespace = "monitoring"
+    labels = {
+      grafana_dashboard = "1"
+    }
+  }
+  data = {
+    "technitium-dns.json" = file("${path.module}/../monitoring/dashboards/technitium-dns.json")
+  }
 }
 
