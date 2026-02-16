@@ -59,6 +59,7 @@ resource "kubernetes_deployment" "idrac-redfish" {
         }
       }
       spec {
+        priority_class_name = "tier-1-cluster"
         container {
           # https://github.com/mrlhansen/idrac_exporter?tab=readme-ov-file
           image = "ghcr.io/mrlhansen/idrac_exporter:latest"

@@ -100,10 +100,13 @@ alloy:
       }
 
   # Resource limits for DaemonSet pods
+  # Alloy tails logs from all containers on the node via K8s API and batches
+  # them to Loki. Memory scales with number of active log streams (~30-50 per node).
+  # 128Mi was OOMKilled; steady-state usage is ~400-450Mi per pod.
   resources:
     requests:
       cpu: 50m
-      memory: 64Mi
+      memory: 256Mi
     limits:
       cpu: 200m
-      memory: 128Mi
+      memory: 768Mi
