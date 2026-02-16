@@ -171,7 +171,7 @@ kubectl get pods -A
 ```
 
 **Cluster Health Check** (`scripts/cluster_healthcheck.sh`):
-- **ALWAYS use this script** when the user asks about cluster status, health, or "what's broken"
+- **ALWAYS use this script** to check cluster health — whether the user asks explicitly, after deploying/updating services, or whenever you need to verify cluster state. Never use ad-hoc kubectl commands to assess overall cluster health; use the script instead.
 - Runs 14 checks: nodes, resources, conditions, pods, evicted, DaemonSets, deployments, PVCs, HPAs, CronJobs, CrowdSec, ingress, Prometheus alerts, Uptime Kuma
 - **When adding new healthchecks or monitoring**: Always update this script to validate the new component
 
