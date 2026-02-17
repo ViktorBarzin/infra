@@ -540,7 +540,7 @@ Key API endpoints:
 - `propertymappings/all/` — List property mappings
 - `rbac/roles/` — List roles
 
-#### Current Applications (8)
+#### Current Applications (9)
 | Application | Provider Type | Auth Flow |
 |-------------|--------------|-----------|
 | Cloudflare Access | OAuth2/OIDC | explicit consent |
@@ -548,11 +548,12 @@ Key API endpoints:
 | Grafana | OAuth2/OIDC | implicit consent |
 | Headscale | OAuth2/OIDC | explicit consent |
 | Immich | OAuth2/OIDC | explicit consent |
+| Kubernetes | OAuth2/OIDC (public) | implicit consent |
 | linkwarden | OAuth2/OIDC | explicit consent |
 | Matrix | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
 
-#### Current Groups (6)
+#### Current Groups (9)
 | Group | Parent | Superuser | Purpose |
 |-------|--------|-----------|---------|
 | Allow Login Users | — | No | Parent group for login-permitted users |
@@ -561,6 +562,9 @@ Key API endpoints:
 | Headscale Users | Allow Login Users | No | VPN access |
 | Home Server Admins | Allow Login Users | No | Server admin access |
 | Wrongmove Users | Allow Login Users | No | Real-estate app access |
+| kubernetes-admins | — | No | K8s cluster-admin RBAC |
+| kubernetes-power-users | — | No | K8s power-user RBAC |
+| kubernetes-namespace-owners | — | No | K8s namespace-owner RBAC |
 
 #### Current Users (7 real users)
 | Username | Name | Type | Groups |
@@ -591,10 +595,24 @@ Key API endpoints:
 - Response headers: `X-authentik-username`, `X-authentik-uid`, `X-authentik-email`, `X-authentik-name`, `X-authentik-groups`, `Set-Cookie`
 
 #### OIDC for Kubernetes API
-- Issuer: `https://authentik.viktorbarzin.me/application/o/kubernetes/`
-- Client ID: `kubernetes`
-- Username claim: `email`, Groups claim: `groups`
-- Configured via SSH to kube-apiserver manifest (`modules/kubernetes/rbac/apiserver-oidc.tf`)
+- **Issuer**: `https://authentik.viktorbarzin.me/application/o/kubernetes/`
+- **Client ID**: `kubernetes` (public client, no secret)
+- **Username claim**: `email`, **Groups claim**: `groups`
+- **Signing key**: `authentik Self-signed Certificate` (must be assigned to the provider or JWKS will be empty)
+- **Redirect URIs**: Regex mode `http://localhost:.*` and `http://127\.0\.0\.1:.*` (kubelogin picks random ports)
+- **Configured via**: SSH to kube-apiserver manifest (`modules/kubernetes/rbac/apiserver-oidc.tf`)
+- **RBAC module**: `modules/kubernetes/rbac/main.tf` — admin/power-user/namespace-owner roles
+- **Self-service portal**: `modules/kubernetes/k8s-portal/` — SvelteKit app at `https://k8s-portal.viktorbarzin.me`
+- **User definition**: `k8s_users` variable in `terraform.tfvars`
+- **Audit logging**: Enabled via `modules/kubernetes/rbac/audit-policy.tf`, logs at `/var/log/kubernetes/audit.log`
+
+**CRITICAL GOTCHAS when setting up Authentik OIDC for Kubernetes:**
+1. **Signing key MUST be assigned** to the OAuth2 provider. Without it, the JWKS endpoint returns `{}` and kube-apiserver can't validate tokens.
+2. **Email mapping must set `email_verified: True`**. The default Authentik email scope mapping hardcodes `email_verified: False`, which causes kube-apiserver to reject the token with `oidc: email not verified`. Use a custom scope mapping: `return {"email": request.user.email, "email_verified": True}`
+3. **kubelogin needs `--oidc-extra-scope`** for `email`, `profile`, `groups`. Without these, only `openid` is requested and the token lacks the `email` claim, causing `oidc: parse username claims "email": claim not present`.
+4. **Redirect URIs must use regex mode** (`http://localhost:.*`) because kubelogin picks random ports, not just 8000/18000.
+5. **Kubelet static pod manifest changes** require a full cycle to take effect: remove manifest, stop kubelet, remove containers via crictl, re-add manifest, start kubelet. Simple `touch` or kubelet restart is not enough.
+6. **Property mappings endpoint** in Authentik 2025.10.x is `propertymappings/provider/scope/` (not the older `propertymappings/scope/`).
 
 #### Common Management Tasks
 **Add a new OAuth2 application:**
