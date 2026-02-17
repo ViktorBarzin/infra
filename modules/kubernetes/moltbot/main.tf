@@ -1,6 +1,9 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "ssh_key" {}
+variable "gemini_api_key" { type = string }
+variable "llama_api_key" { type = string }
+variable "brave_api_key" { type = string }
 
 resource "kubernetes_namespace" "moltbot" {
   metadata {
@@ -66,26 +69,76 @@ resource "kubernetes_config_map" "openclaw_config" {
   data = {
     "openclaw.json" = jsonencode({
       gateway = {
-        bind = "lan"
+        bind           = "lan"
+        trustedProxies = ["10.0.0.0/8"]
         controlUi = {
           dangerouslyDisableDeviceAuth = true
-          allowedOrigins               = ["https://moltbot.viktorbarzin.me"]
+        }
+      }
+      agents = {
+        defaults = {
+          contextTokens     = 1000000
+          bootstrapMaxChars = 30000
+          model = {
+            primary   = "gemini/gemini-2.5-flash"
+            fallbacks = ["llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8"]
+          }
+          models = {
+            "gemini/gemini-2.5-flash"                                = {}
+            "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8" = {}
+          }
+        }
+      }
+      tools = {
+        profile = "full"
+        deny    = ["sessions_spawn", "sessions_list", "sessions_history", "sessions_send", "subagents", "browser"]
+        exec = {
+          host        = "sandbox"
+          security    = "full"
+          ask         = "off"
+          pathPrepend = ["/tools", "/workspace/infra"]
+        }
+        web = {
+          search = {
+            enabled    = true
+            provider   = "brave"
+            apiKey     = var.brave_api_key
+            maxResults = 5
+          }
+          fetch = {
+            enabled        = true
+            maxChars       = 50000
+            timeoutSeconds = 30
+          }
         }
       }
       models = {
+        mode = "merge"
         providers = {
+          gemini = {
+            baseUrl = "https://generativelanguage.googleapis.com/v1beta"
+            api     = "google-generative-ai"
+            apiKey  = var.gemini_api_key
+            models = [
+              { id = "gemini-2.5-flash", name = "gemini-2.5-flash", reasoning = true, input = ["text", "image"], contextWindow = 1048576, maxTokens = 65536, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+            ]
+          }
           ollama = {
             baseUrl = "http://ollama.ollama.svc.cluster.local:11434/v1"
-            apiKey  = "ollama-local"
             api     = "openai-completions"
-            models  = [
-              { id = "qwen2.5:14b", name = "Qwen 2.5 14B" },
-              { id = "qwen2.5-coder:14b", name = "Qwen 2.5 Coder 14B" },
-              { id = "deepseek-r1:14b", name = "DeepSeek R1 14B" },
-              { id = "qwen2.5:7b", name = "Qwen 2.5 7B" },
-              { id = "qwen2.5-coder:7b", name = "Qwen 2.5 Coder 7B" },
-              { id = "gemma2:9b", name = "Gemma 2 9B" },
-              { id = "llama3.1:latest", name = "Llama 3.1 8B" },
+            apiKey  = "ollama"
+            models = [
+              { id = "qwen2.5-coder:14b", name = "qwen2.5-coder:14b", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "qwen2.5:14b", name = "qwen2.5:14b", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "deepseek-r1:14b", name = "deepseek-r1:14b", reasoning = true, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+            ]
+          }
+          llama-as-openai = {
+            baseUrl = "https://api.llama.com/compat/v1"
+            apiKey  = var.llama_api_key
+            api     = "openai-completions"
+            models = [
+              { id = "Llama-4-Maverick-17B-128E-Instruct-FP8", name = "Llama-4-Maverick-17B-128E-Instruct-FP8", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
         }
@@ -127,57 +180,86 @@ resource "kubernetes_deployment" "moltbot" {
       spec {
         service_account_name = kubernetes_service_account.moltbot.metadata[0].name
 
-        # Init container 1: Download kubectl, terraform, git-crypt to /tools
+        # Init container: Download tools + clone repo + terraform init (parallelized)
         init_container {
-          name  = "install-tools"
+          name  = "setup"
           image = "alpine:3.20"
           command = ["sh", "-c", <<-EOF
             set -e
-            apk add --no-cache curl unzip git-crypt
-            # kubectl
-            curl -sL "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl
-            chmod +x /tools/kubectl
-            # terraform
-            curl -sL "https://releases.hashicorp.com/terraform/1.12.1/terraform_1.12.1_linux_amd64.zip" -o /tmp/tf.zip
-            unzip /tmp/tf.zip -d /tools
-            chmod +x /tools/terraform
-            # git-crypt (copy from apk install)
-            cp /usr/bin/git-crypt /tools/git-crypt
-          EOF
-          ]
-          volume_mount {
-            name       = "tools"
-            mount_path = "/tools"
-          }
-        }
+            apk add --no-cache curl unzip git-crypt openssh-client git bash
 
-        # Init container 2: Clone infra repo, unlock git-crypt, run terraform init
-        init_container {
-          name  = "clone-repo"
-          image = "alpine/git"
-          command = ["sh", "-c", <<-EOF
-            set -e
-            apk add --no-cache openssh-client bash git-crypt
-            export PATH="/tools:$PATH"
             # Copy OpenClaw config to writable home dir
             cp /openclaw-config-src/openclaw.json /openclaw-home/openclaw.json
+
             # Setup SSH key
             mkdir -p /root/.ssh
             cp /ssh/id_rsa /root/.ssh/id_rsa
             chmod 600 /root/.ssh/id_rsa
             ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
-            # Clone repo if not already present
+
+            # --- Run downloads and clone in parallel ---
+            # kubectl
+            (curl -sL "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
+            PID_KUBECTL=$!
+
+            # terraform
+            (curl -sL "https://releases.hashicorp.com/terraform/1.12.1/terraform_1.12.1_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
+            PID_TF=$!
+
+            # git-crypt (already installed via apk)
+            cp /usr/bin/git-crypt /tools/git-crypt
+
+            # Clone/pull repo
             if [ ! -d /workspace/infra/.git ]; then
-              git clone git@github.com:ViktorBarzin/infra.git /workspace/infra
+              git clone git@github.com:ViktorBarzin/infra.git /workspace/infra &
+              PID_GIT=$!
             else
-              cd /workspace/infra && git pull --ff-only || true
+              (cd /workspace/infra && git pull --ff-only || true) &
+              PID_GIT=$!
             fi
+
+            # Wait for all parallel tasks
+            wait $PID_KUBECTL || { echo "kubectl download failed"; exit 1; }
+            wait $PID_GIT || { echo "git clone/pull failed"; exit 1; }
+
+            # Unlock git-crypt (needs clone done)
             cd /workspace/infra
-            # Unlock git-crypt
             echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
             git-crypt unlock /tmp/git-crypt-key || true
             rm /tmp/git-crypt-key
-            # Terraform init
+
+            # Mark repo as safe for the node user (different UID from init container)
+            git config --global --add safe.directory /workspace/infra
+            cp /root/.gitconfig /openclaw-home/.gitconfig 2>/dev/null || true
+
+            # Symlink Claude skills into OpenClaw skills directory
+            ln -sfn /workspace/infra/.claude/skills /openclaw-home/skills
+
+            # Generate kubeconfig from in-cluster ServiceAccount credentials
+            SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            SA_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            cat > /openclaw-home/kubeconfig <<-KUBEEOF
+            apiVersion: v1
+            kind: Config
+            clusters:
+            - cluster:
+                certificate-authority-data: $(base64 < "$SA_CA" | tr -d '\n')
+                server: https://kubernetes.default.svc
+              name: in-cluster
+            contexts:
+            - context:
+                cluster: in-cluster
+                user: moltbot
+              name: in-cluster
+            current-context: in-cluster
+            users:
+            - name: moltbot
+              user:
+                token: $SA_TOKEN
+            KUBEEOF
+
+            # Terraform init (needs terraform + clone done)
+            wait $PID_TF || { echo "terraform download failed"; exit 1; }
             /tools/terraform init
           EOF
           ]
@@ -214,8 +296,8 @@ resource "kubernetes_deployment" "moltbot" {
 
         # Main container: OpenClaw
         container {
-          name  = "moltbot"
-          image = "ghcr.io/openclaw/openclaw:latest"
+          name    = "moltbot"
+          image   = "ghcr.io/openclaw/openclaw:2026.2.9"
           command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
           port {
             container_port = 18789
@@ -231,6 +313,18 @@ resource "kubernetes_deployment" "moltbot" {
           env {
             name  = "TF_VAR_prod"
             value = "true"
+          }
+          env {
+            name  = "KUBECONFIG"
+            value = "/home/node/.openclaw/kubeconfig"
+          }
+          env {
+            name  = "GIT_CONFIG_GLOBAL"
+            value = "/home/node/.openclaw/.gitconfig"
+          }
+          env {
+            name  = "GEMINI_API_KEY"
+            value = var.gemini_api_key
           }
           volume_mount {
             name       = "tools"
@@ -251,6 +345,14 @@ resource "kubernetes_deployment" "moltbot" {
           volume_mount {
             name       = "openclaw-home"
             mount_path = "/home/node/.openclaw"
+          }
+          resources {
+            limits = {
+              memory = "4Gi"
+            }
+            requests = {
+              memory = "256Mi"
+            }
           }
         }
 
