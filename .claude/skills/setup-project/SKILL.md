@@ -1,3 +1,17 @@
+---
+name: setup-project
+description: |
+  Deploy a new self-hosted service to the Kubernetes cluster from a GitHub repository.
+  Use when: (1) User provides a GitHub URL or project name and wants to deploy it,
+  (2) User says "deploy [service]" or "set up [service]",
+  (3) User wants to add a new service to the cluster.
+  Automated workflow: Docker image → Terraform module → Deploy.
+  Handles database setup, ingress, DNS configuration.
+author: Claude Code
+version: 1.0.0
+date: 2025-01-01
+---
+
 # Setup Project Skill
 
 **Purpose**: Deploy a new self-hosted service to the Kubernetes cluster from a GitHub repository.

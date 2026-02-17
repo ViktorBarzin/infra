@@ -1,3 +1,16 @@
+---
+name: extend-vm-storage
+description: |
+  Extend disk storage on a Kubernetes node VM (Proxmox-hosted).
+  Use when: (1) User wants to increase disk space on a k8s node VM,
+  (2) A node is running low on disk, (3) User says "extend storage"
+  or "add disk space". Automates: drain → shutdown → resize → boot →
+  expand filesystem → uncordon.
+author: Claude Code
+version: 1.0.0
+date: 2025-01-01
+---
+
 # Extend VM Storage Skill
 
 **Purpose**: Extend disk storage on a Kubernetes node VM (Proxmox-hosted).

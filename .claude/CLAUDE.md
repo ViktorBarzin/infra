@@ -492,14 +492,14 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 
 ### Available Skills
 
-**setup-project** (`.claude/skills/setup-project.md`)
+**setup-project** (`.claude/skills/setup-project/SKILL.md`)
 - Deploy new self-hosted services from GitHub repos
 - Automated workflow: Docker image → Terraform module → Deploy
 - Handles database setup, ingress, DNS configuration
 - **When to use**: User provides GitHub URL or wants to deploy a new service
 - **Example**: "Deploy [GitHub repo] to the cluster"
 
-**extend-vm-storage** (`.claude/skills/extend-vm-storage.md`)
+**extend-vm-storage** (`.claude/skills/extend-vm-storage/SKILL.md`)
 - Extend disk storage on K8s node VMs (Proxmox-hosted)
 - Automates: drain → shutdown → resize → boot → expand filesystem → uncordon
 - **When to use**: A k8s node needs more disk space
