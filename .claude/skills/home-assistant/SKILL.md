@@ -40,8 +40,8 @@ There are **two** Home Assistant instances:
 - **Aliases**: "ha" or "HA" = ha-london. "ha sofia" or "ha-sofia" = ha-sofia.
 
 ## Prerequisites
-- The `~/.venvs/claude` virtualenv must have `requests` package installed
-- Environment variables for each instance must be set in the venv activation script:
+- Python 3 with `requests` package available (installed via PYTHONPATH or system packages)
+- Environment variables for each instance:
   - **ha-london**: `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN`
   - **ha-sofia**: `HOME_ASSISTANT_SOFIA_URL` and `HOME_ASSISTANT_SOFIA_TOKEN`
 
@@ -55,14 +55,14 @@ There are **two** Home Assistant instances:
 | ha-sofia | `.claude/home-assistant-sofia.py` |
 
 ### Execution Pattern (CRITICAL)
-Always activate the venv to get environment variables:
+Run the scripts directly with python3 (env vars are set in the environment):
 
 ```bash
 # ha-london (default)
-source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py [command] [options]
+python3 .claude/home-assistant.py [command] [options]
 
 # ha-sofia
-source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant-sofia.py [command] [options]
+python3 .claude/home-assistant-sofia.py [command] [options]
 ```
 
 ### Available Commands
@@ -194,7 +194,7 @@ ssh vbarzin@192.168.1.8 "cat /config/secrets.yaml"
 
 To turn on the living room light on ha-london:
 ```bash
-source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/home-assistant.py on light.living_room
+python3 .claude/home-assistant.py on light.living_room
 ```
 
 To check ha-sofia configuration:
@@ -230,7 +230,7 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `HOME_ASSISTANT_URL and HOME_ASSISTANT_TOKEN must be set` | Didn't source venv activation | Use `source ~/.venvs/claude/bin/activate && python ...` |
+| `HOME_ASSISTANT_URL and HOME_ASSISTANT_TOKEN must be set` | Env vars not set | Ensure `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN` are in the environment |
 | `404 Not Found` | Entity doesn't exist | Use `search` command to find correct entity ID |
 | `401 Unauthorized` | Token invalid/expired | Generate new long-lived token in HA |
 | `Connection refused` | HA not reachable | Check URL and network connectivity |

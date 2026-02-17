@@ -4,6 +4,7 @@ variable "ssh_key" {}
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+variable "skill_secrets" { type = map(string) }
 
 resource "kubernetes_namespace" "moltbot" {
   metadata {
@@ -188,6 +189,10 @@ resource "kubernetes_deployment" "moltbot" {
             set -e
             apk add --no-cache curl unzip git-crypt openssh-client git bash
 
+            # Install pip and Python packages for skills
+            python3 -m ensurepip 2>/dev/null || apk add --no-cache py3-pip
+            pip3 install --break-system-packages --target=/tools/python-libs requests caldav icalendar uptime-kuma-api
+
             # Copy OpenClaw config to writable home dir
             cp /openclaw-config-src/openclaw.json /openclaw-home/openclaw.json
 
@@ -325,6 +330,33 @@ resource "kubernetes_deployment" "moltbot" {
           env {
             name  = "GEMINI_API_KEY"
             value = var.gemini_api_key
+          }
+          # Skill secrets - Home Assistant
+          env {
+            name  = "HOME_ASSISTANT_URL"
+            value = "https://ha-london.viktorbarzin.me"
+          }
+          env {
+            name  = "HOME_ASSISTANT_TOKEN"
+            value = var.skill_secrets["home_assistant_token"]
+          }
+          env {
+            name  = "HOME_ASSISTANT_SOFIA_URL"
+            value = "https://ha-sofia.viktorbarzin.me"
+          }
+          env {
+            name  = "HOME_ASSISTANT_SOFIA_TOKEN"
+            value = var.skill_secrets["home_assistant_sofia_token"]
+          }
+          # Skill secrets - Uptime Kuma
+          env {
+            name  = "UPTIME_KUMA_PASSWORD"
+            value = var.skill_secrets["uptime_kuma_password"]
+          }
+          # Python packages path for skills
+          env {
+            name  = "PYTHONPATH"
+            value = "/tools/python-libs"
           }
           volume_mount {
             name       = "tools"
