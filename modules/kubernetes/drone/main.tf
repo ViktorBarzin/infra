@@ -17,9 +17,25 @@ variable "allowed_users" {
 resource "kubernetes_namespace" "drone" {
   metadata {
     name = "drone"
-    # labels = {
-    #   "istio-injection" : "enabled"
-    # }
+    labels = {
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "drone" {
+  metadata {
+    name      = "tier-quota"
+    namespace = kubernetes_namespace.drone.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "4Gi"
+      "limits.cpu"      = "8"
+      "limits.memory"   = "16Gi"
+      pods              = "30"
+    }
   }
 }
 
