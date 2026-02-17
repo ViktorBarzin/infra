@@ -103,3 +103,15 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true # Require Authentik login
 }
+
+# Unprotected ingress for the setup script (needs to be curl-able without auth)
+module "ingress_setup_script" {
+  source          = "../ingress_factory"
+  namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
+  name            = "k8s-portal-setup"
+  host            = "k8s-portal"
+  service_name    = "k8s-portal"
+  ingress_path    = ["/setup/script"]
+  tls_secret_name = var.tls_secret_name
+  protected       = false
+}
