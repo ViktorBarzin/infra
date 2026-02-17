@@ -509,6 +509,110 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 
 ## Service-Specific Notes
 
+### Authentik (Identity Provider)
+- **Helm Chart**: `authentik` v2025.10.3 from `https://charts.goauthentik.io/`
+- **URL**: `https://authentik.viktorbarzin.me`
+- **API**: `https://authentik.viktorbarzin.me/api/v3/`
+- **API Token**: Stored as "Claude API" token in Authentik UI (Directory → Tokens)
+- **Namespace**: `authentik` (tier: cluster)
+- **Architecture**: 3 server replicas + 3 worker replicas + 3 PgBouncer replicas + 1 embedded outpost
+- **Database**: PostgreSQL via `postgresql.dbaas:5432`, pooled through PgBouncer at `pgbouncer.authentik:6432`
+- **Redis**: Shared at `redis.redis.svc.cluster.local`
+- **Terraform**: `modules/kubernetes/authentik/main.tf` (Helm), `pgbouncer.tf` (connection pooling)
+
+#### Authentik API Management
+To call the API, use:
+```bash
+curl -s -H "Authorization: Bearer <TOKEN>" "https://authentik.viktorbarzin.me/api/v3/<endpoint>/"
+```
+
+Key API endpoints:
+- `core/users/` — List/create/update/delete users
+- `core/groups/` — List/create/update/delete groups
+- `core/applications/` — List/create applications
+- `providers/all/` — List all providers (OAuth2, Proxy, etc.)
+- `providers/oauth2/` — OAuth2/OIDC providers specifically
+- `providers/proxy/` — Proxy providers (forward auth)
+- `flows/instances/` — List flows
+- `stages/all/` — List stages
+- `sources/all/` — List sources (Google, GitHub, etc.)
+- `outposts/instances/` — List outposts
+- `propertymappings/all/` — List property mappings
+- `rbac/roles/` — List roles
+
+#### Current Applications (8)
+| Application | Provider Type | Auth Flow |
+|-------------|--------------|-----------|
+| Cloudflare Access | OAuth2/OIDC | explicit consent |
+| Domain wide catch all | Proxy (forward auth) | implicit consent |
+| Grafana | OAuth2/OIDC | implicit consent |
+| Headscale | OAuth2/OIDC | explicit consent |
+| Immich | OAuth2/OIDC | explicit consent |
+| linkwarden | OAuth2/OIDC | explicit consent |
+| Matrix | OAuth2/OIDC | implicit consent |
+| wrongmove | OAuth2/OIDC | implicit consent |
+
+#### Current Groups (6)
+| Group | Parent | Superuser | Purpose |
+|-------|--------|-----------|---------|
+| Allow Login Users | — | No | Parent group for login-permitted users |
+| authentik Admins | — | Yes | Full admin access |
+| authentik Read-only | — | No | Read-only access (has role) |
+| Headscale Users | Allow Login Users | No | VPN access |
+| Home Server Admins | Allow Login Users | No | Server admin access |
+| Wrongmove Users | Allow Login Users | No | Real-estate app access |
+
+#### Current Users (7 real users)
+| Username | Name | Type | Groups |
+|----------|------|------|--------|
+| akadmin | authentik Default Admin | internal | authentik Admins, Home Server Admins, Headscale Users |
+| vbarzin@gmail.com | Viktor Barzin | internal | authentik Admins, Home Server Admins, Wrongmove Users, Headscale Users |
+| emil.barzin@gmail.com | Emil Barzin | internal | Home Server Admins, Headscale Users |
+| ancaelena98@gmail.com | Anca Milea | external | Wrongmove Users, Headscale Users |
+| vabbit81@gmail.com | GHEORGHE Milea | external | Headscale Users |
+| valentinakolevabarzina@gmail.com | Валентина Колева-Барзина | internal | Headscale Users |
+| anca.r.cristian10@gmail.com | — | internal | Wrongmove Users |
+| kadir.tugan@gmail.com | Kadir | internal | Wrongmove Users |
+
+#### Login Sources (Social Login)
+- **Google** (OAuth) — user matching by identifier
+- **GitHub** (OAuth) — user matching by email_link
+- **Facebook** (OAuth) — user matching by email_link
+- All use the same authentication flow (`1a779f24`) and enrollment flow (`87572804`)
+
+#### Authorization Flows
+- **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen before redirecting — used for Immich, Linkwarden, Headscale, Cloudflare
+- **Implicit consent** (`default-provider-authorization-implicit-consent`): Auto-redirects without consent — used for Grafana, Matrix, Domain catch-all, Wrongmove
+
+#### Traefik Integration
+- Forward auth middleware: `authentik-forward-auth` in Traefik namespace
+- Outpost endpoint: `http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik`
+- Services opt in via `protected = true` in `ingress_factory`
+- Response headers: `X-authentik-username`, `X-authentik-uid`, `X-authentik-email`, `X-authentik-name`, `X-authentik-groups`, `Set-Cookie`
+
+#### OIDC for Kubernetes API
+- Issuer: `https://authentik.viktorbarzin.me/application/o/kubernetes/`
+- Client ID: `kubernetes`
+- Username claim: `email`, Groups claim: `groups`
+- Configured via SSH to kube-apiserver manifest (`modules/kubernetes/rbac/apiserver-oidc.tf`)
+
+#### Common Management Tasks
+**Add a new OAuth2 application:**
+1. Create OAuth2 provider: `POST /api/v3/providers/oauth2/` with client_id, client_secret, redirect_uris, authorization_flow, etc.
+2. Create application: `POST /api/v3/core/applications/` with name, slug, provider pk
+3. (Optional) Bind to group policy for access control
+
+**Add a user to a group:**
+```bash
+# Get group pk, then PATCH with updated users list
+curl -X PATCH -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  "https://authentik.viktorbarzin.me/api/v3/core/groups/<group-pk>/" \
+  -d '{"users": [<existing_user_pks>, <new_user_pk>]}'
+```
+
+**Protect a service with forward auth:**
+Set `protected = true` in the service's `ingress_factory` call in Terraform.
+
 ### AFFiNE (Visual Canvas)
 - **Image**: `ghcr.io/toeverything/affine:stable`
 - **Port**: 3010
