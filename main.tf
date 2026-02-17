@@ -155,9 +155,15 @@ variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
 variable "moltbot_ssh_key" { type = string }
+variable "moltbot_skill_secrets" { type = map(string) }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+
+variable "k8s_users" {
+  type    = map(any)
+  default = {}
+}
 
 variable "kube_config_path" {
   type    = string
@@ -695,9 +701,13 @@ module "kubernetes_cluster" {
   health_postgresql_password = var.health_postgresql_password
   health_secret_key          = var.health_secret_key
   moltbot_ssh_key            = var.moltbot_ssh_key
+  moltbot_skill_secrets      = var.moltbot_skill_secrets
   gemini_api_key             = var.gemini_api_key
   llama_api_key              = var.llama_api_key
   brave_api_key              = var.brave_api_key
+
+  k8s_users       = var.k8s_users
+  ssh_private_key = var.ssh_private_key
 }
 
 
