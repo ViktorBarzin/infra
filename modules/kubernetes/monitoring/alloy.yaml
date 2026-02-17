@@ -99,6 +99,25 @@ alloy:
         forward_to = [loki.write.default.receiver]
       }
 
+      // Kubernetes audit log collection from /var/log/kubernetes/audit.log
+      // Requires alloy.mounts.varlog=true to mount /var/log from the host
+      local.file_match "audit_logs" {
+        path_targets = [{
+          __path__ = "/var/log/kubernetes/audit.log",
+          job      = "kubernetes-audit",
+          node     = env("HOSTNAME"),
+        }]
+      }
+
+      loki.source.file "audit_logs" {
+        targets    = local.file_match.audit_logs.targets
+        forward_to = [loki.write.default.receiver]
+      }
+
+  # Mount /var/log from the host for file-based log collection (audit logs)
+  mounts:
+    varlog: true
+
   # Resource limits for DaemonSet pods
   # Alloy tails logs from all containers on the node via K8s API and batches
   # them to Loki. Memory scales with number of active log streams (~30-50 per node).

@@ -126,9 +126,20 @@ variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
 variable "moltbot_ssh_key" { type = string }
+variable "moltbot_skill_secrets" { type = map(string) }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+
+variable "k8s_users" {
+  type    = map(any)
+  default = {}
+}
+variable "ssh_private_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
 
 
 variable "defcon_level" {
@@ -829,6 +840,22 @@ module "authentik" {
   postgres_password = var.authentik_postgres_password
 }
 
+module "rbac" {
+  source          = "./rbac"
+  for_each        = contains(local.active_modules, "authentik") ? { rbac = true } : {}
+  tier            = local.tiers.cluster
+  tls_secret_name = var.tls_secret_name
+  k8s_users       = var.k8s_users
+  ssh_private_key = var.ssh_private_key
+}
+
+module "k8s-portal" {
+  source          = "./k8s-portal"
+  for_each        = contains(local.active_modules, "authentik") ? { portal = true } : {}
+  tier            = local.tiers.edge
+  tls_secret_name = var.tls_secret_name
+}
+
 module "linkwarden" {
   source                  = "./linkwarden"
   for_each                = contains(local.active_modules, "linkwarden") ? { linkwarden = true } : {}
@@ -1142,6 +1169,7 @@ module "moltbot" {
   for_each        = contains(local.active_modules, "moltbot") ? { moltbot = true } : {}
   tls_secret_name = var.tls_secret_name
   ssh_key         = var.moltbot_ssh_key
+  skill_secrets   = var.moltbot_skill_secrets
   gemini_api_key  = var.gemini_api_key
   llama_api_key   = var.llama_api_key
   brave_api_key   = var.brave_api_key
