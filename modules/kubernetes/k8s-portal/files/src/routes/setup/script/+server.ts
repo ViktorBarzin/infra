@@ -57,14 +57,28 @@ set -e
 echo "=== Kubernetes Cluster Setup ==="
 echo ""
 
+# Use sudo if available, otherwise install directly (e.g. in containers running as root)
+SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo &>/dev/null; then
+    SUDO="sudo"
+fi
+
+# Determine install directory
+INSTALL_DIR="/usr/local/bin"
+if [ ! -w "\$INSTALL_DIR" ] && [ -z "\$SUDO" ]; then
+    INSTALL_DIR="\$HOME/.local/bin"
+    mkdir -p "\$INSTALL_DIR"
+    export PATH="\$INSTALL_DIR:\$PATH"
+fi
+
 # Install kubectl
 if command -v kubectl &>/dev/null; then
-    echo "[OK] kubectl already installed ($(kubectl version --client -o json 2>/dev/null | grep -o '"gitVersion":"[^"]*"' | cut -d'"' -f4))"
+    echo "[OK] kubectl already installed"
 else
     echo "[..] Installing kubectl..."
-    KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+    KUBECTL_VERSION=\$(curl -L -s https://dl.k8s.io/release/stable.txt)
     curl -fsSLO "https://dl.k8s.io/release/\${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-    chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+    chmod +x kubectl && \$SUDO mv kubectl "\$INSTALL_DIR/"
     echo "[OK] kubectl installed"
 fi
 
@@ -73,11 +87,11 @@ if command -v kubectl-oidc_login &>/dev/null; then
     echo "[OK] kubelogin already installed"
 else
     echo "[..] Installing kubelogin..."
-    KUBELOGIN_VERSION=$(curl -fsSL -o /dev/null -w "%{url_effective}" https://github.com/int128/kubelogin/releases/latest | grep -o '[^/]*$')
+    KUBELOGIN_VERSION=\$(curl -fsSL -o /dev/null -w "%{url_effective}" https://github.com/int128/kubelogin/releases/latest | grep -o '[^/]*\$')
     curl -fsSLO "https://github.com/int128/kubelogin/releases/download/\${KUBELOGIN_VERSION}/kubelogin_linux_amd64.zip"
     unzip -o kubelogin_linux_amd64.zip kubelogin -d /tmp
-    sudo mv /tmp/kubelogin /usr/local/bin/kubectl-oidc_login
-    rm kubelogin_linux_amd64.zip
+    \$SUDO mv /tmp/kubelogin "\$INSTALL_DIR/kubectl-oidc_login"
+    rm -f kubelogin_linux_amd64.zip
     echo "[OK] kubelogin installed"
 fi
 
