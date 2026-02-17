@@ -23,21 +23,21 @@ Need to create, query, or manage calendar events in the user's Nextcloud calenda
 - Default calendar is always Nextcloud unless otherwise specified
 
 ## Prerequisites
-- The `~/.venvs/claude` virtualenv must have `caldav` and `icalendar` packages installed
-- Environment variables `NEXTCLOUD_USER` and `NEXTCLOUD_APP_PASSWORD` must be set in the venv activation script
+- Python 3 with `caldav` and `icalendar` packages available (installed via PYTHONPATH or system packages)
+- Environment variables `NEXTCLOUD_USER` and `NEXTCLOUD_APP_PASSWORD` must be set
 
 ## Solution
 
 ### Script Location
 ```
-/home/wizard/code/infra/.claude/calendar-query.py
+.claude/calendar-query.py
 ```
 
 ### Execution Pattern (CRITICAL)
-Always activate the venv to get environment variables:
+Run the script directly with python3 (env vars are set in the environment):
 
 ```bash
-source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/calendar-query.py [command] [options]
+python3 .claude/calendar-query.py [command] [options]
 ```
 
 ### Available Commands
@@ -103,16 +103,14 @@ python .claude/calendar-query.py week
 To create an event "Team offsite" from March 20-22, 2026:
 
 ```bash
-source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day
+python3 .claude/calendar-query.py create --title "Team offsite" --start "2026-03-20" --end "2026-03-23" --all-day
 ```
 
 ## Important Notes
 
 1. **End dates are exclusive** for all-day events (CalDAV standard). To create an event spanning April 10-13, set end to April 14.
 
-2. **Must source venv activation** - Using `~/.venvs/claude/bin/python` directly won't work because environment variables (`NEXTCLOUD_USER`, `NEXTCLOUD_APP_PASSWORD`) are set in the activation script.
-
-3. **No delete/update commands** - The script currently only supports create and query. To modify events, user must do it manually in Nextcloud.
+2. **No delete/update commands** - The script currently only supports create and query. To modify events, user must do it manually in Nextcloud.
 
 4. **Default calendar** is "Personal" - use `--calendar` flag for others.
 
@@ -125,6 +123,6 @@ source ~/.venvs/claude/bin/activate && cd ~/code/infra && python .claude/calenda
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `NEXTCLOUD_USER and NEXTCLOUD_APP_PASSWORD must be set` | Didn't source venv activation | Use `source ~/.venvs/claude/bin/activate && python ...` |
-| `Required packages not installed` | caldav/icalendar missing | Run `~/.venvs/claude/bin/pip install caldav icalendar` |
+| `NEXTCLOUD_USER and NEXTCLOUD_APP_PASSWORD must be set` | Env vars not set | Ensure `NEXTCLOUD_USER` and `NEXTCLOUD_APP_PASSWORD` are in the environment |
+| `Required packages not installed` | caldav/icalendar missing | Ensure PYTHONPATH includes the installed packages |
 | `Calendar 'X' not found` | Wrong calendar name | Run `list` command to see available calendars |

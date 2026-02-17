@@ -20,17 +20,18 @@ date: 2026-02-14
 - **Internal**: `uptime-kuma.uptime-kuma.svc.cluster.local:80`
 - **Image**: `louislam/uptime-kuma:2`
 - **Storage**: NFS at `/mnt/main/uptime-kuma` -> `/app/data`
-- **API Library**: `uptime-kuma-api` (pip, installed in `~/.venvs/claude/`)
-- **Credentials**: admin / EUxhLr4w4NFsGehy
+- **API Library**: `uptime-kuma-api` (pip, available via PYTHONPATH)
+- **Credentials**: admin / (from `UPTIME_KUMA_PASSWORD` env var)
 
 ## Python API Access
 
 ### Connection Pattern
 ```python
+import os
 from uptime_kuma_api import UptimeKumaApi, MonitorType
 
 api = UptimeKumaApi('https://uptime.viktorbarzin.me')
-api.login('admin', 'EUxhLr4w4NFsGehy')
+api.login('admin', os.environ.get('UPTIME_KUMA_PASSWORD', ''))
 
 # ... operations ...
 
@@ -39,10 +40,11 @@ api.disconnect()
 
 ### Execution
 ```bash
-~/.venvs/claude/bin/python3 -c "
+python3 -c "
+import os
 from uptime_kuma_api import UptimeKumaApi, MonitorType
 api = UptimeKumaApi('https://uptime.viktorbarzin.me')
-api.login('admin', 'EUxhLr4w4NFsGehy')
+api.login('admin', os.environ.get('UPTIME_KUMA_PASSWORD', ''))
 # ... your code ...
 api.disconnect()
 "
