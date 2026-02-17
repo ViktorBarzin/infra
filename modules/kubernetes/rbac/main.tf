@@ -146,19 +146,6 @@ locals {
   ])
 }
 
-resource "kubernetes_namespace" "user_namespaces" {
-  for_each = { for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair }
-
-  metadata {
-    name = each.value.namespace
-    labels = {
-      tier                    = var.tier
-      "k8s-portal/owner"      = each.value.user_key
-      "k8s-portal/managed-by" = "rbac-module"
-    }
-  }
-}
-
 resource "kubernetes_role_binding" "namespace_owner" {
   for_each = { for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair }
 
@@ -178,8 +165,6 @@ resource "kubernetes_role_binding" "namespace_owner" {
     name      = each.value.email
     api_group = "rbac.authorization.k8s.io"
   }
-
-  depends_on = [kubernetes_namespace.user_namespaces]
 }
 
 # Read-only cluster-wide access for namespace owners
@@ -246,7 +231,7 @@ resource "kubernetes_resource_quota" "user_namespace_quota" {
     }
   }
 
-  depends_on = [kubernetes_namespace.user_namespaces]
+  depends_on = [kubernetes_role_binding.namespace_owner]
 }
 
 # ConfigMap with user-role mapping for the self-service portal
