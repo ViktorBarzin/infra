@@ -513,7 +513,7 @@ Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
 - **Helm Chart**: `authentik` v2025.10.3 from `https://charts.goauthentik.io/`
 - **URL**: `https://authentik.viktorbarzin.me`
 - **API**: `https://authentik.viktorbarzin.me/api/v3/`
-- **API Token**: Stored as "Claude API" token in Authentik UI (Directory → Tokens)
+- **API Token**: Stored in `terraform.tfvars` as `authentik_api_token` (non-expiring, superuser, identifier: `claude-code-permanent`). Read with: `grep authentik_api_token terraform.tfvars | cut -d'"' -f2`
 - **Namespace**: `authentik` (tier: cluster)
 - **Architecture**: 3 server replicas + 3 worker replicas + 3 PgBouncer replicas + 1 embedded outpost
 - **Database**: PostgreSQL via `postgresql.dbaas:5432`, pooled through PgBouncer at `pgbouncer.authentik:6432`
