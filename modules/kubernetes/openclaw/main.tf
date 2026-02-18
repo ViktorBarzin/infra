@@ -6,33 +6,33 @@ variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
 variable "skill_secrets" { type = map(string) }
 
-resource "kubernetes_namespace" "moltbot" {
+resource "kubernetes_namespace" "openclaw" {
   metadata {
-    name = "moltbot"
+    name = "openclaw"
   }
 }
 
 module "tls_secret" {
   source          = "../setup_tls_secret"
-  namespace       = kubernetes_namespace.moltbot.metadata[0].name
+  namespace       = kubernetes_namespace.openclaw.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_service_account" "moltbot" {
+resource "kubernetes_service_account" "openclaw" {
   metadata {
-    name      = "moltbot"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    name      = "openclaw"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
 }
 
-resource "kubernetes_cluster_role_binding" "moltbot" {
+resource "kubernetes_cluster_role_binding" "openclaw" {
   metadata {
-    name = "moltbot-cluster-admin"
+    name = "openclaw-cluster-admin"
   }
   subject {
     kind      = "ServiceAccount"
-    name      = kubernetes_service_account.moltbot.metadata[0].name
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    name      = kubernetes_service_account.openclaw.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   role_ref {
     api_group = "rbac.authorization.k8s.io"
@@ -44,7 +44,7 @@ resource "kubernetes_cluster_role_binding" "moltbot" {
 resource "kubernetes_secret" "ssh_key" {
   metadata {
     name      = "ssh-key"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   data = {
     "id_rsa" = var.ssh_key
@@ -55,7 +55,7 @@ resource "kubernetes_secret" "ssh_key" {
 resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   data = {
     "key" = filebase64("${path.root}/.git/git-crypt/keys/default")
@@ -65,7 +65,7 @@ resource "kubernetes_config_map" "git_crypt_key" {
 resource "kubernetes_config_map" "openclaw_config" {
   metadata {
     name      = "openclaw-config"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   data = {
     "openclaw.json" = jsonencode({
@@ -81,12 +81,13 @@ resource "kubernetes_config_map" "openclaw_config" {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
           model = {
-            primary   = "gemini/gemini-2.5-flash"
-            fallbacks = ["llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8"]
+            primary   = "llama-as-openai/Llama-3.3-70B-Instruct"
+            fallbacks = ["gemini/gemini-2.5-flash", "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"]
           }
           models = {
+            "llama-as-openai/Llama-3.3-70B-Instruct"                 = {}
             "gemini/gemini-2.5-flash"                                = {}
-            "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8" = {}
+            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"     = {}
           }
         }
       }
@@ -139,6 +140,8 @@ resource "kubernetes_config_map" "openclaw_config" {
             apiKey  = var.llama_api_key
             api     = "openai-completions"
             models = [
+              { id = "Llama-3.3-70B-Instruct", name = "Llama-3.3-70B-Instruct", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "Llama-4-Scout-17B-16E-Instruct-FP8", name = "Llama-4-Scout-17B-16E-Instruct-FP8", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
               { id = "Llama-4-Maverick-17B-128E-Instruct-FP8", name = "Llama-4-Maverick-17B-128E-Instruct-FP8", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
@@ -153,12 +156,12 @@ resource "random_password" "gateway_token" {
   special = false
 }
 
-resource "kubernetes_deployment" "moltbot" {
+resource "kubernetes_deployment" "openclaw" {
   metadata {
-    name      = "moltbot"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    name      = "openclaw"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
     labels = {
-      app  = "moltbot"
+      app  = "openclaw"
       tier = var.tier
     }
   }
@@ -169,17 +172,17 @@ resource "kubernetes_deployment" "moltbot" {
     replicas = 1
     selector {
       match_labels = {
-        app = "moltbot"
+        app = "openclaw"
       }
     }
     template {
       metadata {
         labels = {
-          app = "moltbot"
+          app = "openclaw"
         }
       }
       spec {
-        service_account_name = kubernetes_service_account.moltbot.metadata[0].name
+        service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
         # Init container: Download tools + clone repo + terraform init (parallelized)
         init_container {
@@ -208,7 +211,7 @@ resource "kubernetes_deployment" "moltbot" {
             PID_KUBECTL=$!
 
             # terraform
-            (curl -sL "https://releases.hashicorp.com/terraform/1.12.1/terraform_1.12.1_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
+            (curl -sL "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
             PID_TF=$!
 
             # git-crypt (already installed via apk)
@@ -254,11 +257,11 @@ resource "kubernetes_deployment" "moltbot" {
             contexts:
             - context:
                 cluster: in-cluster
-                user: moltbot
+                user: openclaw
               name: in-cluster
             current-context: in-cluster
             users:
-            - name: moltbot
+            - name: openclaw
               user:
                 token: $SA_TOKEN
             KUBEEOF
@@ -301,7 +304,7 @@ resource "kubernetes_deployment" "moltbot" {
 
         # Main container: OpenClaw
         container {
-          name    = "moltbot"
+          name    = "openclaw"
           image   = "ghcr.io/openclaw/openclaw:2026.2.9"
           command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
           port {
@@ -400,14 +403,14 @@ resource "kubernetes_deployment" "moltbot" {
           name = "workspace"
           nfs {
             server = "10.0.10.15"
-            path   = "/mnt/main/moltbot/workspace"
+            path   = "/mnt/main/openclaw/workspace"
           }
         }
         volume {
           name = "data"
           nfs {
             server = "10.0.10.15"
-            path   = "/mnt/main/moltbot/data"
+            path   = "/mnt/main/openclaw/data"
           }
         }
         volume {
@@ -428,17 +431,17 @@ resource "kubernetes_deployment" "moltbot" {
   }
 }
 
-resource "kubernetes_service" "moltbot" {
+resource "kubernetes_service" "openclaw" {
   metadata {
-    name      = "moltbot"
-    namespace = kubernetes_namespace.moltbot.metadata[0].name
+    name      = "openclaw"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
     labels = {
-      app = "moltbot"
+      app = "openclaw"
     }
   }
   spec {
     selector = {
-      app = "moltbot"
+      app = "openclaw"
     }
     port {
       port        = 80
@@ -449,8 +452,8 @@ resource "kubernetes_service" "moltbot" {
 
 module "ingress" {
   source          = "../ingress_factory"
-  namespace       = kubernetes_namespace.moltbot.metadata[0].name
-  name            = "moltbot"
+  namespace       = kubernetes_namespace.openclaw.metadata[0].name
+  name            = "openclaw"
   tls_secret_name = var.tls_secret_name
   port            = 80
   protected       = true
