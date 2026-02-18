@@ -138,6 +138,7 @@ variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
 variable "pve_password" { type = string }
 variable "grafana_db_password" { type = string }
+variable "grafana_admin_password" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
@@ -154,8 +155,8 @@ variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
-variable "moltbot_ssh_key" { type = string }
-variable "moltbot_skill_secrets" { type = map(string) }
+variable "openclaw_ssh_key" { type = string }
+variable "openclaw_skill_secrets" { type = map(string) }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
@@ -676,6 +677,7 @@ module "kubernetes_cluster" {
   haos_api_token           = var.haos_api_token
   pve_password             = var.pve_password
   grafana_db_password      = var.grafana_db_password
+  grafana_admin_password   = var.grafana_admin_password
 
   clickhouse_password          = var.clickhouse_password
   clickhouse_postgres_password = var.clickhouse_postgres_password
@@ -700,8 +702,8 @@ module "kubernetes_cluster" {
   affine_postgresql_password = var.affine_postgresql_password
   health_postgresql_password = var.health_postgresql_password
   health_secret_key          = var.health_secret_key
-  moltbot_ssh_key            = var.moltbot_ssh_key
-  moltbot_skill_secrets      = var.moltbot_skill_secrets
+  openclaw_ssh_key            = var.openclaw_ssh_key
+  openclaw_skill_secrets      = var.openclaw_skill_secrets
   gemini_api_key             = var.gemini_api_key
   llama_api_key              = var.llama_api_key
   brave_api_key              = var.brave_api_key

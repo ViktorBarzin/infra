@@ -60,9 +60,10 @@ resource "helm_release" "grafana" {
   create_namespace = true
   name             = "grafana"
   atomic           = true
+  timeout          = 600
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"
 
-  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password })]
+  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password, grafana_admin_password = var.grafana_admin_password })]
 }
