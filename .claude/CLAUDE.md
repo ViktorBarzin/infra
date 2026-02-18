@@ -146,7 +146,7 @@ When configuring services to use the mailserver:
 - `tier` - Deployment tier label
 - Service-specific passwords passed as variables
 
-## Service Versions (as of 2025-01)
+## Service Versions (as of 2026-02)
 - Immich: v2.4.1
 - Freedify: latest (music streaming, factory pattern)
 - AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
@@ -155,6 +155,7 @@ When configuring services to use the mailserver:
 - Gramps Web: latest (genealogy, uses Redis + Celery)
 - Loki: 3.6.5 (log aggregation, single binary, 6Gi RAM, 24h in-memory chunks)
 - Alloy: v1.13.0 (log collector DaemonSet, forwards to Loki)
+- OpenClaw: 2026.2.9 (AI agent gateway, authentik-protected)
 
 ## Useful Commands
 ```bash
@@ -300,6 +301,7 @@ Top-level modules in `main.tf`:
 | health | Apple Health data dashboard (PostgreSQL) | aux |
 | whisper | Wyoming Faster Whisper STT (CPU on GPU node) | gpu |
 | grampsweb | Genealogy web app (Gramps Web) | aux |
+| openclaw | AI agent gateway (OpenClaw) | aux |
 
 ---
 
@@ -321,7 +323,7 @@ owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine, health, family
+jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
 ```
 
 ### Special Subdomains
@@ -693,3 +695,18 @@ Set `protected = true` in the service's `ingress_factory` call in Terraform.
 - **Key paths**: Compactor at `/var/loki/compactor`, ruler scratch at `/var/loki/scratch` (must be under `/var/loki` — root FS is read-only)
 - **Querying**: Grafana Explore with LogQL, e.g. `{namespace="monitoring"} |= "error"`
 - **Troubleshooting**: If "entry too far behind" errors on first start, restart Alloy DaemonSet (`kubectl rollout restart ds -n monitoring alloy`) — Alloy reads historical logs on first boot, which Loki rejects; clears after restart
+
+### OpenClaw (AI Agent Gateway)
+- **Image**: `ghcr.io/openclaw/openclaw:2026.2.9`
+- **Port**: 18789
+- **URL**: `https://openclaw.viktorbarzin.me` (authentik-protected)
+- **Namespace**: `openclaw` (tier: aux)
+- **Formerly**: `moltbot` — renamed in Feb 2026
+- **Architecture**: Single pod with init container (tools download + repo clone) + main container (OpenClaw gateway)
+- **Init container**: Downloads kubectl v1.34.2, terraform 1.14.5, git-crypt; clones infra repo; runs terraform init
+- **ServiceAccount**: `openclaw` with `cluster-admin` ClusterRoleBinding (for managing cluster resources)
+- **Storage**: NFS at `/mnt/main/openclaw/workspace` (git repo) and `/mnt/main/openclaw/data` (persistent data)
+- **Config**: `openclaw.json` ConfigMap with model providers (Gemini, Ollama, Llama API), tool permissions, and agent defaults
+- **Variables**: `openclaw_ssh_key`, `openclaw_skill_secrets` in `terraform.tfvars`
+- **Skill secrets**: Home Assistant tokens (london + sofia), Uptime Kuma password — passed as env vars
+- **Model providers**: Gemini (gemini-2.5-flash), Ollama (qwen2.5-coder:14b, deepseek-r1:14b), Llama API (Llama-3.3-70B, Llama-4-Scout/Maverick)
