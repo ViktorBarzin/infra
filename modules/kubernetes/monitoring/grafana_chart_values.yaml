@@ -1,6 +1,14 @@
 deploymentStrategy:
   type: RollingUpdate
 replicas: 3
+adminPassword: "${grafana_admin_password}"
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 persistence:
   enabled: false # using external mysql
   existingClaim: "grafana-pvc"
@@ -8,7 +16,7 @@ ingress:
   enabled: "true"
   ingressClassName: "traefik"
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+    traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
     traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
   tls:
     - secretName: "tls-secret"

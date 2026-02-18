@@ -109,6 +109,7 @@ variable "tiny_tuya_slack_url" { type = string }
 variable "haos_api_token" { type = string }
 variable "pve_password" { type = string }
 variable "grafana_db_password" { type = string }
+variable "grafana_admin_password" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
 variable "wealthfolio_password_hash" { type = string }
@@ -125,8 +126,8 @@ variable "slack_channel" { type = string }
 variable "affine_postgresql_password" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
-variable "moltbot_ssh_key" { type = string }
-variable "moltbot_skill_secrets" { type = map(string) }
+variable "openclaw_ssh_key" { type = string }
+variable "openclaw_skill_secrets" { type = map(string) }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
@@ -165,7 +166,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing", "moltbot"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing", "openclaw"
     ],
   }
   active_modules = distinct(flatten([
@@ -320,6 +321,7 @@ module "monitoring" {
   haos_api_token                = var.haos_api_token
   pve_password                  = var.pve_password
   grafana_db_password           = var.grafana_db_password
+  grafana_admin_password        = var.grafana_admin_password
   tier                          = local.tiers.cluster
 }
 
@@ -1164,12 +1166,12 @@ module "grampsweb" {
   depends_on = [null_resource.core_services]
 }
 
-module "moltbot" {
-  source          = "./moltbot"
-  for_each        = contains(local.active_modules, "moltbot") ? { moltbot = true } : {}
+module "openclaw" {
+  source          = "./openclaw"
+  for_each        = contains(local.active_modules, "openclaw") ? { openclaw = true } : {}
   tls_secret_name = var.tls_secret_name
-  ssh_key         = var.moltbot_ssh_key
-  skill_secrets   = var.moltbot_skill_secrets
+  ssh_key         = var.openclaw_ssh_key
+  skill_secrets   = var.openclaw_skill_secrets
   gemini_api_key  = var.gemini_api_key
   llama_api_key   = var.llama_api_key
   brave_api_key   = var.brave_api_key
