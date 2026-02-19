@@ -4,6 +4,7 @@ variable "ssh_key" {}
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+variable "modal_api_key" { type = string }
 variable "skill_secrets" { type = map(string) }
 
 resource "kubernetes_namespace" "openclaw" {
@@ -81,13 +82,14 @@ resource "kubernetes_config_map" "openclaw_config" {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
           model = {
-            primary   = "llama-as-openai/Llama-3.3-70B-Instruct"
-            fallbacks = ["gemini/gemini-2.5-flash", "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"]
+            primary   = "modal/zai-org/GLM-5-FP8"
+            fallbacks = ["gemini/gemini-2.5-flash", "llama-as-openai/Llama-3.3-70B-Instruct"]
           }
           models = {
-            "llama-as-openai/Llama-3.3-70B-Instruct"                 = {}
-            "gemini/gemini-2.5-flash"                                = {}
-            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"     = {}
+            "modal/zai-org/GLM-5-FP8"                                   = { streaming = false }
+            "gemini/gemini-2.5-flash"                                    = {}
+            "llama-as-openai/Llama-3.3-70B-Instruct"                     = {}
+            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"         = {}
           }
         }
       }
@@ -117,6 +119,14 @@ resource "kubernetes_config_map" "openclaw_config" {
       models = {
         mode = "merge"
         providers = {
+          modal = {
+            baseUrl = "https://api.us-west-2.modal.direct/v1"
+            api     = "openai-completions"
+            apiKey  = var.modal_api_key
+            models = [
+              { id = "zai-org/GLM-5-FP8", name = "GLM-5", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+            ]
+          }
           gemini = {
             baseUrl = "https://generativelanguage.googleapis.com/v1beta"
             api     = "google-generative-ai"
@@ -207,11 +217,11 @@ resource "kubernetes_deployment" "openclaw" {
 
             # --- Run downloads and clone in parallel ---
             # kubectl
-            (curl -sL "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
+            (curl -sL --retry 3 --retry-delay 5 "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
             PID_KUBECTL=$!
 
             # terraform
-            (curl -sL "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
+            (curl -sL --retry 3 --retry-delay 5 "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
             PID_TF=$!
 
             # git-crypt (already installed via apk)
