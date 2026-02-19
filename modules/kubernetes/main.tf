@@ -128,6 +128,7 @@ variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
 variable "openclaw_ssh_key" { type = string }
 variable "openclaw_skill_secrets" { type = map(string) }
+variable "modal_api_key" { type = string }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
@@ -1175,6 +1176,7 @@ module "openclaw" {
   gemini_api_key  = var.gemini_api_key
   llama_api_key   = var.llama_api_key
   brave_api_key   = var.brave_api_key
+  modal_api_key   = var.modal_api_key
   tier            = local.tiers.aux
 
   depends_on = [null_resource.core_services]

@@ -160,6 +160,7 @@ variable "openclaw_skill_secrets" { type = map(string) }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+variable "modal_api_key" { type = string }
 
 variable "k8s_users" {
   type    = map(any)
@@ -707,6 +708,7 @@ module "kubernetes_cluster" {
   gemini_api_key             = var.gemini_api_key
   llama_api_key              = var.llama_api_key
   brave_api_key              = var.brave_api_key
+  modal_api_key              = var.modal_api_key
 
   k8s_users       = var.k8s_users
   ssh_private_key = var.ssh_private_key
