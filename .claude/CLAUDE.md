@@ -9,6 +9,9 @@
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
 - **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`. The real cluster state must never deviate from what's defined in Terraform — if a manual change is unavoidable (e.g., containerd config on running nodes), document it and ensure the Terraform templates match so future provisioning is consistent. Use `kubectl` only for read-only operations (get, describe, logs) and ephemeral debugging (run --rm, delete stuck pods), never for persistent state changes.
 - **CRITICAL: NEVER put sensitive data (API keys, passwords, tokens, credentials) into committed files** unless they are encrypted (e.g., via git-crypt). Secrets belong in `terraform.tfvars` (which is git-crypt encrypted) or in the `secrets/` directory. Never hardcode credentials in `.tf` files, scripts, `.claude/` files, or any other unencrypted committed file. Always pass secrets through the Terraform variable chain (`terraform.tfvars` → `main.tf` → module variables).
+- **CRITICAL: NEVER commit secrets** — triple-check before every commit that no API keys, passwords, tokens, or credentials are included in unencrypted files. This is a hard rule with zero exceptions.
+- **New services MUST have CI/CD**: Set up Drone CI pipeline (`.drone.yml`) with GitHub/GitLab repo integration. Services should auto-build and auto-deploy.
+- **New services MUST have monitoring**: Every new service should have monitoring via Prometheus (alerts/metrics) and/or Uptime Kuma (HTTP health checks). Add both when possible.
 
 ## Execution Environment
 - **File operations**: Read, Edit, Write, Glob, Grep tools
