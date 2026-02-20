@@ -730,3 +730,70 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
     }
   }
 }
+
+# --- ndots:2 injection ---
+# Kubernetes defaults to ndots:5, which causes 4 wasted NxDomain queries per
+# external DNS lookup (search domain expansion). This policy injects ndots:2
+# on all pods to reduce NxDomain flood while still allowing short-name service
+# resolution (e.g. "redis.redis" has 1 dot, so it still expands).
+resource "kubernetes_manifest" "mutate_ndots" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "inject-ndots"
+      annotations = {
+        "policies.kyverno.io/title"       = "Inject ndots:2 DNS Config"
+        "policies.kyverno.io/description" = "Sets ndots:2 on all Pods to reduce NxDomain query flood from search domain expansion. Skips pods that already have ndots configured."
+      }
+    }
+    spec = {
+      rules = [
+        {
+          name = "inject-ndots-2"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds = ["Pod"]
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
+                }
+              }
+            ]
+          }
+          preconditions = {
+            all = [
+              {
+                key      = "{{ request.object.spec.dnsConfig.options || `[]` | [?name == 'ndots'] | length(@) }}"
+                operator = "Equals"
+                value    = "0"
+              }
+            ]
+          }
+          mutate = {
+            patchStrategicMerge = {
+              spec = {
+                dnsConfig = {
+                  options = [
+                    {
+                      name  = "ndots"
+                      value = "2"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
