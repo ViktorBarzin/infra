@@ -32,7 +32,7 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 2
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -104,7 +104,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 2
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -262,7 +262,11 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
   spec {
     replicas = 1
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
     }
     selector {
       match_labels = {
@@ -281,6 +285,11 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           image             = "viktorbarzin/realestatecrawler:latest"
           image_pull_policy = "Always"
           command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info"]
+          port {
+            name           = "metrics"
+            container_port = 9090
+            protocol       = "TCP"
+          }
           env {
             name  = "ENV"
             value = "prod"
@@ -326,6 +335,26 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
         }
       }
+    }
+  }
+}
+
+resource "kubernetes_service" "realestate-crawler-celery-metrics" {
+  metadata {
+    name      = "realestate-crawler-celery-metrics"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+    labels = {
+      "app" = "realestate-crawler-celery"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "realestate-crawler-celery"
+    }
+    port {
+      port        = 9090
+      target_port = 9090
     }
   }
 }
@@ -398,59 +427,3 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
   }
 }
 
-resource "kubernetes_cron_job_v1" "scrape-rightmove" {
-  metadata {
-    name      = "scrape-rightmove"
-    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
-  }
-  spec {
-    concurrency_policy            = "Replace"
-    failed_jobs_history_limit     = 5
-    schedule                      = "0 0 1 * *"
-    starting_deadline_seconds     = 10
-    successful_jobs_history_limit = 10
-    job_template {
-      metadata {}
-      spec {
-        backoff_limit              = 3
-        ttl_seconds_after_finished = 10
-        template {
-          metadata {}
-          spec {
-            container {
-              name  = "scrape-rightmove"
-              image = "viktorbarzin/realestatecrawler:latest"
-              command = ["/bin/sh", "-c", <<-EOT
-                /app/runall.sh # Run the scrape script
-              EOT
-              ]
-              env {
-                name  = "DB_CONNECTION_STRING"
-                value = "mysql://wrongmove:wrongmove@mysql.dbaas.svc.cluster.local:3306/wrongmove"
-              }
-              # env {
-              #   name  = "HTTP_PROXY"
-              #   value = "http://tor-proxy.tor-proxy:8118"
-              # }
-              # env {
-              #   name  = "HTTPS_PROXY"
-              #   value = "http://tor-proxy.tor-proxy:8118"
-              # }
-              volume_mount {
-                name       = "data"
-                mount_path = "/app/data"
-              }
-            }
-            volume {
-              name = "data"
-              nfs {
-                path   = "/mnt/main/real-estate-crawler"
-                server = "10.0.10.15"
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
