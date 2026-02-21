@@ -14,7 +14,24 @@ resource "kubernetes_namespace" "authentik" {
   metadata {
     name = "authentik"
     labels = {
-      tier = var.tier
+      tier                                = var.tier
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "authentik" {
+  metadata {
+    name      = "authentik-quota"
+    namespace = kubernetes_namespace.authentik.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "8Gi"
+      "limits.cpu"      = "24"
+      "limits.memory"   = "48Gi"
+      pods              = "30"
     }
   }
 }
