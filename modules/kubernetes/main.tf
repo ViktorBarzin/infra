@@ -132,6 +132,7 @@ variable "modal_api_key" { type = string }
 variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
+variable "coturn_turn_secret" { type = string }
 
 variable "k8s_users" {
   type    = map(any)
@@ -159,7 +160,7 @@ locals {
     3 : ["reverse-proxy"],                                                                                                # Cluster admin services (k8s-dashboard chart repo still 404)
     4 : [
       "mailserver", "shadowsocks", "webhook_handler", "tuya-bridge", "dawarich", "owntracks", "nextcloud",
-      "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget"
+      "calibre", "onlyoffice", "f1-stream", "rybbit", "isponsorblocktv", "actualbudget", "coturn"
     ], # Activel used services
     # Optional services
     5 : [
@@ -252,6 +253,16 @@ module "f1-stream" {
   for_each        = contains(local.active_modules, "f1-stream") ? { f1-stream = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+
+  depends_on = [null_resource.core_services]
+}
+
+module "coturn" {
+  source          = "./coturn"
+  for_each        = contains(local.active_modules, "coturn") ? { coturn = true } : {}
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
+  turn_secret     = var.coturn_turn_secret
 
   depends_on = [null_resource.core_services]
 }

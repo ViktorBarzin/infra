@@ -161,6 +161,7 @@ variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
 variable "modal_api_key" { type = string }
+variable "coturn_turn_secret" { type = string }
 
 variable "k8s_users" {
   type    = map(any)
@@ -703,12 +704,13 @@ module "kubernetes_cluster" {
   affine_postgresql_password = var.affine_postgresql_password
   health_postgresql_password = var.health_postgresql_password
   health_secret_key          = var.health_secret_key
-  openclaw_ssh_key            = var.openclaw_ssh_key
-  openclaw_skill_secrets      = var.openclaw_skill_secrets
+  openclaw_ssh_key           = var.openclaw_ssh_key
+  openclaw_skill_secrets     = var.openclaw_skill_secrets
   gemini_api_key             = var.gemini_api_key
   llama_api_key              = var.llama_api_key
   brave_api_key              = var.brave_api_key
   modal_api_key              = var.modal_api_key
+  coturn_turn_secret         = var.coturn_turn_secret
 
   k8s_users       = var.k8s_users
   ssh_private_key = var.ssh_private_key
