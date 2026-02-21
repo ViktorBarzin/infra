@@ -1,11 +1,14 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "turn_secret" { type = string }
+variable "public_ip" { type = string }
 
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
     name = "f1-stream"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
@@ -34,16 +37,16 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image = "viktorbarzin/f1-stream:v1.0.0"
+          image = "viktorbarzin/f1-stream:v1.2.3"
           name  = "f1-stream"
           resources {
             limits = {
-              cpu    = "0.5"
+              cpu    = "1"
               memory = "512Mi"
             }
             requests = {
-              cpu    = "250m"
-              memory = "512Mi"
+              cpu    = "50m"
+              memory = "128Mi"
             }
           }
           port {
@@ -64,6 +67,18 @@ resource "kubernetes_deployment" "f1-stream" {
           env {
             name  = "HEADLESS_EXTRACT_ENABLED"
             value = "true"
+          }
+          env {
+            name  = "TURN_URL"
+            value = "turn:${var.public_ip}:3478"
+          }
+          env {
+            name  = "TURN_SHARED_SECRET"
+            value = var.turn_secret
+          }
+          env {
+            name  = "TURN_INTERNAL_URL"
+            value = "turn:coturn.coturn.svc.cluster.local:3478"
           }
           volume_mount {
             name       = "data"

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F1 Streams</title>
+  <meta name="description" content="Live F1 streaming links aggregated from Reddit and user submissions">
+  <meta property="og:title" content="F1 Streams">
+  <meta property="og:description" content="Live F1 streaming links aggregated from Reddit and user submissions">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23e10600' rx='12' width='100' height='100'/><text x='50' y='72' font-size='60' font-weight='900' text-anchor='middle' fill='white' font-family='sans-serif'>F1</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Titillium+Web:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/pico.min.css">
+  <link rel="stylesheet" href="/static/css/custom.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <span class="f1-logo">F1</span>
+      <div>
+        <h1 class="brand-title">Streams</h1>
+        <div class="brand-subtitle">Live Racing Hub</div>
+      </div>
+      <span class="live-indicator" id="live-badge" hidden>
+        <span class="live-dot"></span>
+        LIVE
+      </span>
+    </div>
+    <div class="auth-section" id="auth-section">
+      <button id="login-btn" onclick="showAuthDialog()">Login / Register</button>
+    </div>
+  </header>
+  <div class="racing-stripe"></div>
+
+  <nav class="tabs" id="tabs">
+    <button class="hamburger" id="hamburger" onclick="toggleMobileNav()" aria-label="Toggle navigation">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <button class="tab-btn active" data-tab="streams" onclick="switchTab('streams')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Streams
+    </button>
+    <button class="tab-btn" data-tab="reddit" onclick="switchTab('reddit')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(90 12 12)"/></svg>
+      Reddit Links
+    </button>
+    <button class="tab-btn hidden" data-tab="mine" onclick="switchTab('mine')" id="tab-mine">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      My Streams
+    </button>
+    <button class="tab-btn hidden" data-tab="admin" onclick="switchTab('admin')" id="tab-admin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Admin
+    </button>
+  </nav>
+
+  <main>
+    <section class="tab-content active" id="content-streams">
+      <div class="submit-form-card">
+        <div class="submit-form">
+          <input type="url" id="public-submit-url" placeholder="https://stream-url.com/..." required>
+          <input type="text" id="public-submit-title" placeholder="Stream title (optional)">
+          <button onclick="addPublicStream()">Add Stream</button>
+        </div>
+      </div>
+      <div class="stream-grid" id="stream-grid"></div>
+      <div class="empty-state" id="streams-empty" style="display:none">
+        <span class="empty-icon">&#127937;</span>
+        <div class="empty-title">No Streams Yet</div>
+        <p class="empty-desc">Add a stream URL above to get the race started.</p>
+      </div>
+    </section>
+
+    <section class="tab-content" id="content-reddit">
+      <div class="section-header">
+        <h3>Reddit Links</h3>
+        <button onclick="refreshRedditLinks()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Refresh
+        </button>
+      </div>
+      <ul class="link-list" id="reddit-list"></ul>
+      <div class="empty-state" id="reddit-empty" style="display:none">
+        <span class="empty-icon">&#128225;</span>
+        <div class="empty-title">No Links Found</div>
+        <p class="empty-desc">No Reddit links scraped yet. Check back closer to race time.</p>
+      </div>
+    </section>
+
+    <section class="tab-content" id="content-mine">
+      <div class="submit-form-card">
+        <div class="submit-form">
+          <input type="url" id="submit-url" placeholder="https://stream-url.com/..." required>
+          <input type="text" id="submit-title" placeholder="Stream title (optional)">
+          <button onclick="submitStream()">Submit Stream</button>
+        </div>
+      </div>
+      <div class="stream-grid" id="my-stream-grid"></div>
+      <div class="empty-state" id="mine-empty" style="display:none">
+        <span class="empty-icon">&#127918;</span>
+        <div class="empty-title">Your Pit Lane is Empty</div>
+        <p class="empty-desc">Submit a stream URL above to join the grid.</p>
+      </div>
+    </section>
+
+    <section class="tab-content" id="content-admin">
+      <div class="section-header">
+        <h3>All Streams</h3>
+        <button onclick="triggerScrape()">Trigger Scrape</button>
+      </div>
+      <div class="admin-stats" id="admin-stats"></div>
+      <div id="admin-stream-list"></div>
+    </section>
+
+    <!-- Browser Session Viewer (inline within main) -->
+    <section id="browser-viewer" class="browser-viewer hidden">
+      <div class="browser-viewer-bar">
+        <div class="browser-url-bar">
+          <svg class="browser-url-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="browser-url-text" id="browser-url"></span>
+        </div>
+        <span class="browser-viewer-status"></span>
+        <a id="browser-open-original" href="#" target="_blank" rel="noopener" class="browser-open-btn" title="Open original in new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+        <button class="browser-viewer-close" onclick="closeBrowserSession()" title="Close viewer">&times;</button>
+      </div>
+      <div class="browser-viewer-content">
+        <div class="loading-overlay" id="browser-viewer-loader">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Stream links are user-submitted and scraped from Reddit. No streams are hosted on this site.</p>
+  </footer>
+
+  <!-- Auth Dialog -->
+  <dialog id="auth-dialog">
+    <article>
+      <button class="dialog-close" onclick="document.getElementById('auth-dialog').close()" aria-label="Close">&times;</button>
+      <div class="dialog-logo"><span class="f1-logo">F1</span></div>
+      <h3 class="dialog-title">Welcome</h3>
+      <p class="dialog-subtitle">Sign in with your passkey to manage streams</p>
+
+      <div class="dialog-tabs">
+        <button class="dialog-tab-btn active" onclick="switchAuthTab('login', event)">Login</button>
+        <button class="dialog-tab-btn" onclick="switchAuthTab('register', event)">Register</button>
+      </div>
+
+      <div id="auth-login-form" class="auth-form-group">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" placeholder="Username" autocomplete="username webauthn">
+        <div class="error-msg" id="login-error"></div>
+        <button onclick="doLogin()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Login with Passkey
+        </button>
+      </div>
+
+      <div id="auth-register-form" class="auth-form-group" style="display:none">
+        <label for="register-username">Username</label>
+        <input type="text" id="register-username" placeholder="Username (3-30 chars)" autocomplete="username">
+        <div class="error-msg" id="register-error"></div>
+        <button onclick="doRegister()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+          Register with Passkey
+        </button>
+      </div>
+
+      <button onclick="document.getElementById('auth-dialog').close()" class="btn-secondary dialog-cancel">Cancel</button>
+    </article>
+  </dialog>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Reddit Viewer Overlay -->
+  <div id="reddit-viewer" class="reddit-viewer hidden">
+    <div class="reddit-viewer-bar">
+      <span class="reddit-viewer-title"></span>
+      <button class="reddit-viewer-close" onclick="closeRedditViewer()">&times;</button>
+    </div>
+    <div class="reddit-viewer-content">
+      <div class="loading-overlay" id="reddit-viewer-loader">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser Session Viewer (inline, inside main via JS) -->
+
+  <script src="/static/js/utils.js"></script>
+  <script src="/static/js/auth.js"></script>
+  <script src="/static/js/streams.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
