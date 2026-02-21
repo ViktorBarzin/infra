@@ -543,11 +543,11 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
             data = {
               spec = {
                 hard = {
-                  "requests.cpu"    = "4"
-                  "requests.memory" = "4Gi"
-                  "limits.cpu"      = "32"
-                  "limits.memory"   = "64Gi"
-                  pods              = "30"
+                  "requests.cpu"    = "8"
+                  "requests.memory" = "8Gi"
+                  "limits.cpu"      = "48"
+                  "limits.memory"   = "96Gi"
+                  pods              = "40"
                 }
               }
             }
@@ -592,11 +592,11 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
             data = {
               spec = {
                 hard = {
-                  "requests.cpu"    = "2"
-                  "requests.memory" = "2Gi"
-                  "limits.cpu"      = "8"
-                  "limits.memory"   = "16Gi"
-                  pods              = "20"
+                  "requests.cpu"    = "4"
+                  "requests.memory" = "4Gi"
+                  "limits.cpu"      = "16"
+                  "limits.memory"   = "32Gi"
+                  pods              = "30"
                 }
               }
             }
@@ -641,11 +641,11 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
             data = {
               spec = {
                 hard = {
-                  "requests.cpu"    = "1"
-                  "requests.memory" = "1Gi"
-                  "limits.cpu"      = "4"
-                  "limits.memory"   = "8Gi"
-                  pods              = "15"
+                  "requests.cpu"    = "2"
+                  "requests.memory" = "2Gi"
+                  "limits.cpu"      = "8"
+                  "limits.memory"   = "16Gi"
+                  pods              = "20"
                 }
               }
             }
