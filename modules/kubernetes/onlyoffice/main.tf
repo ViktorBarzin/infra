@@ -8,6 +8,7 @@ resource "kubernetes_namespace" "onlyoffice" {
     name = "onlyoffice"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
@@ -44,6 +45,16 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
         container {
           name  = "onlyoffice-document-server"
           image = "onlyoffice/documentserver:8.2.3"
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "4Gi"
+            }
+          }
           port {
             name           = "http"
             container_port = 80
