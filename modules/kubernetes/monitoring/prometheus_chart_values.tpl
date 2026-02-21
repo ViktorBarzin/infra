@@ -109,7 +109,7 @@ server:
     # - "web.enable-admin-api"
     - "web.enable-lifecycle"
     - "storage.tsdb.allow-overlapping-blocks"
-    # - "storage.tsdb.retention.size=1GB"
+    - "storage.tsdb.retention.size=45GB"
     - "storage.tsdb.wal-compression"
   persistentVolume:
     # enabled: false
