@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "f1-stream" {
             }
           }
           port {
-            container_port = 80
+            container_port = 8080
           }
         }
       }
@@ -70,7 +70,8 @@ resource "kubernetes_service" "f1-stream" {
       app = "f1-stream"
     }
     port {
-      port = "80"
+      port        = "80"
+      target_port = "8080"
     }
   }
 }
