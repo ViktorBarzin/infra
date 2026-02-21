@@ -14,6 +14,7 @@ resource "kubernetes_namespace" "actualbudget" {
     name = "actualbudget"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

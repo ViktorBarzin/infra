@@ -7,6 +7,9 @@ variable "method" {
 resource "kubernetes_namespace" "shadowsocks" {
   metadata {
     name = "shadowsocks"
+    labels = {
+      tier = var.tier
+    }
     # TLS termination seems iffy - I get pfsense MiTM-ing
     # labels = {
     #   "istio-injection" : "enabled"

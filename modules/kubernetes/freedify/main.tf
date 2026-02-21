@@ -14,6 +14,7 @@ resource "kubernetes_namespace" "freedify" {
     name = "freedify"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

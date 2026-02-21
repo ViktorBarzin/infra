@@ -12,6 +12,7 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
@@ -57,7 +58,7 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
           image = "viktorbarzin/immoweb:latest"
           port {
             name           = "http"
-            container_port = 80
+            container_port = 8080
             protocol       = "TCP"
           }
           env {
@@ -89,7 +90,8 @@ resource "kubernetes_service" "realestate-crawler-ui" {
       app = "realestate-crawler-ui"
     }
     port {
-      port = 80
+      port        = 80
+      target_port = 8080
     }
   }
 }

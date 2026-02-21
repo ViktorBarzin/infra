@@ -7,6 +7,7 @@ resource "kubernetes_namespace" "website" {
     name = "website"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

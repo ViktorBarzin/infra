@@ -13,6 +13,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "wireguard" {
   metadata {
     name = "wireguard"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 resource "kubernetes_config_map" "wg_0_conf" {

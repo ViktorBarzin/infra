@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "isponsorblocktv" {
     name = "isponsorblocktv"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

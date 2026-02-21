@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "meshcentral" {
     name = "meshcentral"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

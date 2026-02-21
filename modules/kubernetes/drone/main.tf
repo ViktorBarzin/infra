@@ -19,6 +19,7 @@ resource "kubernetes_namespace" "drone" {
     name = "drone"
     labels = {
       "resource-governance/custom-quota" = "true"
+      tier                               = var.tier
     }
   }
 }
@@ -30,10 +31,10 @@ resource "kubernetes_resource_quota" "drone" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "8"
-      "requests.memory" = "8Gi"
-      "limits.cpu"      = "16"
-      "limits.memory"   = "32Gi"
+      "requests.cpu"    = "16"
+      "requests.memory" = "16Gi"
+      "limits.cpu"      = "48"
+      "limits.memory"   = "96Gi"
       pods              = "30"
     }
   }

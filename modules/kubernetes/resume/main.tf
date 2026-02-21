@@ -12,6 +12,9 @@ locals {
 resource "kubernetes_namespace" "resume" {
   metadata {
     name = local.namespace
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

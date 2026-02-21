@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "city-guesser" {
     name = "city-guesser"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

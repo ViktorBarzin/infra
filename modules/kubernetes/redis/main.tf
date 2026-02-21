@@ -4,6 +4,9 @@ variable "tier" { type = string }
 resource "kubernetes_namespace" "redis" {
   metadata {
     name = "redis"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

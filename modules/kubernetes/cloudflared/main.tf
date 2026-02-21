@@ -5,6 +5,9 @@ variable "cloudflare_tunnel_token" {}
 resource "kubernetes_namespace" "cloudflared" {
   metadata {
     name = "cloudflared"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 variable "tier" { type = string }

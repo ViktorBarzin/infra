@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "changedetection" {
     name = "changedetection"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -9,6 +9,9 @@ variable "homepage_password" {}
 resource "kubernetes_namespace" "paperless-ngx" {
   metadata {
     name = "paperless-ngx"
+    labels = {
+      tier = var.tier
+    }
     # labels = {
     #   "istio-injection" : "enabled"
     # }

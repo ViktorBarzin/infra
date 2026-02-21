@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "turn_secret" { type = string }
+variable "public_ip" { type = string }
 
 locals {
   turn_realm = "viktorbarzin.me"
@@ -44,6 +45,7 @@ resource "kubernetes_config_map" "coturn_config" {
 
       # Network — use 0.0.0.0, coturn auto-detects pod IP
       listening-ip=0.0.0.0
+      external-ip=${var.public_ip}
 
       # Media relay port range (narrow — 100 ports)
       min-port=${local.min_port}
@@ -153,7 +155,7 @@ resource "kubernetes_service" "coturn" {
     name      = "coturn"
     namespace = kubernetes_namespace.coturn.metadata[0].name
     annotations = {
-      "metallb.universe.tf/loadBalancerIPs"  = "10.0.20.200"
+      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
       "metallb.universe.tf/allow-shared-ip" = "shared"
     }
   }

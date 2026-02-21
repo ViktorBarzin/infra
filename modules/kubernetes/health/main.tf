@@ -6,6 +6,9 @@ variable "secret_key" { type = string }
 resource "kubernetes_namespace" "health" {
   metadata {
     name = "health"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

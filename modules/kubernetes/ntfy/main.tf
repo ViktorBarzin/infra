@@ -3,6 +3,9 @@ variable "tier" { type = string }
 resource "kubernetes_namespace" "ntfy" {
   metadata {
     name = "ntfy"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

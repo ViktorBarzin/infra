@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "matrix" {
     name = "matrix"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

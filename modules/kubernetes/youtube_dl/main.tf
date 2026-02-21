@@ -9,6 +9,7 @@ resource "kubernetes_namespace" "ytdlp" {
     name = "ytdlp"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

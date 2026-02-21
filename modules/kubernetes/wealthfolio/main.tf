@@ -14,6 +14,7 @@ resource "kubernetes_namespace" "wealthfolio" {
     name = "wealthfolio"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
