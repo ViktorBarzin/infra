@@ -194,8 +194,8 @@ resource "kubernetes_resource_quota" "monitoring" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "64"
-      "limits.memory"   = "128Gi"
+      "limits.cpu"      = "80"
+      "limits.memory"   = "160Gi"
       pods              = "100"
     }
   }
