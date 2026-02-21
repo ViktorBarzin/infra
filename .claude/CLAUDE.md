@@ -535,6 +535,15 @@ Four layers of noisy-neighbor protection, all defined in `modules/kubernetes/kyv
 | 3-edge | 50m/128Mi | 1/2Gi | 4/8Gi |
 | 4-aux | 25m/64Mi | 500m/1Gi | 2/4Gi |
 
+**ResourceQuota hard limits by tier**:
+| Tier | Req CPU | Req Mem | Lim CPU | Lim Mem | Pods |
+|------|---------|---------|---------|---------|------|
+| 0-core | 8 | 8Gi | 32 | 64Gi | 100 |
+| 1-cluster | 4 | 4Gi | 16 | 32Gi | 30 |
+| 2-gpu | 8 | 8Gi | 48 | 96Gi | 40 |
+| 3-edge | 4 | 4Gi | 16 | 32Gi | 30 |
+| 4-aux | 2 | 2Gi | 8 | 16Gi | 20 |
+
 ---
 
 ## User Preferences
