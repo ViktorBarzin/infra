@@ -362,10 +362,11 @@ function openBrowserSession(streamId, streamTitle, streamURL) {
   // Remove any existing iframe
   contentEl.querySelectorAll('.browser-iframe').forEach(el => el.remove());
 
-  // Create iframe
+  // Create iframe with sandbox to prevent frame-busting and top-navigation
   const iframe = document.createElement('iframe');
   iframe.src = proxyURL;
   iframe.className = 'browser-iframe';
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation');
   iframe.setAttribute('allowfullscreen', '');
   iframe.onload = function() {
     loader.classList.add('hidden');
