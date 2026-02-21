@@ -168,7 +168,7 @@ locals {
       "url", "excalidraw", "travel_blog", "dashy", "send", "ytdlp", "wealthfolio", "rybbit", "stirling-pdf",
       "networking-toolbox", "navidrome", "freshrss", "forgejo", "tor-proxy", "real-estate-crawler", "n8n",
       "changedetection", "linkwarden", "matrix", "homepage", "meshcentral", "diun", "cyberchef", "ntfy", "ollama",
-      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "grampsweb", "osm-routing", "openclaw"
+      "servarr", "jsoncrack", "paperless-ngx", "frigate", "audiobookshelf", "tandoor", "ebook2audiobook", "netbox", "speedtest", "resume", "freedify", "mcaptcha", "affine", "plotting-book", "whisper", "osm-routing", "openclaw"
     ],
   }
   active_modules = distinct(flatten([
