@@ -462,7 +462,7 @@ check_crowdsec() {
         return 0
     fi
 
-    not_running=$(echo "$cs_pods" | awk '$3 != "Running" {print $1 ": " $3}' || true)
+    not_running=$(echo "$cs_pods" | awk '$3 != "Running" && $3 != "Completed" {print $1 ": " $3}' || true)
     if [[ -n "$not_running" ]]; then
         [[ "$QUIET" == true ]] && section_always 11 "CrowdSec Agents"
         while IFS= read -r line; do
