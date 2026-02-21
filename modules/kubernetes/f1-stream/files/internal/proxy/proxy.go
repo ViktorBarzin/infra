@@ -91,6 +91,19 @@ if(_ss&&_ss.set){Object.defineProperty(el,'src',{get:function(){return _ss.get?_
 }
 return el;
 };
+/* Neutralize anti-debug: override setInterval to skip debugger-based detection */
+var _si=window.setInterval;
+window.setInterval=function(fn,ms){
+if(typeof fn==='function'){var s=fn.toString();if(s.indexOf('debugger')!==-1||s.indexOf('devtool')!==-1)return 0;}
+if(typeof fn==='string'&&(fn.indexOf('debugger')!==-1||fn.indexOf('devtool')!==-1))return 0;
+return _si.apply(this,arguments);
+};
+/* Block loading of known anti-debug scripts */
+var _ael=HTMLScriptElement.prototype.setAttribute;
+HTMLScriptElement.prototype.setAttribute=function(n,v){
+if(n==='src'&&typeof v==='string'&&(v.indexOf('disable-devtool')!==-1||v.indexOf('devtools-detect')!==-1)){return;}
+return _ael.apply(this,arguments);
+};
 })();</script>`
 
 // NewHandler returns an http.Handler that serves the reverse proxy at /proxy/.
@@ -282,6 +295,9 @@ var rootRelativeCSSRe = regexp.MustCompile(`(url\(\s*["']?)/([^/"')[^"')]*)(["']
 // crossOriginIframeSrcRe matches <iframe src="https://..."> to proxy cross-origin embeds.
 var crossOriginIframeSrcRe = regexp.MustCompile(`(<iframe[^>]*\ssrc\s*=\s*["'])(https?://[^"']+)(["'])`)
 
+// disableDevtoolRe matches <script> tags that load disable-devtool or similar anti-debug libraries.
+var disableDevtoolRe = regexp.MustCompile(`(?i)<script[^>]*(?:disable-devtool|devtools-detect)[^>]*>(?:</script>)?`)
+
 // rewriteHTML replaces URLs and injects the JS shim to intercept runtime requests.
 func rewriteHTML(body, origin, b64Origin string) string {
 	proxyPrefix := "/proxy/" + b64Origin
@@ -340,7 +356,10 @@ func rewriteHTML(body, origin, b64Origin string) string {
 		return prefix + "/proxy/" + iframeB64 + parsed.RequestURI() + quote
 	})
 
-	// 5. Inject JS shim right after <head> to intercept fetch/XHR/WebSocket
+	// 5. Strip anti-debugging scripts (disable-devtool, devtools-detect)
+	body = disableDevtoolRe.ReplaceAllString(body, "")
+
+	// 6. Inject JS shim right after <head> to intercept fetch/XHR/WebSocket
 	shim := fmt.Sprintf(jsShimTemplate, b64Origin, origin)
 	headIdx := strings.Index(strings.ToLower(body), "<head>")
 	if headIdx != -1 {
