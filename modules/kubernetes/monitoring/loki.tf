@@ -73,7 +73,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
           image = "busybox:1.37"
           command = [
             "sh", "-c",
-            "sysctl -w fs.inotify.max_user_watches=1048576 && sysctl -w fs.inotify.max_user_instances=512 && sysctl -w fs.inotify.max_queued_events=1048576"
+            "sysctl -w fs.inotify.max_user_watches=1048576 && sysctl -w fs.inotify.max_user_instances=8192 && sysctl -w fs.inotify.max_queued_events=1048576"
           ]
           security_context {
             privileged = true
