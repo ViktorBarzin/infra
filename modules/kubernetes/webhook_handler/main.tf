@@ -12,6 +12,9 @@ variable "ssh_key" {}
 resource "kubernetes_namespace" "webhook-handler" {
   metadata {
     name = "webhook-handler"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

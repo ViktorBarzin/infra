@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "travel-blog" {
     name = "travel-blog"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

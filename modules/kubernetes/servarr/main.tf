@@ -5,6 +5,9 @@ variable "aiostreams_database_connection_string" { type = string }
 resource "kubernetes_namespace" "servarr" {
   metadata {
     name = "servarr"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

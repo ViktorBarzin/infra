@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "plotting-book" {
     name = "plotting-book"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

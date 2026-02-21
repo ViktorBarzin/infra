@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "networking-toolbox" {
     name = "networking-toolbox"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -18,6 +18,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

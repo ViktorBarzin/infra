@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "audiobookshelf" {
     name = "audiobookshelf"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -19,6 +19,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "xray" {
   metadata {
     name = "xray"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

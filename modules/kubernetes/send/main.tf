@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "send" {
     name = "send"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

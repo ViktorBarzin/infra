@@ -6,6 +6,9 @@ variable "technitium_db_password" {}
 resource "kubernetes_namespace" "technitium" {
   metadata {
     name = "technitium"
+    labels = {
+      tier = var.tier
+    }
     # stale cache error when trying to resolve
     # labels = {
     #   "istio-injection" : "enabled"

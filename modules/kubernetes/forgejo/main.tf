@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "forgejo" {
     name = "forgejo"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

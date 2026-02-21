@@ -15,6 +15,9 @@ variable "prod" {
 resource "kubernetes_namespace" "dbaas" {
   metadata {
     name = "dbaas"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

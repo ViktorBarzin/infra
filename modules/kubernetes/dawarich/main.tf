@@ -12,6 +12,7 @@ resource "kubernetes_namespace" "dawarich" {
     name = "dawarich"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "privatebin" {
     name = "privatebin"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

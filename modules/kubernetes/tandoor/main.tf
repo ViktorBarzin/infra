@@ -8,6 +8,7 @@ resource "kubernetes_namespace" "tandoor" {
     name = "tandoor"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

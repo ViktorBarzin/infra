@@ -12,6 +12,7 @@ resource "kubernetes_namespace" "owntracks" {
     name = "owntracks"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

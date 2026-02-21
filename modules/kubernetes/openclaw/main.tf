@@ -10,6 +10,9 @@ variable "skill_secrets" { type = map(string) }
 resource "kubernetes_namespace" "openclaw" {
   metadata {
     name = "openclaw"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 
@@ -86,10 +89,10 @@ resource "kubernetes_config_map" "openclaw_config" {
             fallbacks = ["gemini/gemini-2.5-flash", "llama-as-openai/Llama-3.3-70B-Instruct"]
           }
           models = {
-            "modal/zai-org/GLM-5-FP8"                                   = { streaming = false }
-            "gemini/gemini-2.5-flash"                                    = {}
-            "llama-as-openai/Llama-3.3-70B-Instruct"                     = {}
-            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"         = {}
+            "modal/zai-org/GLM-5-FP8"                            = { streaming = false }
+            "gemini/gemini-2.5-flash"                            = {}
+            "llama-as-openai/Llama-3.3-70B-Instruct"             = {}
+            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8" = {}
           }
         }
       }

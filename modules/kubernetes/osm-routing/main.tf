@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "osm-routing" {
     name = "osm-routing"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -10,6 +10,9 @@ module "tls_secret" {
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "freshrss"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

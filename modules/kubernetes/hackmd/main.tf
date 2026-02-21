@@ -7,6 +7,7 @@ resource "kubernetes_namespace" "hackmd" {
     name = "hackmd"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

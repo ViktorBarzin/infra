@@ -7,6 +7,9 @@ variable "headscale_acl" {}
 resource "kubernetes_namespace" "headscale" {
   metadata {
     name = "headscale"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

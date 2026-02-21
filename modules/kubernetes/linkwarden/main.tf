@@ -7,6 +7,9 @@ variable "authentik_client_secret" {}
 resource "kubernetes_namespace" "linkwarden" {
   metadata {
     name = "linkwarden"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

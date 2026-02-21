@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "kms" {
     name = "kms"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

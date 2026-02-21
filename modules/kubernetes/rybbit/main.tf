@@ -6,6 +6,9 @@ variable "postgres_password" { type = string }
 resource "kubernetes_namespace" "rybbit" {
   metadata {
     name = "rybbit"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

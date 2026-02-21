@@ -10,6 +10,7 @@ resource "kubernetes_namespace" "tuya-bridge" {
     name = "tuya-bridge"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

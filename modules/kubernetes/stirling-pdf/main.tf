@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "stirling-pdf" {
     name = "stirling-pdf"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

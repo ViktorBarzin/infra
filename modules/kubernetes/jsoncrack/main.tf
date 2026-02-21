@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "jsoncrack" {
     name = "jsoncrack"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

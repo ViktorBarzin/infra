@@ -18,6 +18,7 @@ resource "kubernetes_namespace" "shlink" {
     name = "url"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

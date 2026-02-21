@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "excalidraw" {
     name = "excalidraw"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
