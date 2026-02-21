@@ -37,7 +37,7 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image = "viktorbarzin/f1-stream:v1.2.6"
+          image = "viktorbarzin/f1-stream:v1.2.7"
           name  = "f1-stream"
           resources {
             limits = {
