@@ -342,6 +342,18 @@ HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvisio
 ### Add-ons
 Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client
 
+### Music Assistant (MASS)
+- **Addon slug**: `d5369777_music_assistant`
+- **Version**: 2.7.8
+- **Web UI**: `http://192.168.1.8:8095`
+- **Container name**: `addon_d5369777_music_assistant`
+- **Providers**: Spotify (OAuth PKCE + librespot), TuneIn Radio, RadioBrowser, BBC Sounds, Radio Paradise, Filesystem (remote share)
+- **Player providers**: UPnP/DLNA, AirPlay, Sendspin (port 8927)
+- **Registered players**: Marantz ND8006 (DLNA + AirPlay), Sony BRAVIA XR-65A80L (AirPlay), Web (Chrome)
+- **Librespot cache**: `/data/.cache/spotify--5s3mSP8y/credentials.json` (inside addon container)
+- **Troubleshooting**: See skill `music-assistant-librespot-wrong-account` for Spotify playback failures
+- **SSH addon access to container**: `sudo curl -s --unix-socket /run/docker.sock http://localhost/containers/<id>/exec` (requires sudo)
+
 ### Zones
 - **Вермонт** (Vermont) — Home
 - **Вълчедръм** (Valchedram) — Country house
