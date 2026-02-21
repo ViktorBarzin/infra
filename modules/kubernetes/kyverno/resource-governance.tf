@@ -719,11 +719,21 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
             ]
           }
           mutate = {
-            patchStrategicMerge = {
-              spec = {
-                priorityClassName = "tier-{{tierLabel}}"
+            patchesJson6902 = yamlencode([
+              {
+                op    = "remove"
+                path  = "/spec/priority"
+              },
+              {
+                op    = "remove"
+                path  = "/spec/preemptionPolicy"
+              },
+              {
+                op    = "add"
+                path  = "/spec/priorityClassName"
+                value = "tier-{{tierLabel}}"
               }
-            }
+            ])
           }
         }
       ]
