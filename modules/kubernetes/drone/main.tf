@@ -30,10 +30,10 @@ resource "kubernetes_resource_quota" "drone" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "4"
-      "requests.memory" = "4Gi"
-      "limits.cpu"      = "8"
-      "limits.memory"   = "16Gi"
+      "requests.cpu"    = "8"
+      "requests.memory" = "8Gi"
+      "limits.cpu"      = "16"
+      "limits.memory"   = "32Gi"
       pods              = "30"
     }
   }
