@@ -369,6 +369,11 @@ resource "kubernetes_deployment" "openclaw" {
             name  = "UPTIME_KUMA_PASSWORD"
             value = var.skill_secrets["uptime_kuma_password"]
           }
+          # Skill secrets - Slack
+          env {
+            name  = "SLACK_WEBHOOK_URL"
+            value = var.skill_secrets["slack_webhook"]
+          }
           # Python packages path for skills
           env {
             name  = "PYTHONPATH"
