@@ -367,6 +367,7 @@ function openBrowserSession(streamId, streamTitle, streamURL) {
   iframe.src = proxyURL;
   iframe.className = 'browser-iframe';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation');
+  iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
   iframe.setAttribute('allowfullscreen', '');
   iframe.onload = function() {
     loader.classList.add('hidden');
