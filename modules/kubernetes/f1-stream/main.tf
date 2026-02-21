@@ -20,7 +20,7 @@ resource "kubernetes_deployment" "f1-stream" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     selector {
       match_labels = {
         app = "f1-stream"
@@ -48,6 +48,33 @@ resource "kubernetes_deployment" "f1-stream" {
           }
           port {
             container_port = 8080
+          }
+          env {
+            name  = "WEBAUTHN_RPID"
+            value = "f1.viktorbarzin.me"
+          }
+          env {
+            name  = "WEBAUTHN_ORIGIN"
+            value = "https://f1.viktorbarzin.me"
+          }
+          env {
+            name  = "WEBAUTHN_DISPLAY_NAME"
+            value = "F1 Stream"
+          }
+          env {
+            name  = "HEADLESS_EXTRACT_ENABLED"
+            value = "true"
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+        }
+        volume {
+          name = "data"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/f1-stream"
           }
         }
       }
