@@ -2,6 +2,7 @@
 container_runtime: containerd
 
 agent:
+  priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
     # The namespace where the pod is located
@@ -43,6 +44,7 @@ agent:
       configMap:
         name: crowdsec-whitelist
 lapi:
+  priorityClassName: "tier-1-cluster"
   replicas: 3
   extraSecrets:
     dbPassword: "${DB_PASSWORD}"

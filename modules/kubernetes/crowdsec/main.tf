@@ -133,6 +133,7 @@ resource "kubernetes_deployment" "crowdsec-web" {
         }
       }
       spec {
+        priority_class_name = "tier-1-cluster"
         container {
           name  = "crowdsec-web"
           image = "viktorbarzin/crowdsec_web"

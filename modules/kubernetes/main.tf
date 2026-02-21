@@ -253,6 +253,8 @@ module "f1-stream" {
   for_each        = contains(local.active_modules, "f1-stream") ? { f1-stream = true } : {}
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+  turn_secret     = var.coturn_turn_secret
+  public_ip       = var.public_ip
 
   depends_on = [null_resource.core_services]
 }
@@ -263,6 +265,7 @@ module "coturn" {
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.edge
   turn_secret     = var.coturn_turn_secret
+  public_ip       = var.public_ip
 
   depends_on = [null_resource.core_services]
 }
