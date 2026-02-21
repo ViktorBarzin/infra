@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "tor-proxy" {
     name = "tor-proxy"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

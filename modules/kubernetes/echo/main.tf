@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "echo" {
     name = "echo"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -7,6 +7,7 @@ resource "kubernetes_namespace" "vaultwarden" {
     name = "vaultwarden"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

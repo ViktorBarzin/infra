@@ -6,6 +6,9 @@ variable "db_password" { type = string }
 resource "kubernetes_namespace" "speedtest" {
   metadata {
     name = "speedtest"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

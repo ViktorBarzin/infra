@@ -5,6 +5,9 @@ variable "smtp_password" { type = string }
 resource "kubernetes_namespace" "grampsweb" {
   metadata {
     name = "grampsweb"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

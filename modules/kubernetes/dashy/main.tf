@@ -13,6 +13,7 @@ resource "kubernetes_namespace" "dashy" {
     name = "dashy"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

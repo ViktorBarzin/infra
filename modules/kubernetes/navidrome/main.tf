@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "navidrome" {
     name = "navidrome"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

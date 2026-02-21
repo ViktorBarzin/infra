@@ -6,6 +6,9 @@ variable "smtp_password" { type = string }
 resource "kubernetes_namespace" "affine" {
   metadata {
     name = "affine"
+    labels = {
+      tier = var.tier
+    }
   }
 }
 

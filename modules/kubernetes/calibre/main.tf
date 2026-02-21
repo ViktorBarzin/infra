@@ -10,6 +10,9 @@ variable "homepage_password" {
 resource "kubernetes_namespace" "calibre" {
   metadata {
     name = "calibre"
+    labels = {
+      tier = var.tier
+    }
     # labels = {
     #   "istio-injection" : "enabled"
     # }

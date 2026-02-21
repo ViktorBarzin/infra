@@ -4,6 +4,9 @@ variable "tier" { type = string }
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
+    labels = {
+      tier = var.tier
+    }
     # labels = {
     #   "istio-injection" : "enabled"
     # }

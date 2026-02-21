@@ -4,6 +4,9 @@ variable "tier" { type = string }
 resource "kubernetes_namespace" "frigate" {
   metadata {
     name = "frigate"
+    labels = {
+      tier = var.tier
+    }
     # labels = {
     #   "istio-injection" : "enabled"
     # }

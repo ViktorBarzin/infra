@@ -14,6 +14,7 @@ resource "kubernetes_namespace" "mcaptcha" {
     name = "mcaptcha"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

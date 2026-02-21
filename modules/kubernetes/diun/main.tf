@@ -8,6 +8,7 @@ resource "kubernetes_namespace" "diun" {
     name = "diun"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }

@@ -13,6 +13,7 @@ resource "kubernetes_namespace" "ebook2audiobook" {
     name = "ebook2audiobook"
     labels = {
       "istio-injection" : "disabled"
+      tier = var.tier
     }
   }
 }
