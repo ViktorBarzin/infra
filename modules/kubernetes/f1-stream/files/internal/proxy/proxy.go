@@ -58,8 +58,8 @@ function rw(u){
 if(!u||typeof u!=='string')return u;
 if(u.startsWith('/proxy/'))return u;
 if(u.startsWith(H+'/proxy/'))return u.slice(H.length);
-if(u.startsWith(H+'/'))return u.slice(H.length);
-if(u.startsWith(H))return u.slice(H.length)||'/';
+if(u.startsWith(H+'/')){var hp=u.slice(H.length);return P+hp;}
+if(u.startsWith(H))return P+'/';
 if(u.startsWith('/'))return P+u;
 if(u.startsWith(O))return P+u.slice(O.length);
 try{var p=new URL(u);if(p.protocol==='http:'||p.protocol==='https:'){return'/proxy/'+b64(p.origin)+p.pathname+p.search+p.hash;}}catch(e){}
