@@ -91,13 +91,25 @@ if(_ss&&_ss.set){Object.defineProperty(el,'src',{get:function(){return _ss.get?_
 }
 return el;
 };
-/* Neutralize anti-debug: override setInterval to skip debugger-based detection */
+/* Neutralize anti-debug: override setInterval/setTimeout to skip debugger-based detection */
 var _si=window.setInterval;
 window.setInterval=function(fn,ms){
 if(typeof fn==='function'){var s=fn.toString();if(s.indexOf('debugger')!==-1||s.indexOf('devtool')!==-1)return 0;}
 if(typeof fn==='string'&&(fn.indexOf('debugger')!==-1||fn.indexOf('devtool')!==-1))return 0;
 return _si.apply(this,arguments);
 };
+var _st=window.setTimeout;
+window.setTimeout=function(fn,ms){
+if(typeof fn==='function'){var s=fn.toString();if(s.indexOf('debugger')!==-1||s.indexOf('devtool')!==-1)return 0;}
+if(typeof fn==='string'&&(fn.indexOf('debugger')!==-1||fn.indexOf('devtool')!==-1))return 0;
+return _st.apply(this,arguments);
+};
+/* Override eval and Function to strip debugger statements */
+var _eval=window.eval;
+window.eval=function(s){if(typeof s==='string')s=s.replace(/\bdebugger\b\s*;?/g,'');return _eval.call(this,s);};
+var _Fn=Function;
+window.Function=function(){var a=[].slice.call(arguments);if(a.length>0){var last=a.length-1;if(typeof a[last]==='string')a[last]=a[last].replace(/\bdebugger\b\s*;?/g,'');}return _Fn.apply(this,a);};
+window.Function.prototype=_Fn.prototype;
 /* Block loading of known anti-debug scripts */
 var _ael=HTMLScriptElement.prototype.setAttribute;
 HTMLScriptElement.prototype.setAttribute=function(n,v){
@@ -259,6 +271,18 @@ func NewHandler() http.Handler {
 			return
 		}
 
+		// For JavaScript responses, strip debugger statements
+		if strings.Contains(ct, "javascript") || strings.Contains(ct, "ecmascript") {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("proxy: failed to read JS body: %v", err)
+				return
+			}
+			cleaned := debuggerStmtRe.ReplaceAllString(string(body), "/* */")
+			w.Write([]byte(cleaned))
+			return
+		}
+
 		// Stream other responses directly
 		io.Copy(w, resp.Body)
 	})
@@ -297,6 +321,18 @@ var crossOriginIframeSrcRe = regexp.MustCompile(`(<iframe[^>]*\ssrc\s*=\s*["'])(
 
 // disableDevtoolRe matches <script> tags that load disable-devtool or similar anti-debug libraries.
 var disableDevtoolRe = regexp.MustCompile(`(?i)<script[^>]*(?:disable-devtool|devtools-detect)[^>]*>(?:</script>)?`)
+
+// adScriptRe matches <script> tags that load common ad/popup libraries.
+var adScriptRe = regexp.MustCompile(`(?i)<script[^>]*(?:acscdn\.com|popunder|popads|juicyads)[^>]*>\s*(?:</script>)?`)
+
+// adInlineRe matches inline <script> blocks that call ad popup functions.
+var adInlineRe = regexp.MustCompile(`(?i)<script[^>]*>\s*(?:aclib\.run|popunder|pop_)\w*\([^)]*\);\s*</script>`)
+
+// contextMenuBlockRe matches inline scripts that block right-click and dev tools shortcuts.
+var contextMenuBlockRe = regexp.MustCompile(`(?i)<script[^>]*>\s*document\.addEventListener\(\s*'contextmenu'[\s\S]{0,500}?</script>`)
+
+// debuggerStmtRe matches debugger statements in JavaScript.
+var debuggerStmtRe = regexp.MustCompile(`\bdebugger\b\s*;?`)
 
 // rewriteHTML replaces URLs and injects the JS shim to intercept runtime requests.
 func rewriteHTML(body, origin, b64Origin string) string {
@@ -358,6 +394,14 @@ func rewriteHTML(body, origin, b64Origin string) string {
 
 	// 5. Strip anti-debugging scripts (disable-devtool, devtools-detect)
 	body = disableDevtoolRe.ReplaceAllString(body, "")
+
+	// 5b. Strip ad/popup scripts and context menu blockers
+	body = adScriptRe.ReplaceAllString(body, "")
+	body = adInlineRe.ReplaceAllString(body, "")
+	body = contextMenuBlockRe.ReplaceAllString(body, "")
+
+	// 5c. Strip debugger statements from inline scripts
+	body = debuggerStmtRe.ReplaceAllString(body, "/* */")
 
 	// 6. Inject JS shim right after <head> to intercept fetch/XHR/WebSocket
 	shim := fmt.Sprintf(jsShimTemplate, b64Origin, origin)
