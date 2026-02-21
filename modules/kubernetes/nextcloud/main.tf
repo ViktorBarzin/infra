@@ -72,6 +72,7 @@ resource "kubernetes_deployment" "whiteboard" {
         }
       }
       spec {
+        priority_class_name = "tier-3-edge"
         container {
           image = "ghcr.io/nextcloud-releases/whiteboard:release"
           name  = "whiteboard"
