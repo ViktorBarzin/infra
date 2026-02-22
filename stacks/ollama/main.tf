@@ -1,5 +1,5 @@
 variable "tls_secret_name" { type = string }
-variable "ollama_api_credentials" { type = string }
+variable "ollama_api_credentials" { type = map(string) }
 
 locals {
   tiers = {
