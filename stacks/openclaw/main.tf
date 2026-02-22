@@ -19,6 +19,7 @@ locals {
 module "openclaw" {
   source = "../../modules/kubernetes/openclaw"
   tls_secret_name                = var.tls_secret_name
+  git_crypt_key_base64           = filebase64("${path.root}/../../.git/git-crypt/keys/default")
   ssh_key                        = var.openclaw_ssh_key
   skill_secrets                  = var.openclaw_skill_secrets
   gemini_api_key                 = var.gemini_api_key

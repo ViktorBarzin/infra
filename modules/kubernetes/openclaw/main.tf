@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "git_crypt_key_base64" { type = string }
 variable "tier" { type = string }
 variable "ssh_key" {}
 variable "gemini_api_key" { type = string }
@@ -62,7 +63,7 @@ resource "kubernetes_config_map" "git_crypt_key" {
     namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   data = {
-    "key" = filebase64("${path.root}/.git/git-crypt/keys/default")
+    "key" = var.git_crypt_key_base64
   }
 }
 
