@@ -112,6 +112,23 @@ terraform fmt -recursive                       # Format all
 - Docker registry pull-through cache at `10.0.20.10` (ports 5000/5010/5020/5030/5040)
 - GPU workloads need: `node_selector = { "gpu": "true" }` + `toleration { key = "nvidia.com/gpu", value = "true", effect = "NoSchedule" }`
 
+### Node Rebuild Procedure
+To rebuild a K8s worker node from scratch (e.g., after disk failure or corruption):
+
+1. **Drain the node** (if still reachable): `kubectl drain k8s-nodeX --ignore-daemonsets --delete-emptydir-data`
+2. **Delete the node from K8s**: `kubectl delete node k8s-nodeX`
+3. **Destroy the VM in Proxmox** (or via Terraform: remove from `stacks/infra/main.tf` and apply)
+4. **Ensure K8s template exists**: The template `ubuntu-2404-cloudinit-k8s-template` (VMID 2000) must exist. If not, apply `stacks/infra/` to recreate it.
+5. **Get a fresh join command**: `ssh wizard@10.0.20.100 'sudo kubeadm token create --print-join-command'`
+6. **Update `k8s_join_command`** in `terraform.tfvars` with the new join command
+7. **Create the new VM**: Add it back in `stacks/infra/main.tf` and `cd stacks/infra && terragrunt apply --non-interactive`
+8. **Wait for cloud-init**: The VM will install packages, configure containerd mirrors, and join the cluster automatically via cloud-init
+9. **Verify the node joined**: `kubectl get nodes` — should show the new node as `Ready`
+10. **For GPU node (k8s-node1) only**: Apply the platform stack to re-apply GPU label and taint: `cd stacks/platform && terragrunt apply --non-interactive` (the `null_resource.gpu_node_config` in the nvidia module handles this)
+11. **Verify containerd mirrors**: `ssh wizard@<node-ip> 'ls /etc/containerd/certs.d/'` — should show docker.io, ghcr.io, quay.io, registry.k8s.io, reg.kyverno.io
+
+**Note**: kubeadm tokens expire after 24h by default. Generate a fresh one just before creating the VM.
+
 ## Git Operations
 - **Git is slow** — commands can take 30+ seconds. Use `GIT_OPTIONAL_LOCKS=0` if git hangs.
 - Commit only specific files. **ALWAYS ask user before pushing**.
