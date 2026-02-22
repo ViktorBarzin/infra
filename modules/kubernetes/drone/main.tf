@@ -1,4 +1,5 @@
 variable "tls_secret_name" {}
+variable "git_crypt_key_base64" { type = string }
 variable "tier" { type = string }
 variable "github_client_id" {}
 variable "github_client_secret" {}
@@ -53,7 +54,7 @@ resource "kubernetes_config_map" "git_crypt_key" {
   }
 
   data = {
-    "key" = filebase64("${path.root}/.git/git-crypt/keys/default")
+    "key" = var.git_crypt_key_base64
   }
 }
 

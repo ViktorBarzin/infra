@@ -17,6 +17,7 @@ locals {
 module "drone" {
   source = "../../modules/kubernetes/drone"
   tls_secret_name                = var.tls_secret_name
+  git_crypt_key_base64           = filebase64("${path.root}/../../.git/git-crypt/keys/default")
   github_client_id               = var.drone_github_client_id
   github_client_secret           = var.drone_github_client_secret
   rpc_secret                     = var.drone_rpc_secret
