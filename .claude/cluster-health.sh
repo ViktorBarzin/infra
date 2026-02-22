@@ -371,12 +371,23 @@ if [[ "$SEND_SLACK" == true ]]; then
             fi
         fi
 
-        # Use python3 to JSON-escape the message body safely
-        json_payload=$(python3 -c "
+        # Use python3 to build Slack Block Kit payload with proper mrkdwn
+        json_payload=$(printf '%b' "$slack_text" | python3 -c "
 import json, sys
-text = sys.stdin.read()
-print(json.dumps({'text': text}))
-" <<< "$slack_text")
+text = sys.stdin.read().strip()
+payload = {
+    'blocks': [
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': text
+            }
+        }
+    ]
+}
+print(json.dumps(payload))
+")
 
         curl -s -X POST "$SLACK_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
