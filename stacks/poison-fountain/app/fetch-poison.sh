@@ -13,7 +13,7 @@ echo "Fetching $FETCH_COUNT poison documents from $POISON_URL"
 fetched=0
 for i in $(seq 1 "$FETCH_COUNT"); do
   OUTPUT="$CACHE_DIR/poison_$(date +%s)_${i}.txt"
-  if curl -sS --compressed -o "$OUTPUT" -m 30 "$POISON_URL" 2>/dev/null; then
+  if curl -sS --http1.1 --compressed -o "$OUTPUT" -m 30 "$POISON_URL" 2>/dev/null; then
     # Verify file is non-empty
     if [ -s "$OUTPUT" ]; then
       fetched=$((fetched + 1))
