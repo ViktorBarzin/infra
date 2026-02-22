@@ -12,7 +12,7 @@ locals {
 }
 
 module "servarr" {
-  source = "../../modules/kubernetes/servarr"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
   aiostreams_database_connection_string = var.aiostreams_database_connection_string

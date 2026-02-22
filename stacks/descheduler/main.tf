@@ -1,3 +1,3 @@
 module "descheduler" {
-  source = "../../modules/kubernetes/descheduler"
+  source = "./module"
 }

@@ -12,7 +12,7 @@ locals {
 }
 
 module "owntracks" {
-  source = "../../modules/kubernetes/owntracks"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   owntracks_credentials          = var.owntracks_credentials
   tier                           = local.tiers.aux

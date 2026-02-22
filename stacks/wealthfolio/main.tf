@@ -12,7 +12,7 @@ locals {
 }
 
 module "wealthfolio" {
-  source = "../../modules/kubernetes/wealthfolio"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   wealthfolio_password_hash      = var.wealthfolio_password_hash
   tier                           = local.tiers.aux

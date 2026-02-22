@@ -12,7 +12,7 @@ locals {
 }
 
 module "k8s-dashboard" {
-  source = "../../modules/kubernetes/k8s-dashboard"
+  source                         = "./module"
   tier                           = local.tiers.cluster
   tls_secret_name                = var.tls_secret_name
   client_certificate_secret_name = var.client_certificate_secret_name

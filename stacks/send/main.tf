@@ -11,7 +11,7 @@ locals {
 }
 
 module "send" {
-  source = "../../modules/kubernetes/send"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

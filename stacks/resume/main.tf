@@ -14,7 +14,7 @@ locals {
 }
 
 module "resume" {
-  source = "../../modules/kubernetes/resume"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
   database_url                   = var.resume_database_url

@@ -13,7 +13,7 @@ locals {
 }
 
 module "rybbit" {
-  source = "../../modules/kubernetes/rybbit"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   clickhouse_password            = var.clickhouse_password
   postgres_password              = var.clickhouse_postgres_password

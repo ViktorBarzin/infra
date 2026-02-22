@@ -14,7 +14,7 @@ locals {
 }
 
 module "linkwarden" {
-  source = "../../modules/kubernetes/linkwarden"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   postgresql_password            = var.linkwarden_postgresql_password
   authentik_client_id            = var.linkwarden_authentik_client_id

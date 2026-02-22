@@ -12,7 +12,7 @@ locals {
 }
 
 module "n8n" {
-  source = "../../modules/kubernetes/n8n"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   postgresql_password            = var.n8n_postgresql_password
   tier                           = local.tiers.aux

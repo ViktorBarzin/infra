@@ -11,7 +11,7 @@ locals {
 }
 
 module "shadowsocks" {
-  source = "../../modules/kubernetes/shadowsocks"
+  source = "./module"
   password                       = var.shadowsocks_password
   tier                           = local.tiers.edge
 }

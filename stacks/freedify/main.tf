@@ -12,8 +12,8 @@ locals {
 }
 
 module "freedify" {
-  source = "../../modules/kubernetes/freedify"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.aux
-  additional_credentials         = var.freedify_credentials
+  source                 = "./module"
+  tls_secret_name        = var.tls_secret_name
+  tier                   = local.tiers.aux
+  additional_credentials = var.freedify_credentials
 }

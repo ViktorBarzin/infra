@@ -13,7 +13,7 @@ locals {
 }
 
 module "real-estate-crawler" {
-  source = "../../modules/kubernetes/real-estate-crawler"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   db_password                    = var.realestate_crawler_db_password
   notification_settings          = var.realestate_crawler_notification_settings

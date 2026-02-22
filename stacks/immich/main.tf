@@ -14,10 +14,10 @@ locals {
 }
 
 module "immich" {
-  source = "../../modules/kubernetes/immich"
-  tls_secret_name                = var.tls_secret_name
-  postgresql_password            = var.immich_postgresql_password
-  frame_api_key                  = var.immich_frame_api_key
-  homepage_token                 = var.homepage_credentials["immich"]["token"]
-  tier                           = local.tiers.gpu
+  source              = "./module"
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.immich_postgresql_password
+  frame_api_key       = var.immich_frame_api_key
+  homepage_token      = var.homepage_credentials["immich"]["token"]
+  tier                = local.tiers.gpu
 }

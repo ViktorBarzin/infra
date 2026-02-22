@@ -11,7 +11,7 @@ locals {
 }
 
 module "networking-toolbox" {
-  source = "../../modules/kubernetes/networking-toolbox"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }
