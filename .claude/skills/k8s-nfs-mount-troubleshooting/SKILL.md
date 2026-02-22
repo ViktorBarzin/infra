@@ -1,14 +1,16 @@
 ---
 name: k8s-nfs-mount-troubleshooting
 description: |
-  Debug Kubernetes NFS volume mount failures. Use when: (1) Pod stuck in ContainerCreating 
+  Debug Kubernetes NFS volume mount failures. Use when: (1) Pod stuck in ContainerCreating
   for extended time, (2) kubectl describe shows "MountVolume.SetUp failed" with NFS errors,
-  (3) Error message shows "Protocol not supported" or "mount.nfs: access denied", 
-  (4) NFS volume defined in pod spec but container won't start. Common root cause is 
-  missing NFS export on the server, not a protocol issue.
+  (3) Error message shows "Protocol not supported" or "mount.nfs: access denied",
+  (4) NFS volume defined in pod spec but container won't start, (5) Container starts but
+  gets "Permission denied" writing to NFS volume (non-root container UID mismatch),
+  (6) CronJob or init container fails silently when writing to NFS. Common root causes
+  are missing NFS export on the server and UID mismatch for non-root containers.
 author: Claude Code
-version: 1.0.0
-date: 2026-01-28
+version: 1.1.0
+date: 2026-02-22
 ---
 
 # Kubernetes NFS Mount Troubleshooting
@@ -90,6 +92,55 @@ ssh root@10.0.10.15 'mkdir -p /mnt/main/resume && chmod 777 /mnt/main/resume'
 - For TrueNAS, the NFS share must be updated via API/UI after creating new directories
 - NFSv3 vs NFSv4 issues are rare in modern setups; missing paths are more common
 - Check that the NFS client packages are installed on Kubernetes nodes if this is a new cluster
+
+## Variant: Non-Root Container UID Permission Denied
+
+### Problem
+Container starts and mounts NFS successfully, but gets "Permission denied" when
+writing files. The pod appears healthy but operations fail silently.
+
+### Trigger Conditions
+- Container logs show "Permission denied" or "client returned ERROR on write"
+- Pod is Running (not stuck in ContainerCreating)
+- NFS directory exists and is mounted, but owned by root (uid 0)
+- Container image runs as a non-root user (e.g., `curlimages/curl` runs as uid 101)
+- CronJobs or init containers that write to NFS fail with no obvious error
+
+### Common Non-Root Container UIDs
+| Image | UID | User |
+|-------|-----|------|
+| `curlimages/curl` | 101 | curl_user |
+| `nginx` (unprivileged) | 101 | nginx |
+| `node` | 1000 | node |
+| `python` (slim) | 0 | root (safe) |
+| `grafana/grafana` | 472 | grafana |
+
+### Solution
+Fix permissions on the NFS server:
+```bash
+# Option 1: World-writable (simplest, suitable for non-sensitive data)
+ssh root@10.0.10.15 "chmod -R 777 /mnt/main/<service>/<subdir>"
+
+# Option 2: Match container UID (more secure)
+ssh root@10.0.10.15 "chown -R <uid>:<gid> /mnt/main/<service>/<subdir>"
+
+# Option 3: Use securityContext in pod spec to run as root
+spec:
+  securityContext:
+    runAsUser: 0
+```
+
+### Debugging
+```bash
+# Check what UID the container runs as
+kubectl exec -n <namespace> <pod> -- id
+
+# Test write access from inside container
+kubectl exec -n <namespace> <pod> -- sh -c 'echo test > /path/to/nfs/testfile'
+
+# Check NFS directory ownership on server
+ssh root@10.0.10.15 "ls -la /mnt/main/<service>/"
+```
 
 ## See Also
 - TrueNAS NFS configuration documentation
