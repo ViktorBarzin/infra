@@ -1,6 +1,9 @@
 variable "tls_secret_name" { type = string }
 variable "tandoor_database_password" { type = string }
-variable "tandoor_email_password" { type = string }
+variable "tandoor_email_password" {
+  type    = string
+  default = ""
+}
 
 locals {
   tiers = {
