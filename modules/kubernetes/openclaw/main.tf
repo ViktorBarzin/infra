@@ -543,6 +543,7 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
       }
       spec {
         active_deadline_seconds = 300
+        backoff_limit           = 0
         template {
           metadata {
             labels = {
