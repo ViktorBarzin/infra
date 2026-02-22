@@ -1281,6 +1281,38 @@ print_summary() {
 }
 
 # --- Slack Notification ---
+
+# Human-readable check name mapping
+friendly_check_name() {
+    case "$1" in
+        node_status)        echo "Node Status" ;;
+        node_resources)     echo "Node Resources" ;;
+        node_conditions)    echo "Node Conditions" ;;
+        problematic_pods)   echo "Problematic Pods" ;;
+        evicted_pods)       echo "Evicted Pods" ;;
+        daemonsets)         echo "DaemonSets" ;;
+        deployments)        echo "Deployments" ;;
+        pvcs)               echo "PVCs" ;;
+        hpa)                echo "HPAs" ;;
+        cronjob_failures)   echo "CronJob Failures" ;;
+        crowdsec)           echo "CrowdSec" ;;
+        ingresses)          echo "Ingresses" ;;
+        prometheus_alerts)  echo "Prometheus Alerts" ;;
+        uptime_kuma)        echo "Uptime Kuma" ;;
+        resourcequota)      echo "Resource Quotas" ;;
+        statefulsets)       echo "StatefulSets" ;;
+        node_disk)          echo "Node Disk" ;;
+        helm_releases)      echo "Helm Releases" ;;
+        kyverno)            echo "Kyverno" ;;
+        nfs)                echo "NFS Storage" ;;
+        dns)                echo "DNS Resolution" ;;
+        tls_certs)          echo "TLS Certificates" ;;
+        gpu)                echo "GPU" ;;
+        cloudflare_tunnel)  echo "Cloudflare Tunnel" ;;
+        *)                  echo "$1" ;;
+    esac
+}
+
 send_slack() {
     if [[ "$SEND_SLACK" != true ]]; then
         return 0
@@ -1295,54 +1327,141 @@ send_slack() {
     node_count=$($KUBECTL get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
     pod_count=$($KUBECTL get pods -A --no-headers --field-selector=status.phase=Running 2>/dev/null | wc -l | tr -d ' ')
 
-    # Collect FAIL and WARN items from JSON_RESULTS
-    local fail_items="" warn_items=""
-    for r in "${JSON_RESULTS[@]}"; do
-        local r_status r_check r_detail
-        r_status=$(echo "$r" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["status"])' 2>/dev/null || true)
-        r_check=$(echo "$r" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["check"])' 2>/dev/null || true)
-        r_detail=$(echo "$r" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["detail"])' 2>/dev/null || true)
-
-        if [[ "$r_status" == "FAIL" ]]; then
-            fail_items+="\\n• [${r_check}] ${r_detail}"
-        elif [[ "$r_status" == "WARN" ]]; then
-            warn_items+="\\n• [${r_check}] ${r_detail}"
-        fi
-    done
-
-    local slack_text
     local total_checks=$((PASS_COUNT + WARN_COUNT + FAIL_COUNT))
 
-    if [[ "$FAIL_COUNT" -eq 0 && "$WARN_COUNT" -eq 0 ]]; then
-        slack_text=":white_check_mark: *Cluster Health Check — All Clear*\\n${total_checks}/${total_checks} checks passed | ${node_count} nodes | ${pod_count} pods running"
-    else
-        local issue_count=$((FAIL_COUNT + WARN_COUNT))
-        slack_text=":rotating_light: *Cluster Health Check — ${issue_count} Issue(s)*\\nPASS: ${PASS_COUNT} | WARN: ${WARN_COUNT} | FAIL: ${FAIL_COUNT}"
+    # Use python3 to build the entire Slack payload from JSON_RESULTS
+    local json_results_str
+    json_results_str=$(printf '%s\n' "${JSON_RESULTS[@]}")
 
-        if [[ -n "$fail_items" ]]; then
-            slack_text+="\\n\\n*Failed:*${fail_items}"
-        fi
-        if [[ -n "$warn_items" ]]; then
-            slack_text+="\\n\\n*Warnings:*${warn_items}"
-        fi
-    fi
-
-    # Build Slack Block Kit payload with proper mrkdwn
     local json_payload
-    json_payload=$(printf '%b' "$slack_text" | python3 -c "
+    json_payload=$(echo "$json_results_str" | python3 -c "
 import json, sys
-text = sys.stdin.read().strip()
-payload = {
-    'blocks': [
-        {
-            'type': 'section',
-            'text': {
-                'type': 'mrkdwn',
-                'text': text
-            }
-        }
-    ]
+
+CHECK_NAMES = {
+    'node_status': 'Node Status',
+    'node_resources': 'Node Resources',
+    'node_conditions': 'Node Conditions',
+    'problematic_pods': 'Problematic Pods',
+    'evicted_pods': 'Evicted Pods',
+    'daemonsets': 'DaemonSets',
+    'deployments': 'Deployments',
+    'pvcs': 'PVCs',
+    'hpa': 'HPAs',
+    'cronjob_failures': 'CronJob Failures',
+    'crowdsec': 'CrowdSec',
+    'ingresses': 'Ingresses',
+    'prometheus_alerts': 'Prometheus Alerts',
+    'uptime_kuma': 'Uptime Kuma',
+    'resourcequota': 'Resource Quotas',
+    'statefulsets': 'StatefulSets',
+    'node_disk': 'Node Disk',
+    'helm_releases': 'Helm Releases',
+    'kyverno': 'Kyverno',
+    'nfs': 'NFS Storage',
+    'dns': 'DNS Resolution',
+    'tls_certs': 'TLS Certificates',
+    'gpu': 'GPU',
+    'cloudflare_tunnel': 'Cloudflare Tunnel',
 }
+
+def format_detail(check, detail):
+    \"\"\"Format detail text for readability. Truncate long lists, split semicolons.\"\"\"
+    detail = detail.rstrip('; ').strip()
+
+    # For checks with long comma-separated lists (e.g. Uptime Kuma down monitors),
+    # truncate to first 5 items with a count
+    if check == 'uptime_kuma' and ': ' in detail:
+        prefix, names_str = detail.split(': ', 1)
+        names = [n.strip() for n in names_str.split(',') if n.strip()]
+        if len(names) > 5:
+            shown = ', '.join(names[:5])
+            detail = f'{prefix}: {shown} (+{len(names) - 5} more)'
+        elif names:
+            detail = f'{prefix}: {\", \".join(names)}'
+
+    # For resource quotas and similar semicolon-separated items,
+    # split into separate lines
+    if '; ' in detail:
+        parts = [p.strip() for p in detail.split(';') if p.strip()]
+        if len(parts) > 1:
+            lines = '\\n'.join(f'     \u2022 {p}' for p in parts)
+            return lines
+
+    return detail
+
+# Parse results
+fails = []
+warns = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    status = d.get('status', '')
+    check = d.get('check', '')
+    detail = d.get('detail', '')
+    name = CHECK_NAMES.get(check, check)
+    formatted = format_detail(check, detail)
+
+    if status == 'FAIL':
+        fails.append((name, formatted))
+    elif status == 'WARN':
+        warns.append((name, formatted))
+
+pass_count = ${PASS_COUNT}
+warn_count = ${WARN_COUNT}
+fail_count = ${FAIL_COUNT}
+total = ${total_checks}
+nodes = '${node_count}'
+pods = '${pod_count}'
+
+blocks = []
+
+# Header block
+if fail_count == 0 and warn_count == 0:
+    header = f':white_check_mark: *Cluster Health Check \u2014 All Clear*'
+    summary = f'{total}/{total} checks passed \u2022 {nodes} nodes \u2022 {pods} pods'
+    blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text': f'{header}\n{summary}'}})
+else:
+    issue_count = fail_count + warn_count
+    emoji = ':rotating_light:' if fail_count > 0 else ':warning:'
+    header = f'{emoji} *Cluster Health Check \u2014 {issue_count} Issue(s)*'
+    summary = f':white_check_mark: {pass_count} passed \u2022 :warning: {warn_count} warnings \u2022 :x: {fail_count} failed'
+    blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text': f'{header}\n{summary}'}})
+
+# Failed section
+if fails:
+    blocks.append({'type': 'divider'})
+    lines = [':x: *Failed*']
+    for name, detail in fails:
+        if '\\n' in detail:
+            lines.append(f'\u2022 *{name}*:')
+            lines.append(detail)
+        else:
+            lines.append(f'\u2022 *{name}*: {detail}')
+    blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text': '\\n'.join(lines)}})
+
+# Warnings section
+if warns:
+    blocks.append({'type': 'divider'})
+    lines = [':warning: *Warnings*']
+    for name, detail in warns:
+        if '\\n' in detail:
+            lines.append(f'\u2022 *{name}*:')
+            lines.append(detail)
+        else:
+            lines.append(f'\u2022 *{name}*: {detail}')
+    blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text': '\\n'.join(lines)}})
+
+# Footer with timestamp
+from datetime import datetime, timezone
+ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+blocks.append({'type': 'context', 'elements': [{'type': 'mrkdwn', 'text': f'{nodes} nodes \u2022 {pods} pods \u2022 {ts}'}]})
+
+payload = {'blocks': blocks}
 print(json.dumps(payload))
 ")
 
