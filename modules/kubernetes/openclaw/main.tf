@@ -476,3 +476,111 @@ module "ingress" {
   port            = 80
   protected       = true
 }
+
+# --- CronJob: Scheduled cluster health check ---
+
+resource "kubernetes_service_account" "healthcheck" {
+  metadata {
+    name      = "cluster-healthcheck"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "healthcheck_exec" {
+  metadata {
+    name      = "healthcheck-pod-exec"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "healthcheck_exec" {
+  metadata {
+    name      = "healthcheck-pod-exec"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.healthcheck.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.healthcheck_exec.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
+  metadata {
+    name      = "cluster-healthcheck"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app  = "cluster-healthcheck"
+      tier = var.tier
+    }
+  }
+  spec {
+    schedule                      = "*/30 * * * *"
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "cluster-healthcheck"
+        }
+      }
+      spec {
+        active_deadline_seconds = 300
+        template {
+          metadata {
+            labels = {
+              app = "cluster-healthcheck"
+            }
+          }
+          spec {
+            service_account_name = kubernetes_service_account.healthcheck.metadata[0].name
+            restart_policy       = "Never"
+
+            container {
+              name  = "healthcheck"
+              image = "bitnami/kubectl:1.34"
+              command = ["bash", "-c", <<-EOF
+                # Find the openclaw pod
+                POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                if [ -z "$POD" ]; then
+                  echo "ERROR: OpenClaw pod not found"
+                  exit 1
+                fi
+                echo "Executing health check in pod $POD..."
+                kubectl exec -n openclaw "$POD" -c openclaw -- bash /workspace/infra/.claude/cluster-health.sh
+              EOF
+              ]
+
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
