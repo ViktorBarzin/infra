@@ -47,3 +47,16 @@ git_crypt.key
 # Terragrunt
 .terragrunt-cache/
 state/
+
+# Terragrunt-generated files (providers, backend config)
+backend.tf
+providers.tf
+.terraform.lock.hcl
+
+# Kubernetes config (sensitive)
+config
+
+# Node.js (not part of infra)
+node_modules/
+package-lock.json
+package.json
