@@ -13,7 +13,7 @@ locals {
 }
 
 module "onlyoffice" {
-  source = "../../modules/kubernetes/onlyoffice"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   db_password                    = var.onlyoffice_db_password
   jwt_token                      = var.onlyoffice_jwt_token

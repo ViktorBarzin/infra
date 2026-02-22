@@ -12,7 +12,7 @@ locals {
 }
 
 module "ollama" {
-  source = "../../modules/kubernetes/ollama"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.gpu
   ollama_api_credentials         = var.ollama_api_credentials

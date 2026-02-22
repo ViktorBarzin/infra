@@ -13,9 +13,9 @@ locals {
 }
 
 module "dawarich" {
-  source = "../../modules/kubernetes/dawarich"
-  tls_secret_name                = var.tls_secret_name
-  database_password              = var.dawarich_database_password
-  geoapify_api_key               = var.geoapify_api_key
-  tier                           = local.tiers.edge
+  source            = "./module"
+  tls_secret_name   = var.tls_secret_name
+  database_password = var.dawarich_database_password
+  geoapify_api_key  = var.geoapify_api_key
+  tier              = local.tiers.edge
 }

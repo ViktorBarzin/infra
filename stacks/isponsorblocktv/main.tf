@@ -9,6 +9,6 @@ locals {
 }
 
 module "isponsorblocktv" {
-  source = "../../modules/kubernetes/isponsorblocktv"
-  tier                           = local.tiers.edge
+  source = "./module"
+  tier   = local.tiers.edge
 }

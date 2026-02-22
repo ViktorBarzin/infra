@@ -11,7 +11,7 @@ locals {
 }
 
 module "netbox" {
-  source = "../../modules/kubernetes/netbox"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

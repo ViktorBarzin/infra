@@ -12,7 +12,7 @@ locals {
 }
 
 module "speedtest" {
-  source = "../../modules/kubernetes/speedtest"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
   db_password                    = var.speedtest_db_password

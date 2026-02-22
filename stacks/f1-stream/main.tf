@@ -13,9 +13,9 @@ locals {
 }
 
 module "f1-stream" {
-  source = "../../modules/kubernetes/f1-stream"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.aux
-  turn_secret                    = var.coturn_turn_secret
-  public_ip                      = var.public_ip
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
+  turn_secret     = var.coturn_turn_secret
+  public_ip       = var.public_ip
 }

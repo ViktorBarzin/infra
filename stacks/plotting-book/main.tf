@@ -11,7 +11,7 @@ locals {
 }
 
 module "plotting-book" {
-  source = "../../modules/kubernetes/plotting-book"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

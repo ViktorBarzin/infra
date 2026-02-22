@@ -15,7 +15,7 @@ locals {
 }
 
 module "tuya-bridge" {
-  source = "../../modules/kubernetes/tuya-bridge"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.cluster
   tiny_tuya_api_key              = var.tiny_tuya_api_key

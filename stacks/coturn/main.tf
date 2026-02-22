@@ -13,9 +13,9 @@ locals {
 }
 
 module "coturn" {
-  source = "../../modules/kubernetes/coturn"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.edge
-  turn_secret                    = var.coturn_turn_secret
-  public_ip                      = var.public_ip
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
+  turn_secret     = var.coturn_turn_secret
+  public_ip       = var.public_ip
 }

@@ -14,7 +14,7 @@ locals {
 }
 
 module "url" {
-  source = "../../modules/kubernetes/url-shortener"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   geolite_license_key            = var.url_shortener_geolite_license_key
   api_key                        = var.url_shortener_api_key

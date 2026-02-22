@@ -11,7 +11,7 @@ locals {
 }
 
 module "travel_blog" {
-  source = "../../modules/kubernetes/travel_blog"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

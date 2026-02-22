@@ -11,7 +11,7 @@ locals {
 }
 
 module "frigate" {
-  source = "../../modules/kubernetes/frigate"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.gpu
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 }

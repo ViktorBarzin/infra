@@ -12,7 +12,7 @@ locals {
 }
 
 module "nextcloud" {
-  source = "../../modules/kubernetes/nextcloud"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   db_password                    = var.nextcloud_db_password
   tier                           = local.tiers.edge

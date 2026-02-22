@@ -11,7 +11,7 @@ locals {
 }
 
 module "ebook2audiobook" {
-  source = "../../modules/kubernetes/ebook2audiobook"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.gpu
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
 }

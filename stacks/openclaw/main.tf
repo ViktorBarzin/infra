@@ -17,7 +17,7 @@ locals {
 }
 
 module "openclaw" {
-  source = "../../modules/kubernetes/openclaw"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   git_crypt_key_base64           = filebase64("${path.root}/../../.git/git-crypt/keys/default")
   ssh_key                        = var.openclaw_ssh_key

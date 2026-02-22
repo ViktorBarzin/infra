@@ -12,8 +12,8 @@ locals {
 }
 
 module "actualbudget" {
-  source = "../../modules/kubernetes/actualbudget"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.edge
-  credentials                    = var.actualbudget_credentials
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
+  credentials     = var.actualbudget_credentials
 }
