@@ -10,8 +10,6 @@ locals {
   }
 }
 
-# variable "dockerhub_password" {}
-
 resource "kubernetes_namespace" "website" {
   metadata {
     name = "website"
@@ -27,12 +25,6 @@ module "tls_secret" {
   namespace       = kubernetes_namespace.website.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
-
-# module "dockerhub_creds" {
-#   source    = "../../modules/kubernetes/dockerhub_secret"
-#  namespace = kubernetes_namespace.website.metadata[0].name
-#   password  = var.dockerhub_password
-# }
 
 resource "kubernetes_deployment" "blog" {
   metadata {
