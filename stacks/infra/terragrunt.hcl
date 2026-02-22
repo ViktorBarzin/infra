@@ -3,6 +3,9 @@ include "root" {
   path = find_in_parent_folders()
 }
 
+# Skip in CI - infra stack manages Proxmox VMs which require SSH to the hypervisor
+skip = get_env("CI", "") != ""
+
 # Override provider generation to include proxmox (instead of k8s providers)
 generate "providers" {
   path      = "providers.tf"
