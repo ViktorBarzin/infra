@@ -37,7 +37,7 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image = "viktorbarzin/f1-stream:v1.2.8"
+          image = "viktorbarzin/f1-stream:v1.3.1"
           name  = "f1-stream"
           resources {
             limits = {
@@ -126,9 +126,10 @@ module "tls_secret" {
 
 
 module "ingress" {
-  source          = "../ingress_factory"
-  namespace       = kubernetes_namespace.f1-stream.metadata[0].name
-  name            = "f1"
-  tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "7e69786f66d5"
+  source           = "../ingress_factory"
+  namespace        = kubernetes_namespace.f1-stream.metadata[0].name
+  name             = "f1"
+  tls_secret_name  = var.tls_secret_name
+  rybbit_site_id   = "7e69786f66d5"
+  exclude_crowdsec = true
 }

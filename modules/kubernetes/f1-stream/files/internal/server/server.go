@@ -9,6 +9,8 @@ import (
 
 	"f1-stream/internal/auth"
 	"f1-stream/internal/extractor"
+	"f1-stream/internal/hlsproxy"
+	"f1-stream/internal/playerconfig"
 	"f1-stream/internal/proxy"
 	"f1-stream/internal/scraper"
 	"f1-stream/internal/store"
@@ -18,15 +20,17 @@ type Server struct {
 	store           *store.Store
 	auth            *auth.Auth
 	scraper         *scraper.Scraper
+	playerConfig    *playerconfig.Service
 	mux             *http.ServeMux
 	headlessEnabled bool
 }
 
-func New(s *store.Store, a *auth.Auth, sc *scraper.Scraper, origins []string, headlessEnabled bool) *Server {
+func New(s *store.Store, a *auth.Auth, sc *scraper.Scraper, pc *playerconfig.Service, origins []string, headlessEnabled bool) *Server {
 	srv := &Server{
 		store:           s,
 		auth:            a,
 		scraper:         sc,
+		playerConfig:    pc,
 		mux:             http.NewServeMux(),
 		headlessEnabled: headlessEnabled,
 	}
@@ -67,6 +71,11 @@ func (s *Server) registerRoutes(origins []string) {
 	s.mux.Handle("HEAD /proxy/", proxyHandler)
 	s.mux.Handle("OPTIONS /proxy/", proxyHandler)
 
+	// HLS proxy for native video playback
+	hlsHandler := hlsproxy.NewHandler()
+	s.mux.Handle("GET /hls/", hlsHandler)
+	s.mux.Handle("OPTIONS /hls/", hlsHandler)
+
 	// Public API - wrap with middleware
 	wrapAll := func(h http.HandlerFunc) http.Handler {
 		return RecoveryMiddleware(LoggingMiddleware(originMw(authMw(h))))
@@ -83,6 +92,7 @@ func (s *Server) registerRoutes(origins []string) {
 	// Public streams
 	s.mux.Handle("GET /api/streams/public", wrapAll(s.handlePublicStreams))
 	s.mux.Handle("GET /api/streams/{id}/browse", wrapAll(s.handleBrowseStream))
+	s.mux.Handle("GET /api/streams/{id}/player-config", wrapAll(s.handlePlayerConfig))
 
 	// Scraped links
 	s.mux.Handle("GET /api/scraped", wrapAll(s.handleScrapedLinks))
@@ -290,4 +300,39 @@ func (s *Server) handleBrowseStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	extractor.HandleBrowserSession(w, r, streamURL)
+}
+
+func (s *Server) handlePlayerConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	streams, err := s.store.LoadStreams()
+	if err != nil {
+		log.Printf("server: player-config: failed to load streams: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(playerconfig.PlayerConfig{Type: "proxy"})
+		return
+	}
+
+	var streamURL string
+	var found bool
+	for _, st := range streams {
+		if st.ID == id {
+			if !st.Published {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(playerconfig.PlayerConfig{Type: "proxy"})
+				return
+			}
+			streamURL = st.URL
+			found = true
+			break
+		}
+	}
+	if !found {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(playerconfig.PlayerConfig{Type: "proxy"})
+		return
+	}
+
+	config := s.playerConfig.GetConfig(r.Context(), streamURL)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(config)
 }

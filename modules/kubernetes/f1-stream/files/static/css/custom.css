@@ -1340,6 +1340,15 @@ dialog .dialog-cancel:hover {
   border: none;
 }
 
+#clappr-player {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
 .browser-viewer-content .loading-overlay {
   position: absolute;
   inset: 0;

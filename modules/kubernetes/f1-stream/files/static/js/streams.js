@@ -317,9 +317,9 @@ function closeRedditViewer() {
   contentEl.querySelectorAll(':scope > :not(#reddit-viewer-loader)').forEach(el => el.remove());
 }
 
-// --- Browser Session Viewer (Iframe Proxy) ---
+// --- Browser Session Viewer (Iframe Proxy + Native Player) ---
 
-function openBrowserSession(streamId, streamTitle, streamURL) {
+async function openBrowserSession(streamId, streamTitle, streamURL) {
   const viewer = document.getElementById('browser-viewer');
   const statusEl = viewer.querySelector('.browser-viewer-status');
   const contentEl = viewer.querySelector('.browser-viewer-content');
@@ -331,7 +331,41 @@ function openBrowserSession(streamId, streamTitle, streamURL) {
   statusEl.classList.remove('connected');
   loader.classList.remove('hidden');
 
-  // Parse the stream URL to extract origin and path
+  if (urlText) urlText.textContent = streamURL;
+  if (openOriginal) openOriginal.href = streamURL;
+
+  // Hide all tab content sections and show the viewer
+  document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
+  viewer.classList.remove('hidden');
+  viewer.classList.add('active');
+
+  // Remove any existing iframe or player
+  contentEl.querySelectorAll('.browser-iframe').forEach(el => el.remove());
+  contentEl.querySelectorAll('#clappr-player').forEach(el => el.remove());
+  destroyNativePlayer();
+
+  // Fetch player config to determine stream type
+  const config = await getPlayerConfig(streamId);
+
+  if (config.type === 'hls' || config.type === 'daddylive') {
+    // Native player mode
+    const playerDiv = document.createElement('div');
+    playerDiv.id = 'clappr-player';
+    contentEl.appendChild(playerDiv);
+
+    loader.classList.add('hidden');
+    statusEl.textContent = 'Playing';
+    statusEl.classList.add('connected');
+
+    if (config.type === 'daddylive') {
+      createDaddyLivePlayer('#clappr-player', config);
+    } else {
+      createHLSPlayer('#clappr-player', config.hls_url);
+    }
+    return;
+  }
+
+  // Fallback: iframe proxy mode
   let parsed;
   try {
     parsed = new URL(streamURL);
@@ -344,25 +378,9 @@ function openBrowserSession(streamId, streamTitle, streamURL) {
 
   const origin = parsed.origin;
   const pathAndSearch = parsed.pathname + parsed.search + parsed.hash;
-
-  // Base64-encode the origin (URL-safe, no padding)
   const b64Origin = btoa(origin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-  // Build proxy URL
   const proxyURL = '/proxy/' + b64Origin + pathAndSearch;
 
-  if (urlText) urlText.textContent = streamURL;
-  if (openOriginal) openOriginal.href = streamURL;
-
-  // Hide all tab content sections and show the viewer
-  document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
-  viewer.classList.remove('hidden');
-  viewer.classList.add('active');
-
-  // Remove any existing iframe
-  contentEl.querySelectorAll('.browser-iframe').forEach(el => el.remove());
-
-  // Create iframe with sandbox to prevent frame-busting and top-navigation
   const iframe = document.createElement('iframe');
   iframe.src = proxyURL;
   iframe.className = 'browser-iframe';
@@ -378,11 +396,13 @@ function openBrowserSession(streamId, streamTitle, streamURL) {
 }
 
 function closeBrowserSession() {
+  destroyNativePlayer();
   const viewer = document.getElementById('browser-viewer');
   viewer.classList.add('hidden');
   viewer.classList.remove('active');
   const contentEl = viewer.querySelector('.browser-viewer-content');
   contentEl.querySelectorAll('.browser-iframe').forEach(el => el.remove());
+  contentEl.querySelectorAll('#clappr-player').forEach(el => el.remove());
   const statusEl = viewer.querySelector('.browser-viewer-status');
   statusEl.textContent = '';
   statusEl.classList.remove('connected');
