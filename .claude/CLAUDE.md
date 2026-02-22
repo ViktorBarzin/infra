@@ -39,9 +39,8 @@ Terragrunt-based infrastructure repository managing a home Kubernetes cluster on
 - **Per-stack state**: `state/stacks/<service>/terraform.tfstate` - Per-stack state files (gitignored)
 - **Service resources**: `stacks/<service>/main.tf` - Service resources defined directly in stack root
 - **Platform modules**: `stacks/platform/modules/<service>/` - Platform service modules
-- **Shared modules**: `modules/kubernetes/ingress_factory/`, `modules/kubernetes/setup_tls_secret/`, `modules/kubernetes/dockerhub_secret/`, `modules/kubernetes/oauth-proxy/`
+- **Shared modules**: `modules/kubernetes/ingress_factory/`, `modules/kubernetes/setup_tls_secret/`
 - **Secrets**: `secrets/` - git-crypt encrypted TLS certs and keys
-- **Legacy (unused)**: `main.tf`, `modules/kubernetes/main.tf` - Old monolithic entry points (kept for reference)
 
 ## Network Topology (Static IPs)
 ```
@@ -81,7 +80,7 @@ Terragrunt-based infrastructure repository managing a home Kubernetes cluster on
 - `stacks/platform/` - Core infrastructure (22 services in `stacks/platform/modules/`)
 - `stacks/<service>/` - Individual service stacks (resources directly in `main.tf`)
 - `stacks/platform/modules/<service>/` - Platform service module source code
-- `modules/kubernetes/` - **Only shared utility modules**: `ingress_factory/`, `setup_tls_secret/`, `dockerhub_secret/`, `oauth-proxy/`
+- `modules/kubernetes/` - **Only shared utility modules**: `ingress_factory/`, `setup_tls_secret/`
 - `modules/create-vm/` - Proxmox VM creation module
 - `state/` - Per-stack Terraform state files (gitignored)
 - `secrets/` - Encrypted secrets (TLS certs, keys) via git-crypt

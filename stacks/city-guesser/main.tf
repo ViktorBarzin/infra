@@ -91,26 +91,6 @@ resource "kubernetes_service" "city-guesser" {
     }
   }
 }
-# resource "kubernetes_service" "city-guesser-oauth" {
-#   metadata {
-#     name      = "city-guesser-oauth"
-#     namespace = "city-guesser"
-#     labels = {
-#       "run" = "city-guesser-oauth"
-#     }
-#   }
-
-#   spec {
-#     type          = "ExternalName"
-#     external_name = "oauth-proxy.oauth.svc.cluster.local"
-
-#     # port {
-#     #   name        = "tcp"
-#     #   port        = "80"
-#     #   target_port = "80"
-#     # }
-#   }
-# }
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
@@ -119,45 +99,3 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
 }
-
-# resource "kubernetes_ingress_v1" "city-guesser-oauth" {
-#   metadata {
-#     name      = "city-guesser-ingress-oauth"
-#     namespace = "city-guesser"
-#     annotations = {
-#       "kubernetes.io/ingress.class" = "nginx"
-#     }
-#   }
-
-#   spec {
-#     tls {
-#       hosts       = ["city-guesser.viktorbarzin.me"]
-#       secret_name = var.tls_secret_name
-#     }
-#     rule {
-#       host = "city-guesser.viktorbarzin.me"
-#       http {
-#         path {
-#           path = "/oauth2"
-#           backend {
-#             service_name = "city-guesser-oauth"
-#             service_port = "80"
-#           }
-#         }
-#       }
-#     }
-#   }
-# }
-
-
-# module "oauth" {
-#   source = "../../modules/kubernetes/oauth-proxy"
-#   # oauth_client_id     = "3d8ce4bf7b893899d967"
-#   # oauth_client_secret = "REDACTED_OAUTH_SECRET"
-#   client_id       = "3d8ce4bf7b893899d967"
-#   client_secret   = "REDACTED_OAUTH_SECRET"
-#   namespace       = "city-guesser"
-#   host            = "city-guesser.viktorbarzin.me"
-#   tls_secret_name = var.tls_secret_name
-#   svc_name        = "city-guesser-oauth"
-# }
