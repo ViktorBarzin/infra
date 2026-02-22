@@ -17,10 +17,13 @@ resource "kubernetes_namespace" "nvidia" {
   }
 }
 
-# Apply GPU taint to ensure only GPU workloads run on GPU node
-resource "null_resource" "gpu_node_taint" {
+# Apply GPU taint and label to ensure only GPU workloads run on GPU node
+resource "null_resource" "gpu_node_config" {
   provisioner "local-exec" {
-    command = "kubectl taint nodes k8s-node1 nvidia.com/gpu=true:NoSchedule --overwrite"
+    command = <<-EOT
+      kubectl taint nodes k8s-node1 nvidia.com/gpu=true:NoSchedule --overwrite
+      kubectl label nodes k8s-node1 gpu=true --overwrite
+    EOT
   }
 
   # Re-run if namespace changes (proxy for cluster changes)
