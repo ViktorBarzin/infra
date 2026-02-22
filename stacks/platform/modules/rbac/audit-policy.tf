@@ -68,17 +68,58 @@ resource "null_resource" "audit_policy" {
       # Create audit log directory
       "sudo mkdir -p /var/log/kubernetes",
 
-      # Check if audit flags already present
-      "if grep -q 'audit-policy-file' /etc/kubernetes/manifests/kube-apiserver.yaml; then echo 'Audit flags already configured'; exit 0; fi",
+      # Idempotently add audit flags, volumes, and volumeMounts using Python
+      # to avoid sed duplication bugs on re-runs
+      <<-SCRIPT
+      sudo python3 -c "
+import yaml
 
-      # Add audit flags to kube-apiserver manifest
-      "sudo sed -i '/- --oidc-groups-claim/a\\    - --audit-policy-file=/etc/kubernetes/policies/audit-policy.yaml\\n    - --audit-log-path=/var/log/kubernetes/audit.log\\n    - --audit-log-maxage=7\\n    - --audit-log-maxbackup=3\\n    - --audit-log-maxsize=100' /etc/kubernetes/manifests/kube-apiserver.yaml",
+path = '/etc/kubernetes/manifests/kube-apiserver.yaml'
+with open(path) as f:
+    doc = yaml.safe_load(f)
 
-      # Add volume mount for audit policy (hostPath)
-      # The kube-apiserver pod needs access to the policy file and log directory
-      "sudo sed -i '/volumes:/a\\  - hostPath:\\n      path: /etc/kubernetes/policies\\n      type: DirectoryOrCreate\\n    name: audit-policy\\n  - hostPath:\\n      path: /var/log/kubernetes\\n      type: DirectoryOrCreate\\n    name: audit-log' /etc/kubernetes/manifests/kube-apiserver.yaml",
+container = doc['spec']['containers'][0]
+cmd = container['command']
 
-      "sudo sed -i '/volumeMounts:/a\\    - mountPath: /etc/kubernetes/policies\\n      name: audit-policy\\n      readOnly: true\\n    - mountPath: /var/log/kubernetes\\n      name: audit-log' /etc/kubernetes/manifests/kube-apiserver.yaml",
+# Add audit flags if missing
+audit_flags = {
+    '--audit-policy-file=/etc/kubernetes/policies/audit-policy.yaml': True,
+    '--audit-log-path=/var/log/kubernetes/audit.log': True,
+    '--audit-log-maxage=7': True,
+    '--audit-log-maxbackup=3': True,
+    '--audit-log-maxsize=100': True,
+}
+existing = set(cmd)
+for flag in audit_flags:
+    if flag not in existing:
+        cmd.append(flag)
+
+# Add volumes if missing (deduplicate by name)
+vol_names = {v['name'] for v in doc['spec']['volumes']}
+for vol in [
+    {'name': 'audit-policy', 'hostPath': {'path': '/etc/kubernetes/policies', 'type': 'DirectoryOrCreate'}},
+    {'name': 'audit-log', 'hostPath': {'path': '/var/log/kubernetes', 'type': 'DirectoryOrCreate'}},
+]:
+    if vol['name'] not in vol_names:
+        doc['spec']['volumes'].append(vol)
+        vol_names.add(vol['name'])
+
+# Add volumeMounts if missing (deduplicate by mountPath)
+mount_paths = {vm['mountPath'] for vm in container['volumeMounts']}
+for vm in [
+    {'mountPath': '/etc/kubernetes/policies', 'name': 'audit-policy', 'readOnly': True},
+    {'mountPath': '/var/log/kubernetes', 'name': 'audit-log'},
+]:
+    if vm['mountPath'] not in mount_paths:
+        container['volumeMounts'].append(vm)
+        mount_paths.add(vm['mountPath'])
+
+with open(path, 'w') as f:
+    yaml.dump(doc, f, default_flow_style=False, sort_keys=False)
+
+print('Audit config applied (idempotent)')
+"
+      SCRIPT
 
       # Wait for API server to restart
       "echo 'Waiting for API server to restart with audit logging...'",
