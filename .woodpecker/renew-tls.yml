@@ -1,0 +1,39 @@
+when:
+  event: cron
+  cron: renew-tls-certificate
+
+steps:
+  - name: prepare
+    image: alpine
+    commands:
+      - "apk update && apk add jq curl git git-crypt"
+      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
+      - "git checkout $CI_COMMIT_SHA"
+      - |
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
+      - "git-crypt unlock /tmp/key"
+
+  - name: renew-tls
+    image: alpine
+    environment:
+      TECHNITIUM_API_KEY:
+        from_secret: TECHNITIUM_API_KEY
+      CLOUDFLARE_TOKEN:
+        from_secret: CLOUDFLARE_TOKEN
+      CLOUDFLARE_ZONE_ID:
+        from_secret: CLOUDFLARE_ZONE_ID
+    commands:
+      - "apk update && apk add certbot curl jq"
+      - "./modules/kubernetes/setup_tls_secret/renew2.sh"
+
+  - name: commit-certs
+    image: alpine
+    commands:
+      - "apk update && apk add openssh-client git git-crypt"
+      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - "chmod 400 secrets/deploy_key"
+      - "git add ."
+      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
+      - "git commit -m 'Woodpecker CI Update TLS Certificates Commit' || echo 'No changes'"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
