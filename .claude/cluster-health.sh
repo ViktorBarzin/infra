@@ -626,7 +626,7 @@ except ImportError:
     sys.exit(0)
 
 try:
-    api = UptimeKumaApi("https://uptime.viktorbarzin.me")
+    api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=30)
     password = os.environ.get("UPTIME_KUMA_PASSWORD", "")
     if not password:
         print("ERROR:UPTIME_KUMA_PASSWORD not set")
@@ -634,31 +634,36 @@ try:
     api.login("admin", password)
 
     monitors = api.get_monitors()
-    down = []
-    up_count = 0
+    # Build id->name map and track active/paused
+    id_to_name = {}
     paused_count = 0
-
     for m in monitors:
+        mid = m.get("id")
         name = m.get("name", "unknown")
         active = m.get("active", True)
         if not active:
             paused_count += 1
-            continue
-        # Check heartbeat list for latest status
-        try:
-            hb = api.get_monitor_beats(m["id"], 1)
-            if hb and len(hb) > 0:
-                status = hb[-1].get("status", 0)
-            else:
-                status = m.get("status", 0)
-        except Exception:
-            status = m.get("status", 0)
-        # status: 0=DOWN, 1=UP, 2=PENDING, 3=MAINTENANCE
-        if status == 1:
-            up_count += 1
-        elif status == 3:
-            paused_count += 1
         else:
+            id_to_name[mid] = name
+
+    # Use bulk heartbeat fetch (single API call) instead of per-monitor calls
+    heartbeats = api.get_heartbeats()
+
+    down = []
+    up_count = 0
+    for mid, name in id_to_name.items():
+        beats = heartbeats.get(mid, [])
+        if beats:
+            status = beats[-1].get("status", 0)
+            # Handle both enum and int (MonitorStatus.UP == 1)
+            if status == 1:
+                up_count += 1
+            elif status == 3:
+                paused_count += 1
+            else:
+                down.append(name)
+        else:
+            # No heartbeats = unknown, treat as down
             down.append(name)
 
     api.disconnect()
