@@ -11,7 +11,7 @@ locals {
 }
 
 module "ntfy" {
-  source = "../../modules/kubernetes/ntfy"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

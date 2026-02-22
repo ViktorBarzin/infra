@@ -14,7 +14,7 @@ locals {
 }
 
 module "ytdlp" {
-  source = "../../modules/kubernetes/youtube_dl"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
   openrouter_api_key             = var.openrouter_api_key

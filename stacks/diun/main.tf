@@ -13,9 +13,9 @@ locals {
 }
 
 module "diun" {
-  source = "../../modules/kubernetes/diun"
-  tls_secret_name                = var.tls_secret_name
-  diun_nfty_token                = var.diun_nfty_token
-  diun_slack_url                 = var.diun_slack_url
-  tier                           = local.tiers.aux
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  diun_nfty_token = var.diun_nfty_token
+  diun_slack_url  = var.diun_slack_url
+  tier            = local.tiers.aux
 }

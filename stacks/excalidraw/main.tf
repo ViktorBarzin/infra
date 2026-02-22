@@ -11,7 +11,7 @@ locals {
 }
 
 module "excalidraw" {
-  source = "../../modules/kubernetes/excalidraw"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.aux
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 }

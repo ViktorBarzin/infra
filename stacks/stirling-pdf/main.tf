@@ -11,7 +11,7 @@ locals {
 }
 
 module "stirling-pdf" {
-  source = "../../modules/kubernetes/stirling-pdf"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tier                           = local.tiers.aux
 }

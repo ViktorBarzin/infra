@@ -13,7 +13,7 @@ locals {
 }
 
 module "paperless-ngx" {
-  source = "../../modules/kubernetes/paperless-ngx"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   db_password                    = var.paperless_db_password
   homepage_username              = var.homepage_credentials["paperless-ngx"]["username"]

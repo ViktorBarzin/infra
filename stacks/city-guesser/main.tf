@@ -11,7 +11,7 @@ locals {
 }
 
 module "city-guesser" {
-  source = "../../modules/kubernetes/city-guesser"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.aux
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.aux
 }

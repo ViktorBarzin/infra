@@ -13,9 +13,9 @@ locals {
 }
 
 module "affine" {
-  source = "../../modules/kubernetes/affine"
-  tls_secret_name                = var.tls_secret_name
-  postgresql_password            = var.affine_postgresql_password
-  smtp_password                  = var.mailserver_accounts["info@viktorbarzin.me"]
-  tier                           = local.tiers.aux
+  source              = "./module"
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.affine_postgresql_password
+  smtp_password       = var.mailserver_accounts["info@viktorbarzin.me"]
+  tier                = local.tiers.aux
 }

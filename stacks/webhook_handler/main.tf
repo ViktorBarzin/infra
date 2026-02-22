@@ -18,7 +18,7 @@ locals {
 }
 
 module "webhook_handler" {
-  source = "../../modules/kubernetes/webhook_handler"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   webhook_secret                 = var.webhook_handler_secret
   fb_verify_token                = var.webhook_handler_fb_verify_token

@@ -12,8 +12,8 @@ locals {
 }
 
 module "hackmd" {
-  source = "../../modules/kubernetes/hackmd"
-  hackmd_db_password             = var.hackmd_db_password
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.edge
+  source             = "./module"
+  hackmd_db_password = var.hackmd_db_password
+  tls_secret_name    = var.tls_secret_name
+  tier               = local.tiers.edge
 }

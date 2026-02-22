@@ -12,8 +12,8 @@ locals {
 }
 
 module "grampsweb" {
-  source = "../../modules/kubernetes/grampsweb"
-  tls_secret_name                = var.tls_secret_name
-  smtp_password                  = var.mailserver_accounts["info@viktorbarzin.me"]
-  tier                           = local.tiers.aux
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  smtp_password   = var.mailserver_accounts["info@viktorbarzin.me"]
+  tier            = local.tiers.aux
 }

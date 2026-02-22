@@ -12,9 +12,9 @@ locals {
 }
 
 module "calibre" {
-  source = "../../modules/kubernetes/calibre"
-  tls_secret_name                = var.tls_secret_name
-  homepage_username              = var.homepage_credentials["calibre-web"]["username"]
-  homepage_password              = var.homepage_credentials["calibre-web"]["password"]
-  tier                           = local.tiers.edge
+  source            = "./module"
+  tls_secret_name   = var.tls_secret_name
+  homepage_username = var.homepage_credentials["calibre-web"]["username"]
+  homepage_password = var.homepage_credentials["calibre-web"]["password"]
+  tier              = local.tiers.edge
 }

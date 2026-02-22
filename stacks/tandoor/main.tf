@@ -16,7 +16,7 @@ locals {
 }
 
 module "tandoor" {
-  source = "../../modules/kubernetes/tandoor"
+  source = "./module"
   tls_secret_name                = var.tls_secret_name
   tandoor_database_password      = var.tandoor_database_password
   tandoor_email_password         = var.tandoor_email_password

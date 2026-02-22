@@ -11,7 +11,7 @@ locals {
 }
 
 module "homepage" {
-  source = "../../modules/kubernetes/homepage"
-  tier                           = local.tiers.aux
-  tls_secret_name                = var.tls_secret_name
+  source          = "./module"
+  tier            = local.tiers.aux
+  tls_secret_name = var.tls_secret_name
 }

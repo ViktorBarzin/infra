@@ -13,9 +13,9 @@ locals {
 }
 
 module "health" {
-  source = "../../modules/kubernetes/health"
-  tls_secret_name                = var.tls_secret_name
-  postgresql_password            = var.health_postgresql_password
-  secret_key                     = var.health_secret_key
-  tier                           = local.tiers.aux
+  source              = "./module"
+  tls_secret_name     = var.tls_secret_name
+  postgresql_password = var.health_postgresql_password
+  secret_key          = var.health_secret_key
+  tier                = local.tiers.aux
 }

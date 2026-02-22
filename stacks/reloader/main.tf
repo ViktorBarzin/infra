@@ -9,6 +9,6 @@ locals {
 }
 
 module "reloader" {
-  source = "../../modules/kubernetes/reloader"
+  source = "./module"
   tier                           = local.tiers.aux
 }

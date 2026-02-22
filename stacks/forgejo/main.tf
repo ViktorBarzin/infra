@@ -11,7 +11,7 @@ locals {
 }
 
 module "forgejo" {
-  source = "../../modules/kubernetes/forgejo"
-  tls_secret_name                = var.tls_secret_name
-  tier                           = local.tiers.edge
+  source          = "./module"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.edge
 }
