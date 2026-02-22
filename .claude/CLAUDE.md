@@ -33,11 +33,13 @@ Terragrunt-based infrastructure repository managing a home Kubernetes cluster on
 ## Static File Paths (NEVER CHANGE)
 - **Main config**: `terraform.tfvars` - All secrets, DNS, Cloudflare config, WireGuard peers
 - **Root Terragrunt**: `terragrunt.hcl` - Root Terragrunt config (providers, backend, var loading)
-- **Service stacks**: `stacks/<service>/` - Individual service stacks (each has `terragrunt.hcl` + `main.tf`)
+- **Service stacks**: `stacks/<service>/` - Individual service stacks (each has `terragrunt.hcl` + `main.tf` + `module/`)
 - **Infra stack**: `stacks/infra/` - Proxmox VM resources (templates, docker-registry, VMs)
-- **Platform stack**: `stacks/platform/` - Core infrastructure services (22 modules)
+- **Platform stack**: `stacks/platform/` - Core infrastructure services (22 modules in `modules/` subdir)
 - **Per-stack state**: `state/stacks/<service>/terraform.tfstate` - Per-stack state files (gitignored)
-- **Service modules**: `modules/kubernetes/<service>/main.tf` - Service module definitions (unchanged)
+- **Service modules**: `stacks/<service>/module/` - Service module definitions (collocated with stack)
+- **Platform modules**: `stacks/platform/modules/<service>/` - Platform service modules
+- **Shared modules**: `modules/kubernetes/ingress_factory/`, `modules/kubernetes/setup_tls_secret/`, `modules/kubernetes/dockerhub_secret/`, `modules/kubernetes/oauth-proxy/`
 - **Secrets**: `secrets/` - git-crypt encrypted TLS certs and keys
 - **Legacy (unused)**: `main.tf`, `modules/kubernetes/main.tf` - Old monolithic entry points (kept for reference)
 
@@ -76,9 +78,11 @@ Terragrunt-based infrastructure repository managing a home Kubernetes cluster on
 - `terragrunt.hcl` - Root Terragrunt configuration (providers, backend, variable loading)
 - `stacks/` - Individual Terragrunt stacks (one per service)
 - `stacks/infra/` - Proxmox VM resources (templates, docker-registry)
-- `stacks/platform/` - Core infrastructure (22 services bundled together)
-- `stacks/<service>/` - Individual service stacks (thin wrappers calling modules)
-- `modules/kubernetes/<service>/` - Service module definitions (unchanged)
+- `stacks/platform/` - Core infrastructure (22 services in `stacks/platform/modules/`)
+- `stacks/<service>/` - Individual service stacks (wrapper `main.tf` + `module/` subdir)
+- `stacks/<service>/module/` - Service module source code (moved from `modules/kubernetes/`)
+- `stacks/platform/modules/<service>/` - Platform service module source code
+- `modules/kubernetes/` - **Only shared utility modules**: `ingress_factory/`, `setup_tls_secret/`, `dockerhub_secret/`, `oauth-proxy/`
 - `modules/create-vm/` - Proxmox VM creation module
 - `state/` - Per-stack Terraform state files (gitignored)
 - `secrets/` - Encrypted secrets (TLS certs, keys) via git-crypt
@@ -158,7 +162,9 @@ When configuring services to use the mailserver:
 
 ### Terragrunt Architecture
 - Root `terragrunt.hcl` provides DRY provider, backend, and variable loading for all stacks
-- Each stack is a thin wrapper: `stacks/<service>/main.tf` calls `source = "../../modules/kubernetes/<service>"`
+- Each stack contains its module source: `stacks/<service>/main.tf` calls `source = "./module"`, with actual resources in `stacks/<service>/module/`
+- Platform modules live at `stacks/platform/modules/<service>/`, referenced as `source = "./modules/<service>"`
+- Shared utility modules (`ingress_factory`, `setup_tls_secret`, `dockerhub_secret`, `oauth-proxy`) remain at `modules/kubernetes/` and are referenced with relative paths from each module
 - State isolation: each stack has its own state file at `state/stacks/<service>/terraform.tfstate`
 - Dependencies: service stacks depend on `platform` stack via `dependency` block in their `terragrunt.hcl`
 - Variables loaded from `terraform.tfvars` automatically (unused vars silently ignored via `extra_arguments`)
@@ -170,14 +176,14 @@ When configuring services to use the mailserver:
 
 ### Adding a New Service
 When adding a new service to the cluster:
-1. Create the module at `modules/kubernetes/<service>/main.tf` (as before)
-2. Create `stacks/<service>/` directory with:
+1. Create `stacks/<service>/` directory with:
    - `terragrunt.hcl` - Include root config, declare `platform` dependency
-   - `main.tf` - Thin wrapper calling `source = "../../modules/kubernetes/<service>"`
+   - `main.tf` - Thin wrapper calling `source = "./module"`
+   - `module/` - Service module directory containing `main.tf` with actual resources
    - `secrets` - Symlink to `../../secrets` (for TLS cert path resolution)
-3. Add Cloudflare DNS record in `terraform.tfvars` (`cloudflare_proxied_names` or `cloudflare_non_proxied_names`)
-4. Apply the cloudflared stack: `cd stacks/platform && terragrunt apply --non-interactive`
-5. Apply the new service: `cd stacks/<service> && terragrunt apply --non-interactive`
+2. Add Cloudflare DNS record in `terraform.tfvars` (`cloudflare_proxied_names` or `cloudflare_non_proxied_names`)
+3. Apply the cloudflared stack: `cd stacks/platform && terragrunt apply --non-interactive`
+4. Apply the new service: `cd stacks/<service> && terragrunt apply --non-interactive`
 
 ## Common Variables
 - `tls_secret_name` - TLS certificate secret name
@@ -241,8 +247,8 @@ Adding a name to `cloudflare_non_proxied_names` or `cloudflare_proxied_names` in
 ## Stack Structure
 Terragrunt stacks under `stacks/`:
 - `stacks/infra/` - Proxmox VMs, templates, docker-registry
-- `stacks/platform/` - Core infrastructure (~22 services: traefik, monitoring, authentik, cloudflared, redis, etc.)
-- `stacks/<service>/` - Individual service stacks (one per independently deployable service)
+- `stacks/platform/` - Core infrastructure (~22 services in `modules/` subdir)
+- `stacks/<service>/` - Individual service stacks (wrapper `main.tf` + `module/` with actual resources)
 
 Each stack's `terragrunt.hcl` includes the root `terragrunt.hcl` which provides:
 - Kubernetes + Helm providers (configured from `terraform.tfvars`)
