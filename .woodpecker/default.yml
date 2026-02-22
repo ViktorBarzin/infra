@@ -1,0 +1,46 @@
+when:
+  event: push
+
+steps:
+  - name: prepare
+    image: alpine
+    commands:
+      - "apk update && apk add jq curl git git-crypt"
+      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
+      - "git checkout $CI_COMMIT_SHA"
+      - |
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
+      - "git-crypt unlock /tmp/key"
+
+  - name: terragrunt-apply
+    image: alpine
+    commands:
+      - "apk update && apk add curl unzip git openssh-client"
+      # Install Terraform
+      - "wget -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
+      - "unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform"
+      # Install Terragrunt
+      - "wget -O /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
+      - "chmod 755 /usr/local/bin/terragrunt"
+      # Apply platform stack (core infrastructure services)
+      - "cd stacks/platform && terragrunt apply --non-interactive -auto-approve"
+
+  - name: push-commit
+    image: alpine
+    commands:
+      - "apk update && apk add openssh-client git git-crypt"
+      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - "chmod 400 secrets/deploy_key"
+      - "git add ."
+      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
+      - "git commit -m 'Woodpecker CI deploy commit [CI SKIP]' || echo 'No changes'"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+
+  - name: slack
+    image: woodpeckerci/plugin-slack
+    settings:
+      webhook:
+        from_secret: slack_webhook
+      channel: general
+    when:
+      - status: [success, failure]
