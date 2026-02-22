@@ -1,0 +1,413 @@
+# =============================================================================
+# Platform Stack — Core & Cluster Services
+# =============================================================================
+#
+# This stack groups ~22 core/cluster services that form the platform layer.
+# These services are always present (no DEFCON gating) and provide the
+# foundational infrastructure that application stacks depend on.
+#
+# Services included:
+#   metallb, dbaas, cloudflared, infra-maintenance,
+#   redis, traefik, technitium, headscale, authentik, rbac, k8s-portal,
+#   crowdsec, monitoring, vaultwarden, reverse-proxy, metrics-server,
+#   nvidia, kyverno, uptime-kuma, wireguard, xray, mailserver
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Tier Definitions
+# -----------------------------------------------------------------------------
+locals {
+  tiers = {
+    core    = "0-core"
+    cluster = "1-cluster"
+    gpu     = "2-gpu"
+    edge    = "3-edge"
+    aux     = "4-aux"
+  }
+}
+
+# =============================================================================
+# Variable Declarations
+# =============================================================================
+
+# --- Core ---
+variable "tls_secret_name" { type = string }
+variable "prod" {
+  type    = bool
+  default = false
+}
+
+# --- dbaas ---
+variable "dbaas_root_password" { type = string }
+variable "dbaas_postgresql_root_password" { type = string }
+variable "dbaas_pgadmin_password" { type = string }
+
+# --- traefik ---
+variable "ingress_crowdsec_api_key" { type = string }
+
+# --- technitium ---
+variable "technitium_db_password" { type = string }
+variable "homepage_credentials" { type = map(any) }
+
+# --- headscale ---
+variable "headscale_config" { type = string }
+variable "headscale_acl" { type = string }
+
+# --- authentik / rbac / k8s-portal ---
+variable "authentik_secret_key" { type = string }
+variable "authentik_postgres_password" { type = string }
+variable "k8s_users" {
+  type    = map(any)
+  default = {}
+}
+variable "ssh_private_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+# --- crowdsec ---
+variable "crowdsec_enroll_key" { type = string }
+variable "crowdsec_db_password" { type = string }
+variable "crowdsec_dash_api_key" { type = string }
+variable "crowdsec_dash_machine_id" { type = string }
+variable "crowdsec_dash_machine_password" { type = string }
+variable "alertmanager_slack_api_url" { type = string }
+
+# --- cloudflared ---
+variable "cloudflare_api_key" { type = string }
+variable "cloudflare_email" { type = string }
+variable "cloudflare_account_id" { type = string }
+variable "cloudflare_zone_id" { type = string }
+variable "cloudflare_tunnel_id" { type = string }
+variable "public_ip" { type = string }
+variable "cloudflare_proxied_names" {}
+variable "cloudflare_non_proxied_names" {}
+variable "cloudflare_tunnel_token" { type = string }
+
+# --- monitoring ---
+variable "alertmanager_account_password" { type = string }
+variable "monitoring_idrac_username" { type = string }
+variable "monitoring_idrac_password" { type = string }
+variable "tiny_tuya_service_secret" { type = string }
+variable "haos_api_token" { type = string }
+variable "pve_password" { type = string }
+variable "grafana_db_password" { type = string }
+variable "grafana_admin_password" { type = string }
+
+# --- vaultwarden ---
+variable "vaultwarden_smtp_password" { type = string }
+
+# --- wireguard ---
+variable "wireguard_wg_0_conf" { type = string }
+variable "wireguard_wg_0_key" { type = string }
+variable "wireguard_firewall_sh" { type = string }
+
+# --- xray ---
+variable "xray_reality_clients" { type = list(map(string)) }
+variable "xray_reality_private_key" { type = string }
+variable "xray_reality_short_ids" { type = list(string) }
+
+# --- mailserver ---
+variable "mailserver_accounts" {}
+variable "mailserver_aliases" {}
+variable "mailserver_opendkim_key" {}
+variable "mailserver_sasl_passwd" {}
+variable "mailserver_roundcubemail_db_password" { type = string }
+
+# --- infra-maintenance ---
+variable "webhook_handler_git_user" { type = string }
+variable "webhook_handler_git_token" { type = string }
+variable "technitium_username" { type = string }
+variable "technitium_password" { type = string }
+
+# =============================================================================
+# Module Calls
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# MetalLB — L2 load balancer
+# -----------------------------------------------------------------------------
+module "metallb" {
+  source = "../../modules/kubernetes/metallb"
+  tier   = local.tiers.core
+}
+
+# -----------------------------------------------------------------------------
+# DBaaS — MySQL + PostgreSQL + pgAdmin
+# -----------------------------------------------------------------------------
+module "dbaas" {
+  source                   = "../../modules/kubernetes/dbaas"
+  prod                     = var.prod
+  tls_secret_name          = var.tls_secret_name
+  dbaas_root_password      = var.dbaas_root_password
+  postgresql_root_password = var.dbaas_postgresql_root_password
+  pgadmin_password         = var.dbaas_pgadmin_password
+  tier                     = local.tiers.cluster
+}
+
+# -----------------------------------------------------------------------------
+# Redis — Shared Redis instance
+# -----------------------------------------------------------------------------
+module "redis" {
+  source          = "../../modules/kubernetes/redis"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.cluster
+}
+
+# -----------------------------------------------------------------------------
+# Traefik — Ingress controller (Helm)
+# -----------------------------------------------------------------------------
+module "traefik" {
+  source           = "../../modules/kubernetes/traefik"
+  tier             = local.tiers.core
+  crowdsec_api_key = var.ingress_crowdsec_api_key
+  tls_secret_name  = var.tls_secret_name
+}
+
+# -----------------------------------------------------------------------------
+# Technitium — DNS server
+# -----------------------------------------------------------------------------
+module "technitium" {
+  source                 = "../../modules/kubernetes/technitium"
+  tls_secret_name        = var.tls_secret_name
+  homepage_token         = var.homepage_credentials["technitium"]["token"]
+  technitium_db_password = var.technitium_db_password
+  tier                   = local.tiers.core
+}
+
+# -----------------------------------------------------------------------------
+# Headscale — Tailscale control server
+# -----------------------------------------------------------------------------
+module "headscale" {
+  source           = "../../modules/kubernetes/headscale"
+  tls_secret_name  = var.tls_secret_name
+  headscale_config = var.headscale_config
+  headscale_acl    = var.headscale_acl
+  tier             = local.tiers.core
+}
+
+# -----------------------------------------------------------------------------
+# Authentik — Identity provider (SSO)
+# -----------------------------------------------------------------------------
+module "authentik" {
+  source            = "../../modules/kubernetes/authentik"
+  tier              = local.tiers.cluster
+  tls_secret_name   = var.tls_secret_name
+  secret_key        = var.authentik_secret_key
+  postgres_password = var.authentik_postgres_password
+}
+
+# -----------------------------------------------------------------------------
+# RBAC — Kubernetes OIDC RBAC (depends on Authentik)
+# -----------------------------------------------------------------------------
+module "rbac" {
+  source          = "../../modules/kubernetes/rbac"
+  tier            = local.tiers.cluster
+  tls_secret_name = var.tls_secret_name
+  k8s_users       = var.k8s_users
+  ssh_private_key = var.ssh_private_key
+}
+
+# -----------------------------------------------------------------------------
+# K8s Portal — Self-service Kubernetes portal (depends on Authentik)
+# -----------------------------------------------------------------------------
+module "k8s-portal" {
+  source          = "../../modules/kubernetes/k8s-portal"
+  tier            = local.tiers.edge
+  tls_secret_name = var.tls_secret_name
+}
+
+# -----------------------------------------------------------------------------
+# CrowdSec — Security/WAF
+# -----------------------------------------------------------------------------
+module "crowdsec" {
+  source                         = "../../modules/kubernetes/crowdsec"
+  tier                           = local.tiers.cluster
+  tls_secret_name                = var.tls_secret_name
+  homepage_username              = var.homepage_credentials["crowdsec"]["username"]
+  homepage_password              = var.homepage_credentials["crowdsec"]["password"]
+  enroll_key                     = var.crowdsec_enroll_key
+  db_password                    = var.crowdsec_db_password
+  crowdsec_dash_api_key          = var.crowdsec_dash_api_key
+  crowdsec_dash_machine_id       = var.crowdsec_dash_machine_id
+  crowdsec_dash_machine_password = var.crowdsec_dash_machine_password
+  slack_webhook_url              = var.alertmanager_slack_api_url
+}
+
+# -----------------------------------------------------------------------------
+# Monitoring — Prometheus / Grafana / Loki stack
+# -----------------------------------------------------------------------------
+module "monitoring" {
+  source                       = "../../modules/kubernetes/monitoring"
+  tls_secret_name              = var.tls_secret_name
+  alertmanager_account_password = var.alertmanager_account_password
+  idrac_username               = var.monitoring_idrac_username
+  idrac_password               = var.monitoring_idrac_password
+  alertmanager_slack_api_url   = var.alertmanager_slack_api_url
+  tiny_tuya_service_secret     = var.tiny_tuya_service_secret
+  haos_api_token               = var.haos_api_token
+  pve_password                 = var.pve_password
+  grafana_db_password          = var.grafana_db_password
+  grafana_admin_password       = var.grafana_admin_password
+  tier                         = local.tiers.cluster
+}
+
+# -----------------------------------------------------------------------------
+# Vaultwarden — Password manager
+# -----------------------------------------------------------------------------
+module "vaultwarden" {
+  source          = "../../modules/kubernetes/vaultwarden"
+  tls_secret_name = var.tls_secret_name
+  smtp_password   = var.vaultwarden_smtp_password
+  tier            = local.tiers.edge
+}
+
+# -----------------------------------------------------------------------------
+# Reverse Proxy — Generic reverse proxy
+# -----------------------------------------------------------------------------
+module "reverse-proxy" {
+  source                 = "../../modules/kubernetes/reverse_proxy"
+  tls_secret_name        = var.tls_secret_name
+  truenas_homepage_token = var.homepage_credentials["reverse_proxy"]["truenas_token"]
+  pfsense_homepage_token = var.homepage_credentials["reverse_proxy"]["pfsense_token"]
+}
+
+# -----------------------------------------------------------------------------
+# Metrics Server — Kubernetes metrics
+# -----------------------------------------------------------------------------
+module "metrics-server" {
+  source          = "../../modules/kubernetes/metrics-server"
+  tier            = local.tiers.cluster
+  tls_secret_name = var.tls_secret_name
+}
+
+# -----------------------------------------------------------------------------
+# NVIDIA — GPU device plugin
+# -----------------------------------------------------------------------------
+module "nvidia" {
+  source          = "../../modules/kubernetes/nvidia"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.gpu
+}
+
+# -----------------------------------------------------------------------------
+# Kyverno — Policy engine
+# -----------------------------------------------------------------------------
+module "kyverno" {
+  source = "../../modules/kubernetes/kyverno"
+}
+
+# -----------------------------------------------------------------------------
+# Uptime Kuma — Status monitoring
+# -----------------------------------------------------------------------------
+module "uptime-kuma" {
+  source          = "../../modules/kubernetes/uptime-kuma"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.cluster
+}
+
+# -----------------------------------------------------------------------------
+# WireGuard — VPN server
+# -----------------------------------------------------------------------------
+module "wireguard" {
+  source          = "../../modules/kubernetes/wireguard"
+  tls_secret_name = var.tls_secret_name
+  wg_0_conf       = var.wireguard_wg_0_conf
+  wg_0_key        = var.wireguard_wg_0_key
+  firewall_sh     = var.wireguard_firewall_sh
+  tier            = local.tiers.core
+}
+
+# -----------------------------------------------------------------------------
+# Xray — Proxy/tunnel
+# -----------------------------------------------------------------------------
+module "xray" {
+  source          = "../../modules/kubernetes/xray"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.core
+
+  xray_reality_clients     = var.xray_reality_clients
+  xray_reality_private_key = var.xray_reality_private_key
+  xray_reality_short_ids   = var.xray_reality_short_ids
+}
+
+# -----------------------------------------------------------------------------
+# Mailserver — docker-mailserver
+# -----------------------------------------------------------------------------
+module "mailserver" {
+  source                  = "../../modules/kubernetes/mailserver"
+  tls_secret_name         = var.tls_secret_name
+  mailserver_accounts     = var.mailserver_accounts
+  postfix_account_aliases = var.mailserver_aliases
+  opendkim_key            = var.mailserver_opendkim_key
+  sasl_passwd             = var.mailserver_sasl_passwd
+  roundcube_db_password   = var.mailserver_roundcubemail_db_password
+  tier                    = local.tiers.edge
+}
+
+# -----------------------------------------------------------------------------
+# Cloudflared — Cloudflare tunnel + DNS records
+# -----------------------------------------------------------------------------
+module "cloudflared" {
+  source          = "../../modules/kubernetes/cloudflared"
+  tier            = local.tiers.core
+  tls_secret_name = var.tls_secret_name
+
+  cloudflare_api_key           = var.cloudflare_api_key
+  cloudflare_email             = var.cloudflare_email
+  cloudflare_account_id        = var.cloudflare_account_id
+  cloudflare_zone_id           = var.cloudflare_zone_id
+  cloudflare_tunnel_id         = var.cloudflare_tunnel_id
+  public_ip                    = var.public_ip
+  cloudflare_proxied_names     = var.cloudflare_proxied_names
+  cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
+  cloudflare_tunnel_token      = var.cloudflare_tunnel_token
+}
+
+# -----------------------------------------------------------------------------
+# Infra Maintenance — Automated maintenance jobs
+# -----------------------------------------------------------------------------
+module "infra-maintenance" {
+  source              = "../../modules/kubernetes/infra-maintenance"
+  git_user            = var.webhook_handler_git_user
+  git_token           = var.webhook_handler_git_token
+  technitium_username = var.technitium_username
+  technitium_password = var.technitium_password
+}
+
+# =============================================================================
+# Outputs (consumed by service stacks via Terragrunt dependency)
+# =============================================================================
+
+output "tls_secret_name" {
+  value = var.tls_secret_name
+}
+
+output "redis_host" {
+  value = "redis.redis.svc.cluster.local"
+}
+
+output "postgresql_host" {
+  value = "postgresql.dbaas.svc.cluster.local"
+}
+
+output "postgresql_port" {
+  value = 5432
+}
+
+output "mysql_host" {
+  value = "mysql.dbaas.svc.cluster.local"
+}
+
+output "mysql_port" {
+  value = 3306
+}
+
+output "smtp_host" {
+  value = "mail.viktorbarzin.me"
+}
+
+output "smtp_port" {
+  value = 587
+}
