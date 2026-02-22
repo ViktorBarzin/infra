@@ -85,7 +85,7 @@ var _ce=document.createElement.bind(document);
 document.createElement=function(t){
 var el=_ce(t);
 var tag=t.toLowerCase();
-if(tag==='script'||tag==='iframe'||tag==='img'||tag==='link'||tag==='source'||tag==='video'||tag==='audio'){
+if(tag==='script'||tag==='img'||tag==='link'||tag==='source'||tag==='video'||tag==='audio'){
 var _ss=Object.getOwnPropertyDescriptor(HTMLElement.prototype,'src')||Object.getOwnPropertyDescriptor(el.__proto__,'src');
 if(_ss&&_ss.set){Object.defineProperty(el,'src',{get:function(){return _ss.get?_ss.get.call(this):'';},set:function(v){_ss.set.call(this,rw(v));},configurable:true});}
 }
@@ -316,9 +316,6 @@ var rootRelativeAttrRe = regexp.MustCompile(`((?:src|href|action|poster|data)\s*
 // Matches url("/...") or url('/...') or url(/...) in inline styles — but NOT url("//...")
 var rootRelativeCSSRe = regexp.MustCompile(`(url\(\s*["']?)/([^/"')[^"')]*)(["']?\s*\))`)
 
-// crossOriginIframeSrcRe matches <iframe src="https://..."> to proxy cross-origin embeds.
-var crossOriginIframeSrcRe = regexp.MustCompile(`(<iframe[^>]*\ssrc\s*=\s*["'])(https?://[^"']+)(["'])`)
-
 // disableDevtoolRe matches <script> tags that load disable-devtool or similar anti-debug libraries.
 var disableDevtoolRe = regexp.MustCompile(`(?i)<script[^>]*(?:disable-devtool|devtools-detect)[^>]*>(?:</script>)?`)
 
@@ -376,34 +373,18 @@ func rewriteHTML(body, origin, b64Origin string) string {
 		return m[1] + proxyPrefix + "/" + m[2] + m[3]
 	})
 
-	// 4. Rewrite cross-origin iframe src attributes to route through proxy
-	body = crossOriginIframeSrcRe.ReplaceAllStringFunc(body, func(match string) string {
-		m := crossOriginIframeSrcRe.FindStringSubmatch(match)
-		if len(m) < 4 {
-			return match
-		}
-		prefix, iframeURL, quote := m[1], m[2], m[3]
-		parsed, err := url.Parse(iframeURL)
-		if err != nil {
-			return match
-		}
-		iframeOrigin := parsed.Scheme + "://" + parsed.Host
-		iframeB64 := base64.RawURLEncoding.EncodeToString([]byte(iframeOrigin))
-		return prefix + "/proxy/" + iframeB64 + parsed.RequestURI() + quote
-	})
-
-	// 5. Strip anti-debugging scripts (disable-devtool, devtools-detect)
+	// 4. Strip anti-debugging scripts (disable-devtool, devtools-detect)
 	body = disableDevtoolRe.ReplaceAllString(body, "")
 
-	// 5b. Strip ad/popup scripts and context menu blockers
+	// 4b. Strip ad/popup scripts and context menu blockers
 	body = adScriptRe.ReplaceAllString(body, "")
 	body = adInlineRe.ReplaceAllString(body, "")
 	body = contextMenuBlockRe.ReplaceAllString(body, "")
 
-	// 5c. Strip debugger statements from inline scripts
+	// 4c. Strip debugger statements from inline scripts
 	body = debuggerStmtRe.ReplaceAllString(body, "/* */")
 
-	// 6. Inject JS shim right after <head> to intercept fetch/XHR/WebSocket
+	// 5. Inject JS shim right after <head> to intercept fetch/XHR/WebSocket
 	shim := fmt.Sprintf(jsShimTemplate, b64Origin, origin)
 	headIdx := strings.Index(strings.ToLower(body), "<head>")
 	if headIdx != -1 {

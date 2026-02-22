@@ -15,6 +15,7 @@ import (
 	"f1-stream/internal/extractor"
 	"f1-stream/internal/healthcheck"
 	"f1-stream/internal/models"
+	"f1-stream/internal/playerconfig"
 	"f1-stream/internal/scraper"
 	"f1-stream/internal/server"
 	"f1-stream/internal/store"
@@ -59,7 +60,8 @@ func main() {
 	hc := healthcheck.New(st, healthInterval, healthTimeout)
 
 	// Initialize server
-	srv := server.New(st, a, sc, origins, headlessEnabled)
+	pc := playerconfig.New()
+	srv := server.New(st, a, sc, pc, origins, headlessEnabled)
 
 	// Start scraper in background
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
