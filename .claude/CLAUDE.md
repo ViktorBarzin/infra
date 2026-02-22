@@ -7,7 +7,7 @@
 - **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
 - **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
-- **CRITICAL: All infrastructure changes must go through Terraform**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terraform apply`. The real cluster state must never deviate from what's defined in Terraform — if a manual change is unavoidable (e.g., containerd config on running nodes), document it and ensure the Terraform templates match so future provisioning is consistent. Use `kubectl` only for read-only operations (get, describe, logs) and ephemeral debugging (run --rm, delete stuck pods), never for persistent state changes.
+- **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terragrunt apply`. The real cluster state must never deviate from what's defined in Terraform — if a manual change is unavoidable (e.g., containerd config on running nodes), document it and ensure the Terraform templates match so future provisioning is consistent. Use `kubectl` only for read-only operations (get, describe, logs) and ephemeral debugging (run --rm, delete stuck pods), never for persistent state changes.
 - **CRITICAL: NEVER put sensitive data (API keys, passwords, tokens, credentials) into committed files** unless they are encrypted (e.g., via git-crypt). Secrets belong in `terraform.tfvars` (which is git-crypt encrypted) or in the `secrets/` directory. Never hardcode credentials in `.tf` files, scripts, `.claude/` files, or any other unencrypted committed file. Always pass secrets through the Terraform variable chain (`terraform.tfvars` → `main.tf` → module variables).
 - **CRITICAL: NEVER commit secrets** — triple-check before every commit that no API keys, passwords, tokens, or credentials are included in unencrypted files. This is a hard rule with zero exceptions.
 - **New services MUST have CI/CD**: Set up Drone CI pipeline (`.drone.yml`) with GitHub/GitLab repo integration. Services should auto-build and auto-deploy.
@@ -16,10 +16,10 @@
 ## Execution Environment
 - **File operations**: Read, Edit, Write, Glob, Grep tools
 - **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
-- **Shell commands**: All tools (terraform, kubectl, helm, python, etc.) are available locally
-- **CRITICAL: Always run terraform locally**, never on the remote server via SSH. Use `-var="kube_config_path=$(pwd)/config"` when applying:
+- **Shell commands**: All tools (terraform, terragrunt, kubectl, helm, python, etc.) are available locally
+- **CRITICAL: Always run terragrunt/terraform locally**, never on the remote server via SSH:
   ```bash
-  terraform apply -target=module.kubernetes_cluster.module.<service> -var="kube_config_path=$(pwd)/config" -auto-approve
+  cd stacks/<service> && terragrunt apply --non-interactive
   ```
 - **kubectl**: Use `kubectl --kubeconfig $(pwd)/config` for cluster access
 - **GitHub API**: Use `curl` with token from tfvars (see GitHub & Drone CI section below). `gh` CLI is blocked by sandbox restrictions.
@@ -28,13 +28,18 @@
 ---
 
 ## Overview
-Terraform-based infrastructure repository managing a home Kubernetes cluster on Proxmox VMs. Uses git-crypt for secrets encryption.
+Terragrunt-based infrastructure repository managing a home Kubernetes cluster on Proxmox VMs, with per-service state isolation. Each service has its own Terragrunt stack under `stacks/`, enabling fast, independent plan/apply cycles. Uses git-crypt for secrets encryption.
 
 ## Static File Paths (NEVER CHANGE)
 - **Main config**: `terraform.tfvars` - All secrets, DNS, Cloudflare config, WireGuard peers
-- **Root terraform**: `main.tf` - Proxmox provider, VM templates, kubernetes_cluster module
-- **K8s services**: `modules/kubernetes/main.tf` - All service module definitions
+- **Root Terragrunt**: `terragrunt.hcl` - Root Terragrunt config (providers, backend, var loading)
+- **Service stacks**: `stacks/<service>/` - Individual service stacks (each has `terragrunt.hcl` + `main.tf`)
+- **Infra stack**: `stacks/infra/` - Proxmox VM resources (templates, docker-registry, VMs)
+- **Platform stack**: `stacks/platform/` - Core infrastructure services (22 modules)
+- **Per-stack state**: `state/stacks/<service>/terraform.tfstate` - Per-stack state files (gitignored)
+- **Service modules**: `modules/kubernetes/<service>/main.tf` - Service module definitions (unchanged)
 - **Secrets**: `secrets/` - git-crypt encrypted TLS certs and keys
+- **Legacy (unused)**: `main.tf`, `modules/kubernetes/main.tf` - Old monolithic entry points (kept for reference)
 
 ## Network Topology (Static IPs)
 ```
@@ -68,9 +73,14 @@ Terraform-based infrastructure repository managing a home Kubernetes cluster on 
 - **Internal**: `viktorbarzin.lan` (Technitium DNS)
 
 ## Directory Structure
-- `main.tf` - Main Terraform entry point, imports all modules
-- `modules/kubernetes/` - Kubernetes service deployments (one folder per service)
+- `terragrunt.hcl` - Root Terragrunt configuration (providers, backend, variable loading)
+- `stacks/` - Individual Terragrunt stacks (one per service)
+- `stacks/infra/` - Proxmox VM resources (templates, docker-registry)
+- `stacks/platform/` - Core infrastructure (22 services bundled together)
+- `stacks/<service>/` - Individual service stacks (thin wrappers calling modules)
+- `modules/kubernetes/<service>/` - Service module definitions (unchanged)
 - `modules/create-vm/` - Proxmox VM creation module
+- `state/` - Per-stack Terraform state files (gitignored)
 - `secrets/` - Encrypted secrets (TLS certs, keys) via git-crypt
 - `cli/` - Go CLI tool for infrastructure management
 - `scripts/` - Helper scripts (cluster management, node updates)
@@ -146,6 +156,29 @@ When configuring services to use the mailserver:
 - **Credentials**: Use existing accounts from `mailserver_accounts` in tfvars
 - **Common email**: `info@viktorbarzin.me` for service notifications
 
+### Terragrunt Architecture
+- Root `terragrunt.hcl` provides DRY provider, backend, and variable loading for all stacks
+- Each stack is a thin wrapper: `stacks/<service>/main.tf` calls `source = "../../modules/kubernetes/<service>"`
+- State isolation: each stack has its own state file at `state/stacks/<service>/terraform.tfstate`
+- Dependencies: service stacks depend on `platform` stack via `dependency` block in their `terragrunt.hcl`
+- Variables loaded from `terraform.tfvars` automatically (unused vars silently ignored via `extra_arguments`)
+- `secrets/` symlinks in each stack for TLS cert resolution (`path.root` workaround)
+- Terragrunt v0.99+: use `--non-interactive` (not `--terragrunt-non-interactive`)
+- run-all syntax: `terragrunt run --all -- <command>` (not `terragrunt run-all`)
+- The `platform` stack bundles ~22 core services that have cross-dependencies (traefik, monitoring, authentik, etc.)
+- Individual service stacks are for services that can be deployed independently
+
+### Adding a New Service
+When adding a new service to the cluster:
+1. Create the module at `modules/kubernetes/<service>/main.tf` (as before)
+2. Create `stacks/<service>/` directory with:
+   - `terragrunt.hcl` - Include root config, declare `platform` dependency
+   - `main.tf` - Thin wrapper calling `source = "../../modules/kubernetes/<service>"`
+   - `secrets` - Symlink to `../../secrets` (for TLS cert path resolution)
+3. Add Cloudflare DNS record in `terraform.tfvars` (`cloudflare_proxied_names` or `cloudflare_non_proxied_names`)
+4. Apply the cloudflared stack: `cd stacks/platform && terragrunt apply --non-interactive`
+5. Apply the new service: `cd stacks/<service> && terragrunt apply --non-interactive`
+
 ## Common Variables
 - `tls_secret_name` - TLS certificate secret name
 - `tier` - Deployment tier label
@@ -170,10 +203,21 @@ bash scripts/cluster_healthcheck.sh --quiet    # Only WARN/FAIL
 bash scripts/cluster_healthcheck.sh --json     # Machine-readable
 bash scripts/cluster_healthcheck.sh --fix      # Auto-delete evicted pods
 
-# ALWAYS use -target for terraform apply (speeds up execution)
-terraform apply -target=module.kubernetes_cluster.module.<service_name>
-terraform plan -target=module.kubernetes_cluster.module.<service_name>
+# Apply a single service stack
+cd stacks/<service> && terragrunt apply --non-interactive
+
+# Plan a single service stack
+cd stacks/<service> && terragrunt plan --non-interactive
+
+# Plan all stacks (full DAG)
+cd stacks && terragrunt run --all --non-interactive -- plan
+
+# Apply all stacks (full DAG)
+cd stacks && terragrunt run --all --non-interactive -- apply
+
+# Format all terraform files
 terraform fmt -recursive
+
 kubectl get pods -A
 ```
 
@@ -182,131 +226,134 @@ kubectl get pods -A
 - Runs 24 checks: nodes, resources, conditions, pods, evicted, DaemonSets, deployments, PVCs, HPAs, CronJobs, CrowdSec, ingress, Prometheus alerts, Uptime Kuma, ResourceQuota pressure, StatefulSets, node disk, Helm releases, Kyverno, NFS, DNS, TLS certs, GPU, Cloudflare tunnel
 - **When adding new healthchecks or monitoring**: Always update this script to validate the new component
 
-**Terraform target examples:**
-- `terraform apply -target=module.kubernetes_cluster.module.monitoring` - Apply monitoring
-- `terraform apply -target=module.kubernetes_cluster.module.immich` - Apply immich
-- `terraform apply -target=module.docker-registry-vm` - Apply docker registry VM
-- Only skip `-target` when explicitly told to apply everything
+**Terragrunt apply examples:**
+- `cd stacks/monitoring && terragrunt apply --non-interactive` - Apply monitoring
+- `cd stacks/immich && terragrunt apply --non-interactive` - Apply immich
+- `cd stacks/infra && terragrunt apply --non-interactive` - Apply Proxmox VMs / docker registry
+- `cd stacks/platform && terragrunt apply --non-interactive` - Apply all core/platform services
 
-**IMPORTANT: When deploying a new service**, you must ALSO apply the `cloudflared` module to create the Cloudflare DNS record:
+**IMPORTANT: When deploying a new service**, you must ALSO apply the `platform` stack (which includes `cloudflared`) to create the Cloudflare DNS record:
 ```bash
-terraform apply -target=module.kubernetes_cluster.module.cloudflared -var="kube_config_path=$(pwd)/config" -auto-approve
+cd stacks/platform && terragrunt apply --non-interactive
 ```
-Adding a name to `cloudflare_non_proxied_names` or `cloudflare_proxied_names` in `terraform.tfvars` only defines the record — it won't be created until the `cloudflared` module is applied.
+Adding a name to `cloudflare_non_proxied_names` or `cloudflare_proxied_names` in `terraform.tfvars` only defines the record — it won't be created until the platform stack (which contains cloudflared) is applied.
 
-## Module Structure
-Top-level modules in `main.tf`:
-- `module.k8s-node-template` - K8s node VM template
-- `module.non-k8s-node-template` - Non-k8s VM template
-- `module.docker-registry-template` - Docker registry template
-- `module.docker-registry-vm` - Docker registry VM
-- `module.kubernetes_cluster` - Main K8s cluster (contains all services)
+## Stack Structure
+Terragrunt stacks under `stacks/`:
+- `stacks/infra/` - Proxmox VMs, templates, docker-registry
+- `stacks/platform/` - Core infrastructure (~22 services: traefik, monitoring, authentik, cloudflared, redis, etc.)
+- `stacks/<service>/` - Individual service stacks (one per independently deployable service)
+
+Each stack's `terragrunt.hcl` includes the root `terragrunt.hcl` which provides:
+- Kubernetes + Helm providers (configured from `terraform.tfvars`)
+- Local backend with per-stack state file (`state/stacks/<service>/terraform.tfstate`)
+- Automatic loading of `terraform.tfvars` with unused vars ignored
 
 ---
 
 ## Complete Service Catalog
 
-### DEFCON Level 1 (Critical - Network & Auth)
-| Service | Description | Tier |
-|---------|-------------|------|
-| wireguard | VPN server | core |
-| technitium | DNS server (10.0.20.101) | core |
-| headscale | Tailscale control server | core |
-| traefik | Ingress controller (Helm) | core |
-| xray | Proxy/tunnel | core |
-| authentik | Identity provider (SSO) | core |
-| cloudflared | Cloudflare tunnel | core |
-| authelia | Auth middleware | core |
-| monitoring | Prometheus/Grafana/Loki stack | core |
+### Critical - Network & Auth (Tier: core)
+| Service | Description | Stack |
+|---------|-------------|-------|
+| wireguard | VPN server | platform |
+| technitium | DNS server (10.0.20.101) | platform |
+| headscale | Tailscale control server | platform |
+| traefik | Ingress controller (Helm) | platform |
+| xray | Proxy/tunnel | platform |
+| authentik | Identity provider (SSO) | platform |
+| cloudflared | Cloudflare tunnel | platform |
+| authelia | Auth middleware | platform |
+| monitoring | Prometheus/Grafana/Loki stack | platform |
 
-### DEFCON Level 2 (Storage & Security)
-| Service | Description | Tier |
-|---------|-------------|------|
-| vaultwarden | Bitwarden-compatible password manager | cluster |
-| redis | Shared Redis at `redis.redis.svc.cluster.local` | cluster |
-| immich | Photo management (GPU) | gpu |
-| nvidia | GPU device plugin | gpu |
-| metrics-server | K8s metrics | cluster |
-| uptime-kuma | Status monitoring | cluster |
-| crowdsec | Security/WAF | cluster |
-| kyverno | Policy engine | cluster |
+### Storage & Security (Tier: cluster)
+| Service | Description | Stack |
+|---------|-------------|-------|
+| vaultwarden | Bitwarden-compatible password manager | platform |
+| redis | Shared Redis at `redis.redis.svc.cluster.local` | platform |
+| immich | Photo management (GPU) | immich |
+| nvidia | GPU device plugin | platform |
+| metrics-server | K8s metrics | platform |
+| uptime-kuma | Status monitoring | platform |
+| crowdsec | Security/WAF | platform |
+| kyverno | Policy engine | platform |
 
-### DEFCON Level 3 (Admin)
-| Service | Description | Tier |
-|---------|-------------|------|
-| k8s-dashboard | Kubernetes dashboard | edge |
-| reverse-proxy | Generic reverse proxy | edge |
+### Admin
+| Service | Description | Stack |
+|---------|-------------|-------|
+| k8s-dashboard | Kubernetes dashboard | platform |
+| reverse-proxy | Generic reverse proxy | platform |
 
-### DEFCON Level 4 (Active Use)
-| Service | Description | Tier |
-|---------|-------------|------|
-| mailserver | Email (docker-mailserver) | edge |
-| shadowsocks | Proxy | edge |
-| webhook_handler | Webhook processing | edge |
-| tuya-bridge | Smart home bridge | edge |
-| dawarich | Location history | edge |
-| owntracks | Location tracking | edge |
-| nextcloud | File sync/share | edge |
-| calibre | E-book management | edge |
-| onlyoffice | Document editing | edge |
-| f1-stream | F1 streaming | edge |
-| rybbit | Analytics | edge |
-| isponsorblocktv | SponsorBlock for TV | edge |
-| actualbudget | Budgeting (factory pattern) | aux |
+### Active Use
+| Service | Description | Stack |
+|---------|-------------|-------|
+| mailserver | Email (docker-mailserver) | mailserver |
+| shadowsocks | Proxy | shadowsocks |
+| webhook_handler | Webhook processing | webhook_handler |
+| tuya-bridge | Smart home bridge | tuya-bridge |
+| dawarich | Location history | dawarich |
+| owntracks | Location tracking | owntracks |
+| nextcloud | File sync/share | nextcloud |
+| calibre | E-book management | calibre |
+| onlyoffice | Document editing | onlyoffice |
+| f1-stream | F1 streaming | f1-stream |
+| rybbit | Analytics | rybbit |
+| isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
+| actualbudget | Budgeting (factory pattern) | actualbudget |
 
-### DEFCON Level 5 (Optional)
-| Service | Description | Tier |
-|---------|-------------|------|
-| blog | Personal blog | aux |
-| descheduler | Pod descheduler | aux |
-| drone | CI/CD | aux |
-| hackmd | Collaborative markdown | aux |
-| kms | Key management | aux |
-| privatebin | Encrypted pastebin | aux |
-| vault | HashiCorp Vault | aux |
-| reloader | ConfigMap/Secret reloader | aux |
-| city-guesser | Game | aux |
-| echo | Echo server | aux |
-| url | URL shortener | aux |
-| excalidraw | Whiteboard | aux |
-| travel_blog | Travel blog | aux |
-| dashy | Dashboard | aux |
-| send | Firefox Send | aux |
-| ytdlp | YouTube downloader | aux |
-| wealthfolio | Finance tracking | aux |
-| audiobookshelf | Audiobook server | aux |
-| paperless-ngx | Document management | aux |
-| jsoncrack | JSON visualizer | aux |
-| servarr | Media automation (Sonarr/Radarr/etc) | aux |
-| ntfy | Push notifications | aux |
-| cyberchef | Data transformation | aux |
-| diun | Docker image update notifier | aux |
-| meshcentral | Remote management | aux |
-| homepage | Dashboard/startpage | aux |
-| matrix | Matrix chat server | aux |
-| linkwarden | Bookmark manager | aux |
-| changedetection | Web change detection | aux |
-| tandoor | Recipe manager | aux |
-| n8n | Workflow automation | aux |
-| real-estate-crawler | Property crawler | aux |
-| tor-proxy | Tor proxy | aux |
-| forgejo | Git forge | aux |
-| freshrss | RSS reader | aux |
-| navidrome | Music streaming | aux |
-| networking-toolbox | Network tools | aux |
-| stirling-pdf | PDF tools | aux |
-| speedtest | Speed testing | aux |
-| freedify | Music streaming (factory pattern) | aux |
-| netbox | Network documentation | aux |
-| infra-maintenance | Maintenance jobs | aux |
-| ollama | LLM server (GPU) | gpu |
-| frigate | NVR/camera (GPU) | gpu |
-| ebook2audiobook | E-book to audio (GPU) | gpu |
-| affine | Visual canvas/whiteboard (PostgreSQL + Redis) | aux |
-| health | Apple Health data dashboard (PostgreSQL) | aux |
-| whisper | Wyoming Faster Whisper STT (CPU on GPU node) | gpu |
-| grampsweb | Genealogy web app (Gramps Web) | aux |
-| openclaw | AI agent gateway (OpenClaw) | aux |
+### Optional
+| Service | Description | Stack |
+|---------|-------------|-------|
+| blog | Personal blog | blog |
+| descheduler | Pod descheduler | descheduler |
+| drone | CI/CD | drone |
+| hackmd | Collaborative markdown | hackmd |
+| kms | Key management | kms |
+| privatebin | Encrypted pastebin | privatebin |
+| vault | HashiCorp Vault | vault |
+| reloader | ConfigMap/Secret reloader | reloader |
+| city-guesser | Game | city-guesser |
+| echo | Echo server | echo |
+| url | URL shortener | url |
+| excalidraw | Whiteboard | excalidraw |
+| travel_blog | Travel blog | travel_blog |
+| dashy | Dashboard | dashy |
+| send | Firefox Send | send |
+| ytdlp | YouTube downloader | ytdlp |
+| wealthfolio | Finance tracking | wealthfolio |
+| audiobookshelf | Audiobook server | audiobookshelf |
+| paperless-ngx | Document management | paperless-ngx |
+| jsoncrack | JSON visualizer | jsoncrack |
+| servarr | Media automation (Sonarr/Radarr/etc) | servarr |
+| ntfy | Push notifications | ntfy |
+| cyberchef | Data transformation | cyberchef |
+| diun | Docker image update notifier | diun |
+| meshcentral | Remote management | meshcentral |
+| homepage | Dashboard/startpage | homepage |
+| matrix | Matrix chat server | matrix |
+| linkwarden | Bookmark manager | linkwarden |
+| changedetection | Web change detection | changedetection |
+| tandoor | Recipe manager | tandoor |
+| n8n | Workflow automation | n8n |
+| real-estate-crawler | Property crawler | real-estate-crawler |
+| tor-proxy | Tor proxy | tor-proxy |
+| forgejo | Git forge | forgejo |
+| freshrss | RSS reader | freshrss |
+| navidrome | Music streaming | navidrome |
+| networking-toolbox | Network tools | networking-toolbox |
+| stirling-pdf | PDF tools | stirling-pdf |
+| speedtest | Speed testing | speedtest |
+| freedify | Music streaming (factory pattern) | freedify |
+| netbox | Network documentation | netbox |
+| infra-maintenance | Maintenance jobs | infra-maintenance |
+| ollama | LLM server (GPU) | ollama |
+| frigate | NVR/camera (GPU) | frigate |
+| ebook2audiobook | E-book to audio (GPU) | ebook2audiobook |
+| affine | Visual canvas/whiteboard (PostgreSQL + Redis) | affine |
+| health | Apple Health data dashboard (PostgreSQL) | health |
+| whisper | Wyoming Faster Whisper STT (CPU on GPU node) | whisper |
+| grampsweb | Genealogy web app (Gramps Web) | grampsweb |
+| openclaw | AI agent gateway (OpenClaw) | openclaw |
 
 ---
 
@@ -475,27 +522,6 @@ With these tokens, Claude can:
   - `node_selector = { "gpu": "true" }`
   - `toleration { key = "nvidia.com/gpu", operator = "Equal", value = "true", effect = "NoSchedule" }`
 - Taint is applied via `null_resource.gpu_node_taint` in `modules/kubernetes/nvidia/main.tf`
-
-### Future: Terraform State Splitting (TODO)
-The current monolithic architecture (826 resources, 14MB state, 85 modules in one root) makes `terraform plan/apply` slow. Plan to split into separate root modules ("stacks") with independent state files:
-
-**Why it's slow:**
-- Single state file (14MB) loaded on every plan/apply
-- 85 service modules evaluated even when changing one service
-- `null_resource.core_services` creates serial dependency bottleneck blocking parallelism
-- 3 providers (kubernetes, helm, proxmox) all initialize on every run
-- DEFCON `contains()` evaluated on all 85 module blocks
-
-**Proposed split** (separate root modules, each with own state):
-- `stacks/infra/` — Proxmox VMs, docker-registry, templates
-- `stacks/core/` — traefik, metallb, calico, technitium, wireguard (~12 modules)
-- `stacks/auth/` — authentik, authelia, crowdsec, kyverno
-- `stacks/storage/` — redis, dbaas, vaultwarden
-- `stacks/media/` — immich, navidrome, calibre, audiobookshelf, servarr
-- `stacks/gpu/` — ollama, frigate, immich-ml, whisper
-- `stacks/apps/` — blog, hackmd, nextcloud, dashy, excalidraw, etc.
-
-**Cross-stack refs** via `terraform_remote_state` data source (local backend). No Terragrunt needed — plain Terraform + shell script for multi-stack operations. Migration via `terraform state mv` one tier at a time.
 
 ## Git Operations (IMPORTANT)
 - **Git is slow** on this repo due to many files - commands can take 30+ seconds
