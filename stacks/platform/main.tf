@@ -137,7 +137,7 @@ module "metallb" {
 # DBaaS — MySQL + PostgreSQL + pgAdmin
 # -----------------------------------------------------------------------------
 module "dbaas" {
-  source = "./modules/dbaas"
+  source                   = "./modules/dbaas"
   prod                     = var.prod
   tls_secret_name          = var.tls_secret_name
   dbaas_root_password      = var.dbaas_root_password
@@ -150,7 +150,7 @@ module "dbaas" {
 # Redis — Shared Redis instance
 # -----------------------------------------------------------------------------
 module "redis" {
-  source = "./modules/redis"
+  source          = "./modules/redis"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.cluster
 }
@@ -159,7 +159,7 @@ module "redis" {
 # Traefik — Ingress controller (Helm)
 # -----------------------------------------------------------------------------
 module "traefik" {
-  source = "./modules/traefik"
+  source           = "./modules/traefik"
   tier             = local.tiers.core
   crowdsec_api_key = var.ingress_crowdsec_api_key
   tls_secret_name  = var.tls_secret_name
@@ -169,7 +169,7 @@ module "traefik" {
 # Technitium — DNS server
 # -----------------------------------------------------------------------------
 module "technitium" {
-  source = "./modules/technitium"
+  source                 = "./modules/technitium"
   tls_secret_name        = var.tls_secret_name
   homepage_token         = var.homepage_credentials["technitium"]["token"]
   technitium_db_password = var.technitium_db_password
@@ -180,7 +180,7 @@ module "technitium" {
 # Headscale — Tailscale control server
 # -----------------------------------------------------------------------------
 module "headscale" {
-  source = "./modules/headscale"
+  source           = "./modules/headscale"
   tls_secret_name  = var.tls_secret_name
   headscale_config = var.headscale_config
   headscale_acl    = var.headscale_acl
@@ -191,7 +191,7 @@ module "headscale" {
 # Authentik — Identity provider (SSO)
 # -----------------------------------------------------------------------------
 module "authentik" {
-  source = "./modules/authentik"
+  source            = "./modules/authentik"
   tier              = local.tiers.cluster
   tls_secret_name   = var.tls_secret_name
   secret_key        = var.authentik_secret_key
@@ -202,7 +202,7 @@ module "authentik" {
 # RBAC — Kubernetes OIDC RBAC (depends on Authentik)
 # -----------------------------------------------------------------------------
 module "rbac" {
-  source = "./modules/rbac"
+  source          = "./modules/rbac"
   tier            = local.tiers.cluster
   tls_secret_name = var.tls_secret_name
   k8s_users       = var.k8s_users
@@ -213,7 +213,7 @@ module "rbac" {
 # K8s Portal — Self-service Kubernetes portal (depends on Authentik)
 # -----------------------------------------------------------------------------
 module "k8s-portal" {
-  source = "./modules/k8s-portal"
+  source          = "./modules/k8s-portal"
   tier            = local.tiers.edge
   tls_secret_name = var.tls_secret_name
 }
@@ -222,7 +222,7 @@ module "k8s-portal" {
 # CrowdSec — Security/WAF
 # -----------------------------------------------------------------------------
 module "crowdsec" {
-  source = "./modules/crowdsec"
+  source                         = "./modules/crowdsec"
   tier                           = local.tiers.cluster
   tls_secret_name                = var.tls_secret_name
   homepage_username              = var.homepage_credentials["crowdsec"]["username"]
@@ -239,25 +239,25 @@ module "crowdsec" {
 # Monitoring — Prometheus / Grafana / Loki stack
 # -----------------------------------------------------------------------------
 module "monitoring" {
-  source = "./modules/monitoring"
-  tls_secret_name              = var.tls_secret_name
+  source                        = "./modules/monitoring"
+  tls_secret_name               = var.tls_secret_name
   alertmanager_account_password = var.alertmanager_account_password
-  idrac_username               = var.monitoring_idrac_username
-  idrac_password               = var.monitoring_idrac_password
-  alertmanager_slack_api_url   = var.alertmanager_slack_api_url
-  tiny_tuya_service_secret     = var.tiny_tuya_service_secret
-  haos_api_token               = var.haos_api_token
-  pve_password                 = var.pve_password
-  grafana_db_password          = var.grafana_db_password
-  grafana_admin_password       = var.grafana_admin_password
-  tier                         = local.tiers.cluster
+  idrac_username                = var.monitoring_idrac_username
+  idrac_password                = var.monitoring_idrac_password
+  alertmanager_slack_api_url    = var.alertmanager_slack_api_url
+  tiny_tuya_service_secret      = var.tiny_tuya_service_secret
+  haos_api_token                = var.haos_api_token
+  pve_password                  = var.pve_password
+  grafana_db_password           = var.grafana_db_password
+  grafana_admin_password        = var.grafana_admin_password
+  tier                          = local.tiers.cluster
 }
 
 # -----------------------------------------------------------------------------
 # Vaultwarden — Password manager
 # -----------------------------------------------------------------------------
 module "vaultwarden" {
-  source = "./modules/vaultwarden"
+  source          = "./modules/vaultwarden"
   tls_secret_name = var.tls_secret_name
   smtp_password   = var.vaultwarden_smtp_password
   tier            = local.tiers.edge
@@ -267,7 +267,7 @@ module "vaultwarden" {
 # Reverse Proxy — Generic reverse proxy
 # -----------------------------------------------------------------------------
 module "reverse-proxy" {
-  source = "./modules/reverse_proxy"
+  source                 = "./modules/reverse_proxy"
   tls_secret_name        = var.tls_secret_name
   truenas_homepage_token = var.homepage_credentials["reverse_proxy"]["truenas_token"]
   pfsense_homepage_token = var.homepage_credentials["reverse_proxy"]["pfsense_token"]
@@ -277,7 +277,7 @@ module "reverse-proxy" {
 # Metrics Server — Kubernetes metrics
 # -----------------------------------------------------------------------------
 module "metrics-server" {
-  source = "./modules/metrics-server"
+  source          = "./modules/metrics-server"
   tier            = local.tiers.cluster
   tls_secret_name = var.tls_secret_name
 }
@@ -286,7 +286,7 @@ module "metrics-server" {
 # NVIDIA — GPU device plugin
 # -----------------------------------------------------------------------------
 module "nvidia" {
-  source = "./modules/nvidia"
+  source          = "./modules/nvidia"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.gpu
 }
@@ -302,7 +302,7 @@ module "kyverno" {
 # Uptime Kuma — Status monitoring
 # -----------------------------------------------------------------------------
 module "uptime-kuma" {
-  source = "./modules/uptime-kuma"
+  source          = "./modules/uptime-kuma"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.cluster
 }
@@ -311,7 +311,7 @@ module "uptime-kuma" {
 # WireGuard — VPN server
 # -----------------------------------------------------------------------------
 module "wireguard" {
-  source = "./modules/wireguard"
+  source          = "./modules/wireguard"
   tls_secret_name = var.tls_secret_name
   wg_0_conf       = var.wireguard_wg_0_conf
   wg_0_key        = var.wireguard_wg_0_key
@@ -323,7 +323,7 @@ module "wireguard" {
 # Xray — Proxy/tunnel
 # -----------------------------------------------------------------------------
 module "xray" {
-  source = "./modules/xray"
+  source          = "./modules/xray"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.core
 
@@ -336,7 +336,7 @@ module "xray" {
 # Mailserver — docker-mailserver
 # -----------------------------------------------------------------------------
 module "mailserver" {
-  source = "./modules/mailserver"
+  source                  = "./modules/mailserver"
   tls_secret_name         = var.tls_secret_name
   mailserver_accounts     = var.mailserver_accounts
   postfix_account_aliases = var.mailserver_aliases
@@ -350,7 +350,7 @@ module "mailserver" {
 # Cloudflared — Cloudflare tunnel + DNS records
 # -----------------------------------------------------------------------------
 module "cloudflared" {
-  source = "./modules/cloudflared"
+  source          = "./modules/cloudflared"
   tier            = local.tiers.core
   tls_secret_name = var.tls_secret_name
 
@@ -369,7 +369,7 @@ module "cloudflared" {
 # Infra Maintenance — Automated maintenance jobs
 # -----------------------------------------------------------------------------
 module "infra-maintenance" {
-  source = "./modules/infra-maintenance"
+  source              = "./modules/infra-maintenance"
   git_user            = var.webhook_handler_git_user
   git_token           = var.webhook_handler_git_token
   technitium_username = var.technitium_username

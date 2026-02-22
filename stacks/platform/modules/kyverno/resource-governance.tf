@@ -721,12 +721,12 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
           mutate = {
             patchesJson6902 = yamlencode([
               {
-                op    = "remove"
-                path  = "/spec/priority"
+                op   = "remove"
+                path = "/spec/priority"
               },
               {
-                op    = "remove"
-                path  = "/spec/preemptionPolicy"
+                op   = "remove"
+                path = "/spec/preemptionPolicy"
               },
               {
                 op    = "add"

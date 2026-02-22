@@ -13,11 +13,648 @@ locals {
   }
 }
 
-module "immich" {
-  source              = "./module"
-  tls_secret_name     = var.tls_secret_name
-  postgresql_password = var.immich_postgresql_password
-  frame_api_key       = var.immich_frame_api_key
-  homepage_token      = var.homepage_credentials["immich"]["token"]
-  tier                = local.tiers.gpu
+variable "immich_version" {
+  type = string
+  # Change me to upgrade
+  default = "v2.5.6"
 }
+
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.immich.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_namespace" "immich" {
+  metadata {
+    name = "immich"
+    labels = {
+      tier = local.tiers.gpu
+    }
+  }
+}
+
+resource "kubernetes_deployment" "immich_server" {
+  metadata {
+    name      = "immich-server"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+
+    labels = {
+      app  = "immich-server"
+      tier = local.tiers.gpu
+    }
+  }
+
+  spec {
+    replicas                  = 1
+    progress_deadline_seconds = 600
+
+    selector {
+      match_labels = {
+        app = "immich-server"
+      }
+    }
+
+    strategy {
+      type = "RollingUpdate"
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "immich-server"
+        }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
+      }
+
+      spec {
+        container {
+          name  = "immich-server"
+          image = "ghcr.io/immich-app/immich-server:${var.immich_version}"
+
+          port {
+            name           = "http"
+            container_port = 2283
+            protocol       = "TCP"
+          }
+
+          env {
+            name  = "DB_DATABASE_NAME"
+            value = "immich"
+          }
+          env {
+            name  = "DB_HOSTNAME"
+            value = "immich-postgresql.immich.svc.cluster.local"
+          }
+          env {
+            name  = "DB_USERNAME"
+            value = "immich"
+          }
+          env {
+            name  = "DB_PASSWORD"
+            value = var.immich_postgresql_password
+          }
+          env {
+            name  = "IMMICH_MACHINE_LEARNING_URL"
+            value = "http://immich-machine-learning:3003"
+          }
+          env {
+            name  = "REDIS_HOSTNAME"
+            value = "redis.redis.svc.cluster.local"
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            initial_delay_seconds = 0
+            period_seconds        = 10
+            timeout_seconds       = 1
+            failure_threshold     = 3
+            success_threshold     = 1
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 1
+            failure_threshold = 3
+            success_threshold = 1
+          }
+
+          startup_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 1
+            failure_threshold = 30
+            success_threshold = 1
+          }
+
+          # volume_mount {
+          #   name       = "library-old"
+          #   mount_path = "/usr/src/app/upload"
+          # }
+
+          # Mount them 1 by 1 to enable thumbs in ssd
+          volume_mount {
+            name       = "backups"
+            mount_path = "/usr/src/app/upload/backups"
+          }
+          volume_mount {
+            name       = "encoded-video"
+            mount_path = "/usr/src/app/upload/encoded-video"
+          }
+          volume_mount {
+            name       = "library"
+            mount_path = "/usr/src/app/upload/library"
+          }
+          volume_mount {
+            name       = "profile"
+            mount_path = "/usr/src/app/upload/profile"
+          }
+          volume_mount {
+            name       = "thumbs"
+            mount_path = "/usr/src/app/upload/thumbs"
+          }
+          volume_mount {
+            name       = "upload"
+            mount_path = "/usr/src/app/upload/upload"
+          }
+        }
+
+        # volume {
+        #   name = "library-old"
+        #   nfs {
+        #     server = "10.0.10.15"
+        #     path   = "/mnt/main/immich/immich/"
+        #   }
+        # }
+
+        volume {
+          name = "backups"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/backups"
+          }
+        }
+        volume {
+          name = "encoded-video"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/encoded-video"
+          }
+        }
+        volume {
+          name = "library"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/library"
+          }
+        }
+        volume {
+          name = "profile"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/profile"
+          }
+        }
+        volume {
+          name = "thumbs"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/ssd/immich/thumbs"
+          }
+        }
+        volume {
+          name = "upload"
+          nfs {
+            server = "10.0.10.15"
+            path   = "/mnt/main/immich/immich/upload"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "immich-server" {
+  metadata {
+    name      = "immich-server"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      "app" = "immich-server"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "immich-server"
+    }
+    port {
+      port = 2283
+    }
+  }
+}
+
+resource "kubernetes_deployment" "immich-postgres" {
+  metadata {
+    name      = "immich-postgresql"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      tier = local.tiers.gpu
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "immich-postgresql"
+      }
+    }
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "immich-postgresql"
+        }
+      }
+      spec {
+        container {
+          image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+          name  = "immich-postgresql"
+          port {
+            container_port = 5432
+            protocol       = "TCP"
+            name           = "postgresql"
+          }
+          env {
+            name  = "POSTGRES_PASSWORD"
+            value = var.immich_postgresql_password
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "immich"
+          }
+          env {
+            name  = "POSTGRES_DB"
+            value = "immich"
+          }
+          env {
+            name  = "DB_STORAGE_TYPE"
+            value = "HDD"
+          }
+          volume_mount {
+            name       = "postgresql-persistent-storage"
+            mount_path = "/var/lib/postgresql/data"
+          }
+        }
+        volume {
+          name = "postgresql-persistent-storage"
+          nfs {
+            path   = "/mnt/main/immich/data-immich-postgresql"
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+
+resource "kubernetes_service" "immich-postgresql" {
+  metadata {
+    name      = "immich-postgresql"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      "app" = "immich-postgresql"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "immich-postgresql"
+    }
+    port {
+      port = 5432
+    }
+  }
+}
+
+
+# If you're having issuewith typesens container exiting prematurely, increase liveliness check
+# resource "helm_release" "immich" {
+#  namespace = kubernetes_namespace.immich.metadata[0].name
+#   name      = "immich"
+
+#   repository = "https://immich-app.github.io/immich-charts"
+#   chart      = "immich"
+#   atomic     = true
+#   version    = "0.9.3"
+#   timeout    = 6000
+
+#   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.immich_postgresql_password, version = var.immich_version })]
+# }
+
+# The helm one cannot be customized to use affinity settings to use the gpu node
+resource "kubernetes_deployment" "immich-machine-learning" {
+  metadata {
+    name      = "immich-machine-learning"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      tier = local.tiers.gpu
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "immich-machine-learning"
+      }
+    }
+    strategy {
+      type = "RollingUpdate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "immich-machine-learning"
+        }
+      }
+      spec {
+        node_selector = {
+          "gpu" : "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
+        container {
+          # image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}"
+          image = "ghcr.io/immich-app/immich-machine-learning:${var.immich_version}-cuda"
+          name  = "immich-machine-learning"
+          port {
+            container_port = 3003
+            protocol       = "TCP"
+            name           = "immich-ml"
+          }
+          env {
+            name  = "MACHINE_LEARNING_MODEL_TTL"
+            value = "0"
+          }
+          env {
+            name  = "TRANSFORMERS_CACHE"
+            value = "/cache"
+          }
+          env {
+            name  = "HF_XET_CACHE"
+            value = "/cache/huggingface-xet"
+          }
+          env {
+            name  = "MPLCONFIGDIR"
+            value = "/cache/matplotlib-config"
+          }
+          # Preload CLIP models (for smart search)
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__CLIP__TEXTUAL"
+            value = "ViT-B-16-SigLIP2__webli"
+          }
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__CLIP__VISUAL"
+            value = "ViT-B-16-SigLIP2__webli"
+          }
+          # Preload facial recognition models
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__DETECTION"
+            value = "buffalo_l"
+          }
+          env {
+            name  = "MACHINE_LEARNING_PRELOAD__FACIAL_RECOGNITION__RECOGNITION"
+            value = "buffalo_l"
+          }
+
+          volume_mount {
+            name       = "cache"
+            mount_path = "/cache"
+          }
+          resources {
+            limits = {
+              "nvidia.com/gpu" = "1" # Used for inference
+            }
+          }
+        }
+        volume {
+          name = "cache"
+          nfs {
+            # path   = "/mnt/main/immich/machine-learning"
+            path   = "/mnt/ssd/immich/machine-learning" # load cache from ssd
+            server = "10.0.10.15"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "immich-machine-learning" {
+  metadata {
+    name      = "immich-machine-learning"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      "app" = "immich-machine-learning"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "immich-machine-learning"
+    }
+    port {
+      port = 3003
+    }
+  }
+}
+
+module "ingress-immich" {
+  source                  = "../../modules/kubernetes/ingress_factory"
+  namespace               = kubernetes_namespace.immich.metadata[0].name
+  name                    = "immich"
+  service_name            = "immich-server"
+  port                    = 2283
+  tls_secret_name         = var.tls_secret_name
+  rybbit_site_id          = "35eedb7a3d2b"
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/description"  = "Photos library"
+    "gethomepage.dev/icon"         = "immich.png"
+    "gethomepage.dev/name"         = "Immich"
+    "gethomepage.dev/widget.type"  = "immich"
+    "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
+    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.key"   = var.homepage_credentials["immich"]["token"]
+  }
+}
+
+
+resource "kubernetes_cron_job_v1" "postgresql-backup" {
+  metadata {
+    name      = "postgresql-backup"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 0 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup"
+              image = "postgres:16.4-bullseye"
+              command = ["/bin/sh", "-c", <<-EOT
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                PGPASSWORD=${var.immich_postgresql_password} pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
+
+                # Rotate - delete last log file
+                cd /backup
+                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              nfs {
+                path   = "/mnt/main/immich/data-immich-postgresql"
+                server = "10.0.10.15"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# POWER TOOLS
+
+# resource "kubernetes_deployment" "powertools" {
+#   metadata {
+#     name      = "immich-powertools"
+#    namespace = kubernetes_namespace.immich.metadata[0].name
+#     labels = {
+#       app = "immich-powertools"
+#     }
+#     annotations = {
+#       "reloader.stakater.com/search" = "true"
+#     }
+#   }
+#   spec {
+#     replicas = 1
+#     strategy {
+#       type = "Recreate"
+#     }
+#     selector {
+#       match_labels = {
+#         app = "immich-powertools"
+#       }
+#     }
+#     template {
+#       metadata {
+#         labels = {
+#           app = "immich-powertools"
+#         }
+#         annotations = {
+#           "diun.enable"       = "true"
+#           "diun.include_tags" = "latest"
+#         }
+#       }
+#       spec {
+
+#         container {
+#           image = "ghcr.io/varun-raj/immich-power-tools:latest"
+#           name  = "owntracks"
+#           port {
+#             name           = "http"
+#             container_port = 3000
+#           }
+#           env {
+#             name  = "IMMICH_API_KEY"
+#             value = "<change me>"
+#           }
+#           env {
+#             name = "IMMICH_URL"
+#             value = "http://immich-server.immich.svc.cluster.local"
+#           }
+#           env {
+#             name  = "EXTERNAL_IMMICH_URL"
+#             value = "https://immich.viktorbarzin.me"
+#           }
+#           env {
+#             name  = "DB_USERNAME"
+#             value = "immich"
+#           }
+#           env {
+#             name  = "DB_PASSWORD"
+#             value = var.immich_postgresql_password
+#           }
+#           env {
+#             name = "DB_HOST"
+#             value = "immich-postgresql.immich.svc.cluster.local"
+#           }
+#           # env {
+#           #   name  = "DB_PORT"
+#           #   value = "5432"
+#           # }
+#           env {
+#             name  = "DB_DATABASE_NAME"
+#             value = "immich"
+#           }
+#           env {
+#             name  = "NODE_ENV"
+#             value = "development"
+#           }
+
+#         }
+#       }
+#     }
+#   }
+# }
+
+
+# resource "kubernetes_service" "powertools" {
+#   metadata {
+#     name      = "immich-powertools"
+#    namespace = kubernetes_namespace.immich.metadata[0].name
+#     labels = {
+#       "app" = "immich-powertools"
+#     }
+#   }
+
+#   spec {
+#     selector = {
+#       app = "immich-powertools"
+#     }
+#     port {
+#       name        = "http"
+#       port        = 80
+#       target_port = 3000
+#       protocol    = "TCP"
+#     }
+#   }
+# }
+
+# module "ingress-powertools" {
+#   source          = "../../modules/kubernetes/ingress_factory"
+#  namespace = kubernetes_namespace.immich.metadata[0].name
+#   name            = "immich-powertools"
+#   tls_secret_name = var.tls_secret_name
+#   protected       = true
+# }
