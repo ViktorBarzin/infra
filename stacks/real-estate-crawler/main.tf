@@ -17,7 +17,8 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier                                = local.tiers.aux
+      "resource-governance/custom-quota" = "true"
     }
   }
 }

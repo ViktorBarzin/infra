@@ -144,7 +144,7 @@ To rebuild a K8s worker node from scratch (e.g., after disk failure or corruptio
   2. LimitRange defaults (Kyverno generate): auto-created per namespace tier
   3. ResourceQuotas (Kyverno generate): auto-created per namespace tier (skip with label `resource-governance/custom-quota=true`)
   4. Priority injection (Kyverno mutate): sets priorityClassName on Pods
-- Custom quota override: monitoring, crowdsec
+- Custom quota override: monitoring, crowdsec, nvidia, realestate-crawler
 
 ---
 

@@ -12,7 +12,8 @@ resource "kubernetes_namespace" "nvidia" {
     name = "nvidia"
     labels = {
       "istio-injection" : "disabled"
-      tier = var.tier
+      tier                                = var.tier
+      "resource-governance/custom-quota" = "true"
     }
   }
 }
