@@ -1377,7 +1377,7 @@ def format_detail(check, detail):
             shown = ', '.join(names[:5])
             detail = f'{prefix}: {shown} (+{len(names) - 5} more)'
         elif names:
-            detail = f'{prefix}: {\", \".join(names)}'
+            detail = prefix + ': ' + ', '.join(names)
 
     # For resource quotas and similar semicolon-separated items,
     # split into separate lines
