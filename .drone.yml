@@ -14,7 +14,7 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add jq curl git git-crypt"
-      - "git clone https://github.com/ViktorBarzin/infra.git ."
+      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
       - "git checkout $DRONE_COMMIT"
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
@@ -69,7 +69,7 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add git"
-      - "git clone https://github.com/ViktorBarzin/infra.git ."
+      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
       - "git checkout $DRONE_COMMIT"
   - name: Build image
     image: plugins/docker
@@ -99,7 +99,7 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add jq curl git git-crypt"
-      - "git clone https://github.com/ViktorBarzin/infra.git ."
+      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
       - "git checkout $DRONE_COMMIT"
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
