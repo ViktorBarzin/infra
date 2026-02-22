@@ -15,15 +15,18 @@ steps:
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/drone/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
       - "git-crypt unlock /tmp/key"
-  - name: Terraform apply
-    image: hashicorp/terraform:latest
-    environment:
-      TF_VAR_prod: "true"
+  - name: Terragrunt apply
+    image: alpine
     commands:
-      - "env"
-      - "mkdir -p ~/.ssh && touch ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub" # needed by TF apply; not used in practice
-      - "terraform init"
-      - "terraform apply -target=module.kubernetes_cluster -auto-approve"
+      - "apk update && apk add curl unzip git openssh-client"
+      # Install Terraform
+      - "wget -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
+      - "unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform"
+      # Install Terragrunt
+      - "wget -O /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
+      - "chmod 755 /usr/local/bin/terragrunt"
+      # Apply all stacks
+      - "cd stacks && terragrunt run --all --non-interactive -- apply -auto-approve"
 
   - name: Push commit
     image: alpine
@@ -88,7 +91,6 @@ steps:
   - name: Run renew script
     image: alpine
     environment:
-      TF_VAR_prod: "true"
       TECHNITIUM_API_KEY:
         from_secret: TECHNITIUM_API_KEY
       CLOUDFLARE_TOKEN:
@@ -96,11 +98,7 @@ steps:
       CLOUDFLARE_ZONE_ID:
         from_secret: CLOUDFLARE_ZONE_ID
     commands:
-      - "apk update && apk add git certbot expect curl gzip wget jq"
-      # Install terraform cli
-      # - "curl https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip | gzip -d > /usr/local/bin/terraform && chmod 775 /usr/local/bin/terraform"
-      - "wget -O terraform_1.10.3_linux_amd64.zip https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_amd64.zip && unzip -o terraform_1.10.3_linux_amd64.zip && mv terraform /usr/local/bin/ && chmod 775 /usr/local/bin/terraform"
-      - "/usr/local/bin/terraform init"
+      - "apk update && apk add certbot curl jq"
       - "./modules/kubernetes/setup_tls_secret/renew2.sh"
   - name: Commit updated certificates
     image: alpine

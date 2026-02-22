@@ -390,7 +390,9 @@ jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
 
 ## CI/CD
 - Drone CI (`.drone.yml`) for automated deployments
-- Auto-updates TLS certificates
+- **Default pipeline**: On push, runs `terragrunt run --all -- apply -auto-approve` across all stacks (installs Terraform 1.5.7 + Terragrunt 0.99.4 in Alpine)
+- **TLS renewal pipeline**: Cron-triggered, runs `renew2.sh` (certbot + Cloudflare DNS) — no Terraform/Terragrunt needed
+- **Build CLI pipeline**: Builds Docker image from `cli/Dockerfile` (unchanged)
 - **ALWAYS add `[ci skip]` to commit messages** when you've already run `terraform apply` to avoid triggering CI redundantly
 - **After committing, run `git push origin master`** to sync changes
 
