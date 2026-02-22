@@ -88,7 +88,44 @@ resource "null_resource" "audit_policy" {
   }
 
   triggers = {
-    policy_version = "v1" # Bump to re-apply
+    policy_version = "v1" # Bump to force re-apply of manifest flags
+    policy_hash    = sha256(yamlencode({
+      apiVersion = "audit.k8s.io/v1"
+      kind       = "Policy"
+      rules = [
+        {
+          level = "None"
+          resources = [{
+            group     = ""
+            resources = ["endpoints", "services", "services/status"]
+          }]
+          users = ["system:kube-proxy"]
+        },
+        {
+          level = "None"
+          verbs = ["watch"]
+        },
+        {
+          level           = "None"
+          nonResourceURLs = ["/healthz*", "/readyz*", "/livez*"]
+        },
+        {
+          level = "Metadata"
+          resources = [{
+            group     = ""
+            resources = ["secrets"]
+          }]
+        },
+        {
+          level = "RequestResponse"
+          verbs = ["create", "update", "patch", "delete"]
+        },
+        {
+          level = "Metadata"
+          verbs = ["get", "list"]
+        },
+      ]
+    }))
   }
 
   depends_on = [null_resource.apiserver_oidc_config]

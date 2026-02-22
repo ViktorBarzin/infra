@@ -32,8 +32,11 @@ resource "null_resource" "apiserver_oidc_config" {
 
   provisioner "remote-exec" {
     inline = [
-      # Check if OIDC flags already present
-      "if grep -q 'oidc-issuer-url' /etc/kubernetes/manifests/kube-apiserver.yaml; then echo 'OIDC flags already configured'; exit 0; fi",
+      # Check if OIDC flags already configured with the correct values
+      "if grep -q 'oidc-issuer-url=${var.oidc_issuer_url}' /etc/kubernetes/manifests/kube-apiserver.yaml && grep -q 'oidc-client-id=${var.oidc_client_id}' /etc/kubernetes/manifests/kube-apiserver.yaml; then echo 'OIDC flags already configured with correct values'; exit 0; fi",
+
+      # Remove any existing OIDC flags (in case values changed)
+      "sudo sed -i '/--oidc-issuer-url/d; /--oidc-client-id/d; /--oidc-username-claim/d; /--oidc-groups-claim/d' /etc/kubernetes/manifests/kube-apiserver.yaml",
 
       # Backup the manifest
       "sudo cp /etc/kubernetes/manifests/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml.bak",

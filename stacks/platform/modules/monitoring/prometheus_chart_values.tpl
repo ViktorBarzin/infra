@@ -101,8 +101,8 @@ alertmanager:
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
-# prometheus-node-exporter:
-#   enabled: true
+prometheus-node-exporter:
+  enabled: true
 server:
   # Enable me to delete metrics
   extraFlags:
