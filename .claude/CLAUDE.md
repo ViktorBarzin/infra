@@ -158,6 +158,43 @@ When configuring services to use the mailserver:
 - **Credentials**: Use existing accounts from `mailserver_accounts` in tfvars
 - **Common email**: `info@viktorbarzin.me` for service notifications
 
+### Anti-AI Scraping (5-Layer Defense)
+All services have anti-AI scraping enabled by default via `anti_ai_scraping = true` in `ingress_factory`. The 5 layers are:
+
+1. **Bot blocking** (`traefik-ai-bot-block`): ForwardAuth middleware → poison-fountain `/auth` endpoint. Checks `User-Agent` against known AI crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, etc.). Returns 403 for bots, 200 for normal users.
+2. **X-Robots-Tag header** (`traefik-anti-ai-headers`): Adds `noai, noimageai` to all responses.
+3. **Trap links** (`traefik-anti-ai-trap-links`): rewrite-body plugin injects 5 hidden `<a>` tags before `</body>` linking to `poison.viktorbarzin.me/article/*`. Only injected when request `Accept` header contains `text/html` (browsers/scrapers, not API calls).
+4. **Tarpit** (poison-fountain service): `/article/*` endpoints drip-feed responses at ~100 bytes/sec via chunked transfer encoding, wasting scraper time.
+5. **Poison content**: Cached documents from rnsaffn.com/poison2/ (50 docs, refreshed every 6h via CronJob) served through the tarpit to pollute AI training data.
+
+**Key files:**
+- `stacks/poison-fountain/` — Terraform stack (deployment, service, ingress, CronJob)
+- `stacks/poison-fountain/app/server.py` — Python HTTP server (ForwardAuth + tarpit)
+- `stacks/poison-fountain/app/fetch-poison.sh` — CronJob fetcher (uses `--http1.1`, upstream hangs on HTTP/2)
+- `stacks/platform/modules/traefik/middleware.tf` — 3 Traefik middleware CRDs
+- `modules/kubernetes/ingress_factory/main.tf` — `anti_ai_scraping` variable (default: true)
+
+**Testing:**
+```bash
+# Trap links (need Accept: text/html for rewrite-body plugin to process)
+curl -s -H "Accept: text/html,application/xhtml+xml" https://vaultwarden.viktorbarzin.me/ | grep -oE 'href="https://poison[^"]*"'
+
+# X-Robots-Tag header
+curl -sI -H "Accept: text/html" https://vaultwarden.viktorbarzin.me/ | grep -i x-robots
+
+# Bot blocking (403 for AI bots, 200 for normal users)
+curl -s -o /dev/null -w "%{http_code}" -A "GPTBot/1.0" https://vaultwarden.viktorbarzin.me/
+
+# Tarpit slow-drip (~100 bytes/sec)
+curl -s -H "Accept: text/html" https://poison.viktorbarzin.me/article/test
+```
+
+**Gotchas:**
+- rewrite-body plugin only processes responses when `Accept` header contains `text/html` — `curl` default `Accept: */*` does NOT match. Use `-H "Accept: text/html"` for testing.
+- rnsaffn.com/poison2/ hangs on HTTP/2 — fetcher must use `--http1.1`
+- NFS cache dir (`/mnt/main/poison-fountain/cache`) must be world-writable (chmod 777) because `curlimages/curl` runs as uid 101
+- To disable for a specific service: set `anti_ai_scraping = false` in its `ingress_factory` call
+
 ### Terragrunt Architecture
 - Root `terragrunt.hcl` provides DRY provider, backend, and variable loading for all stacks
 - Each stack contains its resources directly: `stacks/<service>/main.tf` has variable declarations, locals, and all Terraform resources inline
@@ -357,6 +394,7 @@ Each stack's `terragrunt.hcl` includes the root `terragrunt.hcl` which provides:
 | whisper | Wyoming Faster Whisper STT (CPU on GPU node) | whisper |
 | grampsweb | Genealogy web app (Gramps Web) | grampsweb |
 | openclaw | AI agent gateway (OpenClaw) | openclaw |
+| poison-fountain | Anti-AI scraping (tarpit + poison) | poison-fountain |
 
 ---
 
@@ -821,3 +859,23 @@ Set `protected = true` in the service's `ingress_factory` call in Terraform.
 - **Variables**: `openclaw_ssh_key`, `openclaw_skill_secrets` in `terraform.tfvars`
 - **Skill secrets**: Home Assistant tokens (london + sofia), Uptime Kuma password — passed as env vars
 - **Model providers**: Gemini (gemini-2.5-flash), Ollama (qwen2.5-coder:14b, deepseek-r1:14b), Llama API (Llama-3.3-70B, Llama-4-Scout/Maverick)
+
+### Poison Fountain (Anti-AI Scraping Service)
+- **Image**: `python:3.12-slim` (runs custom `server.py` from ConfigMap)
+- **Port**: 8080
+- **URL**: `https://poison.viktorbarzin.me` (public, no auth)
+- **Namespace**: `poison-fountain` (tier: aux)
+- **Stack**: `stacks/poison-fountain/`
+- **Architecture**: 1 Deployment (Python HTTP server) + 1 CronJob (fetcher, every 6h)
+- **Storage**: NFS at `/mnt/main/poison-fountain` — `cache/` subdir for poison docs (chmod 777 for curl uid 101)
+- **Endpoints**:
+  - `/auth` — ForwardAuth: checks User-Agent, returns 200 (allow) or 403 (block AI bots)
+  - `/article/*` — Tarpit: drip-feeds poison content at ~100 bytes/sec (DRIP_BYTES=50, DRIP_DELAY=0.5s)
+  - `/healthz` — Health check
+- **CronJob**: Fetches 50 documents from `rnsaffn.com/poison2/` using `--http1.1` (HTTP/2 hangs)
+- **Ingress**: Uses `anti_ai_scraping = false` (doesn't protect itself), `skip_default_rate_limit = true`, `exclude_crowdsec = true`
+- **DNS**: `poison.viktorbarzin.me` in `cloudflare_non_proxied_names`
+- **Traefik middlewares** (in `stacks/platform/modules/traefik/middleware.tf`):
+  - `ai-bot-block` — ForwardAuth to poison-fountain `/auth`
+  - `anti-ai-headers` — X-Robots-Tag: noai, noimageai
+  - `anti-ai-trap-links` — rewrite-body plugin injecting 5 hidden links before `</body>`
