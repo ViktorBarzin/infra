@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keeps only the N most recent tags per image in a pull-through cache registry.
+"""Keeps only the N most recent tags per image in pull-through cache registries.
 Deletes old tag links directly from the filesystem since the API doesn't support
 DELETE on proxy registries. Run garbage-collect after to reclaim blob storage."""
 
@@ -10,39 +10,40 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 KEEP = int(sys.argv[1]) if len(sys.argv) > 1 else 10
-
-STORAGE = "/var/lib/docker/volumes/57b3f1c5fcc7f39c040e17072e10b4536245357d09340206683c04096d30b942/_data/docker/registry/v2/repositories"
+BASE = sys.argv[2] if len(sys.argv) > 2 else "/opt/registry/data"
 
 total_deleted = 0
 
-for root, dirs, _ in os.walk(STORAGE):
-    # Look for _manifests/tags directories
-    if not root.endswith("_manifests/tags"):
+for registry_name in sorted(os.listdir(BASE)):
+    storage = os.path.join(BASE, registry_name, "docker/registry/v2/repositories")
+    if not os.path.isdir(storage):
         continue
 
-    repo = root.replace(STORAGE + "/", "").replace("/_manifests/tags", "")
+    for root, dirs, _ in os.walk(storage):
+        if not root.endswith("_manifests/tags"):
+            continue
 
-    # Get tags with modification times
-    tag_times = []
-    for tag in os.listdir(root):
-        tag_path = os.path.join(root, tag)
-        if os.path.isdir(tag_path):
-            mtime = os.path.getmtime(tag_path)
-            tag_times.append((mtime, tag, tag_path))
+        repo = root.replace(storage + "/", "").replace("/_manifests/tags", "")
 
-    if len(tag_times) <= KEEP:
-        continue
+        tag_times = []
+        for tag in os.listdir(root):
+            tag_path = os.path.join(root, tag)
+            if os.path.isdir(tag_path):
+                mtime = os.path.getmtime(tag_path)
+                tag_times.append((mtime, tag, tag_path))
 
-    # Sort by mtime descending (newest first)
-    tag_times.sort(reverse=True)
-    to_delete = tag_times[KEEP:]
+        if len(tag_times) <= KEEP:
+            continue
 
-    print(f"[{repo}] {len(tag_times)} tags -> keeping {KEEP}, deleting {len(to_delete)}")
+        tag_times.sort(reverse=True)
+        to_delete = tag_times[KEEP:]
 
-    for _, tag, tag_path in to_delete:
-        shutil.rmtree(tag_path)
-        total_deleted += 1
+        print(f"[{registry_name}/{repo}] {len(tag_times)} tags -> keeping {KEEP}, deleting {len(to_delete)}")
 
-    print(f"  done")
+        for _, tag, tag_path in to_delete:
+            shutil.rmtree(tag_path)
+            total_deleted += 1
 
-print(f"\nDeleted {total_deleted} tags. Restart registry and run garbage-collect to reclaim space.")
+        print(f"  done")
+
+print(f"\nDeleted {total_deleted} tags. Run garbage-collect to reclaim space.")

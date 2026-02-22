@@ -1,0 +1,143 @@
+networks:
+  registry:
+    driver: bridge
+
+services:
+  registry-dockerhub:
+    image: registry:2
+    container_name: registry-dockerhub
+    restart: always
+    volumes:
+      - /opt/registry/data/dockerhub:/var/lib/registry
+      - /opt/registry/config-dockerhub.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    ports:
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  registry-ghcr:
+    image: registry:2
+    container_name: registry-ghcr
+    restart: always
+    volumes:
+      - /opt/registry/data/ghcr:/var/lib/registry
+      - /opt/registry/config-ghcr.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  registry-quay:
+    image: registry:2
+    container_name: registry-quay
+    restart: always
+    volumes:
+      - /opt/registry/data/quay:/var/lib/registry
+      - /opt/registry/config-quay.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  registry-k8s:
+    image: registry:2
+    container_name: registry-k8s
+    restart: always
+    volumes:
+      - /opt/registry/data/k8s:/var/lib/registry
+      - /opt/registry/config-k8s.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  registry-kyverno:
+    image: registry:2
+    container_name: registry-kyverno
+    restart: always
+    volumes:
+      - /opt/registry/data/kyverno:/var/lib/registry
+      - /opt/registry/config-kyverno.yml:/etc/docker/registry/config.yml:ro
+    networks:
+      - registry
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  nginx:
+    image: nginx:alpine
+    container_name: registry-nginx
+    restart: always
+    ports:
+      - "5000:5000"
+      - "5010:5010"
+      - "5020:5020"
+      - "5030:5030"
+      - "5040:5040"
+    volumes:
+      - /opt/registry/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-cache:/var/cache/nginx
+    networks:
+      - registry
+    depends_on:
+      registry-dockerhub:
+        condition: service_healthy
+      registry-ghcr:
+        condition: service_healthy
+      registry-quay:
+        condition: service_healthy
+      registry-k8s:
+        condition: service_healthy
+      registry-kyverno:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  registry-ui:
+    image: joxit/docker-registry-ui:latest
+    container_name: registry-ui
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      - NGINX_PROXY_PASS_URL=http://registry-dockerhub:5000
+      - DELETE_IMAGES=true
+      - SINGLE_REGISTRY=true
+      - SHOW_CONTENT_DIGEST=true
+      - SHOW_CATALOG_NB_TAGS=true
+      - CATALOG_ELEMENTS_LIMIT=1000
+      - TAGLIST_PAGE_SIZE=100
+      - REGISTRY_TITLE=viktorbarzin.me
+    networks:
+      - registry
+    depends_on:
+      registry-dockerhub:
+        condition: service_healthy
+
+volumes:
+  nginx-cache:
