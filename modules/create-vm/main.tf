@@ -34,12 +34,16 @@ variable "ipconfig0" {
   type    = string
   default = "ip=dhcp,ip6=dhcp"
 }
+variable "agent" {
+  type    = number
+  default = 0
+}
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
   vmid             = var.vmid
   name             = var.vm_name
   target_node      = "pve"
-  agent            = 0
+  agent            = var.agent
   memory           = var.vm_mem_mb
   boot             = "order=scsi0"     # has to be the same as the OS disk of the template
   clone            = var.template_name # The name of the template
