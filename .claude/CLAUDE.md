@@ -6,100 +6,40 @@
 - **When making infrastructure changes**: Always update this file to reflect the current state (new services, removed services, version changes, config changes)
 - **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
 - **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
-- **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project.md` for deploying new services)
-- **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (e.g., via kubectl apply/edit/patch, helm install, docker run). Always make changes in the Terraform `.tf` files and apply with `terragrunt apply`. The real cluster state must never deviate from what's defined in Terraform — if a manual change is unavoidable (e.g., containerd config on running nodes), document it and ensure the Terraform templates match so future provisioning is consistent. Use `kubectl` only for read-only operations (get, describe, logs) and ephemeral debugging (run --rm, delete stuck pods), never for persistent state changes.
-- **CRITICAL: NEVER put sensitive data (API keys, passwords, tokens, credentials) into committed files** unless they are encrypted (e.g., via git-crypt). Secrets belong in `terraform.tfvars` (which is git-crypt encrypted) or in the `secrets/` directory. Never hardcode credentials in `.tf` files, scripts, `.claude/` files, or any other unencrypted committed file. Always pass secrets through the Terraform variable chain (`terraform.tfvars` → `main.tf` → module variables).
-- **CRITICAL: NEVER commit secrets** — triple-check before every commit that no API keys, passwords, tokens, or credentials are included in unencrypted files. This is a hard rule with zero exceptions.
-- **New services MUST have CI/CD**: Set up Drone CI pipeline (`.drone.yml`) with GitHub/GitLab repo integration. Services should auto-build and auto-deploy.
-- **New services MUST have monitoring**: Every new service should have monitoring via Prometheus (alerts/metrics) and/or Uptime Kuma (HTTP health checks). Add both when possible.
+- **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project` for deploying new services)
+- **Reference data**: Check `.claude/reference/` for inventory tables, API patterns, and current state snapshots
+- **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (kubectl apply/edit/patch, helm install, docker run). Use `kubectl` only for read-only operations and ephemeral debugging.
+- **CRITICAL: NEVER put sensitive data** (API keys, passwords, tokens, credentials) into committed files unless encrypted via git-crypt. Secrets belong in `terraform.tfvars` or `secrets/` directory.
+- **CRITICAL: NEVER commit secrets** — triple-check before every commit. Zero exceptions.
+- **New services MUST have CI/CD** (Drone CI pipeline) and **monitoring** (Prometheus alerts and/or Uptime Kuma).
 
 ## Execution Environment
-- **File operations**: Read, Edit, Write, Glob, Grep tools
-- **Git commands**: git status, git log, git diff, git add, git commit, git reset, etc.
-- **Shell commands**: All tools (terraform, terragrunt, kubectl, helm, python, etc.) are available locally
-- **CRITICAL: Always run terragrunt/terraform locally**, never on the remote server via SSH:
-  ```bash
-  cd stacks/<service> && terragrunt apply --non-interactive
-  ```
-- **kubectl**: Use `kubectl --kubeconfig $(pwd)/config` for cluster access
-- **GitHub API**: Use `curl` with token from tfvars (see GitHub & Drone CI section below). `gh` CLI is blocked by sandbox restrictions.
-- **Drone CI API**: Use `curl` with token from tfvars (see GitHub & Drone CI section below).
+- **Terraform/Terragrunt**: Always run locally: `cd stacks/<service> && terragrunt apply --non-interactive`
+- **kubectl**: `kubectl --kubeconfig $(pwd)/config`
+- **GitHub/Drone API**: Use `curl` with tokens from tfvars (see `.claude/reference/github-drone-api.md`). `gh` CLI is blocked by sandbox.
 
 ---
 
 ## Overview
-Terragrunt-based infrastructure repository managing a home Kubernetes cluster on Proxmox VMs, with per-service state isolation. Each service has its own Terragrunt stack under `stacks/`, enabling fast, independent plan/apply cycles. Uses git-crypt for secrets encryption.
+Terragrunt-based infrastructure repository managing a home Kubernetes cluster on Proxmox VMs, with per-service state isolation. Each service has its own Terragrunt stack under `stacks/`. Uses git-crypt for secrets encryption.
 
-## Static File Paths (NEVER CHANGE)
-- **Main config**: `terraform.tfvars` - All secrets, DNS, Cloudflare config, WireGuard peers
-- **Root Terragrunt**: `terragrunt.hcl` - Root Terragrunt config (providers, backend, var loading)
-- **Service stacks**: `stacks/<service>/` - Individual service stacks (each has `terragrunt.hcl` + `main.tf` with resources inline)
-- **Infra stack**: `stacks/infra/` - Proxmox VM resources (templates, docker-registry, VMs)
-- **Platform stack**: `stacks/platform/` - Core infrastructure services (22 modules in `modules/` subdir)
-- **Per-stack state**: `state/stacks/<service>/terraform.tfstate` - Per-stack state files (gitignored)
-- **Service resources**: `stacks/<service>/main.tf` - Service resources defined directly in stack root
-- **Platform modules**: `stacks/platform/modules/<service>/` - Platform service modules
-- **Shared modules**: `modules/kubernetes/ingress_factory/`, `modules/kubernetes/setup_tls_secret/`
-- **Secrets**: `secrets/` - git-crypt encrypted TLS certs and keys
-
-## Network Topology (Static IPs)
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 10.0.10.0/24 - Management Network                               │
-├─────────────────────────────────────────────────────────────────┤
-│ 10.0.10.10  - Wizard (main server)                               │
-│ 10.0.10.15  - NFS Server (TrueNAS) - /mnt/main/*                │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│ 10.0.20.0/24 - Kubernetes Network                               │
-├─────────────────────────────────────────────────────────────────┤
-│ 10.0.20.1   - pfSense Gateway                                   │
-│ 10.0.20.10  - Docker Registry VM (MAC: DE:AD:BE:EF:22:22)       │
-│ 10.0.20.100 - k8s-master                                        │
-│ 10.0.20.101 - Technitium DNS                                    │
-│ 10.0.20.102 - MetalLB IP Pool Start                             │
-│ 10.0.20.200 - MetalLB IP Pool End                               │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│ 192.168.1.0/24 - Physical Network                               │
-├─────────────────────────────────────────────────────────────────┤
-│ 192.168.1.127 - Proxmox Hypervisor                              │
-└─────────────────────────────────────────────────────────────────┘
-```
+## Key File Paths
+- `terraform.tfvars` — All secrets, DNS, Cloudflare config, WireGuard peers (git-crypt encrypted)
+- `terragrunt.hcl` — Root config (providers, backend, variable loading)
+- `stacks/<service>/` — Individual service stacks (`terragrunt.hcl` + `main.tf`)
+- `stacks/platform/` — Core infrastructure (~22 services in `modules/` subdir)
+- `stacks/infra/` — Proxmox VM resources
+- `modules/kubernetes/ingress_factory/`, `setup_tls_secret/` — Shared utility modules
+- `secrets/` — git-crypt encrypted TLS certs and keys
 
 ## Domains
 - **Public**: `viktorbarzin.me` (Cloudflare-managed)
 - **Internal**: `viktorbarzin.lan` (Technitium DNS)
 
-## Directory Structure
-- `terragrunt.hcl` - Root Terragrunt configuration (providers, backend, variable loading)
-- `stacks/` - Individual Terragrunt stacks (one per service)
-- `stacks/infra/` - Proxmox VM resources (templates, docker-registry)
-- `stacks/platform/` - Core infrastructure (22 services in `stacks/platform/modules/`)
-- `stacks/<service>/` - Individual service stacks (resources directly in `main.tf`)
-- `stacks/platform/modules/<service>/` - Platform service module source code
-- `modules/kubernetes/` - **Only shared utility modules**: `ingress_factory/`, `setup_tls_secret/`
-- `modules/create-vm/` - Proxmox VM creation module
-- `state/` - Per-stack Terraform state files (gitignored)
-- `secrets/` - Encrypted secrets (TLS certs, keys) via git-crypt
-- `cli/` - Go CLI tool for infrastructure management
-- `scripts/` - Helper scripts (cluster management, node updates)
-- `playbooks/` - Ansible playbooks for node configuration
-- `diagram/` - Infrastructure diagrams (Python-based)
-
 ## Key Patterns
-- Each service in `modules/kubernetes/<service>/main.tf` defines its own namespace, deployments, services, and ingress
-- NFS storage from `10.0.10.15` for persistent data
-- TLS secrets managed via `setup_tls_secret` module
-- Ingress uses Traefik (Helm chart, 3 replicas) with HTTP/3 (QUIC) enabled, Middleware CRDs for rate limiting, auth, CSP headers, CrowdSec bouncer, and analytics injection
-- HTTP/3 enabled on Traefik (`http3.enabled=true`, `advertisedPort=443` on websecure entrypoint) and Cloudflare (`cloudflare_zone_settings_override` with `http3="on"`)
-- GPU workloads use `node_selector = { "gpu": "true" }`
-- Services expose to `*.viktorbarzin.me` domains
 
 ### NFS Volume Pattern
-**Prefer inline NFS volumes** over separate PV/PVC resources. Use the `nfs {}` block directly in pod/deployment/cronjob specs:
+**Prefer inline NFS volumes** over separate PV/PVC resources:
 ```hcl
 volume {
   name = "data"
@@ -109,773 +49,142 @@ volume {
   }
 }
 ```
-Only use PV/PVC when the Helm chart requires `existingClaim` (like the Nextcloud Helm chart).
+Only use PV/PVC when a Helm chart requires `existingClaim`.
 
 ### Adding NFS Exports
-To add a new NFS exported directory:
-1. Edit `secrets/nfs_directories.txt` - add the new directory path, keep the list sorted
-2. Run `secrets/nfs_exports.sh` from the `secrets/` directory to update the NFS share via TrueNAS API
+1. Edit `secrets/nfs_directories.txt` — add path, keep sorted
+2. Run `secrets/nfs_exports.sh` from `secrets/` to update TrueNAS
 
-### Factory Pattern (for multi-user services)
-Used when a service needs one instance per user. Structure:
-```
-stacks/<service>/
-├── main.tf           # Namespace, TLS secret, user module calls
-└── factory/
-    └── main.tf       # Deployment, service, ingress templates with ${var.name}
-```
-Examples: `actualbudget`, `freedify`
+### Factory Pattern (multi-user services)
+Structure: `stacks/<service>/main.tf` + `factory/main.tf`. Examples: `actualbudget`, `freedify`.
+To add a user: export NFS share, add Cloudflare route in tfvars, add module block calling factory.
 
-To add a new user:
-1. Export NFS share at `/mnt/main/<service>/<username>` in TrueNAS
-2. Add Cloudflare route in tfvars
-3. Add module block in main.tf calling factory
-
-### Init Container Pattern (for database migrations)
-Use when a service needs to run database migrations before starting:
-```hcl
-init_container {
-  name    = "migration"
-  image   = "service-image:tag"
-  command = ["sh", "-c", "migration-command"]
-
-  dynamic "env" {
-    for_each = local.common_env
-    content {
-      name  = env.value.name
-      value = env.value.value
-    }
-  }
-}
-```
-Example: AFFiNE runs `node ./scripts/self-host-predeploy.js` in init container.
-
-### SMTP/Email Configuration
-When configuring services to use the mailserver:
-- **Use public hostname**: `mail.viktorbarzin.me` (for TLS cert validation)
-- **Do NOT use**: `mailserver.mailserver.svc.cluster.local` (TLS cert mismatch)
-- **Port**: 587 (STARTTLS)
-- **Credentials**: Use existing accounts from `mailserver_accounts` in tfvars
-- **Common email**: `info@viktorbarzin.me` for service notifications
+### SMTP/Email
+- **Use**: `mail.viktorbarzin.me` port 587 (STARTTLS). **NOT** `mailserver.mailserver.svc.cluster.local` (TLS cert mismatch).
+- **Credentials**: `mailserver_accounts` in tfvars. Common: `info@viktorbarzin.me`
 
 ### Anti-AI Scraping (5-Layer Defense)
-All services have anti-AI scraping enabled by default via `anti_ai_scraping = true` in `ingress_factory`. The 5 layers are:
+All services have `anti_ai_scraping = true` by default in `ingress_factory`. Layers:
+1. **Bot blocking** (`traefik-ai-bot-block`): ForwardAuth → poison-fountain `/auth`. Returns 403 for GPTBot, ClaudeBot, CCBot, etc.
+2. **X-Robots-Tag** (`traefik-anti-ai-headers`): Adds `noai, noimageai`
+3. **Trap links** (`traefik-anti-ai-trap-links`): rewrite-body injects 5 hidden links before `</body>` to `poison.viktorbarzin.me/article/*`
+4. **Tarpit**: `/article/*` drip-feeds at ~100 bytes/sec
+5. **Poison content**: 50 cached docs from rnsaffn.com/poison2/ (CronJob every 6h, `--http1.1` required)
 
-1. **Bot blocking** (`traefik-ai-bot-block`): ForwardAuth middleware → poison-fountain `/auth` endpoint. Checks `User-Agent` against known AI crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, etc.). Returns 403 for bots, 200 for normal users.
-2. **X-Robots-Tag header** (`traefik-anti-ai-headers`): Adds `noai, noimageai` to all responses.
-3. **Trap links** (`traefik-anti-ai-trap-links`): rewrite-body plugin injects 5 hidden `<a>` tags before `</body>` linking to `poison.viktorbarzin.me/article/*`. Only injected when request `Accept` header contains `text/html` (browsers/scrapers, not API calls).
-4. **Tarpit** (poison-fountain service): `/article/*` endpoints drip-feed responses at ~100 bytes/sec via chunked transfer encoding, wasting scraper time.
-5. **Poison content**: Cached documents from rnsaffn.com/poison2/ (50 docs, refreshed every 6h via CronJob) served through the tarpit to pollute AI training data.
-
-**Key files:**
-- `stacks/poison-fountain/` — Terraform stack (deployment, service, ingress, CronJob)
-- `stacks/poison-fountain/app/server.py` — Python HTTP server (ForwardAuth + tarpit)
-- `stacks/poison-fountain/app/fetch-poison.sh` — CronJob fetcher (uses `--http1.1`, upstream hangs on HTTP/2)
-- `stacks/platform/modules/traefik/middleware.tf` — 3 Traefik middleware CRDs
-- `modules/kubernetes/ingress_factory/main.tf` — `anti_ai_scraping` variable (default: true)
-
-**Testing:**
-```bash
-# Trap links (need Accept: text/html for rewrite-body plugin to process)
-curl -s -H "Accept: text/html,application/xhtml+xml" https://vaultwarden.viktorbarzin.me/ | grep -oE 'href="https://poison[^"]*"'
-
-# X-Robots-Tag header
-curl -sI -H "Accept: text/html" https://vaultwarden.viktorbarzin.me/ | grep -i x-robots
-
-# Bot blocking (403 for AI bots, 200 for normal users)
-curl -s -o /dev/null -w "%{http_code}" -A "GPTBot/1.0" https://vaultwarden.viktorbarzin.me/
-
-# Tarpit slow-drip (~100 bytes/sec)
-curl -s -H "Accept: text/html" https://poison.viktorbarzin.me/article/test
-```
-
-**Gotchas:**
-- rewrite-body plugin only processes responses when `Accept` header contains `text/html` — `curl` default `Accept: */*` does NOT match. Use `-H "Accept: text/html"` for testing.
-- rnsaffn.com/poison2/ hangs on HTTP/2 — fetcher must use `--http1.1`
-- NFS cache dir (`/mnt/main/poison-fountain/cache`) must be world-writable (chmod 777) because `curlimages/curl` runs as uid 101
-- To disable for a specific service: set `anti_ai_scraping = false` in its `ingress_factory` call
+Key files: `stacks/poison-fountain/`, `stacks/platform/modules/traefik/middleware.tf`, `modules/kubernetes/ingress_factory/main.tf`
+Testing: `curl -s -H "Accept: text/html,application/xhtml+xml" https://vaultwarden.viktorbarzin.me/ | grep -oE 'href="https://poison[^"]*"'`
+Disable per-service: `anti_ai_scraping = false` in ingress_factory call.
 
 ### Terragrunt Architecture
-- Root `terragrunt.hcl` provides DRY provider, backend, and variable loading for all stacks
-- Each stack contains its resources directly: `stacks/<service>/main.tf` has variable declarations, locals, and all Terraform resources inline
-- Platform modules live at `stacks/platform/modules/<service>/`, referenced as `source = "./modules/<service>"`
-- Shared utility modules (`ingress_factory`, `setup_tls_secret`, `dockerhub_secret`, `oauth-proxy`) remain at `modules/kubernetes/` and are referenced with relative paths from each module
-- State isolation: each stack has its own state file at `state/stacks/<service>/terraform.tfstate`
-- Dependencies: service stacks depend on `platform` stack via `dependency` block in their `terragrunt.hcl`
-- Variables loaded from `terraform.tfvars` automatically (unused vars silently ignored via `extra_arguments`)
-- `secrets/` symlinks in each stack for TLS cert resolution (`path.root` workaround)
-- Terragrunt v0.99+: use `--non-interactive` (not `--terragrunt-non-interactive`)
-- run-all syntax: `terragrunt run --all -- <command>` (not `terragrunt run-all`)
-- The `platform` stack bundles ~22 core services that have cross-dependencies (traefik, monitoring, authentik, etc.)
-- Individual service stacks are for services that can be deployed independently
+- Root `terragrunt.hcl` provides DRY provider, backend, and variable loading
+- Each stack: `stacks/<service>/main.tf` with resources inline, state at `state/stacks/<service>/terraform.tfstate`
+- Platform modules: `stacks/platform/modules/<service>/`, shared modules: `modules/kubernetes/`
+- Dependencies via `dependency` block; variables from `terraform.tfvars` (unused silently ignored)
+- `secrets/` symlinks in stacks for TLS cert path resolution
+- Syntax: `--non-interactive` (not `--terragrunt-non-interactive`), `terragrunt run --all -- <command>` (not `run-all`)
 
 ### Adding a New Service
-When adding a new service to the cluster:
-1. Create `stacks/<service>/` directory with:
-   - `terragrunt.hcl` - Include root config, declare `platform` dependency
-   - `main.tf` - All resources defined directly (variables, locals, namespace, deployments, services, ingress)
-   - `secrets` - Symlink to `../../secrets` (for TLS cert path resolution)
-2. Add Cloudflare DNS record in `terraform.tfvars` (`cloudflare_proxied_names` or `cloudflare_non_proxied_names`)
-3. Apply the cloudflared stack: `cd stacks/platform && terragrunt apply --non-interactive`
-4. Apply the new service: `cd stacks/<service> && terragrunt apply --non-interactive`
-
-## Common Variables
-- `tls_secret_name` - TLS certificate secret name
-- `tier` - Deployment tier label
-- Service-specific passwords passed as variables
-
-## Service Versions (as of 2026-02)
-- Immich: v2.4.1
-- Freedify: latest (music streaming, factory pattern)
-- AFFiNE: stable (visual canvas, uses PostgreSQL + Redis)
-- Wyoming Whisper: latest (STT for Home Assistant, CPU on GPU node)
-- Health: latest (Apple Health data dashboard, Svelte + FastAPI + Caddy, uses PostgreSQL)
-- Gramps Web: latest (genealogy, uses Redis + Celery)
-- Loki: 3.6.5 (log aggregation, single binary, 6Gi RAM, 24h in-memory chunks)
-- Alloy: v1.13.0 (log collector DaemonSet, forwards to Loki)
-- OpenClaw: 2026.2.9 (AI agent gateway, authentik-protected)
+Use the **`setup-project`** skill for the full workflow. Quick reference:
+1. Create `stacks/<service>/` with `terragrunt.hcl`, `main.tf`, `secrets` symlink
+2. Add Cloudflare DNS in `terraform.tfvars`
+3. Apply platform stack (for DNS): `cd stacks/platform && terragrunt apply --non-interactive`
+4. Apply service: `cd stacks/<service> && terragrunt apply --non-interactive`
 
 ## Useful Commands
 ```bash
-# Cluster health check — ALWAYS use this to check cluster status
-bash scripts/cluster_healthcheck.sh            # Full color report
+bash scripts/cluster_healthcheck.sh            # Cluster health (24 checks)
 bash scripts/cluster_healthcheck.sh --quiet    # Only WARN/FAIL
-bash scripts/cluster_healthcheck.sh --json     # Machine-readable
-bash scripts/cluster_healthcheck.sh --fix      # Auto-delete evicted pods
-
-# Apply a single service stack
-cd stacks/<service> && terragrunt apply --non-interactive
-
-# Plan a single service stack
-cd stacks/<service> && terragrunt plan --non-interactive
-
-# Plan all stacks (full DAG)
-cd stacks && terragrunt run --all --non-interactive -- plan
-
-# Apply all stacks (full DAG)
-cd stacks && terragrunt run --all --non-interactive -- apply
-
-# Format all terraform files
-terraform fmt -recursive
-
-kubectl get pods -A
+cd stacks/<service> && terragrunt apply --non-interactive  # Apply single stack
+cd stacks && terragrunt run --all --non-interactive -- plan  # Plan all
+terraform fmt -recursive                       # Format all
 ```
-
-**Cluster Health Check** (`scripts/cluster_healthcheck.sh`):
-- **ALWAYS use this script** to check cluster health — whether the user asks explicitly, after deploying/updating services, or whenever you need to verify cluster state. Never use ad-hoc kubectl commands to assess overall cluster health; use the script instead.
-- Runs 24 checks: nodes, resources, conditions, pods, evicted, DaemonSets, deployments, PVCs, HPAs, CronJobs, CrowdSec, ingress, Prometheus alerts, Uptime Kuma, ResourceQuota pressure, StatefulSets, node disk, Helm releases, Kyverno, NFS, DNS, TLS certs, GPU, Cloudflare tunnel
-- **When adding new healthchecks or monitoring**: Always update this script to validate the new component
-
-**Terragrunt apply examples:**
-- `cd stacks/monitoring && terragrunt apply --non-interactive` - Apply monitoring
-- `cd stacks/immich && terragrunt apply --non-interactive` - Apply immich
-- `cd stacks/infra && terragrunt apply --non-interactive` - Apply Proxmox VMs / docker registry
-- `cd stacks/platform && terragrunt apply --non-interactive` - Apply all core/platform services
-
-**IMPORTANT: When deploying a new service**, you must ALSO apply the `platform` stack (which includes `cloudflared`) to create the Cloudflare DNS record:
-```bash
-cd stacks/platform && terragrunt apply --non-interactive
-```
-Adding a name to `cloudflare_non_proxied_names` or `cloudflare_proxied_names` in `terraform.tfvars` only defines the record — it won't be created until the platform stack (which contains cloudflared) is applied.
-
-## Stack Structure
-Terragrunt stacks under `stacks/`:
-- `stacks/infra/` - Proxmox VMs, templates, docker-registry
-- `stacks/platform/` - Core infrastructure (~22 services in `modules/` subdir)
-- `stacks/<service>/` - Individual service stacks (resources directly in `main.tf`)
-
-Each stack's `terragrunt.hcl` includes the root `terragrunt.hcl` which provides:
-- Kubernetes + Helm providers (configured from `terraform.tfvars`)
-- Local backend with per-stack state file (`state/stacks/<service>/terraform.tfstate`)
-- Automatic loading of `terraform.tfvars` with unused vars ignored
-
----
-
-## Complete Service Catalog
-
-### Critical - Network & Auth (Tier: core)
-| Service | Description | Stack |
-|---------|-------------|-------|
-| wireguard | VPN server | platform |
-| technitium | DNS server (10.0.20.101) | platform |
-| headscale | Tailscale control server | platform |
-| traefik | Ingress controller (Helm) | platform |
-| xray | Proxy/tunnel | platform |
-| authentik | Identity provider (SSO) | platform |
-| cloudflared | Cloudflare tunnel | platform |
-| authelia | Auth middleware | platform |
-| monitoring | Prometheus/Grafana/Loki stack | platform |
-
-### Storage & Security (Tier: cluster)
-| Service | Description | Stack |
-|---------|-------------|-------|
-| vaultwarden | Bitwarden-compatible password manager | platform |
-| redis | Shared Redis at `redis.redis.svc.cluster.local` | platform |
-| immich | Photo management (GPU) | immich |
-| nvidia | GPU device plugin | platform |
-| metrics-server | K8s metrics | platform |
-| uptime-kuma | Status monitoring | platform |
-| crowdsec | Security/WAF | platform |
-| kyverno | Policy engine | platform |
-
-### Admin
-| Service | Description | Stack |
-|---------|-------------|-------|
-| k8s-dashboard | Kubernetes dashboard | platform |
-| reverse-proxy | Generic reverse proxy | platform |
-
-### Active Use
-| Service | Description | Stack |
-|---------|-------------|-------|
-| mailserver | Email (docker-mailserver) | mailserver |
-| shadowsocks | Proxy | shadowsocks |
-| webhook_handler | Webhook processing | webhook_handler |
-| tuya-bridge | Smart home bridge | tuya-bridge |
-| dawarich | Location history | dawarich |
-| owntracks | Location tracking | owntracks |
-| nextcloud | File sync/share | nextcloud |
-| calibre | E-book management | calibre |
-| onlyoffice | Document editing | onlyoffice |
-| f1-stream | F1 streaming | f1-stream |
-| rybbit | Analytics | rybbit |
-| isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
-| actualbudget | Budgeting (factory pattern) | actualbudget |
-
-### Optional
-| Service | Description | Stack |
-|---------|-------------|-------|
-| blog | Personal blog | blog |
-| descheduler | Pod descheduler | descheduler |
-| drone | CI/CD | drone |
-| hackmd | Collaborative markdown | hackmd |
-| kms | Key management | kms |
-| privatebin | Encrypted pastebin | privatebin |
-| vault | HashiCorp Vault | vault |
-| reloader | ConfigMap/Secret reloader | reloader |
-| city-guesser | Game | city-guesser |
-| echo | Echo server | echo |
-| url | URL shortener | url |
-| excalidraw | Whiteboard | excalidraw |
-| travel_blog | Travel blog | travel_blog |
-| dashy | Dashboard | dashy |
-| send | Firefox Send | send |
-| ytdlp | YouTube downloader | ytdlp |
-| wealthfolio | Finance tracking | wealthfolio |
-| audiobookshelf | Audiobook server | audiobookshelf |
-| paperless-ngx | Document management | paperless-ngx |
-| jsoncrack | JSON visualizer | jsoncrack |
-| servarr | Media automation (Sonarr/Radarr/etc) | servarr |
-| ntfy | Push notifications | ntfy |
-| cyberchef | Data transformation | cyberchef |
-| diun | Docker image update notifier | diun |
-| meshcentral | Remote management | meshcentral |
-| homepage | Dashboard/startpage | homepage |
-| matrix | Matrix chat server | matrix |
-| linkwarden | Bookmark manager | linkwarden |
-| changedetection | Web change detection | changedetection |
-| tandoor | Recipe manager | tandoor |
-| n8n | Workflow automation | n8n |
-| real-estate-crawler | Property crawler | real-estate-crawler |
-| tor-proxy | Tor proxy | tor-proxy |
-| forgejo | Git forge | forgejo |
-| freshrss | RSS reader | freshrss |
-| navidrome | Music streaming | navidrome |
-| networking-toolbox | Network tools | networking-toolbox |
-| stirling-pdf | PDF tools | stirling-pdf |
-| speedtest | Speed testing | speedtest |
-| freedify | Music streaming (factory pattern) | freedify |
-| netbox | Network documentation | netbox |
-| infra-maintenance | Maintenance jobs | infra-maintenance |
-| ollama | LLM server (GPU) | ollama |
-| frigate | NVR/camera (GPU) | frigate |
-| ebook2audiobook | E-book to audio (GPU) | ebook2audiobook |
-| affine | Visual canvas/whiteboard (PostgreSQL + Redis) | affine |
-| health | Apple Health data dashboard (PostgreSQL) | health |
-| whisper | Wyoming Faster Whisper STT (CPU on GPU node) | whisper |
-| grampsweb | Genealogy web app (Gramps Web) | grampsweb |
-| openclaw | AI agent gateway (OpenClaw) | openclaw |
-| poison-fountain | Anti-AI scraping (tarpit + poison) | poison-fountain |
-
----
-
-## Cloudflare Domains
-
-### Proxied (CDN + WAF enabled)
-```
-blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
-audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
-changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox
-```
-
-### Non-Proxied (Direct DNS)
-```
-mail, wg, headscale, immich, calibre, vaultwarden, drone,
-mailserver-antispam, mailserver-admin, webhook, uptime,
-owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
-onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
-isponsorblocktv, speedtest, freedify, rybbit, paperless,
-servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
-```
-
-### Special Subdomains
-- `*.viktor.actualbudget` - Actualbudget factory instances
-- `*.freedify` - Freedify factory instances
-- `mailserver.*` - Mail server components (antispam, admin)
-
----
 
 ## CI/CD
-- Drone CI (`.drone.yml`) for automated deployments
-- **Default pipeline**: On push, applies the `platform` stack via `terragrunt apply` (core infrastructure services; installs Terraform 1.5.7 + Terragrunt 0.99.4 in Alpine)
-- **TLS renewal pipeline**: Cron-triggered, runs `renew2.sh` (certbot + Cloudflare DNS) — no Terraform/Terragrunt needed
-- **Build CLI pipeline**: Builds Docker image from `cli/Dockerfile` (unchanged)
-- **ALWAYS add `[ci skip]` to commit messages** when you've already run `terraform apply` to avoid triggering CI redundantly
-- **After committing, run `git push origin master`** to sync changes
-
-## GitHub & Drone CI
-
-### GitHub API Access
-- **Username**: `ViktorBarzin`
-- **Token location**: `terraform.tfvars` as `github_pat` (git-crypt encrypted)
-- **Read token**: `grep github_pat terraform.tfvars | cut -d'"' -f2`
-- **Scopes**: Full access — `repo`, `admin:public_key`, `admin:repo_hook`, `delete_repo`, `admin:org`, `workflow`, `write:packages`, and more
-- **`gh` CLI**: Blocked by sandbox restrictions — use `curl` with the GitHub API instead
-
-#### Common API Patterns
-```bash
-# Read token from tfvars
-GITHUB_TOKEN=$(grep github_pat terraform.tfvars | cut -d'"' -f2)
-
-# List repos
-curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/users/ViktorBarzin/repos?per_page=100"
-
-# Create repo
-curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/user/repos" \
-  -d '{"name":"repo-name","private":true}'
-
-# Add deploy key
-curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/ViktorBarzin/<repo>/keys" \
-  -d '{"title":"key-name","key":"ssh-ed25519 ...","read_only":false}'
-
-# Create webhook (e.g., for Drone CI)
-curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/ViktorBarzin/<repo>/hooks" \
-  -d '{"config":{"url":"https://drone.viktorbarzin.me/hook","content_type":"json","secret":"..."},"events":["push","pull_request"]}'
-
-# Get repo info
-curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/ViktorBarzin/<repo>"
-```
-
-### Drone CI API Access
-- **Server**: `https://drone.viktorbarzin.me`
-- **Token location**: `terraform.tfvars` as `drone_api_token` (git-crypt encrypted)
-- **Read token**: `grep drone_api_token terraform.tfvars | cut -d'"' -f2`
-- **Username**: `ViktorBarzin`
-
-#### Common API Patterns
-```bash
-# Read token from tfvars
-DRONE_TOKEN=$(grep drone_api_token terraform.tfvars | cut -d'"' -f2)
-
-# List repos
-curl -s -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos"
-
-# Activate repo in Drone
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>"
-
-# Trigger build
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>/builds"
-
-# Get build info
-curl -s -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>/builds/<build-number>"
-
-# Add secret to repo
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>/secrets" \
-  -d '{"name":"secret_name","data":"secret_value"}'
-```
-
-### Capabilities
-With these tokens, Claude can:
-- **GitHub**: Create/delete repos, push code, manage SSH/deploy keys, manage webhooks, manage org settings, manage packages
-- **Drone CI**: Activate repos, trigger/monitor builds, manage secrets, configure pipelines
+- Drone CI (`.drone.yml`): pushes apply `platform` stack (Terraform 1.5.7 + Terragrunt 0.99.4)
+- TLS renewal pipeline: cron-triggered `renew2.sh` (certbot + Cloudflare DNS)
+- **ALWAYS add `[ci skip]`** to commit messages when you've already applied locally
+- **After committing, run `git push origin master`** to sync
 
 ## Infrastructure
-- Proxmox hypervisor for VMs (192.168.1.127)
-- Kubernetes cluster with GPU node (5 nodes: k8s-master + k8s-node1-4, running v1.34.2)
-- NFS server at 10.0.10.15 for storage
-- Redis shared service at `redis.redis.svc.cluster.local`
-- Docker registry pull-through cache at 10.0.20.10 (static IP via cloud-init)
-  - Port 5000: docker.io (Docker Hub, with auth)
-  - Port 5010: ghcr.io
-  - Port 5020: quay.io
-  - Port 5030: registry.k8s.io
-  - Port 5040: reg.kyverno.io
-  - Worker nodes use `config_path = "/etc/containerd/certs.d"` with per-registry `hosts.toml` files
-  - k8s-master does NOT use pull-through cache (containerd 1.6.x incompatibility with config_path + mirrors)
+- Proxmox hypervisor (192.168.1.127) — see `.claude/reference/proxmox-inventory.md` for full VM table
+- Kubernetes cluster: 5 nodes (k8s-master + k8s-node1-4, v1.34.2), GPU on node1 (Tesla T4)
+- NFS: `10.0.10.15`, Redis: `redis.redis.svc.cluster.local`
+- Docker registry pull-through cache at `10.0.20.10` (ports 5000/5010/5020/5030/5040)
+- GPU workloads need: `node_selector = { "gpu": "true" }` + `toleration { key = "nvidia.com/gpu", value = "true", effect = "NoSchedule" }`
 
-### Proxmox Host Hardware
-- **CPU**: Intel Xeon E5-2699 v4 @ 2.20GHz (22 cores / 44 threads, single socket)
-- **RAM**: 142 GB (Dell R730 server)
-- **GPU**: NVIDIA Tesla T4 (PCIe passthrough to k8s-node1)
-- **Disks**: 1.1TB + 931GB + 10.7TB (local storage)
-- **Proxmox access**: `ssh root@192.168.1.127`
-
-### Proxmox Network Bridges
-- **vmbr0**: Physical bridge on `eno1`, IP `192.168.1.127/24` — connects to physical/home network (192.168.1.0/24)
-- **vmbr1**: Internal-only bridge (no physical port), VLAN-aware — carries VLAN 10 (management 10.0.10.0/24) and VLAN 20 (kubernetes 10.0.20.0/24)
-
-### Proxmox VM Inventory
-
-| VMID | Name | Status | CPUs | RAM | Network | Disk | Notes |
-|------|------|--------|------|-----|---------|------|-------|
-| 101 | pfsense | running | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall, routes between all networks |
-| 102 | devvm | running | 16 | 8GB | vmbr1:vlan10 | 100G | Development VM on management network |
-| 103 | home-assistant | running | 8 | 16GB | vmbr1:vlan10(down), vmbr0 | 32G | Home Assistant, net0 link disabled, uses vmbr0 |
-| 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup Server (not in use) |
-| 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Kubernetes control plane (10.0.20.100) |
-| 201 | k8s-node1 | running | 16 | 24GB | vmbr1:vlan20 | 128G | GPU node, Tesla T4 passthrough (hostpci0) |
-| 202 | k8s-node2 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
-| 203 | k8s-node3 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
-| 204 | k8s-node4 | running | 8 | 16GB | vmbr1:vlan20 | 64G | K8s worker node |
-| 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | Terraform-managed, MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
-| 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM on physical network |
-| 9000 | truenas | running | 16 | 16GB | vmbr1:vlan10 | 32G+7×256G+1T | NFS server (10.0.10.15), multiple data disks |
-
-#### VM Templates (stopped, used for cloning)
-| VMID | Name | Purpose |
-|------|------|---------|
-| 1000 | ubuntu-2404-cloudinit-non-k8s-template | Base template for non-K8s VMs |
-| 1001 | docker-registry-template | Template for docker registry VM |
-| 2000 | ubuntu-2404-cloudinit-k8s-template | Base template for K8s nodes |
-
-#### Network Connectivity Summary
-- **pfSense (101)** bridges all three networks: physical (vmbr0), management VLAN 10, and kubernetes VLAN 20
-- **K8s cluster** (200-204) + **docker-registry** (220) are all on VLAN 20 (kubernetes network)
-- **TrueNAS** (9000) + **devvm** (102) + **PBS** (105) are on VLAN 10 (management network)
-- **Home Assistant** (103) is on physical network (vmbr0), with a disabled VLAN 10 interface
-- **Windows10** (300) is on physical network (vmbr0) only
-
-### GPU Node (k8s-node1)
-- **VMID**: 201
-- **PCIe Passthrough**: `0000:06:00.0` (NVIDIA Tesla T4)
-- **Taint**: `nvidia.com/gpu=true:NoSchedule` - Only GPU workloads can run here
-- **Label**: `gpu=true`
-- GPU workloads must have both:
-  - `node_selector = { "gpu": "true" }`
-  - `toleration { key = "nvidia.com/gpu", operator = "Equal", value = "true", effect = "NoSchedule" }`
-- Taint is applied via `null_resource.gpu_node_taint` in `modules/kubernetes/nvidia/main.tf`
-
-## Git Operations (IMPORTANT)
-- **Git is slow** on this repo due to many files - commands can take 30+ seconds
-- Use `GIT_OPTIONAL_LOCKS=0` prefix if git hangs
-- Always commit only specific files you changed, not everything
-- **ALWAYS ask user before pushing to remote** - never push without explicit confirmation
+## Git Operations
+- **Git is slow** — commands can take 30+ seconds. Use `GIT_OPTIONAL_LOCKS=0` if git hangs.
+- Commit only specific files. **ALWAYS ask user before pushing**.
 
 ## Prometheus Alerts
-- Alert rules are in `modules/kubernetes/monitoring/prometheus_chart_values.tpl`
-- Under `serverFiles.alerting_rules.yml.groups`
+- Rules in `modules/kubernetes/monitoring/prometheus_chart_values.tpl`
 - Groups: "R730 Host", "Nvidia Tesla T4 GPU", "Power", "Cluster"
-- kube-state-metrics provides: `kube_deployment_*`, `kube_statefulset_*`, `kube_daemonset_*`
 
-## Tier System
-- **0-core**: Critical infrastructure (ingress, DNS, VPN, auth)
-- **1-cluster**: Cluster services (Redis, metrics, security)
-- **2-gpu**: GPU workloads (Immich, Ollama, Frigate)
-- **3-edge**: User-facing services
-- **4-aux**: Optional/auxiliary services
-
-### Resource Governance (Kyverno-based)
-Four layers of noisy-neighbor protection, all defined in `modules/kubernetes/kyverno/resource-governance.tf`:
-
-1. **PriorityClasses**: `tier-0-core` (1M) through `tier-4-aux` (200K). `tier-4-aux` uses `preemption_policy=Never`.
-2. **LimitRange defaults** (Kyverno generate): Auto-creates `tier-defaults` LimitRange in namespaces based on tier label. Only affects containers without explicit resources.
-3. **ResourceQuotas** (Kyverno generate): Auto-creates `tier-quota` ResourceQuota in namespaces with tier labels. Excludes namespaces with `resource-governance/custom-quota=true` label.
-4. **Priority injection** (Kyverno mutate): Sets `priorityClassName` on Pods based on namespace tier label.
-
-**Custom quota override**: Add label `resource-governance/custom-quota: "true"` to namespace, then define a custom `kubernetes_resource_quota` in the service's Terraform module. Currently used by: monitoring, crowdsec.
-
-**LimitRange defaults by tier**:
-| Tier | Default Req | Default Limit | Max |
-|------|------------|--------------|-----|
-| 0-core | 100m/128Mi | 2/4Gi | 8/16Gi |
-| 1-cluster | 100m/128Mi | 2/4Gi | 4/8Gi |
-| 2-gpu | 100m/256Mi | 4/8Gi | 8/16Gi |
-| 3-edge | 50m/128Mi | 1/2Gi | 4/8Gi |
-| 4-aux | 25m/64Mi | 500m/1Gi | 2/4Gi |
-
-**ResourceQuota hard limits by tier**:
-| Tier | Req CPU | Req Mem | Lim CPU | Lim Mem | Pods |
-|------|---------|---------|---------|---------|------|
-| 0-core | 8 | 8Gi | 32 | 64Gi | 100 |
-| 1-cluster | 4 | 4Gi | 16 | 32Gi | 30 |
-| 2-gpu | 8 | 8Gi | 48 | 96Gi | 40 |
-| 3-edge | 4 | 4Gi | 16 | 32Gi | 30 |
-| 4-aux | 2 | 2Gi | 8 | 16Gi | 20 |
+## Tier System & Resource Governance
+- **0-core**: Critical infra (ingress, DNS, VPN, auth) | **1-cluster**: Redis, metrics, security | **2-gpu**: GPU workloads | **3-edge**: User-facing | **4-aux**: Optional
+- Kyverno-based governance in `modules/kubernetes/kyverno/resource-governance.tf`:
+  1. PriorityClasses: `tier-0-core` (1M) through `tier-4-aux` (200K, preemption=Never)
+  2. LimitRange defaults (Kyverno generate): auto-created per namespace tier
+  3. ResourceQuotas (Kyverno generate): auto-created per namespace tier (skip with label `resource-governance/custom-quota=true`)
+  4. Priority injection (Kyverno mutate): sets priorityClassName on Pods
+- Custom quota override: monitoring, crowdsec
 
 ---
 
 ## User Preferences
-
-### Calendar
-- **Default calendar**: Nextcloud (always use unless otherwise specified)
-- **Nextcloud URL**: `https://nextcloud.viktorbarzin.me`
-- **CalDAV endpoint**: `https://nextcloud.viktorbarzin.me/remote.php/dav/calendars/<username>/<calendar-name>/`
-
-### Home Assistant
-- **Default smart home**: Home Assistant (always use for smart home control)
-- **Two deployments**:
-  - **ha-london** (default): `https://ha-london.viktorbarzin.me` | Script: `.claude/home-assistant.py` | SSH: `ssh pi@192.168.8.103`, config at `/home/pi/docker/homeAssistant/`
-  - **ha-sofia**: `https://ha-sofia.viktorbarzin.me` | Script: `.claude/home-assistant-sofia.py` | SSH: `ssh vbarzin@192.168.1.8`, config at `/config/`
-- **Aliases**: "ha" or "HA" = ha-london. "ha sofia" or "ha-sofia" = ha-sofia.
-
-### Development
-- **Frontend framework**: Svelte (user is learning it, so use Svelte for all new web apps)
-
-### Pod Monitoring After Updates
-- **Never use `sleep` to wait for pods** — instead, spawn a background subagent (Task tool with `run_in_background: true`) that continuously checks pod state (e.g., `kubectl get pods -n <namespace> -w`) and reports back when the pod is ready or if errors occur. This catches CrashLoopBackOff, ImagePullBackOff, and other failures much sooner than periodic sleep-based polling.
+- **Calendar**: Nextcloud at `https://nextcloud.viktorbarzin.me`
+- **Home Assistant**: ha-london (default) at `https://ha-london.viktorbarzin.me`, ha-sofia at `https://ha-sofia.viktorbarzin.me`. "ha"/"HA" = ha-london.
+- **Frontend**: Svelte for all new web apps
+- **Pod monitoring**: Never use `sleep` — spawn background subagent with `kubectl get pods -w` instead
 
 ---
 
-## Skills & Workflows
-
-Skills are specialized workflows for common tasks. Located in `.claude/skills/`.
-
-### Available Skills
-
-**setup-project** (`.claude/skills/setup-project/SKILL.md`)
-- Deploy new self-hosted services from GitHub repos
-- Automated workflow: Docker image → Terraform module → Deploy
-- Handles database setup, ingress, DNS configuration
-- **When to use**: User provides GitHub URL or wants to deploy a new service
-- **Example**: "Deploy [GitHub repo] to the cluster"
-
-**extend-vm-storage** (`.claude/skills/extend-vm-storage/SKILL.md`)
-- Extend disk storage on K8s node VMs (Proxmox-hosted)
-- Automates: drain → shutdown → resize → boot → expand filesystem → uncordon
-- **When to use**: A k8s node needs more disk space
-- **Example**: "Extend storage on k8s-node2 by 64G"
+## Reference Data
+- `.claude/reference/service-catalog.md` — Full service catalog (70+ services) with Cloudflare domains
+- `.claude/reference/proxmox-inventory.md` — VM table, hardware specs, network topology, GPU config
+- `.claude/reference/github-drone-api.md` — GitHub & Drone CI API patterns with curl examples
+- `.claude/reference/authentik-state.md` — Current applications, groups, users, login sources
 
 ---
 
 ## Service-Specific Notes
 
 ### Authentik (Identity Provider)
-- **Helm Chart**: `authentik` v2025.10.3 from `https://charts.goauthentik.io/`
-- **URL**: `https://authentik.viktorbarzin.me`
-- **API**: `https://authentik.viktorbarzin.me/api/v3/`
-- **API Token**: Stored in `terraform.tfvars` as `authentik_api_token` (non-expiring, superuser, identifier: `claude-code-permanent`). Read with: `grep authentik_api_token terraform.tfvars | cut -d'"' -f2`
-- **Namespace**: `authentik` (tier: cluster)
-- **Architecture**: 3 server replicas + 3 worker replicas + 3 PgBouncer replicas + 1 embedded outpost
-- **Database**: PostgreSQL via `postgresql.dbaas:5432`, pooled through PgBouncer at `pgbouncer.authentik:6432`
-- **Redis**: Shared at `redis.redis.svc.cluster.local`
-- **Terraform**: `modules/kubernetes/authentik/main.tf` (Helm), `pgbouncer.tf` (connection pooling)
-
-#### Authentik API Management
-To call the API, use:
-```bash
-curl -s -H "Authorization: Bearer <TOKEN>" "https://authentik.viktorbarzin.me/api/v3/<endpoint>/"
-```
-
-Key API endpoints:
-- `core/users/` — List/create/update/delete users
-- `core/groups/` — List/create/update/delete groups
-- `core/applications/` — List/create applications
-- `providers/all/` — List all providers (OAuth2, Proxy, etc.)
-- `providers/oauth2/` — OAuth2/OIDC providers specifically
-- `providers/proxy/` — Proxy providers (forward auth)
-- `flows/instances/` — List flows
-- `stages/all/` — List stages
-- `sources/all/` — List sources (Google, GitHub, etc.)
-- `outposts/instances/` — List outposts
-- `propertymappings/all/` — List property mappings
-- `rbac/roles/` — List roles
-
-#### Current Applications (9)
-| Application | Provider Type | Auth Flow |
-|-------------|--------------|-----------|
-| Cloudflare Access | OAuth2/OIDC | explicit consent |
-| Domain wide catch all | Proxy (forward auth) | implicit consent |
-| Grafana | OAuth2/OIDC | implicit consent |
-| Headscale | OAuth2/OIDC | explicit consent |
-| Immich | OAuth2/OIDC | explicit consent |
-| Kubernetes | OAuth2/OIDC (public) | implicit consent |
-| linkwarden | OAuth2/OIDC | explicit consent |
-| Matrix | OAuth2/OIDC | implicit consent |
-| wrongmove | OAuth2/OIDC | implicit consent |
-
-#### Current Groups (9)
-| Group | Parent | Superuser | Purpose |
-|-------|--------|-----------|---------|
-| Allow Login Users | — | No | Parent group for login-permitted users |
-| authentik Admins | — | Yes | Full admin access |
-| authentik Read-only | — | No | Read-only access (has role) |
-| Headscale Users | Allow Login Users | No | VPN access |
-| Home Server Admins | Allow Login Users | No | Server admin access |
-| Wrongmove Users | Allow Login Users | No | Real-estate app access |
-| kubernetes-admins | — | No | K8s cluster-admin RBAC |
-| kubernetes-power-users | — | No | K8s power-user RBAC |
-| kubernetes-namespace-owners | — | No | K8s namespace-owner RBAC |
-
-#### Current Users (7 real users)
-| Username | Name | Type | Groups |
-|----------|------|------|--------|
-| akadmin | authentik Default Admin | internal | authentik Admins, Home Server Admins, Headscale Users |
-| vbarzin@gmail.com | Viktor Barzin | internal | authentik Admins, Home Server Admins, Wrongmove Users, Headscale Users |
-| emil.barzin@gmail.com | Emil Barzin | internal | Home Server Admins, Headscale Users |
-| ancaelena98@gmail.com | Anca Milea | external | Wrongmove Users, Headscale Users |
-| vabbit81@gmail.com | GHEORGHE Milea | external | Headscale Users |
-| valentinakolevabarzina@gmail.com | Валентина Колева-Барзина | internal | Headscale Users |
-| anca.r.cristian10@gmail.com | — | internal | Wrongmove Users |
-| kadir.tugan@gmail.com | Kadir | internal | Wrongmove Users |
-
-#### Login Sources (Social Login)
-- **Google** (OAuth) — user matching by identifier
-- **GitHub** (OAuth) — user matching by email_link
-- **Facebook** (OAuth) — user matching by email_link
-- All use the same authentication flow (`1a779f24`) and enrollment flow (`87572804`)
-
-#### Authorization Flows
-- **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen before redirecting — used for Immich, Linkwarden, Headscale, Cloudflare
-- **Implicit consent** (`default-provider-authorization-implicit-consent`): Auto-redirects without consent — used for Grafana, Matrix, Domain catch-all, Wrongmove
-
-#### Traefik Integration
-- Forward auth middleware: `authentik-forward-auth` in Traefik namespace
-- Outpost endpoint: `http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik`
-- Services opt in via `protected = true` in `ingress_factory`
-- Response headers: `X-authentik-username`, `X-authentik-uid`, `X-authentik-email`, `X-authentik-name`, `X-authentik-groups`, `Set-Cookie`
-
-#### OIDC for Kubernetes API
-- **Issuer**: `https://authentik.viktorbarzin.me/application/o/kubernetes/`
-- **Client ID**: `kubernetes` (public client, no secret)
-- **Username claim**: `email`, **Groups claim**: `groups`
-- **Signing key**: `authentik Self-signed Certificate` (must be assigned to the provider or JWKS will be empty)
-- **Redirect URIs**: Regex mode `http://localhost:.*` and `http://127\.0\.0\.1:.*` (kubelogin picks random ports)
-- **Configured via**: SSH to kube-apiserver manifest (`modules/kubernetes/rbac/apiserver-oidc.tf`)
-- **RBAC module**: `modules/kubernetes/rbac/main.tf` — admin/power-user/namespace-owner roles
-- **Self-service portal**: `modules/kubernetes/k8s-portal/` — SvelteKit app at `https://k8s-portal.viktorbarzin.me`
-- **User definition**: `k8s_users` variable in `terraform.tfvars`
-- **Audit logging**: Enabled via `modules/kubernetes/rbac/audit-policy.tf`, logs at `/var/log/kubernetes/audit.log`
-
-**CRITICAL GOTCHAS when setting up Authentik OIDC for Kubernetes:**
-1. **Signing key MUST be assigned** to the OAuth2 provider. Without it, the JWKS endpoint returns `{}` and kube-apiserver can't validate tokens.
-2. **Email mapping must set `email_verified: True`**. The default Authentik email scope mapping hardcodes `email_verified: False`, which causes kube-apiserver to reject the token with `oidc: email not verified`. Use a custom scope mapping: `return {"email": request.user.email, "email_verified": True}`
-3. **kubelogin needs `--oidc-extra-scope`** for `email`, `profile`, `groups`. Without these, only `openid` is requested and the token lacks the `email` claim, causing `oidc: parse username claims "email": claim not present`.
-4. **Redirect URIs must use regex mode** (`http://localhost:.*`) because kubelogin picks random ports, not just 8000/18000.
-5. **Kubelet static pod manifest changes** require a full cycle to take effect: remove manifest, stop kubelet, remove containers via crictl, re-add manifest, start kubelet. Simple `touch` or kubelet restart is not enough.
-6. **Property mappings endpoint** in Authentik 2025.10.x is `propertymappings/provider/scope/` (not the older `propertymappings/scope/`).
-
-#### Common Management Tasks
-**Add a new OAuth2 application:**
-1. Create OAuth2 provider: `POST /api/v3/providers/oauth2/` with client_id, client_secret, redirect_uris, authorization_flow, etc.
-2. Create application: `POST /api/v3/core/applications/` with name, slug, provider pk
-3. (Optional) Bind to group policy for access control
-
-**Add a user to a group:**
-```bash
-# Get group pk, then PATCH with updated users list
-curl -X PATCH -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
-  "https://authentik.viktorbarzin.me/api/v3/core/groups/<group-pk>/" \
-  -d '{"users": [<existing_user_pks>, <new_user_pk>]}'
-```
-
-**Protect a service with forward auth:**
-Set `protected = true` in the service's `ingress_factory` call in Terraform.
+- **URL**: `https://authentik.viktorbarzin.me` | **API**: `/api/v3/` | **Token**: `authentik_api_token` in tfvars
+- **Architecture**: 3 server + 3 worker + 3 PgBouncer + embedded outpost
+- **Database**: PostgreSQL via `postgresql.dbaas:5432`, PgBouncer at `pgbouncer.authentik:6432`
+- **Traefik integration**: Forward auth via `protected = true` in ingress_factory
+- **OIDC for K8s**: Issuer `https://authentik.viktorbarzin.me/application/o/kubernetes/`, client `kubernetes` (public)
+- For management tasks, current state, and OIDC gotchas: see `authentik` and `authentik-oidc-kubernetes` skills
+- For current apps/groups/users snapshot: see `.claude/reference/authentik-state.md`
 
 ### AFFiNE (Visual Canvas)
-- **Image**: `ghcr.io/toeverything/affine:stable`
-- **Port**: 3010
-- **Requires**: PostgreSQL + Redis
+- **Image**: `ghcr.io/toeverything/affine:stable` | **Port**: 3010 | **Requires**: PostgreSQL + Redis
 - **Migration**: Init container runs `node ./scripts/self-host-predeploy.js`
-- **Storage**: NFS at `/mnt/main/affine` mounted to `/root/.affine/storage` and `/root/.affine/config`
-- **Key env vars**:
-  - `AFFINE_SERVER_EXTERNAL_URL` - Public URL (e.g., `https://affine.viktorbarzin.me`)
-  - `AFFINE_SERVER_HTTPS` - Set to `true` behind TLS ingress
-  - `DATABASE_URL` - PostgreSQL connection string
-  - `REDIS_SERVER_HOST` - Redis hostname
-  - `MAILER_*` - SMTP configuration for email invites
-- **Local-first**: Data stored in browser by default; syncs to server when user creates account
-- **Docs**: https://docs.affine.pro/self-host-affine
+- **Storage**: NFS `/mnt/main/affine` → `/root/.affine/storage` and `/root/.affine/config`
 
-### Wyoming Whisper (STT for Home Assistant)
-- **Image**: `rhasspy/wyoming-whisper:latest`
-- **Port**: 10300/TCP (Wyoming protocol)
-- **Model**: `small-int8` (CPU-optimized, no CUDA variant available from upstream)
-- **Runs on**: GPU node (node_selector gpu=true + nvidia toleration) but uses CPU only
-- **Storage**: NFS at `/mnt/main/whisper` → `/data` (model cache)
-- **Exposure**: Internal only via Traefik TCP entrypoint `whisper-tcp` → IngressRouteTCP
-- **Access**: `10.0.20.202:10300` (Traefik LB IP, no public DNS)
-- **HA Integration**: Wyoming Protocol integration in ha-london, host `10.0.20.202`, port `10300`
-- **No GPU acceleration**: Official image is CPU-only (Debian + PyTorch CPU). The `mib1185/wyoming-faster-whisper-cuda` image exists but requires self-build.
+### Wyoming Whisper (STT)
+- **Image**: `rhasspy/wyoming-whisper:latest` | **Port**: 10300/TCP (Wyoming protocol)
+- **Model**: `small-int8` (CPU-only) | **Access**: `10.0.20.202:10300` (internal, no public DNS)
+- **HA Integration**: Wyoming Protocol in ha-london
 
 ### Gramps Web (Genealogy)
-- **Image**: `ghcr.io/gramps-project/grampsweb:latest`
-- **Port**: 5000
-- **URL**: `https://family.viktorbarzin.me`
-- **Components**: Web app + Celery worker (2 containers in 1 pod)
-- **Requires**: Shared Redis (DB 2 for Celery broker/backend, DB 3 for rate limiting)
-- **Storage**: NFS at `/mnt/main/grampsweb` with sub_paths: users, indexdir, thumbnail_cache, cache, secret, grampsdb, media, tmp
-- **Key env vars**:
-  - `GRAMPSWEB_SECRET_KEY` - Flask secret key (generated via `random_password`)
-  - `GRAMPSWEB_TREE` - Tree name
-  - `GRAMPSWEB_BASE_URL` - Public URL
-  - `GRAMPSWEB_CELERY_CONFIG__broker_url` / `result_backend` - Redis connection
-  - `GRAMPSWEB_REGISTRATION_DISABLED` - Set to `True`
-  - `GRAMPSWEB_EMAIL_*` - SMTP configuration
-  - `GRAMPSWEB_LLM_*` - Ollama AI integration
-- **Celery command**: `celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2`
-- **Registration**: Disabled; first user created via UI setup wizard
+- **Image**: `ghcr.io/gramps-project/grampsweb:latest` | **Port**: 5000 | **URL**: `https://family.viktorbarzin.me`
+- **Components**: Web app + Celery worker (2 containers in 1 pod) | **Redis**: DB 2 (broker), DB 3 (rate limiting)
+- **Storage**: NFS `/mnt/main/grampsweb` with sub_paths
 
-### Loki + Alloy (Centralized Log Collection)
-- **Loki image**: `grafana/loki:3.6.5` (Helm chart, single binary mode)
-- **Alloy image**: `grafana/alloy:v1.13.0` (Helm chart, DaemonSet)
-- **Config files**: `modules/kubernetes/monitoring/loki.tf`, `loki.yaml`, `alloy.yaml`
-- **Port**: 3100/TCP (Loki API)
-- **Storage**: NFS PV at `/mnt/main/loki/loki` (15Gi), WAL on tmpfs (2Gi in-memory)
-- **Memory**: Loki 6Gi limit, Alloy 128Mi per pod (4 worker nodes)
-- **Disk-friendly tuning**: `max_chunk_age: 24h`, `chunk_idle_period: 12h` — holds chunks in memory, flushes ~once/day
-- **Retention**: 7 days (`retention_period: 168h`), compactor enforces deletion
-- **Crash policy**: WAL on tmpfs — up to 24h log loss on crash (alerts still fire in real-time)
-- **Ruler**: Evaluates LogQL alert rules, fires to `http://prometheus-alertmanager.monitoring.svc.cluster.local:9093`
+### Loki + Alloy (Log Collection)
+- **Loki**: `grafana/loki:3.6.5` (single binary, 6Gi RAM, 7d retention)
+- **Alloy**: `grafana/alloy:v1.13.0` (DaemonSet, 128Mi/pod)
+- **Storage**: NFS PV `/mnt/main/loki/loki` (15Gi), WAL on tmpfs (2Gi)
 - **Alert rules**: HighErrorRate, PodCrashLoopBackOff, OOMKilled (ConfigMap `loki-alert-rules`)
-- **Grafana**: Datasource UID `P8E80F9AEF21F6940`, dashboard "Loki Kubernetes Logs" (stored in MySQL, not file-provisioned)
-- **Sysctl DaemonSet**: `sysctl-inotify` sets `fs.inotify.max_user_watches=1048576` on all nodes (required for Alloy fsnotify)
-- **Disabled components**: gateway, chunksCache, resultsCache (not needed for single binary)
-- **Key paths**: Compactor at `/var/loki/compactor`, ruler scratch at `/var/loki/scratch` (must be under `/var/loki` — root FS is read-only)
-- **Querying**: Grafana Explore with LogQL, e.g. `{namespace="monitoring"} |= "error"`
-- **Troubleshooting**: If "entry too far behind" errors on first start, restart Alloy DaemonSet (`kubectl rollout restart ds -n monitoring alloy`) — Alloy reads historical logs on first boot, which Loki rejects; clears after restart
+- **Troubleshooting**: "entry too far behind" on first start → restart Alloy DaemonSet
 
 ### OpenClaw (AI Agent Gateway)
-- **Image**: `ghcr.io/openclaw/openclaw:2026.2.9`
-- **Port**: 18789
-- **URL**: `https://openclaw.viktorbarzin.me` (authentik-protected)
-- **Namespace**: `openclaw` (tier: aux)
-- **Formerly**: `moltbot` — renamed in Feb 2026
-- **Architecture**: Single pod with init container (tools download + repo clone) + main container (OpenClaw gateway)
-- **Init container**: Downloads kubectl v1.34.2, terraform 1.14.5, git-crypt; clones infra repo; runs terraform init
-- **ServiceAccount**: `openclaw` with `cluster-admin` ClusterRoleBinding (for managing cluster resources)
-- **Storage**: NFS at `/mnt/main/openclaw/workspace` (git repo) and `/mnt/main/openclaw/data` (persistent data)
-- **Config**: `openclaw.json` ConfigMap with model providers (Gemini, Ollama, Llama API), tool permissions, and agent defaults
-- **Variables**: `openclaw_ssh_key`, `openclaw_skill_secrets` in `terraform.tfvars`
-- **Skill secrets**: Home Assistant tokens (london + sofia), Uptime Kuma password — passed as env vars
-- **Model providers**: Gemini (gemini-2.5-flash), Ollama (qwen2.5-coder:14b, deepseek-r1:14b), Llama API (Llama-3.3-70B, Llama-4-Scout/Maverick)
+- **Image**: `ghcr.io/openclaw/openclaw:2026.2.9` | **Port**: 18789 | **URL**: `https://openclaw.viktorbarzin.me`
+- **Init container**: Downloads kubectl, terraform, git-crypt; clones infra repo
+- **ServiceAccount**: `openclaw` with `cluster-admin` ClusterRoleBinding
+- **Model providers**: Gemini (gemini-2.5-flash), Ollama (qwen2.5-coder:14b, deepseek-r1:14b), Llama API
 
-### Poison Fountain (Anti-AI Scraping Service)
-- **Image**: `python:3.12-slim` (runs custom `server.py` from ConfigMap)
-- **Port**: 8080
-- **URL**: `https://poison.viktorbarzin.me` (public, no auth)
-- **Namespace**: `poison-fountain` (tier: aux)
-- **Stack**: `stacks/poison-fountain/`
-- **Architecture**: 1 Deployment (Python HTTP server) + 1 CronJob (fetcher, every 6h)
-- **Storage**: NFS at `/mnt/main/poison-fountain` — `cache/` subdir for poison docs (chmod 777 for curl uid 101)
-- **Endpoints**:
-  - `/auth` — ForwardAuth: checks User-Agent, returns 200 (allow) or 403 (block AI bots)
-  - `/article/*` — Tarpit: drip-feeds poison content at ~100 bytes/sec (DRIP_BYTES=50, DRIP_DELAY=0.5s)
-  - `/healthz` — Health check
-- **CronJob**: Fetches 50 documents from `rnsaffn.com/poison2/` using `--http1.1` (HTTP/2 hangs)
-- **Ingress**: Uses `anti_ai_scraping = false` (doesn't protect itself), `skip_default_rate_limit = true`, `exclude_crowdsec = true`
-- **DNS**: `poison.viktorbarzin.me` in `cloudflare_non_proxied_names`
-- **Traefik middlewares** (in `stacks/platform/modules/traefik/middleware.tf`):
-  - `ai-bot-block` — ForwardAuth to poison-fountain `/auth`
-  - `anti-ai-headers` — X-Robots-Tag: noai, noimageai
-  - `anti-ai-trap-links` — rewrite-body plugin injecting 5 hidden links before `</body>`
+## Service Versions (as of 2026-02)
+Immich v2.4.1 | AFFiNE stable | Whisper latest | Loki 3.6.5 | Alloy v1.13.0 | OpenClaw 2026.2.9
