@@ -27,11 +27,11 @@ resource "kubernetes_resource_quota" "authentik" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "8"
-      "requests.memory" = "8Gi"
-      "limits.cpu"      = "24"
-      "limits.memory"   = "48Gi"
-      pods              = "30"
+      "requests.cpu"    = "16"
+      "requests.memory" = "16Gi"
+      "limits.cpu"      = "48"
+      "limits.memory"   = "96Gi"
+      pods              = "50"
     }
   }
 }
