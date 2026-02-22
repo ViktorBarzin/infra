@@ -555,7 +555,7 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
 
             container {
               name  = "healthcheck"
-              image = "bitnami/kubectl:1.34"
+              image = "bitnami/kubectl:latest"
               command = ["bash", "-c", <<-EOF
                 # Find the openclaw pod
                 POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
