@@ -952,11 +952,18 @@ check_dns() {
     section 21 "DNS Resolution"
     local internal_ok=false external_ok=false detail=""
 
-    if dig @10.0.20.101 viktorbarzin.me +short +time=3 +tries=1 &>/dev/null; then
-        internal_ok=true
-    fi
-    if dig @10.0.20.101 google.com +short +time=3 +tries=1 &>/dev/null; then
-        external_ok=true
+    # Test DNS from inside the cluster via kubectl exec (MetalLB IPs may not be
+    # reachable from outside the L2 network)
+    local dns_pod
+    dns_pod=$($KUBECTL get pods -n technitium -l app=technitium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+    if [[ -n "$dns_pod" ]]; then
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup viktorbarzin.me 127.0.0.1 &>/dev/null; then
+            internal_ok=true
+        fi
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup google.com 127.0.0.1 &>/dev/null; then
+            external_ok=true
+        fi
     fi
 
     if [[ "$internal_ok" == true && "$external_ok" == true ]]; then
@@ -974,7 +981,7 @@ check_dns() {
         json_add "dns" "WARN" "$detail"
     else
         [[ "$QUIET" == true ]] && section_always 21 "DNS Resolution"
-        fail "DNS server 10.0.20.101 not resolving — both internal and external failed"
+        fail "DNS server (Technitium) not resolving — both internal and external failed"
         json_add "dns" "FAIL" "Both failed"
     fi
 }

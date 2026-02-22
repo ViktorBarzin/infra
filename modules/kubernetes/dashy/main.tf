@@ -66,6 +66,16 @@ resource "kubernetes_deployment" "dashy" {
           image = "lissy93/dashy:latest"
           name  = "dashy"
 
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "2Gi"
+            }
+          }
           port {
             container_port = 8080
           }
