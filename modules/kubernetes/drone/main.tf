@@ -33,9 +33,9 @@ resource "kubernetes_resource_quota" "drone" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "48"
-      "limits.memory"   = "96Gi"
-      pods              = "30"
+      "limits.cpu"      = "64"
+      "limits.memory"   = "128Gi"
+      pods              = "60"
     }
   }
 }
