@@ -14,7 +14,7 @@ resource "kubernetes_namespace" "authentik" {
   metadata {
     name = "authentik"
     labels = {
-      tier                                = var.tier
+      tier                               = var.tier
       "resource-governance/custom-quota" = "true"
     }
   }

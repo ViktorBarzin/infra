@@ -8,7 +8,20 @@ locals {
   }
 }
 
-module "reloader" {
-  source = "./module"
-  tier                           = local.tiers.aux
+resource "kubernetes_namespace" "crowdsec" {
+  metadata {
+    name = "reloader"
+    labels = {
+      tier = local.tiers.aux
+    }
+  }
+}
+resource "helm_release" "reloader" {
+  namespace        = kubernetes_namespace.crowdsec.metadata[0].name
+  create_namespace = false
+  name             = "reloader"
+  atomic           = true
+
+  repository = "https://stakater.github.io/stakater-charts"
+  chart      = "reloader"
 }

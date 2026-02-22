@@ -13,11 +13,292 @@ locals {
   }
 }
 
-module "url" {
-  source = "./module"
-  tls_secret_name                = var.tls_secret_name
-  geolite_license_key            = var.url_shortener_geolite_license_key
-  api_key                        = var.url_shortener_api_key
-  mysql_password                 = var.url_shortener_mysql_password
-  tier                           = local.tiers.aux
+## Setup
+## Need to manually add
+## user: shlink
+## password: var.url_shortener_mysql_password
+## to the mysql tier
+
+variable "domain" {
+  default = "url.viktorbarzin.me"
+}
+
+resource "kubernetes_namespace" "shlink" {
+  metadata {
+    name = "url"
+    labels = {
+      "istio-injection" : "disabled"
+      tier = local.tiers.aux
+    }
+  }
+}
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_secret" "mysql_config" {
+  metadata {
+    name      = "mysql-config"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  data = {
+    "DB_USER"     = "shlink"
+    "DB_PASSWORD" = var.url_shortener_mysql_password
+  }
+}
+
+# this depends on the mysql installation
+# resource "kubectl_manifest" "mysql-user" {
+#   yaml_body = <<-YAML
+#     apiVersion: mysql.presslabs.org/v1alpha1
+#     kind: MysqlUser
+#     metadata:
+#       name: shlink
+#      namespace = kubernetes_namespace.shlink.metadata[0].name
+#     spec:
+#       user: shlink
+#       clusterRef:
+#         name: mysql-cluster
+#        namespace = kubernetes_namespace.shlink.metadata[0].name
+#       password:
+#         name: mysql-config
+#         key: password
+#       allowedHosts:
+#         - '%'
+#   YAML
+#   # permissions:
+#   #   - schema: db-name-in-mysql
+#   #     tables: ["table1", "table2"]
+#   #     permissions:
+#   #       - SELECT
+#   #       - UPDATE
+#   #       - CREATE
+#   # allowedHosts:
+#   #   - localhost
+# }
+
+resource "kubernetes_deployment" "shlink" {
+  metadata {
+    name      = "shlink"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+    labels = {
+      run  = "shlink"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        run = "shlink"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          run = "shlink"
+        }
+      }
+      spec {
+        container {
+          image = "shlinkio/shlink:stable"
+          name  = "shlink"
+          env {
+            name  = "DEFAULT_DOMAIN"
+            value = var.domain
+          }
+          env {
+            name  = "SHORT_DOMAIN_SCHEMA"
+            value = "https"
+          }
+          env {
+            name  = "GEOLITE_LICENSE_KEY"
+            value = var.url_shortener_geolite_license_key
+          }
+          # DB config
+          env {
+            name  = "DB_DRIVER"
+            value = "mysql"
+          }
+          env {
+            name  = "DB_HOST"
+            value = "mysql.dbaas.svc.cluster.local"
+          }
+          # env {
+          #   name  = "DB_USER"
+          #   value = "shlink"
+          # }
+          env_from {
+            secret_ref {
+              name = "mysql-config"
+            }
+          }
+          # env {
+          #   name  = "DB_PASSWORD"
+          #   value = var.url_shortener_mysql_password
+          # }
+          # resources {
+          #   limits = {
+          #     cpu    = "0.5"
+          #     memory = "512Mi"
+          #   }
+          #   requests = {
+          #     cpu    = "250m"
+          #     memory = "50Mi"
+          #   }
+          # }
+          port {
+            container_port = 8080
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "shlink" {
+  metadata {
+    name      = "shlink"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+    labels = {
+      "run" = "shlink"
+    }
+  }
+
+  spec {
+    selector = {
+      run = "shlink"
+    }
+    port {
+      name        = "http"
+      port        = "80"
+      target_port = "8080"
+    }
+  }
+}
+
+module "ingress" {
+  source            = "../../modules/kubernetes/ingress_factory"
+  namespace         = kubernetes_namespace.shlink.metadata[0].name
+  name              = "url"
+  service_name      = "shlink"
+  tls_secret_name   = var.tls_secret_name
+  extra_annotations = {}
+}
+
+
+# Shlink web client
+
+resource "kubernetes_config_map" "shlink-web" {
+  metadata {
+    name      = "shlink-web-servers"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+
+  data = {
+    "servers.json" = jsonencode([{
+      name   = "Main"
+      url    = "https://url.viktorbarzin.me"
+      apiKey = var.url_shortener_api_key
+    }])
+  }
+}
+
+resource "kubernetes_deployment" "shlink-web" {
+  metadata {
+    name      = "shlink-web"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+    labels = {
+      run  = "shlink-web"
+      tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        run = "shlink-web"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          run = "shlink-web"
+        }
+      }
+      spec {
+        container {
+          image = "shlinkio/shlink-web-client"
+          name  = "shlink-web"
+          volume_mount {
+            mount_path = "/usr/share/nginx/html/servers.json"
+            sub_path   = "servers.json"
+            name       = "config"
+          }
+          resources {
+            limits = {
+              cpu    = "0.5"
+              memory = "512Mi"
+            }
+            requests = {
+              cpu    = "250m"
+              memory = "50Mi"
+            }
+          }
+          port {
+            container_port = 8080
+          }
+        }
+        volume {
+          name = "config"
+          config_map {
+            name = "shlink-web-servers"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "shlink-web" {
+  metadata {
+    name      = "shlink-web"
+    namespace = kubernetes_namespace.shlink.metadata[0].name
+    labels = {
+      "run" = "shlink-web"
+    }
+  }
+
+  spec {
+    selector = {
+      run = "shlink-web"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 8080
+    }
+  }
+}
+
+module "ingress-web" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
+  name            = "shlink"
+  service_name    = "shlink-web"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
 }
