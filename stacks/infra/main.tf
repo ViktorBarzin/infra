@@ -141,22 +141,33 @@ module "docker-registry-template" {
 
   # Setup registry config and start container
   provision_cmds = [
-    "mkdir -p /etc/docker-registry",
-    format("echo %s | base64 -d > /etc/docker-registry/config.yml",
+    # Install and enable QEMU guest agent for remote management
+    "apt-get install -y qemu-guest-agent",
+    "systemctl enable qemu-guest-agent",
+    "systemctl start qemu-guest-agent",
+    # Stop host nginx — we run nginx inside Docker instead
+    "systemctl stop nginx || true",
+    "systemctl disable nginx || true",
+    # Create directory structure
+    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno",
+    # Write Docker Compose file
+    format("echo %s | base64 -d > /opt/registry/docker-compose.yml",
+      base64encode(file("${path.root}/../../modules/docker-registry/docker-compose.yml"))
+    ),
+    # Write nginx config
+    format("echo %s | base64 -d > /opt/registry/nginx.conf",
+      base64encode(file("${path.root}/../../modules/docker-registry/nginx_registry.conf"))
+    ),
+    # Write Docker Hub registry config (with auth)
+    format("echo %s | base64 -d > /opt/registry/config-dockerhub.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config.yaml", {
           password = var.dockerhub_registry_password
-          }
-        )
+        })
       )
     ),
-    "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    # Hourly restart cron removed - it wiped the in-memory blobdescriptor cache every hour,
-    # causing low cache hit rates on the pull-through proxy. Docker containers use --restart always.
-    "docker run -p 5000:5000 -p 5001:5001 -d --restart always --name registry -v /etc/docker-registry/config.yml:/etc/docker/registry/config.yml registry:2",
-    # ghcr.io proxy
-    "mkdir -p /etc/docker-registry/ghcr",
-    format("echo %s | base64 -d > /etc/docker-registry/ghcr/config.yml",
+    # Write GHCR registry config
+    format("echo %s | base64 -d > /opt/registry/config-ghcr.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config-proxy.yaml.tpl", {
           name       = "ghcr"
@@ -164,11 +175,8 @@ module "docker-registry-template" {
         })
       )
     ),
-    "docker run -p 5010:5000 -d --restart always --name registry-ghcr -v /etc/docker-registry/ghcr/config.yml:/etc/docker/registry/config.yml registry:2",
-    "( crontab -l 2>/dev/null; echo '5 3 * * 0 /usr/bin/docker exec registry-ghcr registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    # quay.io proxy
-    "mkdir -p /etc/docker-registry/quay",
-    format("echo %s | base64 -d > /etc/docker-registry/quay/config.yml",
+    # Write Quay registry config
+    format("echo %s | base64 -d > /opt/registry/config-quay.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config-proxy.yaml.tpl", {
           name       = "quay"
@@ -176,11 +184,8 @@ module "docker-registry-template" {
         })
       )
     ),
-    "docker run -p 5020:5000 -d --restart always --name registry-quay -v /etc/docker-registry/quay/config.yml:/etc/docker/registry/config.yml registry:2",
-    "( crontab -l 2>/dev/null; echo '10 3 * * 0 /usr/bin/docker exec registry-quay registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    # registry.k8s.io proxy
-    "mkdir -p /etc/docker-registry/k8s",
-    format("echo %s | base64 -d > /etc/docker-registry/k8s/config.yml",
+    # Write registry.k8s.io registry config
+    format("echo %s | base64 -d > /opt/registry/config-k8s.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config-proxy.yaml.tpl", {
           name       = "k8s"
@@ -188,11 +193,8 @@ module "docker-registry-template" {
         })
       )
     ),
-    "docker run -p 5030:5000 -d --restart always --name registry-k8s -v /etc/docker-registry/k8s/config.yml:/etc/docker/registry/config.yml registry:2",
-    "( crontab -l 2>/dev/null; echo '15 3 * * 0 /usr/bin/docker exec registry-k8s registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    # reg.kyverno.io proxy
-    "mkdir -p /etc/docker-registry/kyverno",
-    format("echo %s | base64 -d > /etc/docker-registry/kyverno/config.yml",
+    # Write reg.kyverno.io registry config
+    format("echo %s | base64 -d > /opt/registry/config-kyverno.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config-proxy.yaml.tpl", {
           name       = "kyverno"
@@ -200,22 +202,43 @@ module "docker-registry-template" {
         })
       )
     ),
-    "docker run -p 5040:5000 -d --restart always --name registry-kyverno -v /etc/docker-registry/kyverno/config.yml:/etc/docker/registry/config.yml registry:2",
-    "( crontab -l 2>/dev/null; echo '20 3 * * 0 /usr/bin/docker exec registry-kyverno registry garbage-collect -m /etc/docker/registry/config.yml' ) | crontab -",
-    # Setup the registry nginx config; We want clients to connect via the nginx to serialize requests for the same blobs
-    # Otherwise race conditions lead to corrupt blobs
-    "mkdir -p /var/cache/nginx/registry",
-    format("echo %s | base64 -d > /etc/nginx/conf.d/registry.conf",
-      base64encode(
-        templatefile("${path.root}/../../modules/docker-registry/nginx_registry.conf", {})
-      )
-    ),
-    "docker run -d --restart always --net host --name registry-ui -e NGINX_LISTEN_PORT=8080 -e NGINX_PROXY_PASS_URL=http://127.0.0.1:5000 -e DELETE_IMAGES=true -e SINGLE_REGISTRY=true -e SHOW_CONTENT_DIGEST=true -e SHOW_CATALOG_NB_TAGS=true -e CATALOG_ELEMENTS_LIMIT=1000 -e TAGLIST_PAGE_SIZE=100 -e REGISTRY_TITLE=viktorbarzin.me joxit/docker-registry-ui:latest",
-    # Deploy tag cleanup script (keep last 10 tags per image) and schedule daily at 2am before weekly GC
-    format("echo %s | base64 -d > /etc/docker-registry/cleanup-tags.sh && chmod +x /etc/docker-registry/cleanup-tags.sh",
+    # Write tag cleanup script
+    format("echo %s | base64 -d > /opt/registry/cleanup-tags.sh && chmod +x /opt/registry/cleanup-tags.sh",
       base64encode(file("${path.root}/../../modules/docker-registry/cleanup-tags.sh"))
     ),
-    "( crontab -l 2>/dev/null; echo '0 2 * * * python3 /etc/docker-registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
+    # Create systemd unit for docker compose
+    format("echo %s | base64 -d > /etc/systemd/system/docker-compose-registry.service",
+      base64encode(<<-UNIT
+[Unit]
+Description=Docker Compose Registry Stack
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/registry
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+      )
+    ),
+    # Enable and start the registry stack
+    "systemctl daemon-reload",
+    "systemctl enable docker-compose-registry.service",
+    "systemctl start docker-compose-registry.service",
+    # Cron: garbage collection (weekly, Sunday 3am, staggered per registry)
+    "( crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/bin/docker exec registry-dockerhub registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '5 3 * * 0 /usr/bin/docker exec registry-ghcr registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '10 3 * * 0 /usr/bin/docker exec registry-quay registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '15 3 * * 0 /usr/bin/docker exec registry-k8s registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '20 3 * * 0 /usr/bin/docker exec registry-kyverno registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    # Cron: tag cleanup (daily 2am, keep last 10 tags per image)
+    "( crontab -l 2>/dev/null; echo '0 2 * * * python3 /opt/registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
   ]
 }
 
@@ -234,18 +257,18 @@ module "docker-registry-vm" {
   template_name  = "docker-registry-template"
   vm_name        = "docker-registry"
   cisnippet_name = "docker-registry.yaml"
+  agent          = 1
 
   vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
   bridge         = "vmbr1"
   vlan_tag       = "20"
   ipconfig0      = "ip=10.0.20.10/24,gw=10.0.20.1"
-  # ports:
-  # 5000 -> registry (docker.io proxy)
-  # 5001 -> metrics
-  # 5002 -> nginx proxy <-- use this to prevent races on the same blobs
-  # 5010 -> registry-ghcr (ghcr.io proxy)
-  # 5020 -> registry-quay (quay.io proxy)
-  # 5030 -> registry-k8s (registry.k8s.io proxy)
-  # 5040 -> registry-kyverno (reg.kyverno.io proxy)
+  # All ports go through nginx for request serialization (proxy_cache_lock):
+  # 5000 -> nginx -> registry-dockerhub (docker.io proxy)
+  # 5001 -> registry-dockerhub direct (Prometheus metrics)
+  # 5010 -> nginx -> registry-ghcr (ghcr.io proxy)
+  # 5020 -> nginx -> registry-quay (quay.io proxy)
+  # 5030 -> nginx -> registry-k8s (registry.k8s.io proxy)
+  # 5040 -> nginx -> registry-kyverno (reg.kyverno.io proxy)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
 }
