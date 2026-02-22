@@ -539,7 +539,7 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
     }
   }
   spec {
-    schedule                      = "*/30 * * * *"
+    schedule                      = "0 */8 * * *"
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
