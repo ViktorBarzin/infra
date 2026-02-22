@@ -71,6 +71,10 @@ variable "skip_default_rate_limit" {
   type    = bool
   default = false
 }
+variable "anti_ai_scraping" {
+  type    = bool
+  default = true
+}
 
 locals {
   effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
@@ -109,6 +113,10 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
+        var.anti_ai_scraping ? "traefik-ai-bot-block@kubernetescrd" : null,
+        var.anti_ai_scraping ? "traefik-anti-ai-headers@kubernetescrd" : null,
+        var.anti_ai_scraping ? "traefik-strip-accept-encoding@kubernetescrd" : null,
+        var.anti_ai_scraping ? "traefik-anti-ai-trap-links@kubernetescrd" : null,
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         var.rybbit_site_id != null ? "traefik-strip-accept-encoding@kubernetescrd" : null,
