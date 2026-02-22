@@ -45,3 +45,7 @@ modules/kubernetes/frigate/config.yaml
 .claude/._*
 
 ._*
+
+# Terragrunt
+.terragrunt-cache/
+state/
