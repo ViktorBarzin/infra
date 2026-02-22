@@ -26,12 +26,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# module "dockerhub_creds" {
-#   source    = "../../modules/kubernetes/dockerhub_secret"
-#  namespace = kubernetes_namespace.travel.metadata[0].name
-#   password  = var.dockerhub_password
-# }
-
 resource "kubernetes_deployment" "blog" {
   metadata {
     name      = "travel-blog"
