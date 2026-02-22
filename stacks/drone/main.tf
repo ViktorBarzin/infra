@@ -322,7 +322,7 @@ resource "kubernetes_deployment" "drone_runner" {
             value = "true"
           }
           env {
-            name  = "DRONE_IMAGES_CLONE"
+            name  = "DRONE_IMAGE_CLONE"
             value = "alpine/git:latest"
           }
         }
