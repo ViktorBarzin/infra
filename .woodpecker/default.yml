@@ -1,13 +1,18 @@
 when:
   event: push
 
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      attempts: 5
+      backoff: 10s
+
 steps:
   - name: prepare
     image: alpine
     commands:
       - "apk update && apk add jq curl git git-crypt"
-      - "for i in 1 2 3 4 5; do git clone https://github.com/ViktorBarzin/infra.git . && break || echo \"Clone attempt $i failed, retrying in 10s...\" && sleep 10; done"
-      - "git checkout $CI_COMMIT_SHA"
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
       - "git-crypt unlock /tmp/key"
