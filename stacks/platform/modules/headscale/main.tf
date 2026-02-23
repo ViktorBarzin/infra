@@ -164,6 +164,12 @@ resource "kubernetes_deployment" "headscale" {
             value = "kekekekeke"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

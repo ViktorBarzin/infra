@@ -413,6 +413,12 @@ resource "kubernetes_deployment" "mailserver" {
           name = "var-run-dovecot"
           empty_dir {}
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

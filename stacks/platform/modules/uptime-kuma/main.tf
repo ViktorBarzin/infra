@@ -83,6 +83,12 @@ resource "kubernetes_deployment" "uptime-kuma" {
             path   = "/mnt/main/uptime-kuma"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

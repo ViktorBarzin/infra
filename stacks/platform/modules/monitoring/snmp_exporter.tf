@@ -70,6 +70,12 @@ resource "kubernetes_deployment" "snmp-exporter" {
             name = "snmp-exporter-yaml"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
