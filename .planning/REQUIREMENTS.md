@@ -76,31 +76,31 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHED-01 | — | Pending |
-| EXTR-01 | — | Pending |
-| EXTR-02 | — | Pending |
-| EXTR-03 | — | Pending |
-| EXTR-04 | — | Pending |
-| EXTR-05 | — | Pending |
-| PRXY-01 | — | Pending |
-| PRXY-02 | — | Pending |
-| PRXY-03 | — | Pending |
-| PRXY-04 | — | Pending |
-| PRXY-05 | — | Pending |
-| HLTH-01 | — | Pending |
-| HLTH-02 | — | Pending |
-| HLTH-03 | — | Pending |
-| FRNT-01 | — | Pending |
-| FRNT-02 | — | Pending |
-| FRNT-03 | — | Pending |
-| DEPL-01 | — | Pending |
-| DEPL-02 | — | Pending |
+| SCHED-01 | Phase 2 | Pending |
+| EXTR-01 | Phase 3 | Pending |
+| EXTR-02 | Phase 3 | Pending |
+| EXTR-03 | Phase 3 | Pending |
+| EXTR-04 | Phase 6 | Pending |
+| EXTR-05 | Phase 4 | Pending |
+| PRXY-01 | Phase 5 | Pending |
+| PRXY-02 | Phase 5 | Pending |
+| PRXY-03 | Phase 5 | Pending |
+| PRXY-04 | Phase 6 | Pending |
+| PRXY-05 | Phase 6 | Pending |
+| HLTH-01 | Phase 4 | Pending |
+| HLTH-02 | Phase 4 | Pending |
+| HLTH-03 | Phase 4 | Pending |
+| FRNT-01 | Phase 7 | Pending |
+| FRNT-02 | Phase 7 | Pending |
+| FRNT-03 | Phase 8 | Pending |
+| DEPL-01 | Phase 1 | Pending |
+| DEPL-02 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19 ⚠️
+- Mapped to phases: 19
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-23*
-*Last updated: 2026-02-23 after initial definition*
+*Last updated: 2026-02-23 after roadmap creation — all 19 requirements mapped*
