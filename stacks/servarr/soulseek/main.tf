@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "nfs_server" { type = string }
 
 
 resource "kubernetes_deployment" "soulseek" {
@@ -59,14 +60,14 @@ resource "kubernetes_deployment" "soulseek" {
           name = "config"
           nfs {
             path   = "/mnt/main/servarr/lidarr"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "downloads"
           nfs {
             path   = "/mnt/main/servarr/lidarr"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

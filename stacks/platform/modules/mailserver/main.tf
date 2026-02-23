@@ -4,6 +4,7 @@ variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
 variable "sasl_passwd" {} # For sendgrid i.e relayhost
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "mailserver" {
   metadata {
@@ -106,7 +107,7 @@ resource "kubernetes_config_map" "mailserver_config" {
         }
     }
     EOF
-    fail2ban_conf = <<-EOF
+    fail2ban_conf       = <<-EOF
     [DEFAULT]
 
     #logtarget = /var/log/fail2ban.log
@@ -393,7 +394,7 @@ resource "kubernetes_deployment" "mailserver" {
           name = "data"
           nfs {
             path   = "/mnt/main/mailserver"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
           # iscsi {
           #   target_portal = "iscsi.viktorbarzin.lan:3260"

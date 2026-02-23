@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "nfs_server" { type = string }
 
 
 resource "kubernetes_deployment" "prowlarr" {
@@ -64,14 +65,14 @@ resource "kubernetes_deployment" "prowlarr" {
           name = "data"
           nfs {
             path   = "/mnt/main/servarr/prowlarr"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "downloads"
           nfs {
             path   = "/mnt/main/servarr/downloads"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

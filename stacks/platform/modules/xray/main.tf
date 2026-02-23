@@ -186,109 +186,36 @@ resource "kubernetes_service" "xray-reality" {
   }
 }
 
-resource "kubernetes_ingress_v1" "ingress" {
-  metadata {
-    namespace = kubernetes_namespace.xray.metadata[0].name
-    name      = "xray"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
+module "ingress_ws" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.xray.metadata[0].name
+  name            = "xray-ws"
+  service_name    = "xray"
+  host            = "xray-ws"
+  port            = 8443
+  tls_secret_name = var.tls_secret_name
+}
 
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["xray-ws.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "xray-ws.viktorbarzin.me"
-      http {
-        path {
-          backend {
-            service {
-              name = "xray"
-              port {
-                number = 8443
-
-              }
-            }
-          }
-        }
-      }
-    }
+module "ingress_grpc" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.xray.metadata[0].name
+  name            = "xray-grpc"
+  service_name    = "xray"
+  host            = "xray-grpc"
+  port            = 9443
+  tls_secret_name = var.tls_secret_name
+  ingress_path    = ["/grpc-vpn"]
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/service.serversscheme" = "h2c"
   }
 }
 
-resource "kubernetes_ingress_v1" "ingress-grpc" {
-  metadata {
-    namespace = kubernetes_namespace.xray.metadata[0].name
-    name      = "xray-grpc"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares"    = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints"    = "websecure"
-      "traefik.ingress.kubernetes.io/service.serversscheme" = "h2c"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["xray-grpc.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "xray-grpc.viktorbarzin.me"
-      http {
-        path {
-          path      = "/grpc-vpn"
-          path_type = "Prefix"
-          backend {
-            service {
-              name = "xray"
-              port {
-                number = 9443
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-resource "kubernetes_ingress_v1" "ingress-vless" {
-  metadata {
-    namespace = kubernetes_namespace.xray.metadata[0].name
-    name      = "xray-vless"
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["xray-vless.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "xray-vless.viktorbarzin.me"
-      http {
-        path {
-          backend {
-            service {
-              name = "xray"
-              port {
-                number = 6443
-
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+module "ingress_vless" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.xray.metadata[0].name
+  name            = "xray-vless"
+  service_name    = "xray"
+  host            = "xray-vless"
+  port            = 6443
+  tls_secret_name = var.tls_secret_name
 }

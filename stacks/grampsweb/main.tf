@@ -1,15 +1,10 @@
 variable "tls_secret_name" { type = string }
 variable "mailserver_accounts" { type = map(any) }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "ollama_host" { type = string }
+variable "mail_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "grampsweb" {
   metadata {
@@ -43,15 +38,15 @@ locals {
     },
     {
       name  = "GRAMPSWEB_CELERY_CONFIG__broker_url"
-      value = "redis://redis.redis.svc.cluster.local:6379/2"
+      value = "redis://${var.redis_host}:6379/2"
     },
     {
       name  = "GRAMPSWEB_CELERY_CONFIG__result_backend"
-      value = "redis://redis.redis.svc.cluster.local:6379/2"
+      value = "redis://${var.redis_host}:6379/2"
     },
     {
       name  = "GRAMPSWEB_RATELIMIT_STORAGE_URI"
-      value = "redis://redis.redis.svc.cluster.local:6379/3"
+      value = "redis://${var.redis_host}:6379/3"
     },
     {
       name  = "GRAMPSWEB_BASE_URL"
@@ -63,7 +58,7 @@ locals {
     },
     {
       name  = "GRAMPSWEB_EMAIL_HOST"
-      value = "mail.viktorbarzin.me"
+      value = var.mail_host
     },
     {
       name  = "GRAMPSWEB_EMAIL_PORT"
@@ -91,7 +86,7 @@ locals {
     },
     {
       name  = "GRAMPSWEB_LLM_BASE_URL"
-      value = "http://ollama.ollama.svc.cluster.local:11434/v1"
+      value = "http://${var.ollama_host}:11434/v1"
     },
     {
       name  = "GRAMPSWEB_LLM_MODEL"
@@ -239,7 +234,7 @@ resource "kubernetes_deployment" "grampsweb" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/grampsweb"
           }
         }
@@ -276,4 +271,5 @@ module "ingress" {
   service_name    = "grampsweb"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
+  protected       = true
 }

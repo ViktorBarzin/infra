@@ -3,21 +3,14 @@ variable "immich_postgresql_password" { type = string }
 variable "immich_frame_api_key" { type = string }
 variable "homepage_credentials" { type = map(any) }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 variable "immich_version" {
   type = string
   # Change me to upgrade
   default = "v2.5.6"
 }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
 
 
 module "tls_secret" {
@@ -104,7 +97,7 @@ resource "kubernetes_deployment" "immich_server" {
           }
           env {
             name  = "REDIS_HOSTNAME"
-            value = "redis.redis.svc.cluster.local"
+            value = var.redis_host
           }
 
           liveness_probe {
@@ -176,7 +169,7 @@ resource "kubernetes_deployment" "immich_server" {
         # volume {
         #   name = "library-old"
         #   nfs {
-        #     server = "10.0.10.15"
+        #     server = var.nfs_server
         #     path   = "/mnt/main/immich/immich/"
         #   }
         # }
@@ -184,42 +177,42 @@ resource "kubernetes_deployment" "immich_server" {
         volume {
           name = "backups"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/immich/immich/backups"
           }
         }
         volume {
           name = "encoded-video"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/immich/immich/encoded-video"
           }
         }
         volume {
           name = "library"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/immich/immich/library"
           }
         }
         volume {
           name = "profile"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/immich/immich/profile"
           }
         }
         volume {
           name = "thumbs"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/ssd/immich/thumbs"
           }
         }
         volume {
           name = "upload"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/immich/immich/upload"
           }
         }
@@ -305,7 +298,7 @@ resource "kubernetes_deployment" "immich-postgres" {
           name = "postgresql-persistent-storage"
           nfs {
             path   = "/mnt/main/immich/data-immich-postgresql"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -442,7 +435,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
           nfs {
             # path   = "/mnt/main/immich/machine-learning"
             path   = "/mnt/ssd/immich/machine-learning" # load cache from ssd
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -533,7 +526,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               name = "postgresql-backup"
               nfs {
                 path   = "/mnt/main/immich/data-immich-postgresql"
-                server = "10.0.10.15"
+                server = var.nfs_server
               }
             }
           }

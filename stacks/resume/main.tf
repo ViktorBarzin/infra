@@ -2,16 +2,9 @@ variable "tls_secret_name" { type = string }
 variable "resume_database_url" { type = string }
 variable "resume_auth_secret" { type = string }
 variable "mailserver_accounts" { type = map(any) }
+variable "nfs_server" { type = string }
+variable "mail_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 locals {
   namespace = "resume"
@@ -192,7 +185,7 @@ resource "kubernetes_deployment" "resume" {
           # SMTP config for password reset emails
           env {
             name  = "SMTP_HOST"
-            value = "mail.viktorbarzin.me"
+            value = var.mail_host
           }
           env {
             name  = "SMTP_PORT"
@@ -259,7 +252,7 @@ resource "kubernetes_deployment" "resume" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/resume"
           }
         }

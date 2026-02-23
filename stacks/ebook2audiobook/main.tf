@@ -1,14 +1,6 @@
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
@@ -98,7 +90,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/ebook2audiobook"
           }
         }
@@ -199,7 +191,7 @@ resource "kubernetes_service" "ebook2audiobook" {
 #         volume {
 #           name = "data"
 #           nfs {
-#             server = "10.0.10.15"
+#             server = var.nfs_server
 #             path   = "/mnt/main/piper"
 #           }
 #         }
@@ -288,7 +280,7 @@ resource "kubernetes_deployment" "audiblez" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/audiblez"
           }
         }
@@ -376,7 +368,7 @@ resource "kubernetes_deployment" "audiblez-web" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/audiblez"
           }
         }

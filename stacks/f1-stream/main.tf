@@ -1,16 +1,8 @@
 variable "tls_secret_name" { type = string }
 variable "coturn_turn_secret" { type = string }
 variable "public_ip" { type = string }
+variable "nfs_server" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
@@ -97,7 +89,7 @@ resource "kubernetes_deployment" "f1-stream" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/f1-stream"
           }
         }

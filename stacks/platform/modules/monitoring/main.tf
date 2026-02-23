@@ -16,6 +16,7 @@ variable "pve_password" { type = string }
 variable "grafana_db_password" { type = string }
 variable "grafana_admin_password" { type = string }
 variable "tier" { type = string }
+variable "mysql_host" { type = string }
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {

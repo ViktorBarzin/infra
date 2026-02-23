@@ -1,15 +1,8 @@
 variable "tls_secret_name" { type = string }
 variable "n8n_postgresql_password" { type = string }
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
@@ -62,7 +55,7 @@ resource "kubernetes_deployment" "n8n" {
           }
           env {
             name  = "DB_POSTGRESDB_HOST"
-            value = "postgresql.dbaas"
+            value = var.postgresql_host
           }
           env {
             name  = "DB_POSTGRESDB_PORT"
@@ -114,7 +107,7 @@ resource "kubernetes_deployment" "n8n" {
           name = "data"
           nfs {
             path   = "/mnt/main/n8n"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

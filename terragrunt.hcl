@@ -53,3 +53,21 @@ provider "helm" {
 }
 EOF
 }
+
+# Generate shared tiers locals for all stacks.
+# Previously duplicated in 67+ stacks; now defined once here.
+generate "tiers" {
+  path      = "tiers.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+locals {
+  tiers = {
+    core    = "0-core"
+    cluster = "1-cluster"
+    gpu     = "2-gpu"
+    edge    = "3-edge"
+    aux     = "4-aux"
+  }
+}
+EOF
+}

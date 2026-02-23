@@ -1,16 +1,11 @@
 variable "tls_secret_name" { type = string }
 variable "affine_postgresql_password" { type = string }
 variable "mailserver_accounts" { type = map(any) }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "postgresql_host" { type = string }
+variable "mail_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "affine" {
   metadata {
@@ -31,11 +26,11 @@ locals {
   common_env = [
     {
       name  = "DATABASE_URL"
-      value = "postgresql://affine:${var.affine_postgresql_password}@postgresql.dbaas.svc.cluster.local:5432/affine"
+      value = "postgresql://affine:${var.affine_postgresql_password}@${var.postgresql_host}:5432/affine"
     },
     {
       name  = "REDIS_SERVER_HOST"
-      value = "redis.redis.svc.cluster.local"
+      value = var.redis_host
     },
     {
       name  = "AFFINE_INDEXER_ENABLED"
@@ -57,7 +52,7 @@ locals {
     # Email/SMTP configuration
     {
       name  = "MAILER_HOST"
-      value = "mailserver.viktorbarzin.me"
+      value = var.mail_host
     },
     {
       name  = "MAILER_PORT"
@@ -187,7 +182,7 @@ resource "kubernetes_deployment" "affine" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/affine"
           }
         }

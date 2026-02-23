@@ -4,16 +4,9 @@ variable "woodpecker_github_client_secret" { type = string }
 variable "woodpecker_agent_secret" { type = string }
 variable "woodpecker_db_password" { type = string }
 variable "dbaas_postgresql_root_password" { type = string }
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "woodpecker" {
   metadata {
@@ -76,11 +69,11 @@ resource "kubernetes_job" "db_init" {
             <<-EOT
               set -e
               # Create user if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h postgresql.dbaas.svc.cluster.local -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h postgresql.dbaas.svc.cluster.local -U root -c "CREATE ROLE woodpecker WITH LOGIN PASSWORD '${var.woodpecker_db_password}'"
+              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='woodpecker'" | grep -q 1 || \
+                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE woodpecker WITH LOGIN PASSWORD '${var.woodpecker_db_password}'"
               # Create database if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h postgresql.dbaas.svc.cluster.local -U root -tc "SELECT 1 FROM pg_database WHERE datname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h postgresql.dbaas.svc.cluster.local -U root -c "CREATE DATABASE woodpecker OWNER woodpecker"
+              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='woodpecker'" | grep -q 1 || \
+                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE woodpecker OWNER woodpecker"
               echo "Database init complete"
             EOT
           ]
@@ -108,7 +101,7 @@ resource "kubernetes_persistent_volume" "woodpecker_server_data" {
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
       nfs {
-        server = "10.0.10.15"
+        server = var.nfs_server
         path   = "/mnt/main/woodpecker"
       }
     }
@@ -133,6 +126,7 @@ resource "helm_release" "woodpecker" {
       github_client_secret = var.woodpecker_github_client_secret
       agent_secret         = var.woodpecker_agent_secret
       db_password          = var.woodpecker_db_password
+      postgresql_host      = var.postgresql_host
     })
   ]
 

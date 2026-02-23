@@ -3,6 +3,7 @@ variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "headscale_config" {}
 variable "headscale_acl" {}
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "headscale" {
   metadata {
@@ -61,6 +62,18 @@ resource "kubernetes_deployment" "headscale" {
           # image   = "headscale/headscale:0.23.0-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
           port {
             container_port = 8080
           }
@@ -100,7 +113,7 @@ resource "kubernetes_deployment" "headscale" {
           name = "nfs-config"
           nfs {
             path   = "/mnt/main/headscale"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         # container {
@@ -114,6 +127,18 @@ resource "kubernetes_deployment" "headscale" {
           image = "ghcr.io/gurucomputing/headscale-ui:latest"
           # image = "ghcr.io/tale/headplane:0.3.2"
           name = "headscale-ui"
+
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
+
           port {
             container_port = 8081
             # container_port = 3000

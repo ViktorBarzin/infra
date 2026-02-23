@@ -1,23 +1,17 @@
 variable "tls_secret_name" { type = string }
 variable "realestate_crawler_db_password" { type = string }
 variable "realestate_crawler_notification_settings" { type = map(string) }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "realestate-crawler" {
   metadata {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier                                = local.tiers.aux
+      tier                               = local.tiers.aux
       "resource-governance/custom-quota" = "true"
     }
   }
@@ -143,7 +137,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
 
           }
           # env {
@@ -156,11 +150,11 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           # }
           env {
             name  = "CELERY_BROKER_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://${var.redis_host}:6379/0"
           }
           env {
             name  = "CELERY_RESULT_BACKEND"
-            value = "redis://redis.redis.svc.cluster.local:6379/1"
+            value = "redis://${var.redis_host}:6379/1"
           }
 
           env {
@@ -196,6 +190,16 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             container_port = 5001
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "2000m"
+              memory = "1Gi"
+            }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/data"
@@ -205,7 +209,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           name = "data"
           nfs {
             path   = "/mnt/main/real-estate-crawler"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -292,7 +296,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           name              = "celery-worker"
           image             = "viktorbarzin/realestatecrawler:latest"
           image_pull_policy = "Always"
-          command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info"]
+          command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
           port {
             name           = "metrics"
             container_port = 9090
@@ -304,15 +308,15 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://${var.redis_host}:6379/0"
           }
           env {
             name  = "CELERY_RESULT_BACKEND"
-            value = "redis://redis.redis.svc.cluster.local:6379/1"
+            value = "redis://${var.redis_host}:6379/1"
           }
           env {
             name  = "SLACK_WEBHOOK_URL"
@@ -339,7 +343,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           name = "data"
           nfs {
             path   = "/mnt/main/real-estate-crawler"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -398,21 +402,31 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           name    = "celery-beat"
           image   = "viktorbarzin/realestatecrawler:latest"
           command = ["python", "-m", "celery", "-A", "celery_app", "beat", "--loglevel=info"]
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
           env {
             name  = "ENV"
             value = "prod"
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@mysql.dbaas.svc.cluster.local:3306/wrongmove"
+            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://${var.redis_host}:6379/0"
           }
           env {
             name  = "CELERY_RESULT_BACKEND"
-            value = "redis://redis.redis.svc.cluster.local:6379/1"
+            value = "redis://${var.redis_host}:6379/1"
           }
           env {
             name  = "SCRAPE_SCHEDULES"
@@ -427,7 +441,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           name = "data"
           nfs {
             path   = "/mnt/main/real-estate-crawler"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
