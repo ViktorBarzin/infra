@@ -1,10 +1,12 @@
 """HLS proxy - fetches upstream m3u8 playlists and relays media segments.
 
-Two core functions:
+Three core functions:
 1. Playlist proxy: fetches an upstream m3u8 playlist, rewrites all URIs
    to route through our /proxy and /relay endpoints, returns the rewritten
    playlist to the client.
-2. Segment relay: fetches an upstream media segment (TS, fMP4, init) and
+2. Quality selection: when the upstream m3u8 is a master playlist containing
+   multiple quality variants, allows selecting a specific variant by index.
+3. Segment relay: fetches an upstream media segment (TS, fMP4, init) and
    streams it to the client using chunked transfer encoding, never buffering
    the full segment in memory.
 
@@ -12,7 +14,10 @@ All responses include CORS headers for browser playback.
 """
 
 import logging
+import re
+from dataclasses import dataclass
 from typing import AsyncGenerator
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import HTTPException
@@ -38,13 +43,218 @@ USER_AGENT = (
 )
 
 
-async def proxy_playlist(encoded_url: str, proxy_base: str) -> str:
+@dataclass
+class QualityVariant:
+    """A single quality variant parsed from a master HLS playlist."""
+
+    index: int  # 0-based index in the playlist
+    bandwidth: int  # BANDWIDTH value in bits/sec
+    resolution: str  # e.g., "1920x1080" or "" if not specified
+    codecs: str  # e.g., "avc1.640028,mp4a.40.2" or "" if not specified
+    name: str  # e.g., "720p" or "" if not specified
+    uri: str  # The variant playlist URI (absolute)
+
+    def to_dict(self) -> dict:
+        """Serialize to a plain dictionary for JSON responses."""
+        return {
+            "index": self.index,
+            "bandwidth": self.bandwidth,
+            "resolution": self.resolution,
+            "codecs": self.codecs,
+            "name": self.name,
+            "uri": self.uri,
+        }
+
+
+def _is_master_playlist(content: str) -> bool:
+    """Check if an m3u8 playlist is a master playlist (contains variant streams).
+
+    A master playlist contains #EXT-X-STREAM-INF tags pointing to variant
+    playlists. A media playlist contains #EXTINF tags pointing to segments.
+
+    Args:
+        content: The raw m3u8 playlist text.
+
+    Returns:
+        True if this is a master playlist.
+    """
+    return "#EXT-X-STREAM-INF:" in content
+
+
+def parse_quality_variants(content: str, base_url: str) -> list[QualityVariant]:
+    """Parse quality variants from a master HLS playlist.
+
+    Extracts all #EXT-X-STREAM-INF entries and their associated URIs.
+
+    Args:
+        content: The raw m3u8 master playlist text.
+        base_url: The URL of the playlist (for resolving relative URIs).
+
+    Returns:
+        List of QualityVariant objects sorted by bandwidth (highest first).
+    """
+    variants: list[QualityVariant] = []
+    lines = content.splitlines()
+    index = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("#EXT-X-STREAM-INF:"):
+            continue
+
+        # Parse attributes from the STREAM-INF tag
+        attrs = stripped[len("#EXT-X-STREAM-INF:"):]
+
+        bandwidth = _parse_attr_int(attrs, "BANDWIDTH")
+        resolution = _parse_attr_str(attrs, "RESOLUTION")
+        codecs = _parse_attr_quoted(attrs, "CODECS")
+        name = _parse_attr_quoted(attrs, "NAME")
+
+        # The next non-empty, non-comment line is the variant URI
+        uri = ""
+        for j in range(i + 1, len(lines)):
+            next_line = lines[j].strip()
+            if next_line and not next_line.startswith("#"):
+                uri = next_line
+                break
+
+        if not uri:
+            continue
+
+        # Resolve relative URI
+        if not uri.startswith("http://") and not uri.startswith("https://"):
+            uri = urljoin(base_url, uri)
+
+        # Generate a human-readable name if not provided
+        if not name and resolution:
+            # Extract height from resolution (e.g., "1920x1080" -> "1080p")
+            parts = resolution.split("x")
+            if len(parts) == 2:
+                name = f"{parts[1]}p"
+
+        variants.append(QualityVariant(
+            index=index,
+            bandwidth=bandwidth,
+            resolution=resolution,
+            codecs=codecs,
+            name=name,
+            uri=uri,
+        ))
+        index += 1
+
+    # Sort by bandwidth descending (highest quality first)
+    variants.sort(key=lambda v: v.bandwidth, reverse=True)
+    # Re-index after sorting
+    for i, v in enumerate(variants):
+        v.index = i
+
+    return variants
+
+
+def _select_variant_playlist(
+    content: str, base_url: str, variant_index: int
+) -> str:
+    """Extract a single variant from a master playlist by index.
+
+    Instead of returning the full master playlist, returns just the selected
+    variant's media playlist URL. The caller should then fetch and proxy that
+    URL instead.
+
+    Args:
+        content: The raw m3u8 master playlist text.
+        base_url: The URL of the playlist (for resolving relative URIs).
+        variant_index: 0-based index of the desired variant (sorted by bandwidth desc).
+
+    Returns:
+        The absolute URL of the selected variant's media playlist.
+
+    Raises:
+        HTTPException: If the variant index is out of range.
+    """
+    variants = parse_quality_variants(content, base_url)
+
+    if not variants:
+        raise HTTPException(
+            status_code=400,
+            detail="Playlist has no quality variants to select from",
+        )
+
+    if variant_index < 0 or variant_index >= len(variants):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Quality index {variant_index} out of range (0-{len(variants) - 1})",
+        )
+
+    selected = variants[variant_index]
+    logger.info(
+        "Selected quality variant %d: %s (%d bps, %s)",
+        variant_index,
+        selected.name or "unknown",
+        selected.bandwidth,
+        selected.resolution or "no resolution",
+    )
+
+    return selected.uri
+
+
+def _parse_attr_int(attrs: str, name: str) -> int:
+    """Parse an integer attribute from an HLS tag attribute string.
+
+    Args:
+        attrs: The attribute string (e.g., 'BANDWIDTH=1280000,RESOLUTION=720x480').
+        name: The attribute name to extract.
+
+    Returns:
+        The integer value, or 0 if not found.
+    """
+    match = re.search(rf"{name}=(\d+)", attrs)
+    return int(match.group(1)) if match else 0
+
+
+def _parse_attr_str(attrs: str, name: str) -> str:
+    """Parse a bare (unquoted) string attribute from an HLS tag attribute string.
+
+    Args:
+        attrs: The attribute string.
+        name: The attribute name to extract.
+
+    Returns:
+        The string value, or empty string if not found.
+    """
+    match = re.search(rf"{name}=([^,\s\"]+)", attrs)
+    return match.group(1) if match else ""
+
+
+def _parse_attr_quoted(attrs: str, name: str) -> str:
+    """Parse a quoted string attribute from an HLS tag attribute string.
+
+    Args:
+        attrs: The attribute string.
+        name: The attribute name to extract.
+
+    Returns:
+        The string value (without quotes), or empty string if not found.
+    """
+    match = re.search(rf'{name}="([^"]*)"', attrs)
+    return match.group(1) if match else ""
+
+
+async def proxy_playlist(
+    encoded_url: str, proxy_base: str, quality: int | None = None
+) -> str:
     """Fetch an upstream m3u8 playlist and rewrite all URIs through our proxy.
+
+    If the upstream playlist is a master playlist (containing multiple quality
+    variants) and a quality index is specified, fetches the selected variant's
+    media playlist instead and rewrites that.
 
     Args:
         encoded_url: Base64url-encoded URL of the upstream m3u8 playlist.
         proxy_base: The base URL of our proxy service for rewriting URIs
                     (e.g., "https://f1.viktorbarzin.me").
+        quality: Optional 0-based index of the desired quality variant.
+                 Only applies when the upstream is a master playlist.
+                 Variants are sorted by bandwidth descending (0 = highest).
 
     Returns:
         The rewritten m3u8 playlist text.
@@ -106,6 +316,68 @@ async def proxy_playlist(encoded_url: str, proxy_base: str) -> str:
             status_code=502,
             detail="Upstream response is not a valid HLS playlist",
         )
+
+    # If this is a master playlist and a quality variant was requested,
+    # fetch the selected variant's media playlist instead
+    if quality is not None and _is_master_playlist(content):
+        variant_url = _select_variant_playlist(content, url, quality)
+        logger.info("Fetching selected variant playlist: %s", variant_url)
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=PLAYLIST_TIMEOUT,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "*/*",
+                },
+            ) as client:
+                variant_response = await client.get(variant_url)
+
+            if variant_response.status_code != 200:
+                logger.warning(
+                    "Variant playlist returned HTTP %d for %s",
+                    variant_response.status_code,
+                    variant_url,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Variant playlist returned HTTP {variant_response.status_code}",
+                )
+
+            content = variant_response.text
+            url = variant_url  # Use variant URL as base for relative URI resolution
+
+            if "#EXTM3U" not in content:
+                logger.warning(
+                    "Variant playlist is not valid m3u8: %s", variant_url
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Variant playlist is not a valid HLS playlist",
+                )
+
+        except httpx.TimeoutException:
+            logger.error("Timeout fetching variant playlist: %s", variant_url)
+            raise HTTPException(
+                status_code=504, detail="Variant playlist timeout"
+            )
+        except httpx.HTTPError as e:
+            logger.error(
+                "HTTP error fetching variant playlist: %s - %s", variant_url, e
+            )
+            raise HTTPException(
+                status_code=502, detail=f"Variant playlist error: {e}"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(
+                "Unexpected error fetching variant playlist: %s", variant_url
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Internal error: {e}"
+            )
 
     # Rewrite all URIs to go through our proxy
     rewritten = rewrite_playlist(content, url, proxy_base)
