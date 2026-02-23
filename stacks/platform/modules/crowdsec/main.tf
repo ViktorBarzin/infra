@@ -160,6 +160,12 @@ resource "kubernetes_deployment" "crowdsec-web" {
             protocol       = "TCP"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

@@ -128,6 +128,12 @@ resource "kubernetes_deployment" "xray" {
             name = "xray-config"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

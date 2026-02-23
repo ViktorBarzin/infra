@@ -74,6 +74,12 @@ resource "kubernetes_deployment" "k8s_portal" {
             name = kubernetes_config_map.k8s_portal_config.metadata[0].name
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

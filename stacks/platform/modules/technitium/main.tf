@@ -173,6 +173,12 @@ resource "kubernetes_deployment" "technitium" {
             secret_name = var.tls_secret_name
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

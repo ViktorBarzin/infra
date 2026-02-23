@@ -178,6 +178,12 @@ resource "kubernetes_deployment" "mysql" {
           }
 
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
@@ -425,6 +431,12 @@ resource "kubernetes_deployment" "phpmyadmin" {
           env {
             name  = "UPLOAD_LIMIT"
             value = "300M"
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
           }
         }
       }
@@ -779,6 +791,12 @@ resource "kubernetes_deployment" "postgres" {
         #     name = "mycnf"
         #   }
         # }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
@@ -856,6 +874,12 @@ resource "kubernetes_deployment" "pgadmin" {
           nfs {
             path   = "/mnt/main/postgresql/pgadmin"
             server = var.nfs_server
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
           }
         }
       }

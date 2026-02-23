@@ -105,6 +105,12 @@ resource "kubernetes_deployment" "pgbouncer" {
             secret_name = kubernetes_secret.pgbouncer_auth.metadata[0].name
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

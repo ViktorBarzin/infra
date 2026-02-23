@@ -122,6 +122,12 @@ resource "kubernetes_deployment" "nvidia-exporter" {
             }
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
@@ -626,6 +632,12 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
           host_path {
             path = "/proc"
             type = "Directory"
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
           }
         }
       }

@@ -175,6 +175,12 @@ resource "kubernetes_deployment" "wireguard" {
             name = "wg0-conf"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
