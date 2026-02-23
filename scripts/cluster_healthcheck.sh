@@ -858,7 +858,7 @@ check_helm_releases() {
     section 18 "Helm Release Health"
     local releases detail="" had_issue=false status="PASS"
 
-    releases=$(helm list -A --kubeconfig "$KUBECONFIG_PATH" --all -o json 2>/dev/null) || {
+    releases=$(helm list -A --kubeconfig "$KUBECONFIG_PATH" -o json 2>/dev/null) || {
         [[ "$QUIET" == true ]] && section_always 18 "Helm Release Health"
         warn "Cannot list Helm releases"
         json_add "helm_releases" "WARN" "Cannot list"
