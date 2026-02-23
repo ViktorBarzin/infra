@@ -541,13 +541,13 @@ serverFiles:
           #     severity: page
           #   annotations:
           #     summary: OpenWRT high memory usage. Can cause services getting stuck.
-          # - alert: Mail server has no replicas available
-          #   expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
-          #   for: 10m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: Mail server has no available replicas. This means mail may not be received.
+          - alert: Mail server has no replicas available
+            expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              summary: Mail server has no available replicas. This means mail may not be received.
           # - alert: Hackmd has no replicas available
           #   expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
           #   for: 1m
@@ -803,13 +803,29 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: instance
   - job_name: 'realestate-crawler-api'
-    static_configs:
-        - targets:
-          - "realestate-crawler-api.realestate-crawler.svc.cluster.local:80"
-    metrics_path: '/metrics'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - realestate-crawler
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: realestate-crawler-api
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance
+    metrics_path: '/metrics/'
   - job_name: 'realestate-crawler-celery'
-    static_configs:
-        - targets:
-          - "realestate-crawler-celery-metrics.realestate-crawler.svc.cluster.local:9090"
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - realestate-crawler
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: realestate-crawler-celery-metrics
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: instance
     metrics_path: '/metrics'
 
