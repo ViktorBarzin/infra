@@ -89,6 +89,23 @@ resource "kubernetes_config_map" "mailserver_config" {
     SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
     TrustedHosts  = "127.0.0.1\nlocalhost\n"
     "sasl_passwd" = var.sasl_passwd
+    # Rspamd DKIM signing configuration
+    "dkim_signing.conf" = <<-EOF
+    enabled = true;
+    sign_authenticated = true;
+    sign_local = true;
+    use_domain = "header";
+    use_redis = false;
+    use_esld = true;
+    selector = "mail";
+    path = "/tmp/docker-mailserver/rspamd/dkim/viktorbarzin.me/mail.private";
+    domain {
+        viktorbarzin.me {
+            path = "/tmp/docker-mailserver/rspamd/dkim/viktorbarzin.me/mail.private";
+            selector = "mail";
+        }
+    }
+    EOF
     fail2ban_conf = <<-EOF
     [DEFAULT]
 
@@ -262,6 +279,18 @@ resource "kubernetes_deployment" "mailserver" {
           volume_mount {
             name       = "opendkim-key"
             mount_path = "/tmp/docker-mailserver/opendkim/keys"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "opendkim-key"
+            mount_path = "/tmp/docker-mailserver/rspamd/dkim/viktorbarzin.me/mail.private"
+            sub_path   = "viktorbarzin.me-mail.key"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/dkim_signing.conf"
+            sub_path   = "dkim_signing.conf"
             read_only  = true
           }
           volume_mount {
