@@ -1,6 +1,4 @@
 variable "tls_secret_name" { type = string }
-variable "coturn_turn_secret" { type = string }
-variable "public_ip" { type = string }
 variable "nfs_server" { type = string }
 
 
@@ -38,48 +36,20 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image = "viktorbarzin/f1-stream:v1.3.1"
+          image = "viktorbarzin/f1-stream:v2.0.1"
           name  = "f1-stream"
           resources {
             limits = {
-              cpu    = "1"
-              memory = "512Mi"
+              cpu    = "500m"
+              memory = "256Mi"
             }
             requests = {
               cpu    = "50m"
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
           port {
-            container_port = 8080
-          }
-          env {
-            name  = "WEBAUTHN_RPID"
-            value = "f1.viktorbarzin.me"
-          }
-          env {
-            name  = "WEBAUTHN_ORIGIN"
-            value = "https://f1.viktorbarzin.me"
-          }
-          env {
-            name  = "WEBAUTHN_DISPLAY_NAME"
-            value = "F1 Stream"
-          }
-          env {
-            name  = "HEADLESS_EXTRACT_ENABLED"
-            value = "true"
-          }
-          env {
-            name  = "TURN_URL"
-            value = "turn:${var.public_ip}:3478"
-          }
-          env {
-            name  = "TURN_SHARED_SECRET"
-            value = var.coturn_turn_secret
-          }
-          env {
-            name  = "TURN_INTERNAL_URL"
-            value = "turn:coturn.coturn.svc.cluster.local:3478"
+            container_port = 8000
           }
           volume_mount {
             name       = "data"
@@ -114,7 +84,7 @@ resource "kubernetes_service" "f1-stream" {
     }
     port {
       port        = "80"
-      target_port = "8080"
+      target_port = "8000"
     }
   }
 }
