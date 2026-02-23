@@ -55,7 +55,6 @@
 |---------|-------------|-------|
 | blog | Personal blog | blog |
 | descheduler | Pod descheduler | descheduler |
-| drone | CI/CD | drone |
 | hackmd | Collaborative markdown | hackmd |
 | kms | Key management | kms |
 | privatebin | Encrypted pastebin | privatebin |
@@ -117,7 +116,7 @@ travel, netbox
 
 ### Non-Proxied (Direct DNS)
 ```
-mail, wg, headscale, immich, calibre, vaultwarden, drone,
+mail, wg, headscale, immich, calibre, vaultwarden,
 mailserver-antispam, mailserver-admin, webhook, uptime,
 owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,

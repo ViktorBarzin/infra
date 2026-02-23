@@ -1,4 +1,4 @@
-# GitHub & Drone CI API Reference
+# GitHub API Reference
 
 > Token locations and common API patterns.
 
@@ -24,27 +24,8 @@ curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/
 
 # Create webhook
 curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/ViktorBarzin/<repo>/hooks" \
-  -d '{"config":{"url":"https://drone.viktorbarzin.me/hook","content_type":"json","secret":"..."},"events":["push","pull_request"]}'
-```
-
-## Drone CI API
-- **Server**: `https://drone.viktorbarzin.me`
-- **Token**: `grep drone_api_token terraform.tfvars | cut -d'"' -f2`
-
-```bash
-DRONE_TOKEN=$(grep drone_api_token terraform.tfvars | cut -d'"' -f2)
-
-# Activate repo
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>"
-
-# Trigger build
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>/builds"
-
-# Add secret
-curl -s -X POST -H "Authorization: Bearer $DRONE_TOKEN" "https://drone.viktorbarzin.me/api/repos/ViktorBarzin/<repo>/secrets" \
-  -d '{"name":"secret_name","data":"secret_value"}'
+  -d '{"config":{"url":"https://ci.viktorbarzin.me/hook","content_type":"json","secret":"..."},"events":["push","pull_request"]}'
 ```
 
 ## Capabilities
 - **GitHub**: Create/delete repos, push code, manage SSH/deploy keys, manage webhooks, manage org settings, manage packages
-- **Drone CI**: Activate repos, trigger/monitor builds, manage secrets, configure pipelines
