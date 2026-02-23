@@ -3,9 +3,8 @@
 ## Instructions for Claude
 - **When the user says "remember" something**: Always update this file (`.claude/CLAUDE.md`) with the information so it persists across sessions
 - **When discovering new patterns or versions**: Add them to the appropriate section below
-- **When making infrastructure changes**: Always update this file to reflect the current state (new services, removed services, version changes, config changes)
-- **After every significant change**: Proactively update this file (`.claude/CLAUDE.md`) to reflect what changed — new services, config changes, version bumps, new patterns, etc. This ensures knowledge persists across sessions automatically.
-- **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`) to avoid building up unstaged changes.
+- **After every significant change**: Proactively update this file to reflect what changed — new services, config changes, version bumps, new patterns, etc.
+- **After updating any `.claude/` files**: Always commit them immediately (`git add .claude/ && git commit -m "[ci skip] update claude knowledge"`)
 - **Skills available**: Check `.claude/skills/` directory for specialized workflows (e.g., `setup-project` for deploying new services)
 - **Reference data**: Check `.claude/reference/` for inventory tables, API patterns, and current state snapshots
 - **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (kubectl apply/edit/patch, helm install, docker run). Use `kubectl` only for read-only operations and ephemeral debugging.
@@ -67,12 +66,11 @@ To add a user: export NFS share, add Cloudflare route in tfvars, add module bloc
 All services have `anti_ai_scraping = true` by default in `ingress_factory`. Layers:
 1. **Bot blocking** (`traefik-ai-bot-block`): ForwardAuth → poison-fountain `/auth`. Returns 403 for GPTBot, ClaudeBot, CCBot, etc.
 2. **X-Robots-Tag** (`traefik-anti-ai-headers`): Adds `noai, noimageai`
-3. **Trap links** (`traefik-anti-ai-trap-links`): rewrite-body injects 5 hidden links before `</body>` to `poison.viktorbarzin.me/article/*`
+3. **Trap links** (`traefik-anti-ai-trap-links`): rewrite-body injects hidden links before `</body>` to `poison.viktorbarzin.me/article/*`
 4. **Tarpit**: `/article/*` drip-feeds at ~100 bytes/sec
-5. **Poison content**: 50 cached docs from rnsaffn.com/poison2/ (CronJob every 6h, `--http1.1` required)
+5. **Poison content**: 50 cached docs (CronJob every 6h, `--http1.1` required)
 
 Key files: `stacks/poison-fountain/`, `stacks/platform/modules/traefik/middleware.tf`, `modules/kubernetes/ingress_factory/main.tf`
-Testing: `curl -s -H "Accept: text/html,application/xhtml+xml" https://vaultwarden.viktorbarzin.me/ | grep -oE 'href="https://poison[^"]*"'`
 Disable per-service: `anti_ai_scraping = false` in ingress_factory call.
 
 ### Terragrunt Architecture
@@ -121,60 +119,31 @@ terraform fmt -recursive                       # Format all
 ## Infrastructure
 - Proxmox hypervisor (192.168.1.127) — see `.claude/reference/proxmox-inventory.md` for full VM table
 - Kubernetes cluster: 5 nodes (k8s-master + k8s-node1-4, v1.34.2), GPU on node1 (Tesla T4)
-- NFS: `var.nfs_server` (10.0.10.15), Redis: `var.redis_host` (redis.redis.svc.cluster.local)
-- PostgreSQL: `var.postgresql_host` (postgresql.dbaas.svc.cluster.local), MySQL: `var.mysql_host` (mysql.dbaas.svc.cluster.local)
-- Ollama: `var.ollama_host` (ollama.ollama.svc.cluster.local), Mail: `var.mail_host` (mail.viktorbarzin.me)
 - Docker registry pull-through cache at `10.0.20.10` (ports 5000/5010/5020/5030/5040)
 - GPU workloads need: `node_selector = { "gpu": "true" }` + `toleration { key = "nvidia.com/gpu", value = "true", effect = "NoSchedule" }`
 
 ### Node Rebuild Procedure
-To rebuild a K8s worker node from scratch (e.g., after disk failure or corruption):
+1. **Drain the node** (if reachable): `kubectl drain k8s-nodeX --ignore-daemonsets --delete-emptydir-data`
+2. **Delete from K8s**: `kubectl delete node k8s-nodeX`
+3. **Destroy VM** (or remove from `stacks/infra/main.tf` and apply)
+4. **Ensure K8s template exists**: `ubuntu-2404-cloudinit-k8s-template` (VMID 2000). If not, apply `stacks/infra/`.
+5. **Get join command**: `ssh wizard@10.0.20.100 'sudo kubeadm token create --print-join-command'`
+6. **Update `k8s_join_command`** in `terraform.tfvars`
+7. **Create VM**: Add to `stacks/infra/main.tf` and apply
+8. **Wait for cloud-init** — VM auto-joins cluster
+9. **GPU node (k8s-node1) only**: Apply platform stack to re-apply GPU label/taint
 
-1. **Drain the node** (if still reachable): `kubectl drain k8s-nodeX --ignore-daemonsets --delete-emptydir-data`
-2. **Delete the node from K8s**: `kubectl delete node k8s-nodeX`
-3. **Destroy the VM in Proxmox** (or via Terraform: remove from `stacks/infra/main.tf` and apply)
-4. **Ensure K8s template exists**: The template `ubuntu-2404-cloudinit-k8s-template` (VMID 2000) must exist. If not, apply `stacks/infra/` to recreate it.
-5. **Get a fresh join command**: `ssh wizard@10.0.20.100 'sudo kubeadm token create --print-join-command'`
-6. **Update `k8s_join_command`** in `terraform.tfvars` with the new join command
-7. **Create the new VM**: Add it back in `stacks/infra/main.tf` and `cd stacks/infra && terragrunt apply --non-interactive`
-8. **Wait for cloud-init**: The VM will install packages, configure containerd mirrors, and join the cluster automatically via cloud-init
-9. **Verify the node joined**: `kubectl get nodes` — should show the new node as `Ready`
-10. **For GPU node (k8s-node1) only**: Apply the platform stack to re-apply GPU label and taint: `cd stacks/platform && terragrunt apply --non-interactive` (the `null_resource.gpu_node_config` in the nvidia module handles this)
-11. **Verify containerd mirrors**: `ssh wizard@<node-ip> 'ls /etc/containerd/certs.d/'` — should show docker.io, ghcr.io, quay.io, registry.k8s.io, reg.kyverno.io
-
-**Note**: kubeadm tokens expire after 24h by default. Generate a fresh one just before creating the VM.
+**Note**: kubeadm tokens expire after 24h. Generate fresh just before creating the VM.
 
 ## Git Operations
 - **Git is slow** — commands can take 30+ seconds. Use `GIT_OPTIONAL_LOCKS=0` if git hangs.
 - Commit only specific files. **ALWAYS ask user before pushing**.
 
-## Prometheus Alerts
-- Rules in `stacks/platform/modules/monitoring/prometheus_chart_values.tpl`
-- Groups: "R730 Host", "Nvidia Tesla T4 GPU", "Power", "Storage", "K8s Health", "Infrastructure Health", "Critical Services", "Cluster", "Traefik Ingress"
-- **Critical Services** group (added 2026-02): PostgreSQLDown, MySQLDown, RedisDown, HeadscaleDown, AuthentikDown, LokiDown
-- **Predictive alerts**: PVPredictedFull (predict_linear 24h ahead)
-- Loki alert rules: HighErrorRate, PodCrashLoopBackOff, OOMKilled (in `loki.tf` ConfigMap)
-
-## Tier System & Resource Governance
+## Tier System
 - **0-core**: Critical infra (ingress, DNS, VPN, auth) | **1-cluster**: Redis, metrics, security | **2-gpu**: GPU workloads | **3-edge**: User-facing | **4-aux**: Optional
-- **Tiers locals**: Generated by root `terragrunt.hcl` into `tiers.tf` — available as `local.tiers.core`, `local.tiers.cluster`, etc. in all stacks
-- Kyverno-based governance in `stacks/platform/modules/kyverno/resource-governance.tf`:
-  1. PriorityClasses: `tier-0-core` (1M) through `tier-4-aux` (200K, preemption=Never)
-  2. LimitRange defaults (Kyverno generate): auto-created per namespace tier
-  3. ResourceQuotas (Kyverno generate): auto-created per namespace tier (skip with label `resource-governance/custom-quota=true`)
-  4. Priority injection (Kyverno mutate): sets priorityClassName on Pods
-- Custom quota override: monitoring, crowdsec, nvidia, realestate-crawler
-- **Pod Security Policies** (Kyverno, audit mode) in `stacks/platform/modules/kyverno/security-policies.tf`:
-  1. `deny-privileged-containers`: Blocks `privileged: true` (exempt: frigate, nvidia, monitoring)
-  2. `deny-host-namespaces`: Blocks hostNetwork/PID/IPC (exempt: frigate, monitoring)
-  3. `restrict-sys-admin`: Blocks SYS_ADMIN capability (exempt: nvidia, monitoring)
-  4. `require-trusted-registries`: Validates images from docker.io, ghcr.io, quay.io, registry.k8s.io, 10.0.20.10
-
-### Traefik Security (hardened 2026-02)
-- **API dashboard**: `api.insecure = false` — dashboard only accessible via Authentik-protected ingress
-- **Forwarded headers**: `insecure=false` with `trustedIPs` set to Cloudflare IPv4 ranges + internal (10.0.0.0/8, 192.168.0.0/16)
-- **Security headers middleware** (`security-headers`): HSTS (31536000s, includeSubDomains), X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy: strict-origin-when-cross-origin, Permissions-Policy
-- **Rate limiting**: average=10, burst=50 (default); average=100, burst=1000 (immich-rate-limit for uploads)
+- Tiers auto-generated into `tiers.tf` — available as `local.tiers.core`, `local.tiers.cluster`, etc.
+- Governance: Kyverno in `stacks/platform/modules/kyverno/` (resource-governance.tf, security-policies.tf)
+- Prometheus alerts: `stacks/platform/modules/monitoring/prometheus_chart_values.tpl`
 
 ---
 
@@ -192,47 +161,9 @@ To rebuild a K8s worker node from scratch (e.g., after disk failure or corruptio
 - `.claude/reference/github-api.md` — GitHub API patterns with curl examples
 - `.claude/reference/authentik-state.md` — Current applications, groups, users, login sources
 
----
-
-## Service-Specific Notes
-
-### Authentik (Identity Provider)
+## Authentik (Identity Provider)
 - **URL**: `https://authentik.viktorbarzin.me` | **API**: `/api/v3/` | **Token**: `authentik_api_token` in tfvars
 - **Architecture**: 3 server + 3 worker + 3 PgBouncer + embedded outpost
-- **Database**: PostgreSQL via `postgresql.dbaas:5432`, PgBouncer at `pgbouncer.authentik:6432`
 - **Traefik integration**: Forward auth via `protected = true` in ingress_factory
 - **OIDC for K8s**: Issuer `https://authentik.viktorbarzin.me/application/o/kubernetes/`, client `kubernetes` (public)
-- For management tasks, current state, and OIDC gotchas: see `authentik` and `authentik-oidc-kubernetes` skills
-- For current apps/groups/users snapshot: see `.claude/reference/authentik-state.md`
-
-### AFFiNE (Visual Canvas)
-- **Image**: `ghcr.io/toeverything/affine:stable` | **Port**: 3010 | **Requires**: PostgreSQL + Redis
-- **Migration**: Init container runs `node ./scripts/self-host-predeploy.js`
-- **Storage**: NFS `/mnt/main/affine` → `/root/.affine/storage` and `/root/.affine/config`
-
-### Wyoming Whisper (STT)
-- **Image**: `rhasspy/wyoming-whisper:latest` | **Port**: 10300/TCP (Wyoming protocol)
-- **Model**: `small-int8` (CPU-only) | **Access**: `10.0.20.202:10300` (internal, no public DNS)
-- **HA Integration**: Wyoming Protocol in ha-london
-
-### Gramps Web (Genealogy)
-- **Image**: `ghcr.io/gramps-project/grampsweb:latest` | **Port**: 5000 | **URL**: `https://family.viktorbarzin.me`
-- **Components**: Web app + Celery worker (2 containers in 1 pod) | **Redis**: DB 2 (broker), DB 3 (rate limiting)
-- **Storage**: NFS `/mnt/main/grampsweb` with sub_paths
-- **Auth**: Protected by Authentik (added 2026-02)
-
-### Loki + Alloy (Log Collection)
-- **Loki**: `grafana/loki:3.6.5` (single binary, 6Gi RAM, 30d retention / 720h)
-- **Alloy**: `grafana/alloy:v1.13.0` (DaemonSet, 512Mi requests / 1Gi limits)
-- **Storage**: NFS PV `/mnt/main/loki/loki` (15Gi), WAL on tmpfs (2Gi)
-- **Alert rules**: HighErrorRate, PodCrashLoopBackOff, OOMKilled (ConfigMap `loki-alert-rules`)
-- **Troubleshooting**: "entry too far behind" on first start → restart Alloy DaemonSet
-
-### OpenClaw (AI Agent Gateway)
-- **Image**: `ghcr.io/openclaw/openclaw:2026.2.9` | **Port**: 18789 | **URL**: `https://openclaw.viktorbarzin.me`
-- **Init container**: Downloads kubectl, terraform, git-crypt; clones infra repo
-- **ServiceAccount**: `openclaw` with `cluster-admin` ClusterRoleBinding
-- **Model providers**: Gemini (gemini-2.5-flash), Ollama (qwen2.5-coder:14b, deepseek-r1:14b), Llama API
-
-## Service Versions (as of 2026-02)
-Immich v2.4.1 | AFFiNE stable | Whisper latest | Loki 3.6.5 | Alloy v1.13.0 | OpenClaw 2026.2.9
+- For management tasks and OIDC gotchas: see `authentik` and `authentik-oidc-kubernetes` skills
