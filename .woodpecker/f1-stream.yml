@@ -1,0 +1,30 @@
+when:
+  event: push
+  path: "stacks/f1-stream/files/**"
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      attempts: 5
+      backoff: 10s
+
+steps:
+  - name: build-image
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      username: "viktorbarzin"
+      password:
+        from_secret: dockerhub-pat
+      repo: viktorbarzin/f1-stream
+      dockerfile: stacks/f1-stream/files/Dockerfile
+      context: stacks/f1-stream/files
+      platforms: linux/amd64
+      provenance: false
+      auto_tag: true
+
+  - name: deploy
+    image: bitnami/kubectl
+    commands:
+      - kubectl -n f1-stream rollout restart deployment f1-stream
+      - kubectl -n f1-stream rollout status deployment f1-stream --timeout=120s

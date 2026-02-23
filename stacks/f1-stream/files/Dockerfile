@@ -1,21 +1,12 @@
-FROM golang:1.24-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /f1-stream .
+FROM python:3.13-slim-bookworm
 
-FROM alpine:3.20
-RUN apk add --no-cache \
-    ca-certificates \
-    chromium nss freetype harfbuzz ttf-freefont \
-    mesa-dri-gallium mesa-gl \
-    dbus \
-    xvfb-run xorg-server \
-    pulseaudio pulseaudio-utils \
-    ffmpeg
-ENV CHROME_PATH=/usr/bin/chromium-browser
-COPY --from=builder /f1-stream /f1-stream
-COPY static/ /static/
-EXPOSE 8080
-ENTRYPOINT ["/f1-stream"]
+WORKDIR /app
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ ./backend/
+
+EXPOSE 8000
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
