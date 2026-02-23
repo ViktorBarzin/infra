@@ -1,4 +1,5 @@
 variable "tls_secret_name" { type = string }
+variable "plotting_book_session_secret" { type = string }
 
 
 resource "kubernetes_namespace" "plotting-book" {
@@ -50,6 +51,10 @@ resource "kubernetes_deployment" "plotting-book" {
           # image = "viktorbarzin/book-plotter:7"
           name              = "plotting-book"
           image_pull_policy = "Always"
+          env {
+            name  = "SESSION_SECRET"
+            value = var.plotting_book_session_secret
+          }
           port {
             container_port = 3001
           }
