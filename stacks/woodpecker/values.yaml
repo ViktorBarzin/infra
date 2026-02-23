@@ -15,7 +15,7 @@ server:
     WOODPECKER_GITHUB_SECRET: "${github_client_secret}"
     WOODPECKER_AGENT_SECRET: "${agent_secret}"
     WOODPECKER_DATABASE_DRIVER: "postgres"
-    WOODPECKER_DATABASE_DATASOURCE: "postgres://woodpecker:${db_password}@postgresql.dbaas.svc.cluster.local:5432/woodpecker?sslmode=disable"
+    WOODPECKER_DATABASE_DATASOURCE: "postgres://woodpecker:${db_password}@${postgresql_host}:5432/woodpecker?sslmode=disable"
     WOODPECKER_PLUGINS_PRIVILEGED: "woodpeckerci/plugin-docker-buildx,plugins/docker"
     WOODPECKER_PLUGINS_TRUSTED_CLONE: "woodpeckerci/plugin-git,alpine"
     WOODPECKER_LOG_LEVEL: "info"

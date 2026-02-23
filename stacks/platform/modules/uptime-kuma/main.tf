@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
@@ -56,6 +57,17 @@ resource "kubernetes_deployment" "uptime-kuma" {
           image = "louislam/uptime-kuma:2"
           name  = "uptime-kuma"
 
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
           port {
             container_port = 3001
           }
@@ -67,7 +79,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/uptime-kuma"
           }
         }
@@ -160,7 +172,7 @@ module "ingress" {
 #             volume {
 #               name = "data"
 #               nfs {
-#                 server = "10.0.10.15"
+#                 server = var.nfs_server
 #                 path   = "/mnt/main/uptime-kuma"
 #               }
 #             }

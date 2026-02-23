@@ -2,20 +2,14 @@ variable "tls_secret_name" { type = string }
 variable "dawarich_database_password" { type = string }
 variable "geoapify_api_key" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 variable "image_version" {
   type    = string
   default = "0.37.1"
 }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "postgresql_host" { type = string }
 
 resource "kubernetes_namespace" "dawarich" {
   metadata {
@@ -82,11 +76,11 @@ resource "kubernetes_deployment" "dawarich" {
           args    = ["bin/dev"]
           env {
             name  = "REDIS_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379"
+            value = "redis://${var.redis_host}:6379"
           }
           env {
             name  = "DATABASE_HOST"
-            value = "postgresql.dbaas"
+            value = var.postgresql_host
           }
           env {
             name  = "DATABASE_USERNAME"
@@ -272,7 +266,7 @@ resource "kubernetes_deployment" "dawarich" {
 #           name = "data"
 #           nfs {
 #             path   = "/mnt/main/photon"
-#             server = "10.0.10.15"
+#             server = var.nfs_server
 #           }
 #         }
 #       }

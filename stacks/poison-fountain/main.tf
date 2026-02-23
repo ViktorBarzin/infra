@@ -1,14 +1,6 @@
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "poison_fountain" {
   metadata {
@@ -152,7 +144,7 @@ resource "kubernetes_deployment" "poison_fountain" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/poison-fountain"
           }
         }
@@ -259,7 +251,7 @@ resource "kubernetes_cron_job_v1" "poison_fetcher" {
             volume {
               name = "data"
               nfs {
-                server = "10.0.10.15"
+                server = var.nfs_server
                 path   = "/mnt/main/poison-fountain"
               }
             }

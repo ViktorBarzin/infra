@@ -1,16 +1,9 @@
 variable "tls_secret_name" { type = string }
 variable "health_postgresql_password" { type = string }
 variable "health_secret_key" { type = string }
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "health" {
   metadata {
@@ -60,7 +53,7 @@ resource "kubernetes_deployment" "health" {
 
           env {
             name  = "DATABASE_URL"
-            value = "postgresql+asyncpg://health:${var.health_postgresql_password}@postgresql.dbaas.svc.cluster.local:5432/health"
+            value = "postgresql+asyncpg://health:${var.health_postgresql_password}@${var.postgresql_host}:5432/health"
           }
           env {
             name  = "SECRET_KEY"
@@ -102,7 +95,7 @@ resource "kubernetes_deployment" "health" {
         volume {
           name = "uploads"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/health"
           }
         }

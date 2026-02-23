@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "nfs_server" { type = string }
 resource "kubernetes_namespace" "readarr" {
   metadata {
     name = "readarr"
@@ -83,14 +84,14 @@ resource "kubernetes_deployment" "readarr" {
           name = "data"
           nfs {
             path   = "/mnt/main/servarr/readarr"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "qbittorrent"
           nfs {
             path   = "/mnt/main/servarr/qbittorrent"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

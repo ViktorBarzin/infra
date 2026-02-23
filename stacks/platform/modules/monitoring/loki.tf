@@ -1,3 +1,5 @@
+variable "nfs_server" { type = string }
+
 resource "helm_release" "loki" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -24,7 +26,7 @@ resource "kubernetes_persistent_volume" "loki" {
     persistent_volume_source {
       nfs {
         path   = "/mnt/main/loki/loki"
-        server = "10.0.10.15"
+        server = var.nfs_server
       }
     }
     persistent_volume_reclaim_policy = "Retain"

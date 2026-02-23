@@ -2,16 +2,8 @@ variable "tls_secret_name" { type = string }
 variable "url_shortener_geolite_license_key" { type = string }
 variable "url_shortener_api_key" { type = string }
 variable "url_shortener_mysql_password" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 ## Setup
 ## Need to manually add
@@ -128,7 +120,7 @@ resource "kubernetes_deployment" "shlink" {
           }
           env {
             name  = "DB_HOST"
-            value = "mysql.dbaas.svc.cluster.local"
+            value = var.mysql_host
           }
           # env {
           #   name  = "DB_USER"

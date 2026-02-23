@@ -316,6 +316,13 @@ serverFiles:
               severity: warning
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 85%)"
+          - alert: PVPredictedFull
+            expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} predicted to fill within 24h"
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
@@ -389,6 +396,50 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
+      - name: Critical Services
+        rules:
+          - alert: PostgreSQLDown
+            expr: (kube_deployment_status_replicas_available{namespace="dbaas", deployment=~"postgresql.*"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL has no available replicas"
+          - alert: MySQLDown
+            expr: (kube_deployment_status_replicas_available{namespace="dbaas", deployment=~"mysql.*"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MySQL has no available replicas"
+          - alert: RedisDown
+            expr: (kube_deployment_status_replicas_available{namespace="redis"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis has no available replicas"
+          - alert: HeadscaleDown
+            expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Headscale VPN has no available replicas"
+          - alert: AuthentikDown
+            expr: (kube_deployment_status_replicas_available{namespace="authentik", deployment="authentik-server"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Authentik auth server has no available replicas"
+          - alert: LokiDown
+            expr: (kube_statefulset_status_replicas_ready{namespace="monitoring", statefulset=~"loki.*"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Loki log aggregation has no ready replicas"
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -548,20 +599,20 @@ serverFiles:
               severity: page
             annotations:
               summary: Mail server has no available replicas. This means mail may not be received.
-          # - alert: Hackmd has no replicas available
-          #   expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
-          #   for: 1m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: Hackmd has no available replicas.
-          # - alert: Privatebin has no replicas available
-          #   expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
-          #   for: 10m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: Privatebin has no available replicas.
+          - alert: HackmdDown
+            expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Hackmd has no available replicas"
+          - alert: PrivatebinDown
+            expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Privatebin has no available replicas"
           # - name: London OpenWRT Down
           #   rules:
           #     - alert: OpenWRT client unreachable

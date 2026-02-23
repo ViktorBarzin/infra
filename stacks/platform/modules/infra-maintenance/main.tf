@@ -3,6 +3,7 @@ variable "git_user" {}
 variable "git_token" {}
 variable "technitium_username" {}
 variable "technitium_password" {}
+variable "nfs_server" { type = string }
 
 
 # DISABLED WHILST USING CLOUDFLARE NS
@@ -124,7 +125,7 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
               name = "backup"
               nfs {
                 path   = "/mnt/main/etcd-backup"
-                server = "10.0.10.15"
+                server = var.nfs_server
               }
             }
             volume {

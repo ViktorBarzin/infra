@@ -1,15 +1,8 @@
 variable "tls_secret_name" { type = string }
 variable "speedtest_db_password" { type = string }
+variable "nfs_server" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "speedtest" {
   metadata {
@@ -90,7 +83,7 @@ resource "kubernetes_deployment" "speedtest" {
           }
           env {
             name  = "DB_HOST"
-            value = "mysql.dbaas.svc.cluster.local"
+            value = var.mysql_host
           }
           env {
             name  = "DB_DATABASE"
@@ -116,7 +109,7 @@ resource "kubernetes_deployment" "speedtest" {
         volume {
           name = "config"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/speedtest"
           }
         }

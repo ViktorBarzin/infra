@@ -5,16 +5,9 @@ variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
 variable "modal_api_key" { type = string }
+variable "nfs_server" { type = string }
+variable "ollama_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "openclaw" {
   metadata {
@@ -148,7 +141,7 @@ resource "kubernetes_config_map" "openclaw_config" {
             ]
           }
           ollama = {
-            baseUrl = "http://ollama.ollama.svc.cluster.local:11434/v1"
+            baseUrl = "http://${var.ollama_host}:11434/v1"
             api     = "openai-completions"
             apiKey  = "ollama"
             models = [
@@ -429,14 +422,14 @@ resource "kubernetes_deployment" "openclaw" {
         volume {
           name = "workspace"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/openclaw/workspace"
           }
         }
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/openclaw/data"
           }
         }

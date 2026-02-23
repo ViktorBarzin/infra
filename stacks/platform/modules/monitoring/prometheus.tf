@@ -1,4 +1,5 @@
 
+
 resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   metadata {
     name      = "prometheus-iscsi-pvc"
@@ -29,7 +30,7 @@ resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
     persistent_volume_source {
       nfs {
         path   = "/mnt/main/prometheus"
-        server = "10.0.10.15"
+        server = var.nfs_server
       }
       # iscsi {
       #   fs_type       = "ext4"

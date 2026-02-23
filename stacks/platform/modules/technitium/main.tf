@@ -2,6 +2,8 @@ variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "homepage_token" {}
 variable "technitium_db_password" {}
+variable "nfs_server" { type = string }
+variable "mysql_host" { type = string }
 
 resource "kubernetes_namespace" "technitium" {
   metadata {
@@ -131,14 +133,14 @@ resource "kubernetes_deployment" "technitium" {
           image = "technitium/dns-server:latest"
           name  = "technitium"
           resources {
-            # limits = {
-            #   cpu    = "1"
-            #   memory = "1Gi"
-            # }
-            # requests = {
-            #   cpu    = "1"
-            #   memory = "1Gi"
-            # }
+            requests = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
           }
           port {
             container_port = 5380
@@ -162,7 +164,7 @@ resource "kubernetes_deployment" "technitium" {
           name = "nfs-config"
           nfs {
             path   = "/mnt/main/technitium"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
@@ -278,7 +280,7 @@ resource "kubernetes_config_map" "grafana_technitium_datasource" {
         name     = "Technitium MySQL"
         type     = "mysql"
         access   = "proxy"
-        url      = "mysql.dbaas.svc.cluster.local:3306"
+        url      = "${var.mysql_host}:3306"
         database = "technitium"
         user     = "technitium"
         uid      = "technitium-mysql"

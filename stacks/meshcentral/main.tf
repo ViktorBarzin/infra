@@ -1,14 +1,6 @@
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "meshcentral" {
   metadata {
@@ -82,7 +74,7 @@ resource "kubernetes_deployment" "meshcentral" {
           }
           env {
             name  = "ALLOW_NEW_ACCOUNTS"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "WEBRTC"
@@ -106,21 +98,21 @@ resource "kubernetes_deployment" "meshcentral" {
           name = "data"
           nfs {
             path   = "/mnt/main/meshcentral/meshcentral-data"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "files"
           nfs {
             path   = "/mnt/main/meshcentral/meshcentral-files"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "backups"
           nfs {
             path   = "/mnt/main/meshcentral/meshcentral-backups"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -156,4 +148,5 @@ module "ingress" {
   name            = "meshcentral"
   tls_secret_name = var.tls_secret_name
   port            = 443
+  protected       = true
 }

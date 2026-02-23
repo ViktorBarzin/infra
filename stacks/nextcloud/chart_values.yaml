@@ -28,13 +28,13 @@ nextcloud:
 
 externalRedis:
   enabled: true
-  host: redis.redis.svc.cluster.local
+  host: ${redis_host}
 
 # Currently not in use; we use the nextcloud.db sqlite3
 externalDatabase:
   enabled: false
   type: mysql
-  host: mysql.dbaas.svc.cluster.local
+  host: ${mysql_host}
   user: nextcloud
   password: ${db_password}
   databse: nextcloud

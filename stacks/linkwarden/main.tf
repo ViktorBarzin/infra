@@ -2,16 +2,8 @@ variable "tls_secret_name" { type = string }
 variable "linkwarden_postgresql_password" { type = string }
 variable "linkwarden_authentik_client_id" { type = string }
 variable "linkwarden_authentik_client_secret" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "linkwarden" {
   metadata {
@@ -73,7 +65,7 @@ resource "kubernetes_deployment" "linkwarden" {
           }
           env {
             name  = "DATABASE_URL"
-            value = "postgresql://linkwarden:${var.linkwarden_postgresql_password}@postgresql.dbaas.svc.cluster.local:5432/linkwarden"
+            value = "postgresql://linkwarden:${var.linkwarden_postgresql_password}@${var.postgresql_host}:5432/linkwarden"
           }
           env {
             name  = "NEXT_PUBLIC_AUTHENTIK_ENABLED"

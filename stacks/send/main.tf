@@ -1,14 +1,7 @@
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "send" {
   metadata {
@@ -81,7 +74,7 @@ resource "kubernetes_deployment" "send" {
           }
           env {
             name  = "REDIS_HOST"
-            value = "redis.redis.svc.cluster.local"
+            value = var.redis_host
           }
           volume_mount {
             name       = "data"
@@ -92,7 +85,7 @@ resource "kubernetes_deployment" "send" {
           name = "data"
           nfs {
             path   = "/mnt/main/send"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

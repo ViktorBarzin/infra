@@ -4,16 +4,10 @@ variable "tandoor_email_password" {
   type    = string
   default = ""
 }
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
+variable "mail_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "tandoor" {
   metadata {
@@ -75,7 +69,7 @@ resource "kubernetes_deployment" "tandoor" {
           }
           env {
             name  = "POSTGRES_HOST"
-            value = "postgresql.dbaas.svc.cluster.local"
+            value = var.postgresql_host
           }
           env {
             name  = "POSTGRES_PORT"
@@ -107,7 +101,7 @@ resource "kubernetes_deployment" "tandoor" {
           }
           env {
             name  = "EMAIL_HOST"
-            value = "mail.viktorbarzin.me"
+            value = var.mail_host
           }
           env {
             name  = "EMAIL_HOST_USER"
@@ -148,7 +142,7 @@ resource "kubernetes_deployment" "tandoor" {
           name = "data"
           nfs {
             path   = "/mnt/main/tandoor"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

@@ -1,15 +1,9 @@
 variable "tls_secret_name" { type = string }
 variable "nextcloud_db_password" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
@@ -36,7 +30,7 @@ resource "helm_release" "nextcloud" {
   atomic     = true
   version    = "8.8.1"
 
-  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.nextcloud_db_password })]
+  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.nextcloud_db_password, redis_host = var.redis_host, mysql_host = var.mysql_host })]
   timeout = 6000
 }
 
@@ -136,7 +130,7 @@ resource "kubernetes_persistent_volume" "nextcloud-data-pv" {
     persistent_volume_source {
       nfs {
         path   = "/mnt/main/nextcloud"
-        server = "10.0.10.15"
+        server = var.nfs_server
       }
     }
   }
@@ -298,7 +292,7 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
             volume {
               name = "nextcloud-data"
               nfs {
-                server = "10.0.10.15"
+                server = var.nfs_server
                 path   = "/mnt/main/nextcloud"
               }
             }
@@ -306,7 +300,7 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
             volume {
               name = "backup"
               nfs {
-                server = "10.0.10.15"
+                server = var.nfs_server
                 path   = "/mnt/main/nextcloud-backup"
               }
             }

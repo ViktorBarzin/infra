@@ -16,15 +16,6 @@
 # -----------------------------------------------------------------------------
 # Tier Definitions
 # -----------------------------------------------------------------------------
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 # =============================================================================
 # Variable Declarations
@@ -32,6 +23,12 @@ locals {
 
 # --- Core ---
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "postgresql_host" { type = string }
+variable "mysql_host" { type = string }
+variable "ollama_host" { type = string }
+variable "mail_host" { type = string }
 variable "prod" {
   type    = bool
   default = false
@@ -140,6 +137,7 @@ module "dbaas" {
   source                   = "./modules/dbaas"
   prod                     = var.prod
   tls_secret_name          = var.tls_secret_name
+  nfs_server               = var.nfs_server
   dbaas_root_password      = var.dbaas_root_password
   postgresql_root_password = var.dbaas_postgresql_root_password
   pgadmin_password         = var.dbaas_pgadmin_password
@@ -152,6 +150,7 @@ module "dbaas" {
 module "redis" {
   source          = "./modules/redis"
   tls_secret_name = var.tls_secret_name
+  nfs_server      = var.nfs_server
   tier            = local.tiers.cluster
 }
 
@@ -171,6 +170,8 @@ module "traefik" {
 module "technitium" {
   source                 = "./modules/technitium"
   tls_secret_name        = var.tls_secret_name
+  nfs_server             = var.nfs_server
+  mysql_host             = var.mysql_host
   homepage_token         = var.homepage_credentials["technitium"]["token"]
   technitium_db_password = var.technitium_db_password
   tier                   = local.tiers.core
@@ -182,6 +183,7 @@ module "technitium" {
 module "headscale" {
   source           = "./modules/headscale"
   tls_secret_name  = var.tls_secret_name
+  nfs_server       = var.nfs_server
   headscale_config = var.headscale_config
   headscale_acl    = var.headscale_acl
   tier             = local.tiers.core
@@ -196,6 +198,7 @@ module "authentik" {
   tls_secret_name   = var.tls_secret_name
   secret_key        = var.authentik_secret_key
   postgres_password = var.authentik_postgres_password
+  redis_host        = var.redis_host
 }
 
 # -----------------------------------------------------------------------------
@@ -225,6 +228,7 @@ module "crowdsec" {
   source                         = "./modules/crowdsec"
   tier                           = local.tiers.cluster
   tls_secret_name                = var.tls_secret_name
+  mysql_host                     = var.mysql_host
   homepage_username              = var.homepage_credentials["crowdsec"]["username"]
   homepage_password              = var.homepage_credentials["crowdsec"]["password"]
   enroll_key                     = var.crowdsec_enroll_key
@@ -241,6 +245,8 @@ module "crowdsec" {
 module "monitoring" {
   source                        = "./modules/monitoring"
   tls_secret_name               = var.tls_secret_name
+  nfs_server                    = var.nfs_server
+  mysql_host                    = var.mysql_host
   alertmanager_account_password = var.alertmanager_account_password
   idrac_username                = var.monitoring_idrac_username
   idrac_password                = var.monitoring_idrac_password
@@ -259,6 +265,8 @@ module "monitoring" {
 module "vaultwarden" {
   source          = "./modules/vaultwarden"
   tls_secret_name = var.tls_secret_name
+  nfs_server      = var.nfs_server
+  mail_host       = var.mail_host
   smtp_password   = var.vaultwarden_smtp_password
   tier            = local.tiers.edge
 }
@@ -304,6 +312,7 @@ module "kyverno" {
 module "uptime-kuma" {
   source          = "./modules/uptime-kuma"
   tls_secret_name = var.tls_secret_name
+  nfs_server      = var.nfs_server
   tier            = local.tiers.cluster
 }
 
@@ -338,6 +347,8 @@ module "xray" {
 module "mailserver" {
   source                  = "./modules/mailserver"
   tls_secret_name         = var.tls_secret_name
+  nfs_server              = var.nfs_server
+  mysql_host              = var.mysql_host
   mailserver_accounts     = var.mailserver_accounts
   postfix_account_aliases = var.mailserver_aliases
   opendkim_key            = var.mailserver_opendkim_key
@@ -370,6 +381,7 @@ module "cloudflared" {
 # -----------------------------------------------------------------------------
 module "infra-maintenance" {
   source              = "./modules/infra-maintenance"
+  nfs_server          = var.nfs_server
   git_user            = var.webhook_handler_git_user
   git_token           = var.webhook_handler_git_token
   technitium_username = var.technitium_username
@@ -385,11 +397,11 @@ output "tls_secret_name" {
 }
 
 output "redis_host" {
-  value = "redis.redis.svc.cluster.local"
+  value = var.redis_host
 }
 
 output "postgresql_host" {
-  value = "postgresql.dbaas.svc.cluster.local"
+  value = var.postgresql_host
 }
 
 output "postgresql_port" {
@@ -397,7 +409,7 @@ output "postgresql_port" {
 }
 
 output "mysql_host" {
-  value = "mysql.dbaas.svc.cluster.local"
+  value = var.mysql_host
 }
 
 output "mysql_port" {
@@ -405,7 +417,7 @@ output "mysql_port" {
 }
 
 output "smtp_host" {
-  value = "mail.viktorbarzin.me"
+  value = var.mail_host
 }
 
 output "smtp_port" {

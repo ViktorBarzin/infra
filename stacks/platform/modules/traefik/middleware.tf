@@ -13,8 +13,8 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
     }
     spec = {
       rateLimit = {
-        average = 5
-        burst   = 250
+        average = 10
+        burst   = 50
       }
     }
   }
@@ -106,6 +106,31 @@ resource "kubernetes_manifest" "middleware_csp_headers" {
     spec = {
       headers = {
         contentSecurityPolicy = "frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Security headers middleware (HSTS, X-Frame-Options, etc.)
+resource "kubernetes_manifest" "middleware_security_headers" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "security-headers"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        stsSeconds           = 31536000
+        stsIncludeSubdomains = true
+        frameDeny            = true
+        contentTypeNosniff   = true
+        browserXssFilter     = true
+        referrerPolicy       = "strict-origin-when-cross-origin"
+        permissionsPolicy    = "camera=(), microphone=(), geolocation=()"
       }
     }
   }

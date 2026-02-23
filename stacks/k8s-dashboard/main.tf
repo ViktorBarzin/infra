@@ -1,15 +1,6 @@
 variable "tls_secret_name" { type = string }
 variable "client_certificate_secret_name" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "random_password" "csrf_token" {
   length           = 16
