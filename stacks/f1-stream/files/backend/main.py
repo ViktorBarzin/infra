@@ -1,4 +1,4 @@
-"""F1 Streams - FastAPI backend with schedule and stream extraction services."""
+"""F1 Streams - FastAPI backend with schedule, stream extraction, health checking, and HLS proxy."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -6,9 +6,12 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response, StreamingResponse
 
 from backend.extractors import create_extraction_service
+from backend.proxy import proxy_playlist, relay_stream
 from backend.schedule import ScheduleService
 
 logging.basicConfig(
@@ -108,6 +111,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="F1 Streams", lifespan=lifespan)
 
+# --- CORS Middleware ---
+# Required for browser-based HLS players to access proxy/relay endpoints
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["Range"],
+    expose_headers=["Content-Range", "Content-Length", "Content-Type"],
+)
+
 
 # --- Health & Info ---
 
@@ -119,7 +132,7 @@ async def health():
 
 @app.get("/")
 async def root():
-    return {"service": "f1-streams", "version": "3.0.0"}
+    return {"service": "f1-streams", "version": "4.0.0"}
 
 
 # --- Schedule ---
@@ -143,8 +156,27 @@ async def refresh_schedule():
 
 @app.get("/streams")
 async def get_streams():
-    """Return all currently cached streams from all extractors."""
+    """Return all currently cached streams that passed health checks.
+
+    Streams are sorted by fallback priority:
+    1. Live streams only (is_live=True)
+    2. Fastest response time first (lowest response_time_ms)
+    """
     streams = extraction_service.get_streams()
+    return {
+        "streams": streams,
+        "count": len(streams),
+    }
+
+
+@app.get("/streams/all")
+async def get_all_streams():
+    """Return ALL cached streams including unhealthy ones (for debugging).
+
+    Unlike GET /streams, this endpoint includes streams that failed health
+    checks. Useful for diagnosing extraction or health check issues.
+    """
+    streams = extraction_service.get_all_streams_unfiltered()
     return {
         "streams": streams,
         "count": len(streams),
@@ -165,8 +197,80 @@ async def trigger_extraction():
     return {
         "status": "extraction_complete",
         "streams_found": status["total_cached_streams"],
+        "live_streams": status["total_live_streams"],
         "extractors_run": len(status["extractors"]),
     }
+
+
+# --- HLS Proxy ---
+
+
+def _get_proxy_base(request: Request) -> str:
+    """Derive the proxy base URL from the incoming request.
+
+    Uses X-Forwarded-Proto and X-Forwarded-Host headers if present
+    (behind a reverse proxy), otherwise falls back to request URL.
+    """
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    return f"{proto}://{host}"
+
+
+@app.get("/proxy")
+async def proxy_endpoint(
+    request: Request,
+    url: str = Query(..., description="Base64url-encoded m3u8 playlist URL"),
+):
+    """Proxy an upstream m3u8 playlist with URI rewriting.
+
+    Fetches the upstream m3u8 playlist, rewrites all URIs to route through
+    our /proxy (for sub-playlists) and /relay (for segments) endpoints,
+    and returns the rewritten playlist.
+
+    The `url` parameter must be base64url-encoded to avoid URL encoding issues.
+
+    Example:
+        GET /proxy?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9zdHJlYW0ubTN1OA
+    """
+    proxy_base = _get_proxy_base(request)
+    rewritten = await proxy_playlist(url, proxy_base)
+
+    return Response(
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
+    )
+
+
+@app.get("/relay")
+async def relay_endpoint(
+    request: Request,
+    url: str = Query(..., description="Base64url-encoded segment URL"),
+):
+    """Relay an upstream media segment as a chunked byte stream.
+
+    Fetches the upstream segment (TS, fMP4, init segment, etc.) and streams
+    it to the client using chunked transfer encoding. Never buffers the
+    full segment in memory.
+
+    The `url` parameter must be base64url-encoded to avoid URL encoding issues.
+
+    Supports HTTP Range requests for seeking.
+
+    Example:
+        GET /relay?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9zZWdtZW50LnRz
+    """
+    range_header = request.headers.get("range")
+
+    stream_gen, headers, status_code = await relay_stream(url, range_header)
+
+    return StreamingResponse(
+        stream_gen,
+        status_code=status_code,
+        headers=headers,
+    )
 
 
 if __name__ == "__main__":
