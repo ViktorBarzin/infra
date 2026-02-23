@@ -38,7 +38,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The Terragrunt stack applies cleanly from a fresh checkout with no manual cluster intervention
   3. The NFS volume is mounted inside the running pod and a file written to it survives a pod restart
   4. Woodpecker CI pipeline exists and triggers on push to the service's directory
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — Create FastAPI backend app, Dockerfile, and build/push Docker image
+- [ ] 01-02-PLAN.md — Update Terraform deployment, apply stack, verify NFS, add CI pipeline
 
 ### Phase 2: F1 Schedule Subsystem
 **Goal**: The system automatically fetches the full F1 race calendar and serves it as structured data — users can see all sessions for the current season with correct times.
@@ -125,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Infrastructure and Deployment | 0/TBD | Not started | - |
+| 1. Infrastructure and Deployment | 0/2 | Planning complete | - |
 | 2. F1 Schedule Subsystem | 0/TBD | Not started | - |
 | 3. Extractor Framework and First Site | 0/TBD | Not started | - |
 | 4. Stream Health and Fallback | 0/TBD | Not started | - |
