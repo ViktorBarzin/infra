@@ -220,12 +220,12 @@ sections:
         statusCheck: false
         id: 0_1364_phpmyadmin
       - &ref_22
-        title: Drone CI
+        title: Woodpecker CI
         description: CI/CD Service
-        icon: si-drone
-        url: https://drone.viktorbarzin.me/
+        icon: si-woodpeckerci
+        url: https://ci.viktorbarzin.me/
         target: newtab
-        id: 1_1364_droneci
+        id: 1_1364_woodpeckerci
       - &ref_23
         title: DNS Server
         description: Technitium
