@@ -1,6 +1,7 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "aiostreams" {
   metadata {
@@ -64,7 +65,7 @@ resource "kubernetes_deployment" "aiostreams" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/servarr/aiostreams"
           }
         }

@@ -2,16 +2,10 @@ variable "tls_secret_name" { type = string }
 variable "openrouter_api_key" { type = string }
 variable "slack_bot_token" { type = string }
 variable "slack_channel" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "ollama_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "ytdlp" {
   metadata {
@@ -100,7 +94,7 @@ resource "kubernetes_deployment" "ytdlp" {
           name = "data"
           nfs {
             path   = "/mnt/main/ytdlp"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         # }
@@ -247,7 +241,7 @@ resource "kubernetes_deployment" "yt_highlights" {
           }
           env {
             name  = "REDIS_URL"
-            value = "redis://redis.redis.svc.cluster.local:6379/0"
+            value = "redis://${var.redis_host}:6379/0"
           }
           # Store model cache on NFS to avoid ephemeral storage eviction
           env {
@@ -261,7 +255,7 @@ resource "kubernetes_deployment" "yt_highlights" {
           # Ollama fallback for when OpenRouter models fail
           env {
             name  = "OLLAMA_URL"
-            value = "http://ollama.ollama.svc.cluster.local:11434"
+            value = "http://${var.ollama_host}:11434"
           }
           env {
             name  = "OLLAMA_MODEL"
@@ -290,7 +284,7 @@ resource "kubernetes_deployment" "yt_highlights" {
         volume {
           name = "data"
           nfs {
-            server = "10.0.10.15"
+            server = var.nfs_server
             path   = "/mnt/main/ytdlp-highlights"
           }
         }

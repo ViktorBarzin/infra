@@ -1,4 +1,5 @@
 
+
 # resource "kubernetes_persistent_volume" "prometheus_grafana_pv" {
 #   metadata {
 #     name = "grafana-pv"
@@ -11,7 +12,7 @@
 #     persistent_volume_source {
 #       nfs {
 #         path   = "/mnt/main/grafana"
-#         server = "10.0.10.15"
+#         server = var.nfs_server
 #       }
 #       # iscsi {
 #       #   target_portal = "iscsi.viktorbarzin.lan:3260"
@@ -35,7 +36,7 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
     persistent_volume_source {
       nfs {
         path   = "/mnt/main/alertmanager"
-        server = "10.0.10.15"
+        server = var.nfs_server
       }
     }
   }
@@ -65,5 +66,5 @@ resource "helm_release" "grafana" {
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"
 
-  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password, grafana_admin_password = var.grafana_admin_password })]
+  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password, grafana_admin_password = var.grafana_admin_password, mysql_host = var.mysql_host })]
 }

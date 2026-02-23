@@ -1,15 +1,8 @@
 variable "tls_secret_name" { type = string }
 variable "ollama_api_credentials" { type = map(string) }
+variable "nfs_server" { type = string }
+variable "ollama_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "ollama" {
   metadata {
@@ -54,7 +47,7 @@ resource "kubernetes_persistent_volume" "ollama-pv" {
     persistent_volume_source {
       nfs {
         path   = "/mnt/main/ollama"
-        server = "10.0.10.15"
+        server = var.nfs_server
       }
     }
   }
@@ -130,7 +123,7 @@ resource "kubernetes_deployment" "ollama" {
           nfs {
             # path   = "/mnt/main/ollama"
             path   = "/mnt/ssd/ollama"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -254,7 +247,7 @@ resource "kubernetes_deployment" "ollama-ui" {
           name  = "ollama-ui"
           env {
             name  = "OLLAMA_BASE_URL"
-            value = "http://ollama.ollama.svc.cluster.local:11434"
+            value = "http://${var.ollama_host}:11434"
           }
 
           port {
@@ -269,7 +262,7 @@ resource "kubernetes_deployment" "ollama-ui" {
           name = "data"
           nfs {
             path   = "/mnt/main/ollama"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

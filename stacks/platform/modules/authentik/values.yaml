@@ -13,7 +13,7 @@ authentik:
     user: authentik
     password: ${postgres_password}
   redis:
-    host: redis.redis
+    host: ${redis_host}
 
 server:
   replicas: 3

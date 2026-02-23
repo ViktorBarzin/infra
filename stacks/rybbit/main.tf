@@ -1,16 +1,9 @@
 variable "tls_secret_name" { type = string }
 variable "clickhouse_password" { type = string }
 variable "clickhouse_postgres_password" { type = string }
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "rybbit" {
   metadata {
@@ -89,7 +82,7 @@ resource "kubernetes_deployment" "clickhouse" {
           name = "data"
           nfs {
             path   = "/mnt/main/clickhouse"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -168,7 +161,7 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "POSTGRES_HOST"
-            value = "postgresql.dbaas.svc.cluster.local"
+            value = var.postgresql_host
           }
           env {
             name  = "POSTGRES_PORT"

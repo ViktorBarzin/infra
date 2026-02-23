@@ -2,6 +2,7 @@ variable "tls_secret_name" {}
 variable "secret_key" {}
 variable "postgres_password" {}
 variable "tier" { type = string }
+variable "redis_host" { type = string }
 
 
 module "tls_secret" {
@@ -48,7 +49,7 @@ resource "helm_release" "authentik" {
   atomic  = true
   timeout = 6000
 
-  values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key })]
+  values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key, redis_host = var.redis_host })]
 }
 
 

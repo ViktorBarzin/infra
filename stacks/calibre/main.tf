@@ -1,15 +1,7 @@
 variable "tls_secret_name" { type = string }
 variable "homepage_credentials" { type = map(any) }
+variable "nfs_server" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "calibre" {
   metadata {
@@ -94,7 +86,7 @@ module "tls_secret" {
 #           name = "data"
 #           nfs {
 #             path   = "/mnt/main/calibre"
-#             server = "10.0.10.15"
+#             server = var.nfs_server
 #           }
 #         }
 #       }
@@ -181,21 +173,21 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           name = "library"
           nfs {
             path   = "/mnt/main/calibre-web-automated/calibre-library"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "config"
           nfs {
             path   = "/mnt/main/calibre-web-automated/config"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "ingest"
           nfs {
             path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -292,14 +284,14 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
           name = "config"
           nfs {
             path   = "/mnt/main/calibre-web-automated/stacks"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "ingest"
           nfs {
             path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

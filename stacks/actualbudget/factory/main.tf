@@ -12,6 +12,7 @@ variable "budget_encryption_password" {
   type    = string
   default = null # If not passed, we won't run banksync ;known after initial installation
 }
+variable "nfs_server" { type = string }
 
 resource "kubernetes_deployment" "actualbudget" {
   metadata {
@@ -59,7 +60,7 @@ resource "kubernetes_deployment" "actualbudget" {
           name = "data"
           nfs {
             path   = "/mnt/main/actualbudget/${var.name}"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

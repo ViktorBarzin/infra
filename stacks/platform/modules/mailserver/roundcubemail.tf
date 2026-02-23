@@ -1,4 +1,5 @@
 variable "roundcube_db_password" { type = string }
+variable "mysql_host" { type = string }
 
 # If you want to override settings mount this in /var/roundcube/config
 # more info in https://github.com/roundcube/roundcubemail-docker?tab=readme-ov-file
@@ -89,7 +90,7 @@ resource "kubernetes_deployment" "roundcubemail" {
           }
           env {
             name  = "ROUNDCUBEMAIL_DB_HOST"
-            value = "mysql.dbaas"
+            value = var.mysql_host
           }
           env {
             name  = "ROUNDCUBEMAIL_DB_USER"
@@ -148,14 +149,14 @@ resource "kubernetes_deployment" "roundcubemail" {
           name = "html"
           nfs {
             path   = "/mnt/main/roundcubemail/html"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         volume {
           name = "enigma"
           nfs {
             path   = "/mnt/main/roundcubemail/enigma"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

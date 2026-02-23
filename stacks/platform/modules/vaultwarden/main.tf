@@ -1,6 +1,8 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "smtp_password" {}
+variable "nfs_server" { type = string }
+variable "mail_host" { type = string }
 
 resource "kubernetes_namespace" "vaultwarden" {
   metadata {
@@ -51,6 +53,18 @@ resource "kubernetes_deployment" "vaultwarden" {
         container {
           image = "vaultwarden/server:1.35.2"
           name  = "vaultwarden"
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
           env {
             name  = "DOMAIN"
             value = "https://vaultwarden.viktorbarzin.me"
@@ -61,7 +75,7 @@ resource "kubernetes_deployment" "vaultwarden" {
           # }
           env {
             name  = "SMTP_HOST"
-            value = "mail.viktorbarzin.me"
+            value = var.mail_host
           }
           env {
             name  = "SMTP_FROM"
@@ -96,7 +110,7 @@ resource "kubernetes_deployment" "vaultwarden" {
           name = "data"
           nfs {
             path   = "/mnt/main/vaultwarden"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

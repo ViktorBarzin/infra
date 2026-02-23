@@ -1,16 +1,10 @@
 variable "tls_secret_name" { type = string }
 variable "paperless_db_password" { type = string }
 variable "homepage_credentials" { type = map(any) }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "paperless-ngx" {
   metadata {
@@ -69,7 +63,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           env {
             name = "PAPERLESS_REDIS"
             // If redis gets stuck, try deleting the locks files in log dir
-            value = "redis://redis.redis"
+            value = "redis://${var.redis_host}"
           }
           env {
             name  = "PAPERLESS_REDIS_PREFIX"
@@ -81,7 +75,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           }
           env {
             name  = "PAPERLESS_DBHOST"
-            value = "mysql.dbaas"
+            value = var.mysql_host
           }
           env {
             name  = "PAPERLESS_DBNAME"
@@ -124,7 +118,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           name = "data"
           nfs {
             path   = "/mnt/main/paperless-ngx"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

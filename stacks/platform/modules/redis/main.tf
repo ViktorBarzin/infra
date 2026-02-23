@@ -1,5 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "redis" {
   metadata {
@@ -49,6 +50,17 @@ resource "kubernetes_deployment" "redis" {
           image = "redis/redis-stack:latest"
           name  = "redis"
 
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
+
           port {
             container_port = 6379
           }
@@ -64,7 +76,7 @@ resource "kubernetes_deployment" "redis" {
           name = "data"
           nfs {
             path   = "/mnt/main/redis"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

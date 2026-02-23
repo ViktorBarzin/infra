@@ -1,14 +1,10 @@
 variable "tls_secret_name" { type = string }
+variable "netbox_db_password" { type = string }
+variable "netbox_superuser_password" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "postgresql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "netbox" {
   metadata {
@@ -75,11 +71,11 @@ resource "kubernetes_deployment" "netbox" {
           }
           env {
             name  = "DB_PASSWORD"
-            value = "ttPSBjF9oPLb49XZst3sGF"
+            value = var.netbox_db_password
           }
           env {
             name  = "DB_HOST"
-            value = "postgresql.dbaas.svc.cluster.local"
+            value = var.postgresql_host
           }
           env {
             name  = "DB_NAME"
@@ -99,7 +95,7 @@ resource "kubernetes_deployment" "netbox" {
           }
           env {
             name  = "REDIS_HOST"
-            value = "redis.redis"
+            value = var.redis_host
           }
           env {
             name  = "ALLOWED_HOST"
@@ -111,7 +107,7 @@ resource "kubernetes_deployment" "netbox" {
           }
           env {
             name  = "SUPERUSER_PASSWORD"
-            value = "ttPSBjF9oPLb49XZst3sGFasdf"
+            value = var.netbox_superuser_password
           }
           env {
             name  = "REMOTE_AUTH_ENABLED"
@@ -147,7 +143,7 @@ resource "kubernetes_deployment" "netbox" {
         #   name = "data"
         #   nfs {
         #     path   = "/mnt/main/netbox"
-        #     server = "10.0.10.15"
+        #     server = var.nfs_server
         #   }
         # }
       }

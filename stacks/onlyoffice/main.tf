@@ -1,16 +1,10 @@
 variable "tls_secret_name" { type = string }
 variable "onlyoffice_db_password" { type = string }
 variable "onlyoffice_jwt_token" { type = string }
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "onlyoffice" {
   metadata {
@@ -75,7 +69,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           }
           env {
             name  = "DB_HOST"
-            value = "mysql.dbaas"
+            value = var.mysql_host
           }
           env {
             name  = "DB_PORT"
@@ -95,7 +89,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           }
           env {
             name  = "REDIS_SERVER_HOST"
-            value = "redis.redis"
+            value = var.redis_host
           }
           env {
             name  = "REDIS_SERVER_PORT"
@@ -115,7 +109,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           name = "data"
           nfs {
             path   = "/mnt/main/onlyoffice"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }

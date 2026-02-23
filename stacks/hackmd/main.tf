@@ -1,15 +1,8 @@
 variable "hackmd_db_password" { type = string }
 variable "tls_secret_name" { type = string }
+variable "nfs_server" { type = string }
+variable "mysql_host" { type = string }
 
-locals {
-  tiers = {
-    core    = "0-core"
-    cluster = "1-cluster"
-    gpu     = "2-gpu"
-    edge    = "3-edge"
-    aux     = "4-aux"
-  }
-}
 
 resource "kubernetes_namespace" "hackmd" {
   metadata {
@@ -97,7 +90,7 @@ resource "kubernetes_deployment" "hackmd" {
           env {
             name = "CMD_DB_URL"
             # value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
-            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@mysql.dbaas/codimd")
+            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@${var.mysql_host}/codimd")
           }
           env {
             name  = "CMD_USECDN"
@@ -121,7 +114,7 @@ resource "kubernetes_deployment" "hackmd" {
           name = "data"
           nfs {
             path   = "/mnt/main/hackmd"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
           #   iscsi {
           #     target_portal = "iscsi.viktorbarzin.lan:3260"

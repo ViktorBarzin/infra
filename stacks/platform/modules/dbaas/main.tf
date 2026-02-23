@@ -11,6 +11,7 @@ variable "prod" {
   default = false
   type    = bool
 }
+variable "nfs_server" { type = string }
 
 resource "kubernetes_namespace" "dbaas" {
   metadata {
@@ -131,6 +132,18 @@ resource "kubernetes_deployment" "mysql" {
         container {
           image = "mysql:9.2.0"
           name  = "mysql"
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "2Gi"
+            }
+          }
+
           env {
             name  = "MYSQL_ROOT_PASSWORD"
             value = var.dbaas_root_password
@@ -153,7 +166,7 @@ resource "kubernetes_deployment" "mysql" {
           name = "mysql-persistent-storage"
           nfs {
             path   = "/mnt/main/mysql"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
 
@@ -219,7 +232,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
               name = "mysql-backup"
               nfs {
                 path   = "/mnt/main/mysql-backup"
-                server = "10.0.10.15"
+                server = var.nfs_server
               }
             }
           }
@@ -717,6 +730,18 @@ resource "kubernetes_deployment" "postgres" {
           image = "viktorbarzin/postgres:16-master" # mix of postgis + pgvector
           # image = "postgres:17.2-bullseye" # needs pg_upgrade to data dir
           name = "postgresql"
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "2Gi"
+            }
+          }
+
           env {
             name  = "POSTGRES_PASSWORD"
             value = var.postgresql_root_password
@@ -744,7 +769,7 @@ resource "kubernetes_deployment" "postgres" {
           name = "postgresql-persistent-storage"
           nfs {
             path   = "/mnt/main/postgresql/data"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
         # volume {
@@ -830,7 +855,7 @@ resource "kubernetes_deployment" "pgadmin" {
           # }
           nfs {
             path   = "/mnt/main/postgresql/pgadmin"
-            server = "10.0.10.15"
+            server = var.nfs_server
           }
         }
       }
@@ -905,7 +930,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               name = "postgresql-backup"
               nfs {
                 path   = "/mnt/main/postgresql-backup"
-                server = "10.0.10.15"
+                server = var.nfs_server
               }
             }
           }

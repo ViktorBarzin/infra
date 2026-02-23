@@ -81,7 +81,7 @@ lapi:
     - name: MB_DB_PASS
       value: "${DB_PASSWORD}"
     - name: MB_DB_HOST
-      value: "mysql.dbaas.svc.cluster.local"
+      value: "${mysql_host}"
 
     - name: MB_EMAIL_SMTP_USERNAME
       value: "info@viktorbarzin.me"
@@ -166,7 +166,7 @@ config:
       user:     crowdsec
       password: ${DB_PASSWORD}
       db_name:  crowdsec
-      host:     mysql.dbaas.svc.cluster.local
+      host:     ${mysql_host}
       port:     3306
     api:
       server:

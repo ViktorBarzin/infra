@@ -80,7 +80,7 @@ resource "helm_release" "traefik" {
 
     # Enable dashboard API (accessible on port 8080 internally)
     api = {
-      insecure = true
+      insecure = false
     }
 
     # Entrypoints
@@ -174,7 +174,6 @@ resource "helm_release" "traefik" {
     }
 
     additionalArguments = [
-      "--api.insecure=true",
       "--global.checknewversion=false",
       "--global.sendanonymoususage=false",
       # Skip TLS verification for self-signed backend certs (proxmox, idrac, etc.)
@@ -184,8 +183,10 @@ resource "helm_release" "traefik" {
       "--serversTransport.forwardingTimeouts.responseHeaderTimeout=0s",
       "--serversTransport.forwardingTimeouts.idleConnTimeout=90s",
       # Use forwarded headers from trusted proxies
-      "--entryPoints.websecure.forwardedHeaders.insecure=true",
-      "--entryPoints.web.forwardedHeaders.insecure=true",
+      "--entryPoints.websecure.forwardedHeaders.insecure=false",
+      "--entryPoints.web.forwardedHeaders.insecure=false",
+      "--entryPoints.websecure.forwardedHeaders.trustedIPs=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,10.0.0.0/8,192.168.0.0/16",
+      "--entryPoints.web.forwardedHeaders.trustedIPs=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,10.0.0.0/8,192.168.0.0/16",
     ]
 
     resources = {
