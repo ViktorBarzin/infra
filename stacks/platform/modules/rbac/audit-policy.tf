@@ -120,6 +120,7 @@ with open(path, 'w') as f:
 print('Audit config applied (idempotent)')
 "
       SCRIPT
+      ,
 
       # Wait for API server to restart
       "echo 'Waiting for API server to restart with audit logging...'",
@@ -130,7 +131,7 @@ print('Audit config applied (idempotent)')
 
   triggers = {
     policy_version = "v1" # Bump to force re-apply of manifest flags
-    policy_hash    = sha256(yamlencode({
+    policy_hash = sha256(yamlencode({
       apiVersion = "audit.k8s.io/v1"
       kind       = "Policy"
       rules = [
