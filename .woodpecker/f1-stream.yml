@@ -21,7 +21,7 @@ steps:
       context: stacks/f1-stream/files
       platforms: linux/amd64
       provenance: false
-      auto_tag: true
+      tags: latest
 
   - name: deploy
     image: bitnami/kubectl
