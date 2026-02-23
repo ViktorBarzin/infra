@@ -57,7 +57,7 @@ resource "kubernetes_deployment" "roundcubemail" {
       spec {
         container {
           name  = "roundcube"
-          image = "roundcube/roundcubemail:1.6-apache"
+          image = "roundcube/roundcubemail:1.6.13-apache"
           # Uncomment me to mount additional settings
           #   volume_mount {
           #     name       = "imap-config"
