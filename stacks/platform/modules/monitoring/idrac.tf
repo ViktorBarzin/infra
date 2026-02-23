@@ -80,6 +80,12 @@ resource "kubernetes_deployment" "idrac-redfish" {
             name = "redfish-exporter-config"
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

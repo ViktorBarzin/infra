@@ -113,6 +113,12 @@ resource "kubernetes_deployment" "vaultwarden" {
             server = var.nfs_server
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

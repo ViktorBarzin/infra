@@ -67,6 +67,12 @@ resource "kubernetes_deployment" "pve_exporter" {
             }
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

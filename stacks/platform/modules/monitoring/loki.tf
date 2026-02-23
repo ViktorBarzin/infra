@@ -99,6 +99,12 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
         toleration {
           operator = "Exists"
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }

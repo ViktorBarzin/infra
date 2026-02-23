@@ -61,6 +61,12 @@ resource "kubernetes_deployment" "cloudflared" {
             container_port = 14333
           }
         }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
       }
     }
   }
