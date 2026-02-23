@@ -15,6 +15,9 @@ class ExtractedStream:
     title: str = ""  # e.g., "F1 Race Live"
     extracted_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     is_live: bool = False  # Whether it passed health check
+    response_time_ms: int = 0  # Health check response time (lower = better)
+    checked_at: str = ""  # ISO timestamp of last health check
+    bitrate: int = 0  # Bitrate in bps if detectable from m3u8 playlist
 
     def to_dict(self) -> dict:
         """Serialize to a plain dictionary for JSON responses."""
@@ -26,4 +29,7 @@ class ExtractedStream:
             "title": self.title,
             "extracted_at": self.extracted_at,
             "is_live": self.is_live,
+            "response_time_ms": self.response_time_ms,
+            "checked_at": self.checked_at,
+            "bitrate": self.bitrate,
         }
