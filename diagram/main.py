@@ -24,7 +24,7 @@ vpn_clients: dict[str, Node] = {}
 namespaces_to_not_visualize = {
     "ytdlp", "wireguard", "webhook-handler", "url", "travel-blog", "registry",
     "redis", "openid-help-page", "localai", "kubernetes-dashboard",
-    "headscale", "hackmd", "finance-app", "drone", "dbaas", "crowdsec",
+    "headscale", "hackmd", "finance-app", "dbaas", "crowdsec",
     "cloudflared", "city-guesser"
 }
 # docs for lib - https://diagrams.mingrammer.com/docs/nodes/k8s

@@ -23,8 +23,7 @@ MODULES=(
   dawarich
   descheduler
   diun
-  drone
-  ebook2audiobook
+ebook2audiobook
   echo
   excalidraw
   f1-stream

@@ -11,12 +11,12 @@
 - **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (kubectl apply/edit/patch, helm install, docker run). Use `kubectl` only for read-only operations and ephemeral debugging.
 - **CRITICAL: NEVER put sensitive data** (API keys, passwords, tokens, credentials) into committed files unless encrypted via git-crypt. Secrets belong in `terraform.tfvars` or `secrets/` directory.
 - **CRITICAL: NEVER commit secrets** — triple-check before every commit. Zero exceptions.
-- **New services MUST have CI/CD** (Drone CI pipeline) and **monitoring** (Prometheus alerts and/or Uptime Kuma).
+- **New services MUST have CI/CD** (Woodpecker CI pipeline) and **monitoring** (Prometheus alerts and/or Uptime Kuma).
 
 ## Execution Environment
 - **Terraform/Terragrunt**: Always run locally: `cd stacks/<service> && terragrunt apply --non-interactive`
 - **kubectl**: `kubectl --kubeconfig $(pwd)/config`
-- **GitHub/Drone API**: Use `curl` with tokens from tfvars (see `.claude/reference/github-drone-api.md`). `gh` CLI is blocked by sandbox.
+- **GitHub API**: Use `curl` with tokens from tfvars (see `.claude/reference/github-api.md`). `gh` CLI is blocked by sandbox.
 
 ---
 
@@ -100,7 +100,7 @@ terraform fmt -recursive                       # Format all
 ```
 
 ## CI/CD
-- Drone CI (`.drone.yml`): pushes apply `platform` stack (Terraform 1.5.7 + Terragrunt 0.99.4)
+- Woodpecker CI (`.woodpecker/`): pushes apply `platform` stack, hosted at `https://ci.viktorbarzin.me`
 - TLS renewal pipeline: cron-triggered `renew2.sh` (certbot + Cloudflare DNS)
 - **ALWAYS add `[ci skip]`** to commit messages when you've already applied locally
 - **After committing, run `git push origin master`** to sync
@@ -159,7 +159,7 @@ To rebuild a K8s worker node from scratch (e.g., after disk failure or corruptio
 ## Reference Data
 - `.claude/reference/service-catalog.md` — Full service catalog (70+ services) with Cloudflare domains
 - `.claude/reference/proxmox-inventory.md` — VM table, hardware specs, network topology, GPU config
-- `.claude/reference/github-drone-api.md` — GitHub & Drone CI API patterns with curl examples
+- `.claude/reference/github-api.md` — GitHub API patterns with curl examples
 - `.claude/reference/authentik-state.md` — Current applications, groups, users, login sources
 
 ---
