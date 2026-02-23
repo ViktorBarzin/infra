@@ -5,7 +5,7 @@ server:
   image:
     registry: docker.io
     repository: woodpeckerci/woodpecker-server
-    tag: "v3.5.1"
+    tag: "v3.13.0"
   env:
     WOODPECKER_HOST: "https://ci.viktorbarzin.me"
     WOODPECKER_ADMIN: "ViktorBarzin"
@@ -35,7 +35,7 @@ agent:
   image:
     registry: docker.io
     repository: woodpeckerci/woodpecker-agent
-    tag: "v3.5.1"
+    tag: "v3.13.0"
   env:
     WOODPECKER_BACKEND: "kubernetes"
     WOODPECKER_BACKEND_K8S_NAMESPACE: "woodpecker"
