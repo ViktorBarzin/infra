@@ -57,7 +57,7 @@ resource "kubernetes_deployment" "roundcubemail" {
       spec {
         container {
           name  = "roundcube"
-          image = "roundcube/roundcubemail:latest"
+          image = "roundcube/roundcubemail:1.6-apache"
           # Uncomment me to mount additional settings
           #   volume_mount {
           #     name       = "imap-config"
@@ -111,11 +111,11 @@ resource "kubernetes_deployment" "roundcubemail" {
 
           env {
             name  = "ROUNDCUBEMAIL_SMTP_DEBUG"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "ROUNDCUBEMAIL_DEBUG_LEVEL"
-            value = "6"
+            value = "1"
           }
           env {
             name = "ROUNDCUBEMAIL_LOG_DRIVER"
