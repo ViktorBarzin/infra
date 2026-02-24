@@ -427,7 +427,7 @@ serverFiles:
             annotations:
               summary: "Headscale VPN has no available replicas"
           - alert: AuthentikDown
-            expr: (kube_deployment_status_replicas_available{namespace="authentik", deployment="authentik-server"} or on() vector(0)) < 1
+            expr: (kube_deployment_status_replicas_available{namespace="authentik", deployment="goauthentik-server"} or on() vector(0)) < 1
             for: 5m
             labels:
               severity: critical

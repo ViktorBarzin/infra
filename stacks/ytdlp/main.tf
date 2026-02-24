@@ -189,6 +189,11 @@ resource "kubernetes_deployment" "yt_highlights" {
         node_selector = {
           "gpu" : "true"
         }
+        toleration {
+          key      = "nvidia.com/gpu"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         container {
           name              = "yt-highlights"
           image             = "viktorbarzin/yt-highlights:v20-20260127"
