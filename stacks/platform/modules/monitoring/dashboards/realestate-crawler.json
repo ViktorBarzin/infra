@@ -502,7 +502,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 36
+        "y": 26
       },
       "id": 252,
       "options": {
@@ -553,6 +553,179 @@
         }
       ],
       "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Latency percentiles and request rate for each API endpoint",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 2000
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Path"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 300
+              },
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Request Rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "id": 253,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "p95"
+          }
+        ]
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by (le, http_route) (rate(http_server_duration_milliseconds_bucket{job=\"realestate-crawler-api\"}[5m])))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_duration_milliseconds_bucket{job=\"realestate-crawler-api\"}[5m])))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le, http_route) (rate(http_server_duration_milliseconds_bucket{job=\"realestate-crawler-api\"}[5m])))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "p99",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum by (http_route) (rate(http_server_duration_milliseconds_count{job=\"realestate-crawler-api\"}[5m]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "req/s",
+          "refId": "D"
+        }
+      ],
+      "title": "Per-Path Latency Breakdown",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "http_route",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true
+            },
+            "renameByName": {
+              "Value #A": "p50",
+              "Value #B": "p95",
+              "Value #C": "p99",
+              "Value #D": "Request Rate",
+              "http_route": "Path"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "collapsed": false,
@@ -1664,6 +1837,20 @@
         }
       ],
       "title": "Top Offenders (Avg Duration)",
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "Value"
+              }
+            ]
+          }
+        }
+      ],
       "type": "bargauge"
     },
     {
