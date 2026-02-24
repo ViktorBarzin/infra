@@ -89,6 +89,14 @@ resource "kubernetes_deployment" "ollama" {
         }
       }
       spec {
+        node_selector = {
+          "gpu" = "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         container {
           image = "ollama/ollama:latest"
           name  = "ollama"
