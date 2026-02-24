@@ -16,8 +16,45 @@ resource "helm_release" "kyverno" {
 
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno"
+  version    = "3.6.1"
 
-  #   values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password })]
+  values = [yamlencode({
+    # When Kyverno is unavailable, allow pod creation to proceed without
+    # mutation/validation rather than blocking all admissions cluster-wide.
+    features = {
+      forceFailurePolicyIgnore = {
+        enabled = true
+      }
+    }
+
+    admissionController = {
+      container = {
+        resources = {
+          limits = {
+            memory = "768Mi"
+          }
+          requests = {
+            cpu    = "100m"
+            memory = "128Mi"
+          }
+        }
+      }
+
+      # More tolerant liveness probe — API server slowness shouldn't kill the pod
+      livenessProbe = {
+        httpGet = {
+          path   = "/health/liveness"
+          port   = 9443
+          scheme = "HTTPS"
+        }
+        initialDelaySeconds = 15
+        periodSeconds       = 30
+        timeoutSeconds      = 5
+        failureThreshold    = 4
+        successThreshold    = 1
+      }
+    }
+  })]
 }
 
 # To unlabel all:
