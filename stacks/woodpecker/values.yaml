@@ -11,6 +11,7 @@ server:
     WOODPECKER_ADMIN: "ViktorBarzin"
     WOODPECKER_OPEN: "false"
     WOODPECKER_GITHUB: "true"
+    WOODPECKER_GITHUB_URL: "https://github.com"
     WOODPECKER_GITHUB_CLIENT: "${github_client_id}"
     WOODPECKER_GITHUB_SECRET: "${github_client_secret}"
     WOODPECKER_AGENT_SECRET: "${agent_secret}"
@@ -19,6 +20,10 @@ server:
     WOODPECKER_PLUGINS_PRIVILEGED: "woodpeckerci/plugin-docker-buildx,plugins/docker"
     WOODPECKER_PLUGINS_TRUSTED_CLONE: "woodpeckerci/plugin-git,alpine"
     WOODPECKER_LOG_LEVEL: "info"
+    WOODPECKER_FORGEJO: "true"
+    WOODPECKER_FORGEJO_CLIENT: "${forgejo_client_id}"
+    WOODPECKER_FORGEJO_SECRET: "${forgejo_client_secret}"
+    WOODPECKER_FORGEJO_URL: "${forgejo_url}"
   service:
     type: ClusterIP
     port: 80
