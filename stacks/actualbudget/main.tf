@@ -1,5 +1,6 @@
 variable "tls_secret_name" { type = string }
 variable "actualbudget_credentials" { type = map(any) }
+variable "nfs_server" { type = string }
 
 
 # To create a new deployment:
@@ -32,6 +33,7 @@ module "viktor" {
   name                       = "viktor"
   tag                        = "edge"
   tls_secret_name            = var.tls_secret_name
+  nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["viktor"], "password", null)
@@ -44,6 +46,7 @@ module "anca" {
   name                       = "anca"
   tag                        = "edge"
   tls_secret_name            = var.tls_secret_name
+  nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["anca"], "password", null)
@@ -56,6 +59,7 @@ module "emo" {
   name                       = "emo"
   tag                        = "edge"
   tls_secret_name            = var.tls_secret_name
+  nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["emo"], "password", null)
