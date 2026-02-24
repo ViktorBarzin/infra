@@ -411,9 +411,31 @@ async def relay_endpoint(
 
 # --- Frontend Static Files ---
 # Mount the SvelteKit static build AFTER all API routes so API endpoints take priority.
-_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "build")
+# SvelteKit adapter-static with ssr=false produces {page}.html files and a fallback index.html.
+# Starlette StaticFiles(html=True) only checks {path}/index.html, not {path}.html.
+# We use a catch-all route to handle both patterns and the SPA fallback.
+_frontend_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "frontend", "build"))
 if os.path.exists(_frontend_dir):
-    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+    from starlette.responses import FileResponse, HTMLResponse
+
+    _fallback_path = os.path.join(_frontend_dir, "index.html")
+
+    @app.get("/{path:path}")
+    async def serve_frontend(path: str):
+        """Serve SvelteKit frontend files with SPA fallback."""
+        for candidate in [
+            os.path.join(_frontend_dir, path),
+            os.path.join(_frontend_dir, f"{path}.html"),
+            os.path.join(_frontend_dir, path, "index.html"),
+        ]:
+            real = os.path.realpath(candidate)
+            if real.startswith(_frontend_dir) and os.path.isfile(real):
+                return FileResponse(real)
+        # SPA fallback for client-side routing
+        if os.path.isfile(_fallback_path):
+            return FileResponse(_fallback_path)
+        return Response(content="Not Found", status_code=404)
+
     logger.info("Serving frontend from %s", _frontend_dir)
 else:
     # Fallback root when no frontend build exists
