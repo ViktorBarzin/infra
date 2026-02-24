@@ -5,62 +5,61 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** When an F1 session is live, users open one URL and immediately see working streams — no hunting for links.
-**Current focus:** Phase 1 — Infrastructure and Deployment
+**Current focus:** All 8 phases complete — deployed and verified
 
 ## Current Position
 
-Phase: 1 of 8 (Infrastructure and Deployment)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-02-23 — Roadmap created, phase structure derived from 19 v1 requirements
+Phase: 8 of 8 (Multi-Stream Layout) — COMPLETE
+Status: Deployed and verified at https://f1.viktorbarzin.me
+Last activity: 2026-02-24 — All phases deployed, frontend routing fixed, full verification passed
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
-## Performance Metrics
+## Phase Completion Summary
 
-**Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0 hours
+| Phase | Name | Status | Image |
+|-------|------|--------|-------|
+| 1 | Infrastructure & Deployment | Complete | v2.0.1 |
+| 2 | F1 Schedule Subsystem | Complete | v2.0.3 |
+| 3 | Extractor Framework | Complete | v3.0.0 |
+| 4 | Stream Health Checker | Complete | v5.0.0 |
+| 5 | HLS Proxy & Relay | Complete | v5.0.0 |
+| 6 | CDN Token Lifecycle | Complete | v5.0.0 |
+| 7 | SvelteKit Frontend | Complete | v5.0.0 |
+| 8 | Multi-Stream Layout | Complete | v5.0.0 |
 
-**By Phase:**
+## Verified Endpoints
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
+- `/health` — 200 OK
+- `/` — 200 (SvelteKit schedule page)
+- `/watch` — 200 (multi-stream player)
+- `/schedule` — 200 (24 races, 2026 season)
+- `/streams` — 200 (3 demo streams)
+- `/extractors` — 200
+- `/streams/active` — 200
+- `/proxy?url=...` — 200 (HLS m3u8 rewriting)
+- `/relay?url=...` — streaming (chunked segment relay)
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+- Custom per-site extractors over headless browser
+- No authentication — security by obscurity
+- Proxy streams through service for unified player
+- APScheduler in-process (no Celery)
+- Kaniko for in-cluster Docker builds (Docker Desktop unavailable)
+- v5.0.0 tag to bypass pull-through cache (10.0.20.10 caches stale :latest)
+- Catch-all FastAPI route for SvelteKit SPA (adapter-static generates {page}.html, not {page}/index.html)
 
-- [Init]: Custom per-site extractors over headless browser — more efficient and reliable
-- [Init]: No authentication — security by obscurity (private URL) is sufficient
-- [Init]: Proxy streams through service — hides CDN source, enables unified player
-- [Research]: Use yt-dlp as Python library (primary), httpx+BeautifulSoup (custom extractors), Playwright (last resort)
-- [Research]: APScheduler in-process — avoids Celery overhead for 2 periodic jobs
-- [Research]: Phase 2 (Extractor) and Phase 5 (Coverage expansion) need site-specific research during planning
+### Known Issues
 
-### Pending Todos
-
-None yet.
-
-### Blockers/Concerns
-
-- [Pre-Phase 3]: Target streaming sites not yet specified — Phase 3 planning requires site list and DevTools reverse-engineering session before extractors can be scoped
-- [Pre-Phase 3]: Must test extractor access from production K8s cluster network — datacenter IPs may be pre-blocked by streaming sites
-- [Pre-Phase 2]: Validate jolpica API availability and rate limits before depending on it for schedule data
+- Pull-through cache at 10.0.20.10 caches Docker tags aggressively — must use new tags to deploy updates
+- Only demo extractor exists — real streaming site extractors need to be built
+- Woodpecker CI webhook may not be configured for f1-stream builds
 
 ## Session Continuity
 
-Last session: 2026-02-23
-Stopped at: Roadmap created — all 19 v1 requirements mapped across 8 phases
-Resume file: None
+Last session: 2026-02-24
+Stopped at: All 8 phases deployed and verified
+Next steps: Add real streaming site extractors (Phase 3 expansion)
