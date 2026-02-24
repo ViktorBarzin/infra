@@ -6,6 +6,9 @@ variable "woodpecker_db_password" { type = string }
 variable "dbaas_postgresql_root_password" { type = string }
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
+variable "woodpecker_forgejo_client_id" { type = string }
+variable "woodpecker_forgejo_client_secret" { type = string }
+variable "woodpecker_forgejo_url" { type = string }
 
 
 resource "kubernetes_namespace" "woodpecker" {
@@ -122,11 +125,14 @@ resource "helm_release" "woodpecker" {
 
   values = [
     templatefile("${path.module}/values.yaml", {
-      github_client_id     = var.woodpecker_github_client_id
-      github_client_secret = var.woodpecker_github_client_secret
-      agent_secret         = var.woodpecker_agent_secret
-      db_password          = var.woodpecker_db_password
-      postgresql_host      = var.postgresql_host
+      github_client_id      = var.woodpecker_github_client_id
+      github_client_secret  = var.woodpecker_github_client_secret
+      agent_secret          = var.woodpecker_agent_secret
+      db_password           = var.woodpecker_db_password
+      postgresql_host       = var.postgresql_host
+      forgejo_client_id     = var.woodpecker_forgejo_client_id
+      forgejo_client_secret = var.woodpecker_forgejo_client_secret
+      forgejo_url           = var.woodpecker_forgejo_url
     })
   ]
 
