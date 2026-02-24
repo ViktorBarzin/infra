@@ -8,6 +8,11 @@
 # 3. ResourceQuotas (Kyverno generate) - hard ceiling on namespace resource consumption
 # 4. Priority injection (Kyverno mutate) - set priorityClassName based on namespace tier label
 
+locals {
+  governance_tiers    = ["0-core", "1-cluster", "2-gpu", "3-edge", "4-aux"]
+  excluded_namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
+}
+
 # -----------------------------------------------------------------------------
 # Layer 1: PriorityClasses
 # -----------------------------------------------------------------------------
@@ -661,6 +666,7 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
 # -----------------------------------------------------------------------------
 # Automatically sets priorityClassName on Pods based on their namespace's tier label.
 # Skips pods that already have a priorityClassName set.
+# Uses namespaceSelector instead of API calls — no round-trip to the API server.
 
 resource "kubernetes_manifest" "mutate_priority_from_tier" {
   manifest = {
@@ -674,69 +680,58 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
       }
     }
     spec = {
-      rules = [
-        {
-          name = "inject-priority-class"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Pod"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
-                }
-              }
-            ]
-          }
-          context = [
+      rules = [for tier in local.governance_tiers : {
+        name = "inject-priority-${tier}"
+        match = {
+          any = [
             {
-              name = "tierLabel"
-              apiCall = {
-                urlPath  = "/api/v1/namespaces/{{request.namespace}}"
-                jmesPath = "metadata.labels.tier || ''"
+              resources = {
+                kinds = ["Pod"]
+                namespaceSelector = {
+                  matchLabels = {
+                    tier = tier
+                  }
+                }
               }
             }
           ]
-          preconditions = {
-            all = [
-              {
-                key      = "{{request.object.spec.priorityClassName || ''}}"
-                operator = "Equals"
-                value    = ""
-              },
-              {
-                key      = "{{tierLabel}}"
-                operator = "NotEquals"
-                value    = ""
-              }
-            ]
-          }
-          mutate = {
-            patchesJson6902 = yamlencode([
-              {
-                op   = "remove"
-                path = "/spec/priority"
-              },
-              {
-                op   = "remove"
-                path = "/spec/preemptionPolicy"
-              },
-              {
-                op    = "add"
-                path  = "/spec/priorityClassName"
-                value = "tier-{{tierLabel}}"
-              }
-            ])
-          }
         }
-      ]
+        exclude = {
+          any = [
+            {
+              resources = {
+                namespaces = local.excluded_namespaces
+              }
+            }
+          ]
+        }
+        preconditions = {
+          all = [
+            {
+              key      = "{{request.object.spec.priorityClassName || ''}}"
+              operator = "Equals"
+              value    = ""
+            }
+          ]
+        }
+        mutate = {
+          patchesJson6902 = yamlencode([
+            {
+              op   = "remove"
+              path = "/spec/priority"
+            },
+            {
+              op   = "remove"
+              path = "/spec/preemptionPolicy"
+            },
+            {
+              op    = "add"
+              path  = "/spec/priorityClassName"
+              value = "tier-${tier}"
+            }
+          ])
+        }
+      }]
     }
   }
 }

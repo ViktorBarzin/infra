@@ -28,6 +28,8 @@ resource "helm_release" "kyverno" {
     }
 
     admissionController = {
+      replicas = 2
+
       container = {
         resources = {
           limits = {
@@ -53,12 +55,30 @@ resource "helm_release" "kyverno" {
         failureThreshold    = 4
         successThreshold    = 1
       }
+
+      # Spread replicas across nodes for HA
+      topologySpreadConstraints = [
+        {
+          maxSkew           = 1
+          topologyKey       = "kubernetes.io/hostname"
+          whenUnsatisfiable = "DoNotSchedule"
+          labelSelector = {
+            matchLabels = {
+              "app.kubernetes.io/component" = "admission-controller"
+              "app.kubernetes.io/instance"  = "kyverno"
+            }
+          }
+        }
+      ]
     }
   })]
 }
 
 # To unlabel all:
 # kubectl label deployment,statefulset,daemonset --all-namespaces -l tier tier-
+#
+# Uses namespaceSelector to match tiers — no API call needed.
+# One rule per tier so Kyverno resolves the tier value from its informer cache.
 resource "kubernetes_manifest" "mutate_tier_from_namespace" {
   manifest = {
     apiVersion = "kyverno.io/v1"
@@ -67,49 +87,41 @@ resource "kubernetes_manifest" "mutate_tier_from_namespace" {
       name = "sync-tier-label-from-namespace"
     }
     spec = {
-      rules = [
-        {
-          name = "lookup-and-add-tier"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Deployment", "StatefulSet", "DaemonSet"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  namespaces = ["kube-system", "metallb-system", "n8n"]
-                }
-              }
-            ]
-          }
-          # Context allows us to perform an API call to get Namespace metadata
-          context = [
+      rules = [for tier in local.governance_tiers : {
+        name = "sync-tier-${tier}"
+        match = {
+          any = [
             {
-              name = "namespaceLabel"
-              apiCall = {
-                urlPath  = "/api/v1/namespaces/{{request.namespace}}"
-                jmesPath = "metadata.labels.tier || 'default'"
+              resources = {
+                kinds = ["Deployment", "StatefulSet", "DaemonSet"]
+                namespaceSelector = {
+                  matchLabels = {
+                    tier = tier
+                  }
+                }
               }
             }
           ]
-          mutate = {
-            patchStrategicMerge = {
-              metadata = {
-                labels = {
-                  # Injects the variable discovered in the context above
-                  "+(tier)" = "{{namespaceLabel}}"
-                }
+        }
+        exclude = {
+          any = [
+            {
+              resources = {
+                namespaces = ["kube-system", "metallb-system", "n8n"]
+              }
+            }
+          ]
+        }
+        mutate = {
+          patchStrategicMerge = {
+            metadata = {
+              labels = {
+                "+(tier)" = tier
               }
             }
           }
         }
-      ]
+      }]
     }
   }
 }
