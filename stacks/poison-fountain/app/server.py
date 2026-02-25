@@ -14,6 +14,7 @@ import random
 import time
 import hashlib
 import sys
+import socketserver
 
 LISTEN_PORT = int(os.environ.get("PORT", "8080"))
 CACHE_DIR = os.environ.get("CACHE_DIR", "/data/cache")
@@ -163,8 +164,12 @@ class PoisonHandler(http.server.BaseHTTPRequestHandler):
             pass
 
 
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+
+
 if __name__ == "__main__":
     os.makedirs(CACHE_DIR, exist_ok=True)
-    server = http.server.HTTPServer(("0.0.0.0", LISTEN_PORT), PoisonHandler)
+    server = ThreadedHTTPServer(("0.0.0.0", LISTEN_PORT), PoisonHandler)
     print(f"Poison Fountain service listening on :{LISTEN_PORT}", flush=True)
     server.serve_forever()
