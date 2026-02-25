@@ -54,9 +54,13 @@ resource "kubernetes_deployment" "poison_fountain" {
   }
 
   spec {
-    replicas = 1
+    replicas = 2
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
     }
     selector {
       match_labels = {
@@ -70,6 +74,16 @@ resource "kubernetes_deployment" "poison_fountain" {
         }
       }
       spec {
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "DoNotSchedule"
+          label_selector {
+            match_labels = {
+              app = "poison-fountain"
+            }
+          }
+        }
         container {
           name    = "poison-fountain"
           image   = "python:3.12-slim"
