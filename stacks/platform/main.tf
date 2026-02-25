@@ -9,7 +9,7 @@
 # Services included:
 #   metallb, dbaas, cloudflared, infra-maintenance,
 #   redis, traefik, technitium, headscale, authentik, rbac, k8s-portal,
-#   crowdsec, monitoring, vaultwarden, reverse-proxy, metrics-server,
+#   crowdsec, monitoring, vaultwarden, reverse-proxy, metrics-server, vpa,
 #   nvidia, kyverno, uptime-kuma, wireguard, xray, mailserver
 # =============================================================================
 
@@ -288,6 +288,15 @@ module "metrics-server" {
   source          = "./modules/metrics-server"
   tier            = local.tiers.cluster
   tls_secret_name = var.tls_secret_name
+}
+
+# -----------------------------------------------------------------------------
+# VPA + Goldilocks — Vertical Pod Autoscaler & resource dashboard
+# -----------------------------------------------------------------------------
+module "vpa" {
+  source          = "./modules/vpa"
+  tls_secret_name = var.tls_secret_name
+  tier            = local.tiers.cluster
 }
 
 # -----------------------------------------------------------------------------
