@@ -77,6 +77,16 @@ resource "kubernetes_deployment" "clickhouse" {
             name       = "data"
             mount_path = "/var/lib/clickhouse"
           }
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "4Gi"
+            }
+          }
         }
         volume {
           name = "data"
