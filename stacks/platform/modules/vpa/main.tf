@@ -84,3 +84,93 @@ module "ingress" {
 
   depends_on = [helm_release.goldilocks]
 }
+
+# -----------------------------------------------------------------------------
+# Kyverno policy — label namespaces for VPA mode by tier
+# -----------------------------------------------------------------------------
+# Goldilocks reads the goldilocks.fairwinds.com/vpa-update-mode label on
+# namespaces to decide the updateMode for VPA objects it creates.
+# Tier 0-core gets "off" (recommend only — these are critical infra where
+# evictions cause downtime). All other namespaces get "auto".
+
+resource "kubernetes_manifest" "vpa_auto_mode_label" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "goldilocks-vpa-auto-mode"
+      annotations = {
+        "policies.kyverno.io/title"       = "Goldilocks VPA Mode by Tier"
+        "policies.kyverno.io/description" = "Sets VPA update mode per namespace: Off for tier-0 critical infra (no evictions), Auto for all others."
+      }
+    }
+    spec = {
+      rules = [
+        # Tier 0-core: recommend only, never evict
+        {
+          name = "label-vpa-off-tier-0"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds = ["Namespace"]
+                  selector = {
+                    matchLabels = {
+                      tier = "0-core"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          mutate = {
+            patchStrategicMerge = {
+              metadata = {
+                labels = {
+                  "goldilocks.fairwinds.com/vpa-update-mode" = "off"
+                }
+              }
+            }
+          }
+        },
+        # All other namespaces: auto mode
+        {
+          name = "label-vpa-auto-default"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds = ["Namespace"]
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      tier = "0-core"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          mutate = {
+            patchStrategicMerge = {
+              metadata = {
+                labels = {
+                  "goldilocks.fairwinds.com/vpa-update-mode" = "auto"
+                }
+              }
+            }
+          }
+        },
+      ]
+    }
+  }
+
+  depends_on = [helm_release.goldilocks]
+}
