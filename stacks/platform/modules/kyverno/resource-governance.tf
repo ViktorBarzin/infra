@@ -117,16 +117,16 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "2"
-                      memory = "4Gi"
+                      cpu    = "500m"
+                      memory = "512Mi"
                     }
                     defaultRequest = {
-                      cpu    = "100m"
-                      memory = "128Mi"
+                      cpu    = "50m"
+                      memory = "64Mi"
                     }
                     max = {
-                      cpu    = "8"
-                      memory = "16Gi"
+                      cpu    = "4"
+                      memory = "8Gi"
                     }
                   }
                 ]
@@ -163,16 +163,16 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "2"
-                      memory = "4Gi"
+                      cpu    = "500m"
+                      memory = "512Mi"
                     }
                     defaultRequest = {
-                      cpu    = "100m"
-                      memory = "128Mi"
+                      cpu    = "50m"
+                      memory = "64Mi"
                     }
                     max = {
-                      cpu    = "4"
-                      memory = "8Gi"
+                      cpu    = "2"
+                      memory = "4Gi"
                     }
                   }
                 ]
@@ -209,8 +209,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "4"
-                      memory = "8Gi"
+                      cpu    = "1"
+                      memory = "2Gi"
                     }
                     defaultRequest = {
                       cpu    = "100m"
@@ -255,16 +255,16 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "1"
-                      memory = "2Gi"
+                      cpu    = "250m"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
-                      cpu    = "50m"
-                      memory = "128Mi"
+                      cpu    = "25m"
+                      memory = "64Mi"
                     }
                     max = {
-                      cpu    = "4"
-                      memory = "8Gi"
+                      cpu    = "2"
+                      memory = "4Gi"
                     }
                   }
                 ]
@@ -301,8 +301,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "500m"
-                      memory = "1Gi"
+                      cpu    = "250m"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "25m"
@@ -363,16 +363,16 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "500m"
-                      memory = "1Gi"
+                      cpu    = "250m"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "25m"
                       memory = "64Mi"
                     }
                     max = {
-                      cpu    = "2"
-                      memory = "4Gi"
+                      cpu    = "1"
+                      memory = "2Gi"
                     }
                   }
                 ]
