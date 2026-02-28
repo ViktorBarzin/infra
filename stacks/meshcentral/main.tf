@@ -89,6 +89,16 @@ resource "kubernetes_deployment" "meshcentral" {
             name       = "files"
             mount_path = "/opt/meshcentral/meshcentral-files"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "384Mi"
+            }
+          }
           volume_mount {
             name       = "backups"
             mount_path = "/opt/meshcentral/meshcentral-backups"

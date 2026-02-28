@@ -40,10 +40,10 @@ resource "helm_release" "redis" {
     }
 
     sentinel = {
-      enabled          = true
-      quorum           = 2
-      masterSet        = "mymaster"
-      automateCluster  = true
+      enabled         = true
+      quorum          = 2
+      masterSet       = "mymaster"
+      automateCluster = true
 
       resources = {
         requests = {
@@ -66,12 +66,12 @@ resource "helm_release" "redis" {
 
       resources = {
         requests = {
-          cpu    = "200m"
-          memory = "512Mi"
+          cpu    = "100m"
+          memory = "64Mi"
         }
         limits = {
-          cpu    = "1"
-          memory = "2Gi"
+          cpu    = "500m"
+          memory = "256Mi"
         }
       }
     }
@@ -87,12 +87,12 @@ resource "helm_release" "redis" {
 
       resources = {
         requests = {
-          cpu    = "100m"
-          memory = "256Mi"
+          cpu    = "50m"
+          memory = "64Mi"
         }
         limits = {
           cpu    = "500m"
-          memory = "1Gi"
+          memory = "256Mi"
         }
       }
     }

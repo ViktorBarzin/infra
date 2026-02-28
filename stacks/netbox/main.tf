@@ -131,6 +131,16 @@ resource "kubernetes_deployment" "netbox" {
             value = "Europe/Sofia"
           }
 
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "512Mi"
+            }
+          }
           port {
             container_port = 8080
           }
