@@ -56,16 +56,16 @@ resource "kubernetes_deployment" "ytdlp" {
         container {
           image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
-          # resources {
-          #   limits = {
-          #     cpu    = "1"
-          #     memory = "1Gi"
-          #   }
-          # requests = {
-          #   cpu    = "1"
-          #   memory = "1Gi"
-          # }
-          # }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
           port {
             container_port = 17442
           }
@@ -190,9 +190,9 @@ resource "kubernetes_deployment" "yt_highlights" {
           "gpu" : "true"
         }
         toleration {
-          key      = "nvidia.com/gpu"
-          value    = "true"
-          effect   = "NoSchedule"
+          key    = "nvidia.com/gpu"
+          value  = "true"
+          effect = "NoSchedule"
         }
         container {
           name              = "yt-highlights"

@@ -403,10 +403,10 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "4Gi"
+              memory = "1Gi"
             }
             requests = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
