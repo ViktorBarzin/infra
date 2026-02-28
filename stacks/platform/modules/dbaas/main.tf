@@ -98,6 +98,24 @@ resource "kubernetes_service" "mysql" {
   }
 }
 
+# Local PVC for MySQL data — proper fsync, no NFS SPOF
+resource "kubernetes_persistent_volume_claim" "mysql" {
+  metadata {
+    name      = "mysql-data"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "local-path"
+    resources {
+      requests = {
+        storage = "10Gi"
+      }
+    }
+  }
+  wait_until_bound = false
+}
+
 resource "kubernetes_deployment" "mysql" {
   metadata {
     name      = "mysql"
@@ -124,12 +142,33 @@ resource "kubernetes_deployment" "mysql" {
         labels = {
           app = "mysql"
         }
-        annotations = {
-          "diun.enable"       = "false"
-          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-        }
       }
       spec {
+        # Seed data from NFS on first run (local PVC empty)
+        init_container {
+          name  = "seed-data"
+          image = "busybox:1.36"
+          command = ["/bin/sh", "-c", <<-EOT
+            if [ ! -d /data/mysql ]; then
+              echo "No local data found, copying from NFS..."
+              cp -a /nfs-data/. /data/
+              echo "Done — $(du -sh /data/ | cut -f1) copied"
+            else
+              echo "Local data exists, skipping seed"
+            fi
+          EOT
+          ]
+          volume_mount {
+            name       = "mysql-persistent-storage"
+            mount_path = "/data"
+          }
+          volume_mount {
+            name       = "nfs-data"
+            mount_path = "/nfs-data"
+            read_only  = true
+          }
+        }
+
         container {
           image = "mysql:9.2.0"
           name  = "mysql"
@@ -165,19 +204,23 @@ resource "kubernetes_deployment" "mysql" {
         }
         volume {
           name = "mysql-persistent-storage"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.mysql.metadata[0].name
+          }
+        }
+        # NFS volume for init container seeding only
+        volume {
+          name = "nfs-data"
           nfs {
             path   = "/mnt/main/mysql"
             server = var.nfs_server
           }
         }
-
         volume {
           name = "mycnf"
-
           config_map {
             name = "mycnf"
           }
-
         }
         dns_config {
           option {
