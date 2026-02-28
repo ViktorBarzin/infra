@@ -7,15 +7,14 @@ resource "helm_release" "caretta" {
   chart      = "caretta"
   version    = "0.0.16"
 
-  set {
-    name  = "grafana.enabled"
-    value = "false"
-  }
-
-  set {
-    name  = "victoria-metrics-single.enabled"
-    value = "false"
-  }
+  values = [yamlencode({
+    grafana = {
+      enabled = false
+    }
+    victoria-metrics-single = {
+      enabled = false
+    }
+  })]
 }
 
 resource "kubernetes_service" "caretta_metrics" {
