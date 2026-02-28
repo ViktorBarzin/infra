@@ -35,8 +35,8 @@
       },
       "description": "",
       "gridPos": {
-        "h": 24,
-        "w": 17,
+        "h": 28,
+        "w": 24,
         "x": 0,
         "y": 0
       },
@@ -49,7 +49,11 @@
               "color": "#5794F2",
               "field": "arc__color"
             }
-          ]
+          ],
+          "mainStatUnit": ""
+        },
+        "edges": {
+          "mainStatUnit": ""
         }
       },
       "targets": [
@@ -60,7 +64,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "increase((sum by (id, title, subTitle, detail__kind, arc__color) (label_replace((label_replace(label_replace(label_replace(label_replace((caretta_links_observed{client_namespace=~\"$namespace\", client_kind=~\"$kind\", client_name=~\"$workload\", server_port=~\"$port\"} or caretta_links_observed{server_namespace=~\"$namespace\", server_kind=~\"$kind\", server_name=~\"$workload\", server_port=~\"$port\"}), \"detail__kind\", \"$1\", \"server_kind\", \"(.*)\"), \"subTitle\", \"$1\", \"server_namespace\", \"(.*)\"), \"title\", \"$1\", \"server_name\", \"(.*)\"), \"id\", \"$1\", \"server_id\", \"(.*)\") or label_replace(label_replace(label_replace(label_replace((caretta_links_observed{client_namespace=~\"$namespace\", client_kind=~\"$kind\", client_name=~\"$workload\", server_port=~\"$port\"} or caretta_links_observed{server_namespace=~\"$namespace\", server_kind=~\"$kind\", server_name=~\"$workload\", server_port=~\"$port\"}), \"detail__kind\", \"$1\", \"client_kind\", \"(.*)\"), \"subTitle\", \"$1\", \"client_namespace\", \"(.*)\"), \"title\", \"$1\", \"client_name\", \"(.*)\"), \"id\", \"$1\", \"client_id\", \"(.*)\")  ), \"arc__color\", \"1\", \"link_id\", \"(.*)\")) )[$__range:$__interval])  > 0",
+          "expr": "increase((sum by (id, title, subTitle, detail__kind, arc__color, color) (label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace((label_replace(label_replace(label_replace(label_replace((caretta_links_observed{client_namespace=~\"$namespace\", client_kind=~\"$kind\", client_name=~\"$workload\", server_port=~\"$port\"} or caretta_links_observed{server_namespace=~\"$namespace\", server_kind=~\"$kind\", server_name=~\"$workload\", server_port=~\"$port\"}), \"detail__kind\", \"$1\", \"server_kind\", \"(.*)\"), \"subTitle\", \"$1\", \"server_namespace\", \"(.*)\"), \"title\", \"$1\", \"server_name\", \"(.*)\"), \"id\", \"$1\", \"server_id\", \"(.*)\") or label_replace(label_replace(label_replace(label_replace((caretta_links_observed{client_namespace=~\"$namespace\", client_kind=~\"$kind\", client_name=~\"$workload\", server_port=~\"$port\"} or caretta_links_observed{server_namespace=~\"$namespace\", server_kind=~\"$kind\", server_name=~\"$workload\", server_port=~\"$port\"}), \"detail__kind\", \"$1\", \"client_kind\", \"(.*)\"), \"subTitle\", \"$1\", \"client_namespace\", \"(.*)\"), \"title\", \"$1\", \"client_name\", \"(.*)\"), \"id\", \"$1\", \"client_id\", \"(.*)\")), \"arc__color\", \"1\", \"link_id\", \"(.*)\"), \"color\", \"#8F8F8F\", \"subTitle\", \"(.*)\"), \"color\", \"#F2495C\", \"subTitle\", \"^external$\"), \"color\", \"#8AB8FF\", \"subTitle\", \"^node$\"), \"color\", \"#FF9830\", \"subTitle\", \"^traefik$\"), \"color\", \"#5794F2\", \"subTitle\", \"^monitoring$\"), \"color\", \"#73BF69\", \"subTitle\", \"^dbaas$\"), \"color\", \"#B877D9\", \"subTitle\", \"^authentik$\"), \"color\", \"#FF7383\", \"subTitle\", \"^crowdsec$\"), \"color\", \"#FADE2A\", \"subTitle\", \"^uptime-kuma$\"), \"color\", \"#56A64B\", \"subTitle\", \"^immich$\"), \"color\", \"#C0D8FF\", \"subTitle\", \"^technitium$\"), \"color\", \"#FF6600\", \"subTitle\", \"^kyverno$\"), \"color\", \"#76B900\", \"subTitle\", \"^nvidia$\")))[$__range:$__interval]) > 0",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -83,8 +87,12 @@
           "refId": "edges"
         }
       ],
-      "title": "Service Map \u2638\ufe0f",
-      "type": "nodeGraph"
+      "title": "Service Map",
+      "type": "nodeGraph",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     },
     {
       "datasource": {
@@ -110,10 +118,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 4,
-        "x": 17,
-        "y": 0
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 28
       },
       "id": 4,
       "options": {
@@ -160,10 +168,10 @@
         "uid": "grafana"
       },
       "gridPos": {
-        "h": 7,
+        "h": 4,
         "w": 3,
         "x": 21,
-        "y": 0
+        "y": 36
       },
       "id": 10,
       "options": {
@@ -209,9 +217,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 7,
-        "x": 17,
-        "y": 7
+        "w": 9,
+        "x": 15,
+        "y": 28
       },
       "id": 8,
       "options": {
@@ -279,10 +287,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
-        "w": 7,
-        "x": 17,
-        "y": 15
+        "h": 8,
+        "w": 9,
+        "x": 6,
+        "y": 28
       },
       "id": 6,
       "options": {
@@ -326,7 +334,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 40
       },
       "id": 11,
       "title": "Network Flows (GoFlow2 / pfSense NetFlow)",
@@ -362,7 +370,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 41
       },
       "id": 12,
       "options": {
@@ -420,7 +428,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 41
       },
       "id": 13,
       "options": {
@@ -483,7 +491,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 33
+        "y": 49
       },
       "id": 14,
       "options": {
@@ -542,7 +550,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 33
+        "y": 49
       },
       "id": 15,
       "options": {
@@ -601,7 +609,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 33
+        "y": 49
       },
       "id": 16,
       "options": {
@@ -660,7 +668,7 @@
         "h": 4,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 49
       },
       "id": 17,
       "options": {
@@ -689,7 +697,7 @@
       "type": "timeseries"
     }
   ],
-  "refresh": "",
+  "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
@@ -847,7 +855,7 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
