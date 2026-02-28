@@ -12,6 +12,7 @@ variable "prod" {
   type    = bool
 }
 variable "nfs_server" { type = string }
+variable "kube_config_path" { type = string }
 
 resource "kubernetes_namespace" "dbaas" {
   metadata {
@@ -706,101 +707,59 @@ module "ingress" {
 #   EOF
 # }
 
-resource "kubernetes_deployment" "postgres" {
-  metadata {
-    name      = "postgresql"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-    annotations = {
-      "reloader.stakater.com/search" = "true"
-    }
-    labels = {
-      tier = var.tier
-    }
+#### POSTGRESQL — CloudNativePG Cluster
+#
+# Migrated from single NFS-backed pod to CNPG on local-path storage.
+# CNPG Cluster is managed via kubectl apply (not kubernetes_manifest)
+# because the CNPG webhook mutates the spec on apply, causing
+# Terraform provider "inconsistent result" errors.
+#
+# Rollback: apply old deployment yaml, revert service selector to app=postgresql.
+
+# Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
+resource "null_resource" "pg_cluster" {
+  triggers = {
+    instances      = "2"
+    image          = "ghcr.io/cloudnative-pg/postgis:16"
+    storage_size   = "20Gi"
+    storage_class  = "local-path"
+    memory_limit   = "4Gi"
+    cpu_limit      = "2"
   }
-  spec {
-    selector {
-      match_labels = {
-        app = "postgresql"
-      }
-    }
-    strategy {
-      type = "Recreate"
-    }
-    template {
-      metadata {
-        labels = {
-          app = "postgresql"
-        }
-        annotations = {
-          "diun.enable"       = "false"
-          "diun.include_tags" = "^\\d+(?:\\.\\d+)?-bullseye$"
-        }
-      }
-      spec {
-        container {
-          # image = "postgis/postgis:16-master"
-          image = "viktorbarzin/postgres:16-master" # mix of postgis + pgvector
-          # image = "postgres:17.2-bullseye" # needs pg_upgrade to data dir
-          name = "postgresql"
 
-          resources {
-            requests = {
-              cpu    = "250m"
-              memory = "512Mi"
-            }
-            limits = {
-              cpu    = "1"
-              memory = "2Gi"
-            }
-          }
-
-          env {
-            name  = "POSTGRES_PASSWORD"
-            value = var.postgresql_root_password
-          }
-          env {
-            name  = "POSTGRES_USER"
-            value = "root"
-          }
-          port {
-            container_port = 5432
-            protocol       = "TCP"
-            name           = "postgresql"
-          }
-          volume_mount {
-            name       = "postgresql-persistent-storage"
-            mount_path = "/var/lib/postgresql/data"
-          }
-          # volume_mount {
-          #   name       = "mycnf"
-          #   mount_path = "/etc/my.cnf"
-          #   sub_path   = "my.cnf"
-          # }
-        }
-        volume {
-          name = "postgresql-persistent-storage"
-          nfs {
-            path   = "/mnt/main/postgresql/data"
-            server = var.nfs_server
-          }
-        }
-        # volume {
-        #   name = "mycnf"
-
-        #   config_map {
-        #     name = "mycnf"
-        #   }
-        # }
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
-          }
-        }
-      }
-    }
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} apply -f - <<'EOF'
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: pg-cluster
+        namespace: dbaas
+      spec:
+        instances: 2
+        imageName: ghcr.io/cloudnative-pg/postgis:16
+        postgresql:
+          parameters:
+            search_path: '"$user", public'
+          enableAlterSystem: true
+        enableSuperuserAccess: true
+        storage:
+          size: 20Gi
+          storageClass: local-path
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+      EOF
+    EOT
   }
 }
+
+# Service that maintains the original postgresql.dbaas endpoint,
+# now pointing at the CNPG primary pod instead of the old deployment.
 resource "kubernetes_service" "postgresql" {
   metadata {
     name      = "postgresql"
@@ -808,7 +767,8 @@ resource "kubernetes_service" "postgresql" {
   }
   spec {
     selector = {
-      "app" = "postgresql"
+      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/instanceRole" = "primary"
     }
     port {
       name        = "postgresql"
@@ -817,6 +777,37 @@ resource "kubernetes_service" "postgresql" {
     }
   }
 }
+
+# Old PostgreSQL deployment — kept commented for rollback reference
+# resource "kubernetes_deployment" "postgres" {
+#   metadata {
+#     name      = "postgresql"
+#     namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     labels    = { tier = var.tier }
+#   }
+#   spec {
+#     replicas = 0  # scaled to 0 during CNPG migration
+#     selector { match_labels = { app = "postgresql" } }
+#     strategy { type = "Recreate" }
+#     template {
+#       metadata { labels = { app = "postgresql" } }
+#       spec {
+#         container {
+#           image = "viktorbarzin/postgres:16-master"
+#           name  = "postgresql"
+#           env { name = "POSTGRES_PASSWORD"; value = var.postgresql_root_password }
+#           env { name = "POSTGRES_USER"; value = "root" }
+#           port { container_port = 5432; protocol = "TCP"; name = "postgresql" }
+#           volume_mount { name = "postgresql-persistent-storage"; mount_path = "/var/lib/postgresql/data" }
+#         }
+#         volume {
+#           name = "postgresql-persistent-storage"
+#           nfs { path = "/mnt/main/postgresql/data"; server = var.nfs_server }
+#         }
+#       }
+#     }
+#   }
+# }
 
 #### PGADMIN
 
@@ -934,10 +925,19 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             container {
               name  = "postgresql-backup"
               image = "postgres:16.4-bullseye"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "pg-cluster-superuser"
+                    key  = "password"
+                  }
+                }
+              }
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=${var.postgresql_root_password} pg_dumpall  -h postgresql.dbaas -U root > /backup/dump_$now.sql
+                PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
