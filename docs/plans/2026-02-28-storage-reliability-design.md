@@ -173,7 +173,6 @@ Apps confirmed safe to migrate:
 | Forgejo | `[database]` in app.ini | `forgejo dump --database postgres` | Moderate | Git repos stay on NFS |
 | FreshRSS | `DB_HOST` env vars | OPML export/import (fresh install) | Low | PG is the recommended backend |
 | Open WebUI | `DATABASE_URL` env var | None (start fresh) | Low | Chat history is disposable |
-| Vaultwarden | `DATABASE_URL` env var | pgloader (unsupported by maintainers) | **HIGH** | Test extensively; attachments stay on NFS |
 
 **Apps REMOVED from migration plan:**
 
@@ -187,6 +186,7 @@ Apps confirmed SQLite/BoltDB-only (stay on NFS):
 | App | Storage engine | Mitigation |
 |-----|---------------|------------|
 | Headscale | SQLite (recommended by project) | Accept (project-recommended config) |
+| Vaultwarden | SQLite | Defer (migration too risky for password vault) |
 | Uptime Kuma | SQLite (v2 adds MariaDB, not PG) | Accept or Litestream |
 | Navidrome | SQLite only | Accept or Litestream |
 | Audiobookshelf | SQLite only | Accept or Litestream |
@@ -286,7 +286,6 @@ Migrate one at a time, safest first:
 5a. FreshRSS (lowest risk — fresh install with OPML import)
 5b. Open WebUI (low risk — start fresh, chat history disposable)
 5c. Forgejo (moderate risk — use forgejo dump, verify git operations)
-5d. Vaultwarden (HIGH risk — pgloader, test extensively on copy first)
 
 ### Phase 6: ClickHouse + Monitoring
 6a. ClickHouse → local PVC
