@@ -59,6 +59,16 @@ resource "kubernetes_deployment" "forgejo" {
             name       = "data"
             mount_path = "/data"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
           port {
             name           = "http"
             container_port = 3000

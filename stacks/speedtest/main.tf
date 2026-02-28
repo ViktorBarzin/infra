@@ -101,6 +101,16 @@ resource "kubernetes_deployment" "speedtest" {
             name  = "APP_TIMEZONE"
             value = "Europe/Sofia"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
           volume_mount {
             name       = "config"
             mount_path = "/config"
