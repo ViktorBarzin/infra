@@ -4,11 +4,13 @@
 
 **Goal:** Speed up Woodpecker CI Docker image builds by adding BuildKit layer caching via a local private registry, with dual-push to Docker Hub and local.
 
-**Architecture:** Extend the existing Docker Compose registry stack on `10.0.20.10` with a new R/W `registry-private` service (port 5050). Configure Woodpecker `plugin-docker-buildx` pipelines with `cache_from`/`cache_to` pointing to `registry.viktorbarzin.lan:5050`. Push final images to both Docker Hub and local registry.
+**Architecture:** Extend the existing Docker Compose registry stack on `10.0.20.10` with a new R/W `registry-private` service (port 5050). Configure Woodpecker `plugin-docker-buildx` pipelines with `cache_from`/`cache_to` pointing to `registry.viktorbarzin.lan:5050`. Push final images to both Docker Hub and local registry. All changes persisted in Terraform via `stacks/infra/main.tf` cloud-init provisioning.
 
-**Tech Stack:** Docker Registry v2, nginx, Docker Compose, Woodpecker CI, BuildKit, Technitium DNS
+**Tech Stack:** Docker Registry v2, nginx, Docker Compose, Woodpecker CI, BuildKit, Technitium DNS, Terraform
 
 **Design doc:** `docs/plans/2026-02-28-ci-build-caching-design.md`
+
+**Key context:** The registry VM at `10.0.20.10` is fully managed via Terraform in `stacks/infra/main.tf`. Config files live in `modules/docker-registry/` and are read by Terraform via `file()` and `templatefile()`, then base64-encoded into cloud-init `provision_cmds`. Changes to config files require updating both the files AND the cloud-init provisioning in `stacks/infra/main.tf`. Since the VM is already running, we also SCP updated files to the live VM for immediate effect.
 
 ---
 
@@ -182,7 +184,76 @@ git commit -m "[ci skip] add nginx upstream and server block for private registr
 
 ---
 
-### Task 4: Deploy the private registry on 10.0.20.10
+### Task 4: Update Terraform provisioning for the private registry
+
+**Files:**
+- Modify: `stacks/infra/main.tf` (lines 119-274, the docker-registry-template and docker-registry-vm modules)
+
+**Step 1: Add private registry data directory to `provision_cmds`**
+
+In the `mkdir` command at line 152, append the private registry directory. Change:
+
+```hcl
+    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno",
+```
+
+to:
+
+```hcl
+    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno /opt/registry/data/private",
+```
+
+**Step 2: Add config-private.yml deployment command**
+
+After the kyverno config block (line 203), add:
+
+```hcl
+    # Write private R/W registry config (no proxy = accepts pushes)
+    format("echo %s | base64 -d > /opt/registry/config-private.yml",
+      base64encode(file("${path.root}/../../modules/docker-registry/config-private.yml"))
+    ),
+```
+
+**Step 3: Add garbage collection cron for private registry**
+
+After the kyverno garbage collection cron (line 239), add:
+
+```hcl
+    "( crontab -l 2>/dev/null; echo '25 3 * * 0 /usr/bin/docker exec registry-private registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+```
+
+This follows the existing staggered pattern (each registry offset by 5 minutes).
+
+**Step 4: Update the VM module comment block**
+
+At lines 266-273, update the port documentation comment to include port 5050:
+
+```hcl
+  # All ports go through nginx for request serialization (proxy_cache_lock):
+  # 5000 -> nginx -> registry-dockerhub (docker.io proxy)
+  # 5001 -> registry-dockerhub direct (Prometheus metrics)
+  # 5010 -> nginx -> registry-ghcr (ghcr.io proxy)
+  # 5020 -> nginx -> registry-quay (quay.io proxy)
+  # 5030 -> nginx -> registry-k8s (registry.k8s.io proxy)
+  # 5040 -> nginx -> registry-kyverno (reg.kyverno.io proxy)
+  # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
+  # 8080 -> registry-ui (joxit/docker-registry-ui)
+```
+
+**Step 5: Commit**
+
+```bash
+git add stacks/infra/main.tf
+git commit -m "[ci skip] add private registry to Terraform cloud-init provisioning"
+```
+
+**Note:** This updates the cloud-init template. The running VM won't automatically pick up these changes — it only applies on fresh VM creation from the template. For the running VM, Task 5 deploys the files via SCP. This ensures both the live VM and Terraform state are in sync.
+
+---
+
+### Task 5: Deploy to the running registry VM
+
+Since the registry VM is already running (cloud-init only runs on first boot), we deploy the updated files directly via SSH/SCP for immediate effect.
 
 **Step 1: SSH to the registry VM and create the storage directory**
 
@@ -208,11 +279,16 @@ ssh root@10.0.20.10 "cd /opt/registry && docker compose up -d"
 
 This will create the new `registry-private` container and reload nginx with the new port.
 
-**Step 4: Verify the private registry is accessible**
+**Step 4: Add garbage collection cron on the running VM**
 
 ```bash
-# From the local machine or any node on the 10.0.20.0/24 network:
-curl -s http://10.0.20.10:5050/v2/ | head
+ssh root@10.0.20.10 '( crontab -l 2>/dev/null; echo "25 3 * * 0 /usr/bin/docker exec registry-private registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1" ) | crontab -'
+```
+
+**Step 5: Verify the private registry is accessible**
+
+```bash
+curl -s http://10.0.20.10:5050/v2/
 # Expected: {} (empty JSON object = registry is up)
 
 curl -s http://10.0.20.10:5050/v2/_catalog
@@ -221,13 +297,13 @@ curl -s http://10.0.20.10:5050/v2/_catalog
 
 ---
 
-### Task 5: Add DNS record for registry.viktorbarzin.lan
+### Task 6: Add DNS record for registry.viktorbarzin.lan
 
 **Step 1: Add A record via Technitium API**
 
 ```bash
 # Technitium DNS API endpoint (web UI is on port 5380)
-# First, get API token from tfvars (technitium_password)
+# Get API token from tfvars (technitium_password)
 curl -s "http://10.0.20.204:5380/api/zones/records/add?token=<TECHNITIUM_TOKEN>&domain=registry.viktorbarzin.lan&zone=viktorbarzin.lan&type=A&ipAddress=10.0.20.10&overwrite=true"
 ```
 
@@ -251,7 +327,7 @@ curl -s http://registry.viktorbarzin.lan:5050/v2/
 
 ---
 
-### Task 6: Update build-cli.yml pipeline with BuildKit caching
+### Task 7: Update build-cli.yml pipeline with BuildKit caching
 
 **Files:**
 - Modify: `.woodpecker/build-cli.yml`
@@ -313,7 +389,7 @@ git commit -m "[ci skip] add BuildKit layer caching and dual-push to build-cli p
 
 ---
 
-### Task 7: Update f1-stream.yml pipeline with BuildKit caching
+### Task 8: Update f1-stream.yml pipeline with BuildKit caching
 
 **Files:**
 - Modify: `.woodpecker/f1-stream.yml`
@@ -379,7 +455,7 @@ git commit -m "[ci skip] add BuildKit layer caching and dual-push to f1-stream p
 
 ---
 
-### Task 8: Test end-to-end with a manual build trigger
+### Task 9: Test end-to-end with a manual build trigger
 
 **Step 1: Push changes to trigger the build-cli pipeline**
 
@@ -408,16 +484,15 @@ Make a trivial change (e.g., update a comment in `cli/`) and push again. The bui
 **Step 4: Verify Docker Hub also has the image**
 
 ```bash
-# Check Docker Hub has the image too
 curl -s https://hub.docker.com/v2/repositories/viktorbarzin/infra/tags/ | python3 -m json.tool | head -20
 ```
 
 ---
 
-### Task 9: Extend cleanup script for private registry
+### Task 10: Verify cleanup script covers private registry
 
 **Files:**
-- Modify: `modules/docker-registry/cleanup-tags.sh`
+- Review: `modules/docker-registry/cleanup-tags.sh`
 
 **Step 1: Verify the script already handles multiple registries**
 
@@ -430,7 +505,3 @@ Verify by reading the script logic — `os.listdir(BASE)` iterates `dockerhub`, 
 The default `KEEP=10` may be too aggressive for the private registry since buildcache tags are few (usually just one `buildcache` tag per repo). The script only deletes when there are MORE than `KEEP` tags, so with typically 2-3 tags per repo (e.g., `latest`, `buildcache`, maybe a version tag), no cleanup will happen. This is fine.
 
 No code changes needed — the script already works with the new registry.
-
-**Step 3: Commit (no-op — just verify)**
-
-No changes needed. The cleanup script automatically covers the private registry.
