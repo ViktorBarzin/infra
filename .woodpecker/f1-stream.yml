@@ -29,8 +29,10 @@ steps:
       platforms: linux/amd64
       provenance: false
       tags: latest
-      cache_from: type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache
-      cache_to: type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache,mode=max
+      cache_from:
+        - "type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache"
+      cache_to:
+        - "type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache,mode=max"
       buildkit_config: |
         [registry."registry.viktorbarzin.lan:5050"]
           http = true
