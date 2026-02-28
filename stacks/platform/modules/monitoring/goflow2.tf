@@ -24,7 +24,7 @@ resource "kubernetes_deployment" "goflow2" {
         container {
           name  = "goflow2"
           image = "netsampler/goflow2:v2.2.1"
-          args  = ["-listen", "netflow://:2055", "-transport", "stdout", "-format", "json"]
+          args  = ["-listen", "netflow://:2055"]
 
           port {
             name           = "netflow"
