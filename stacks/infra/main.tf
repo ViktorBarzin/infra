@@ -149,7 +149,7 @@ module "docker-registry-template" {
     "systemctl stop nginx || true",
     "systemctl disable nginx || true",
     # Create directory structure
-    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno",
+    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno /opt/registry/data/private",
     # Write Docker Compose file
     format("echo %s | base64 -d > /opt/registry/docker-compose.yml",
       base64encode(file("${path.root}/../../modules/docker-registry/docker-compose.yml"))
@@ -202,6 +202,10 @@ module "docker-registry-template" {
         })
       )
     ),
+    # Write private R/W registry config (no proxy = accepts pushes)
+    format("echo %s | base64 -d > /opt/registry/config-private.yml",
+      base64encode(file("${path.root}/../../modules/docker-registry/config-private.yml"))
+    ),
     # Write tag cleanup script
     format("echo %s | base64 -d > /opt/registry/cleanup-tags.sh && chmod +x /opt/registry/cleanup-tags.sh",
       base64encode(file("${path.root}/../../modules/docker-registry/cleanup-tags.sh"))
@@ -237,6 +241,7 @@ UNIT
     "( crontab -l 2>/dev/null; echo '10 3 * * 0 /usr/bin/docker exec registry-quay registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
     "( crontab -l 2>/dev/null; echo '15 3 * * 0 /usr/bin/docker exec registry-k8s registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
     "( crontab -l 2>/dev/null; echo '20 3 * * 0 /usr/bin/docker exec registry-kyverno registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '25 3 * * 0 /usr/bin/docker exec registry-private registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
     # Cron: tag cleanup (daily 2am, keep last 10 tags per image)
     "( crontab -l 2>/dev/null; echo '0 2 * * * python3 /opt/registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
   ]
@@ -270,5 +275,6 @@ module "docker-registry-vm" {
   # 5020 -> nginx -> registry-quay (quay.io proxy)
   # 5030 -> nginx -> registry-k8s (registry.k8s.io proxy)
   # 5040 -> nginx -> registry-kyverno (reg.kyverno.io proxy)
+  # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
 }
