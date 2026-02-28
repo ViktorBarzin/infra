@@ -17,6 +17,25 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Local PVC for Redis data — proper fsync, fast RDB saves
+resource "kubernetes_persistent_volume_claim" "redis" {
+  metadata {
+    name      = "redis-data"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "local-path"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+
+  wait_until_bound = false
+}
+
 resource "kubernetes_deployment" "redis" {
   metadata {
     name      = "redis"
@@ -24,9 +43,6 @@ resource "kubernetes_deployment" "redis" {
     labels = {
       app  = "redis"
       tier = var.tier
-    }
-    annotations = {
-      "reloader.stakater.com/search" = "true"
     }
   }
   spec {
@@ -46,14 +62,17 @@ resource "kubernetes_deployment" "redis" {
         }
       }
       spec {
+        # No init container needed — all Redis data is transient (queues, caches).
+        # Starting fresh is safe; services rebuild their state automatically.
+
         container {
-          image = "redis/redis-stack:latest"
+          image = "redis:7-alpine"
           name  = "redis"
 
           resources {
             requests = {
               cpu    = "200m"
-              memory = "1Gi"
+              memory = "512Mi"
             }
             limits = {
               cpu    = "1"
@@ -64,21 +83,19 @@ resource "kubernetes_deployment" "redis" {
           port {
             container_port = 6379
           }
-          port {
-            container_port = 8001
-          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
           }
         }
+
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/redis"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.redis.metadata[0].name
           }
         }
+
         dns_config {
           option {
             name  = "ndots"
@@ -89,6 +106,7 @@ resource "kubernetes_deployment" "redis" {
     }
   }
 }
+
 resource "kubernetes_service" "redis" {
   metadata {
     name      = "redis"
@@ -97,7 +115,6 @@ resource "kubernetes_service" "redis" {
       app = "redis"
     }
   }
-
   spec {
     selector = {
       app = "redis"
@@ -106,17 +123,57 @@ resource "kubernetes_service" "redis" {
       name = "redis"
       port = 6379
     }
-    port {
-      name = "http"
-      port = 8001
-    }
   }
 }
-module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.redis.metadata[0].name
-  name            = "redis"
-  tls_secret_name = var.tls_secret_name
-  protected       = true
-  port            = 8001
+
+# Hourly backup: copy RDB snapshot to NFS for the TrueNAS → backup NAS pipeline
+resource "kubernetes_cron_job_v1" "redis-backup" {
+  metadata {
+    name      = "redis-backup"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "0 * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 60
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "redis-backup"
+              image = "redis:7-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eux
+                # Trigger a fresh RDB save
+                redis-cli -h redis.redis BGSAVE
+                sleep 5
+                # Copy the RDB from the running pod's data via redis
+                redis-cli -h redis.redis --rdb /backup/dump.rdb
+                echo "Backup complete: $(ls -lh /backup/dump.rdb)"
+              EOT
+              ]
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "backup"
+              nfs {
+                path   = "/mnt/main/redis-backup"
+                server = var.nfs_server
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
