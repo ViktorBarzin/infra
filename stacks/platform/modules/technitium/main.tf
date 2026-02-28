@@ -4,6 +4,8 @@ variable "homepage_token" {}
 variable "technitium_db_password" {}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
+variable "technitium_username" { type = string }
+variable "technitium_password" { type = string }
 
 resource "kubernetes_namespace" "technitium" {
   metadata {
@@ -91,7 +93,11 @@ resource "kubernetes_deployment" "technitium" {
   }
   spec {
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = "0"
+        max_surge       = "1"
+      }
     }
     # replicas = 1
     selector {
@@ -107,12 +113,13 @@ resource "kubernetes_deployment" "technitium" {
           "diun.include_tags" = "latest"
         }
         labels = {
-          app = "technitium"
+          app          = "technitium"
+          "dns-server" = "true"
         }
       }
       spec {
-        # Prefer nodes running Traefik for network locality
         affinity {
+          # Prefer nodes running Traefik for network locality
           pod_affinity {
             preferred_during_scheduling_ignored_during_execution {
               weight = 100
@@ -126,6 +133,19 @@ resource "kubernetes_deployment" "technitium" {
                 }
                 topology_key = "kubernetes.io/hostname"
               }
+            }
+          }
+          # Spread DNS pods across nodes for HA
+          pod_anti_affinity {
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_expressions {
+                  key      = "dns-server"
+                  operator = "In"
+                  values   = ["true"]
+                }
+              }
+              topology_key = "kubernetes.io/hostname"
             }
           }
         }
@@ -150,6 +170,20 @@ resource "kubernetes_deployment" "technitium" {
           }
           port {
             container_port = 80
+          }
+          liveness_probe {
+            tcp_socket {
+              port = 53
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+          }
+          readiness_probe {
+            tcp_socket {
+              port = 53
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
           }
           volume_mount {
             mount_path = "/etc/dns"
@@ -183,7 +217,6 @@ resource "kubernetes_deployment" "technitium" {
     }
   }
 }
-
 
 resource "kubernetes_service" "technitium-web" {
   metadata {
@@ -234,7 +267,7 @@ resource "kubernetes_service" "technitium-dns" {
     }
     external_traffic_policy = "Local"
     selector = {
-      app = "technitium"
+      "dns-server" = "true"
     }
   }
 }
