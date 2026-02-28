@@ -26,7 +26,5 @@ steps:
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
-      cache_from:
-        - "type=registry,ref=registry.viktorbarzin.me:5050/infra:buildcache"
-      cache_to:
-        - "type=registry,ref=registry.viktorbarzin.me:5050/infra:buildcache,mode=max"
+      cache_from: "registry.viktorbarzin.me:5050/infra:latest"
+      cache_to: "type=inline"
