@@ -110,6 +110,17 @@ resource "kubernetes_deployment" "paperless-ngx" {
             mount_path = "/usr/src/paperless/data"
           }
 
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "1Gi"
+            }
+          }
+
           port {
             container_port = 8000
           }
