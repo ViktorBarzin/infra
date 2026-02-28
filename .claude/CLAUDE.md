@@ -10,6 +10,7 @@
 - **CRITICAL: All infrastructure changes must go through Terraform/Terragrunt**. NEVER modify cluster resources directly (kubectl apply/edit/patch, helm install, docker run). Use `kubectl` only for read-only operations and ephemeral debugging.
 - **CRITICAL: NEVER put sensitive data** (API keys, passwords, tokens, credentials) into committed files unless encrypted via git-crypt. Secrets belong in `terraform.tfvars` or `secrets/` directory.
 - **CRITICAL: NEVER commit secrets** — triple-check before every commit. Zero exceptions.
+- **CRITICAL: NEVER restart NFS** (`service nfsd restart` or equivalent on TrueNAS). This is destructive — it causes mount failures across all pods using NFS volumes cluster-wide. If NFS exports aren't taking effect, re-run `nfs_exports.sh` or wait; never restart the NFS service.
 - **New services MUST have CI/CD** (Woodpecker CI pipeline) and **monitoring** (Prometheus alerts and/or Uptime Kuma).
 
 ## Execution Environment
@@ -51,8 +52,10 @@ volume {
 Only use PV/PVC when a Helm chart requires `existingClaim`.
 
 ### Adding NFS Exports
-1. Edit `secrets/nfs_directories.txt` — add path, keep sorted
-2. Run `secrets/nfs_exports.sh` from `secrets/` to update TrueNAS
+1. **Create the directory on TrueNAS first**: `ssh root@10.0.10.15 "mkdir -p /mnt/main/<service> && chmod 777 /mnt/main/<service>"`
+2. Edit `secrets/nfs_directories.txt` — add path, keep sorted
+3. Run `secrets/nfs_exports.sh` from `secrets/` to update TrueNAS
+4. **Note**: If any path in `nfs_directories.txt` doesn't exist on TrueNAS, the API rejects the entire update and no paths are added. Fix missing dirs first.
 
 ### Factory Pattern (multi-user services)
 Structure: `stacks/<service>/main.tf` + `factory/main.tf`. Examples: `actualbudget`, `freedify`.
