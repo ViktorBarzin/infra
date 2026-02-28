@@ -15,9 +15,7 @@ steps:
       username: "viktorbarzin"
       password:
         from_secret: dockerhub-pat
-      repo:
-        - viktorbarzin/infra
-        - registry.viktorbarzin.lan:5050/infra
+      repo: viktorbarzin/infra
       logins:
         - registry: https://index.docker.io/v1/
           username: viktorbarzin
@@ -26,5 +24,3 @@ steps:
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
-      insecure: true
-      buildkit_config: "[registry.\"registry.viktorbarzin.lan:5050\"]\n  http = true\n  insecure = true\n"
