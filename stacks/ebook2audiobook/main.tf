@@ -327,8 +327,7 @@ resource "kubernetes_deployment" "audiblez-web" {
           effect   = "NoSchedule"
         }
         container {
-          # Use digest to bypass local registry cache
-          image             = "docker.io/viktorbarzin/audiblez-web@sha256:eb6d13e6372b931bcac45ca389c063dfadc7b3fc2a607127fc76c5627b13a34c"
+          image             = "docker.io/viktorbarzin/audiblez-web:latest"
           image_pull_policy = "Always"
           name              = "audiblez-web"
 
