@@ -61,5 +61,13 @@ podAnnotations:
 collabora:
   enabled: false # Using onlyoffice instead
 
+resources:
+  limits:
+    cpu: "2"
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
 cronjob:
   enabled: true
