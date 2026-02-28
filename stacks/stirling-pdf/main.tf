@@ -44,6 +44,17 @@ resource "kubernetes_deployment" "stirling-pdf" {
         container {
           image = "stirlingtools/stirling-pdf:latest"
           name  = "stirling-pdf"
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "1Gi"
+            }
+          }
+
           port {
             container_port = 8080
           }
