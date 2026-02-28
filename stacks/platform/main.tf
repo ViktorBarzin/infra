@@ -141,6 +141,7 @@ module "dbaas" {
   dbaas_root_password      = var.dbaas_root_password
   postgresql_root_password = var.dbaas_postgresql_root_password
   pgadmin_password         = var.dbaas_pgadmin_password
+  kube_config_path         = var.kube_config_path
   tier                     = local.tiers.cluster
 }
 
