@@ -1,5 +1,6 @@
 variable "tls_secret_name" { type = string }
 variable "aiostreams_database_connection_string" { type = string }
+variable "nfs_server" { type = string }
 
 
 resource "kubernetes_namespace" "servarr" {
@@ -28,12 +29,14 @@ module "prowlarr" {
   source          = "./prowlarr"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+  nfs_server      = var.nfs_server
 }
 
 module "qbittorrent" {
   source          = "./qbittorrent"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+  nfs_server      = var.nfs_server
 }
 
 module "flaresolverr" {
@@ -58,6 +61,7 @@ module "listenarr" {
   source          = "./listenarr"
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.aux
+  nfs_server      = var.nfs_server
 }
 
 module "aiostreams" {
@@ -65,4 +69,5 @@ module "aiostreams" {
   tls_secret_name                       = var.tls_secret_name
   aiostreams_database_connection_string = var.aiostreams_database_connection_string
   tier                                  = local.tiers.aux
+  nfs_server                            = var.nfs_server
 }
