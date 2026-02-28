@@ -133,9 +133,10 @@ resource "kubernetes_manifest" "vpa_auto_mode_label" {
             }
           }
         },
-        # All other namespaces: auto mode
+        # All other namespaces: initial mode (compatible with Terraform —
+        # VPA mutates pods at creation, not the deployment spec)
         {
-          name = "label-vpa-auto-default"
+          name = "label-vpa-initial-default"
           match = {
             any = [
               {
@@ -162,7 +163,7 @@ resource "kubernetes_manifest" "vpa_auto_mode_label" {
             patchStrategicMerge = {
               metadata = {
                 labels = {
-                  "goldilocks.fairwinds.com/vpa-update-mode" = "auto"
+                  "goldilocks.fairwinds.com/vpa-update-mode" = "initial"
                 }
               }
             }
