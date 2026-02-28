@@ -17,116 +17,99 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# Local PVC for Redis data — proper fsync, fast RDB saves
-resource "kubernetes_persistent_volume_claim" "redis" {
-  metadata {
-    name      = "redis-data"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "local-path"
-    resources {
-      requests = {
-        storage = "2Gi"
+# Redis with Sentinel HA via Bitnami Helm chart
+# Architecture: 1 master + 2 replicas + 3 sentinels
+# Sentinel automatically promotes a replica if master fails
+# The K8s Service always points at the current master
+resource "helm_release" "redis" {
+  namespace        = kubernetes_namespace.redis.metadata[0].name
+  create_namespace = false
+  name             = "redis"
+  atomic           = true
+  timeout          = 600
+
+  repository = "oci://10.0.20.10:5000/bitnamicharts"
+  chart      = "redis"
+  version    = "25.3.2"
+
+  values = [yamlencode({
+    architecture = "replication"
+
+    auth = {
+      enabled = false
+    }
+
+    sentinel = {
+      enabled          = true
+      quorum           = 2
+      masterSet        = "mymaster"
+      automateCluster  = true
+
+      resources = {
+        requests = {
+          cpu    = "50m"
+          memory = "64Mi"
+        }
+        limits = {
+          cpu    = "200m"
+          memory = "128Mi"
+        }
       }
     }
-  }
 
-  wait_until_bound = false
+    master = {
+      persistence = {
+        enabled      = true
+        storageClass = "local-path"
+        size         = "2Gi"
+      }
+
+      resources = {
+        requests = {
+          cpu    = "200m"
+          memory = "512Mi"
+        }
+        limits = {
+          cpu    = "1"
+          memory = "2Gi"
+        }
+      }
+    }
+
+    replica = {
+      replicaCount = 2
+
+      persistence = {
+        enabled      = true
+        storageClass = "local-path"
+        size         = "2Gi"
+      }
+
+      resources = {
+        requests = {
+          cpu    = "100m"
+          memory = "256Mi"
+        }
+        limits = {
+          cpu    = "500m"
+          memory = "1Gi"
+        }
+      }
+    }
+
+    # Metrics for Prometheus
+    metrics = {
+      enabled = false
+    }
+
+    # Use the existing service name so clients don't need changes
+    # Sentinel-enabled Bitnami chart creates a headless service
+    # and a regular service pointing at the master
+    nameOverride = "redis"
+  })]
 }
 
-resource "kubernetes_deployment" "redis" {
-  metadata {
-    name      = "redis"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-    labels = {
-      app  = "redis"
-      tier = var.tier
-    }
-  }
-  spec {
-    replicas = 1
-    strategy {
-      type = "Recreate"
-    }
-    selector {
-      match_labels = {
-        app = "redis"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "redis"
-        }
-      }
-      spec {
-        # No init container needed — all Redis data is transient (queues, caches).
-        # Starting fresh is safe; services rebuild their state automatically.
-
-        container {
-          image = "redis:7-alpine"
-          name  = "redis"
-
-          resources {
-            requests = {
-              cpu    = "200m"
-              memory = "512Mi"
-            }
-            limits = {
-              cpu    = "1"
-              memory = "2Gi"
-            }
-          }
-
-          port {
-            container_port = 6379
-          }
-          volume_mount {
-            name       = "data"
-            mount_path = "/data"
-          }
-        }
-
-        volume {
-          name = "data"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.redis.metadata[0].name
-          }
-        }
-
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
-          }
-        }
-      }
-    }
-  }
-}
-
-resource "kubernetes_service" "redis" {
-  metadata {
-    name      = "redis"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-    labels = {
-      app = "redis"
-    }
-  }
-  spec {
-    selector = {
-      app = "redis"
-    }
-    port {
-      name = "redis"
-      port = 6379
-    }
-  }
-}
-
-# Hourly backup: copy RDB snapshot to NFS for the TrueNAS → backup NAS pipeline
+# Hourly backup: copy RDB snapshot from master to NFS
 resource "kubernetes_cron_job_v1" "redis-backup" {
   metadata {
     name      = "redis-backup"
@@ -151,10 +134,10 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
               image = "redis:7-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eux
-                # Trigger a fresh RDB save
+                # Trigger a fresh RDB save on the master
                 redis-cli -h redis.redis BGSAVE
                 sleep 5
-                # Copy the RDB from the running pod's data via redis
+                # Copy the RDB via redis-cli --rdb
                 redis-cli -h redis.redis --rdb /backup/dump.rdb
                 echo "Backup complete: $(ls -lh /backup/dump.rdb)"
               EOT
