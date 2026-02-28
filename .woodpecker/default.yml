@@ -42,10 +42,15 @@ steps:
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
 
   - name: slack
-    image: woodpeckerci/plugin-slack
-    settings:
-      webhook:
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: infra pipeline ${CI_PIPELINE_STATUS}\"}" \
+          "$SLACK_WEBHOOK" || true
+    secrets: [slack_webhook]
+    environment:
+      SLACK_WEBHOOK:
         from_secret: slack_webhook
-      channel: general
     when:
       - status: [success, failure]
