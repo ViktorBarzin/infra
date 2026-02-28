@@ -34,55 +34,26 @@ resource "kubernetes_config_map" "mycnf" {
   metadata {
     name      = "mycnf"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
-
     annotations = {
       "reloader.stakater.com/match" = "true"
     }
   }
-
   data = {
     "my.cnf" = <<-EOT
-    # For advice on how to change settings please see
-    # http://dev.mysql.com/doc/refman/8.2/en/server-configuration-defaults.html
-
     [mysqld]
-    #
-    # Remove leading # and set to the amount of RAM for the most important data
-    # cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
-    # innodb_buffer_pool_size = 128M
-    #
-    # Remove leading # to turn on a very important data integrity option: logging
-    # changes to the binary log between backups.
-    # log_bin
-    #
-    # Remove leading # to set options mainly useful for reporting servers.
-    # The server defaults are faster for transactions and fast SELECTs.
-    # Adjust sizes as needed, experiment to find the optimal values.
-    # join_buffer_size = 128M
-    # sort_buffer_size = 2M
-    # read_rnd_buffer_size = 2M
-
-    # Remove leading # to revert to previous value for default_authentication_plugin,
-    # this will increase compatibility with older clients. For background, see:
-    # https://dev.mysql.com/doc/refman/8.2/en/server-system-variables.html#sysvar_default_authentication_plugin
-    # default-authentication-plugin=mysql_native_password
-    #skip-host-cache
     skip-name-resolve
     datadir=/var/lib/mysql
     socket=/var/run/mysqld/mysqld.sock
     secure-file-priv=/var/lib/mysql-files
     user=mysql
-    #innodb_force_recovery = 6
-    #log_error_verbosity = 6 
-
     pid-file=/var/run/mysqld/mysqld.pid
     [client]
     socket=/var/run/mysqld/mysqld.sock
-
     !includedir /etc/mysql/conf.d/
     EOT
   }
 }
+
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
@@ -98,24 +69,7 @@ resource "kubernetes_service" "mysql" {
   }
 }
 
-# Local PVC for MySQL data — proper fsync, no NFS SPOF
-resource "kubernetes_persistent_volume_claim" "mysql" {
-  metadata {
-    name      = "mysql-data"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "local-path"
-    resources {
-      requests = {
-        storage = "10Gi"
-      }
-    }
-  }
-  wait_until_bound = false
-}
-
+# MySQL — single instance on NFS (temporary, pending replication migration)
 resource "kubernetes_deployment" "mysql" {
   metadata {
     name      = "mysql"
@@ -144,31 +98,6 @@ resource "kubernetes_deployment" "mysql" {
         }
       }
       spec {
-        # Seed data from NFS on first run (local PVC empty)
-        init_container {
-          name  = "seed-data"
-          image = "busybox:1.36"
-          command = ["/bin/sh", "-c", <<-EOT
-            if [ ! -d /data/mysql ]; then
-              echo "No local data found, copying from NFS..."
-              cp -a /nfs-data/. /data/
-              echo "Done — $(du -sh /data/ | cut -f1) copied"
-            else
-              echo "Local data exists, skipping seed"
-            fi
-          EOT
-          ]
-          volume_mount {
-            name       = "mysql-persistent-storage"
-            mount_path = "/data"
-          }
-          volume_mount {
-            name       = "nfs-data"
-            mount_path = "/nfs-data"
-            read_only  = true
-          }
-        }
-
         container {
           image = "mysql:9.2.0"
           name  = "mysql"
@@ -204,13 +133,6 @@ resource "kubernetes_deployment" "mysql" {
         }
         volume {
           name = "mysql-persistent-storage"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.mysql.metadata[0].name
-          }
-        }
-        # NFS volume for init container seeding only
-        volume {
-          name = "nfs-data"
           nfs {
             path   = "/mnt/main/mysql"
             server = var.nfs_server
