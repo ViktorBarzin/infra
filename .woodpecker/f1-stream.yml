@@ -16,12 +16,25 @@ steps:
       username: "viktorbarzin"
       password:
         from_secret: dockerhub-pat
-      repo: viktorbarzin/f1-stream
+      repo:
+        - viktorbarzin/f1-stream
+        - registry.viktorbarzin.lan:5050/f1-stream
+      logins:
+        - registry: https://index.docker.io/v1/
+          username: viktorbarzin
+          password:
+            from_secret: dockerhub-pat
       dockerfile: stacks/f1-stream/files/Dockerfile
       context: stacks/f1-stream/files
       platforms: linux/amd64
       provenance: false
       tags: latest
+      cache_from: type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache
+      cache_to: type=registry,ref=registry.viktorbarzin.lan:5050/f1-stream:buildcache,mode=max
+      buildkit_config: |
+        [registry."registry.viktorbarzin.lan:5050"]
+          http = true
+          insecure = true
 
   - name: deploy
     image: bitnami/kubectl
