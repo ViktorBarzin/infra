@@ -149,7 +149,7 @@ module "docker-registry-template" {
     "systemctl stop nginx || true",
     "systemctl disable nginx || true",
     # Create directory structure
-    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno /opt/registry/data/private",
+    "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno /opt/registry/data/private /opt/registry/tls",
     # Write Docker Compose file
     format("echo %s | base64 -d > /opt/registry/docker-compose.yml",
       base64encode(file("${path.root}/../../modules/docker-registry/docker-compose.yml"))
@@ -157,6 +157,13 @@ module "docker-registry-template" {
     # Write nginx config
     format("echo %s | base64 -d > /opt/registry/nginx.conf",
       base64encode(file("${path.root}/../../modules/docker-registry/nginx_registry.conf"))
+    ),
+    # Write TLS certificate for private registry (*.viktorbarzin.me wildcard)
+    format("echo %s | base64 -d > /opt/registry/tls/fullchain.pem",
+      base64encode(file("${path.root}/../../secrets/fullchain.pem"))
+    ),
+    format("echo %s | base64 -d > /opt/registry/tls/privkey.pem && chmod 600 /opt/registry/tls/privkey.pem",
+      base64encode(file("${path.root}/../../secrets/privkey.pem"))
     ),
     # Write Docker Hub registry config (with auth)
     format("echo %s | base64 -d > /opt/registry/config-dockerhub.yml",

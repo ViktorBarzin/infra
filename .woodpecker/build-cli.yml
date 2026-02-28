@@ -15,7 +15,9 @@ steps:
       username: "viktorbarzin"
       password:
         from_secret: dockerhub-pat
-      repo: viktorbarzin/infra
+      repo:
+        - viktorbarzin/infra
+        - registry.viktorbarzin.me:5050/infra
       logins:
         - registry: https://index.docker.io/v1/
           username: viktorbarzin
@@ -24,3 +26,7 @@ steps:
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
+      cache_from:
+        - "type=registry,ref=registry.viktorbarzin.me:5050/infra:buildcache"
+      cache_to:
+        - "type=registry,ref=registry.viktorbarzin.me:5050/infra:buildcache,mode=max"
