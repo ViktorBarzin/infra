@@ -61,6 +61,16 @@ resource "kubernetes_deployment" "aiostreams" {
             name       = "data"
             mount_path = "/app/data"
           }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "768Mi"
+            }
+          }
         }
         volume {
           name = "data"

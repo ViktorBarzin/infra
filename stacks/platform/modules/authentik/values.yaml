@@ -17,6 +17,13 @@ authentik:
 
 server:
   replicas: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
   ingress:
     enabled: false
     # hosts:
@@ -29,3 +36,10 @@ global:
 
 worker:
   replicas: 3
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
