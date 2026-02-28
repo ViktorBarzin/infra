@@ -48,10 +48,10 @@ persistence:
 
 startupProbe:
   enabled: true
-  initialDelaySeconds: 10
+  initialDelaySeconds: 30
   periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 30
+  timeoutSeconds: 10
+  failureThreshold: 60
   successThreshold: 1
 
 podAnnotations:
@@ -64,10 +64,10 @@ collabora:
 resources:
   limits:
     cpu: "2"
-    memory: 2Gi
+    memory: 4Gi
   requests:
     cpu: 100m
-    memory: 512Mi
+    memory: 1Gi
 
 cronjob:
   enabled: true
