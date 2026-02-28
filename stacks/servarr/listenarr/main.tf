@@ -40,6 +40,16 @@ resource "kubernetes_deployment" "listenarr" {
             name       = "data"
             mount_path = "/app/config"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "1Gi"
+            }
+          }
         }
         volume {
           name = "data"
