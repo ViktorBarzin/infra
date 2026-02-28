@@ -29,10 +29,8 @@ steps:
       platforms: linux/amd64
       provenance: false
       tags: latest
-      cache_from:
-        - "type=registry,ref=registry.viktorbarzin.me:5050/f1-stream:buildcache"
-      cache_to:
-        - "type=registry,ref=registry.viktorbarzin.me:5050/f1-stream:buildcache,mode=max"
+      cache_from: "registry.viktorbarzin.me:5050/f1-stream:latest"
+      cache_to: "type=inline"
 
   - name: deploy
     image: bitnami/kubectl
