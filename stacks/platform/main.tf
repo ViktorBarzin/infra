@@ -174,6 +174,8 @@ module "technitium" {
   mysql_host             = var.mysql_host
   homepage_token         = var.homepage_credentials["technitium"]["token"]
   technitium_db_password = var.technitium_db_password
+  technitium_username    = var.technitium_username
+  technitium_password    = var.technitium_password
   tier                   = local.tiers.core
 }
 
