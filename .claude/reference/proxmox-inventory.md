@@ -30,10 +30,10 @@
 | 103 | home-assistant | running | 8 | 16GB | vmbr0 | 32G | HA, net0(vlan10) disabled |
 | 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup (unused) |
 | 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |
-| 201 | k8s-node1 | running | 16 | 24GB | vmbr1:vlan20 | 128G | GPU node, Tesla T4 |
-| 202 | k8s-node2 | running | 8 | 16GB | vmbr1:vlan20 | 64G | Worker |
-| 203 | k8s-node3 | running | 8 | 16GB | vmbr1:vlan20 | 64G | Worker |
-| 204 | k8s-node4 | running | 8 | 16GB | vmbr1:vlan20 | 64G | Worker |
+| 201 | k8s-node1 | running | 16 | 24GB | vmbr1:vlan20 | 256G | GPU node, Tesla T4 |
+| 202 | k8s-node2 | running | 8 | 16GB | vmbr1:vlan20 | 256G | Worker |
+| 203 | k8s-node3 | running | 8 | 16GB | vmbr1:vlan20 | 256G | Worker |
+| 204 | k8s-node4 | running | 8 | 16GB | vmbr1:vlan20 | 256G | Worker |
 | 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
 | 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM |
 | 9000 | truenas | running | 16 | 16GB | vmbr1:vlan10 | 32G+7x256G+1T | NFS (10.0.10.15) |
