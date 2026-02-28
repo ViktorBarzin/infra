@@ -47,8 +47,9 @@ resource "kubernetes_namespace" "trading-bot" {
   metadata {
     name = "trading-bot"
     labels = {
-      tier                               = local.tiers.edge
-      "resource-governance/custom-quota" = "true"
+      tier                                         = local.tiers.edge
+      "resource-governance/custom-quota"           = "true"
+      "goldilocks.fairwinds.com/vpa-update-mode"   = "off"
     }
   }
 }
@@ -265,6 +266,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               value = env.value
             }
           }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9091"
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -287,6 +292,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name  = env.key
               value = env.value
             }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9092"
           }
           resources {
             requests = {
@@ -311,6 +320,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               value = env.value
             }
           }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9093"
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -333,6 +346,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name  = env.key
               value = env.value
             }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9094"
           }
           resources {
             requests = {
@@ -357,6 +374,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               value = env.value
             }
           }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9095"
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -379,6 +400,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name  = env.key
               value = env.value
             }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9096"
           }
           resources {
             requests = {
