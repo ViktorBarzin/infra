@@ -26,8 +26,5 @@ steps:
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
-      cache_images: registry.viktorbarzin.lan:5050/infra:buildcache
-      buildkit_config: |
-        [registry."registry.viktorbarzin.lan:5050"]
-          http = true
-          insecure = true
+      insecure: true
+      buildkit_config: "[registry.\"registry.viktorbarzin.lan:5050\"]\n  http = true\n  insecure = true\n"
