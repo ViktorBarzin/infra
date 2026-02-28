@@ -148,7 +148,7 @@ fi
 # --- Step 1: Drain node ---
 info "Step 1/7: Draining node '$NODE_NAME'..."
 DRAINED_NODE="$NODE_NAME"
-if ! $KUBECTL drain "$NODE_NAME" --ignore-daemonsets --delete-emptydir-data --timeout=120s; then
+if ! $KUBECTL drain "$NODE_NAME" --ignore-daemonsets --delete-emptydir-data --force --timeout=300s; then
     error "Failed to drain node '$NODE_NAME'."
     exit 1
 fi
