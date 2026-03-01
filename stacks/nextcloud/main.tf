@@ -18,6 +18,23 @@ resource "kubernetes_namespace" "nextcloud" {
       "istio-injection" : "disabled"
       tier                                     = local.tiers.edge
       "resource-governance/custom-limitrange" = "true"
+      "resource-governance/custom-quota"      = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "nextcloud" {
+  metadata {
+    name      = "nextcloud-quota"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "8Gi"
+      "limits.cpu"      = "32"
+      "limits.memory"   = "16Gi"
+      pods              = "10"
     }
   }
 }
@@ -39,7 +56,7 @@ resource "kubernetes_limit_range" "nextcloud" {
         memory = "64Mi"
       }
       max = {
-        cpu    = "4"
+        cpu    = "16"
         memory = "8Gi"
       }
     }
