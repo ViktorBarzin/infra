@@ -7,8 +7,8 @@ description: |
   but works on host, (4) PyTorch/TensorFlow falls back to CPU despite GPU allocation.
   Covers NVIDIA device plugin, time-slicing, and container runtime issues.
 author: Claude Code
-version: 1.0.0
-date: 2026-01-27
+version: 1.1.0
+date: 2026-03-01
 ---
 
 # Kubernetes GPU Pod - No NVIDIA Devices Found
@@ -139,6 +139,45 @@ $ kubectl exec -n ebook2audiobook deployment/ebook2audiobook -- nvidia-smi
 
 - Check GPU Operator status: `kubectl get pods -n nvidia`
 - View time-slicing config: `kubectl get configmap -n nvidia time-slicing-config -o yaml`
+
+## Automatic GPU Recovery via Liveness Probe
+
+To prevent GPU loss from requiring manual intervention, add a liveness probe that checks
+both GPU availability and application health. Example for Frigate (but applicable to any
+GPU workload):
+
+```hcl
+# Restart pod if GPU becomes unavailable or app hangs
+liveness_probe {
+  exec {
+    command = ["sh", "-c", "nvidia-smi > /dev/null 2>&1 && curl -sf http://localhost:<port>/health > /dev/null"]
+  }
+  initial_delay_seconds = 120
+  period_seconds        = 60
+  timeout_seconds       = 10
+  failure_threshold     = 3
+}
+# Allow time for GPU model loading at startup
+startup_probe {
+  http_get {
+    path = "/health"
+    port = <port>
+  }
+  period_seconds    = 10
+  failure_threshold = 30  # up to 5 minutes
+}
+```
+
+The liveness probe checks:
+- `nvidia-smi` — fails if GPU devices are no longer accessible (CUDA context corruption, device plugin issues)
+- `curl` health endpoint — fails if the application process is hung
+
+If either fails 3 times in a row (3 minutes), Kubernetes automatically restarts the pod,
+which re-acquires the GPU device through the NVIDIA device plugin.
+
+**Important**: Always pair with a `startup_probe` when using GPU workloads — model loading
+(TensorRT, ONNX, PyTorch) can take several minutes and would trip a liveness probe
+configured with a short `initial_delay_seconds`.
 
 ## References
 
