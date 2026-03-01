@@ -310,6 +310,15 @@ module "vpa" {
 }
 
 # -----------------------------------------------------------------------------
+# NFS CSI — CSI driver for NFS with soft mount options (no stale mount hangs)
+# -----------------------------------------------------------------------------
+module "nfs-csi" {
+  source     = "./modules/nfs-csi"
+  tier       = local.tiers.cluster
+  nfs_server = var.nfs_server
+}
+
+# -----------------------------------------------------------------------------
 # CNPG — CloudNativePG Operator + local-path-provisioner for database storage
 # -----------------------------------------------------------------------------
 module "cnpg" {

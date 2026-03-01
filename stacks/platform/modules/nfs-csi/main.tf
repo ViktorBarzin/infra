@@ -1,0 +1,62 @@
+variable "tier" { type = string }
+variable "nfs_server" { type = string }
+
+resource "kubernetes_namespace" "nfs_csi" {
+  metadata {
+    name = "nfs-csi"
+    labels = {
+      tier = var.tier
+    }
+  }
+}
+
+resource "helm_release" "nfs_csi_driver" {
+  namespace        = kubernetes_namespace.nfs_csi.metadata[0].name
+  create_namespace = false
+  name             = "csi-driver-nfs"
+  atomic           = true
+  timeout          = 300
+
+  repository = "https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts"
+  chart      = "csi-driver-nfs"
+
+  values = [yamlencode({
+    controller = {
+      replicas = 1
+      resources = {
+        requests = { cpu = "10m", memory = "32Mi" }
+        limits   = { cpu = "100m", memory = "128Mi" }
+      }
+    }
+    node = {
+      resources = {
+        requests = { cpu = "10m", memory = "32Mi" }
+        limits   = { cpu = "100m", memory = "128Mi" }
+      }
+    }
+    storageClass = {
+      create = false
+    }
+  })]
+}
+
+resource "kubernetes_storage_class" "nfs_truenas" {
+  metadata {
+    name = "nfs-truenas"
+  }
+  storage_provisioner = "nfs.csi.k8s.io"
+  reclaim_policy      = "Retain"
+  volume_binding_mode = "Immediate"
+
+  mount_options = [
+    "soft",
+    "timeo=30",
+    "retrans=3",
+    "actimeo=5",
+  ]
+
+  parameters = {
+    server = var.nfs_server
+    share  = "/mnt/main"
+  }
+}
