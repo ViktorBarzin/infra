@@ -121,7 +121,13 @@ resource "kubernetes_deployment" "ollama" {
             mount_path = "/root/.ollama"
           }
           resources {
+            requests = {
+              cpu    = "500m"
+              memory = "4Gi"
+            }
             limits = {
+              cpu              = "4"
+              memory           = "12Gi"
               "nvidia.com/gpu" = "1"
             }
           }

@@ -47,9 +47,8 @@ resource "kubernetes_namespace" "trading-bot" {
   metadata {
     name = "trading-bot"
     labels = {
-      tier                                         = local.tiers.edge
-      "resource-governance/custom-quota"           = "true"
-      "goldilocks.fairwinds.com/vpa-update-mode"   = "off"
+      tier                                = local.tiers.edge
+      "resource-governance/custom-quota" = "true"
     }
   }
 }

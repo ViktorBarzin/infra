@@ -175,9 +175,9 @@ Custom quota namespaces: `authentik` (16 req CPU/16Gi req mem/48 lim CPU/96Gi li
 
 **LimitRange opt-out**: label `resource-governance/custom-limitrange=true` — skips Kyverno-generated LimitRange, requires a custom `kubernetes_limit_range` in the stack. Used by: `nextcloud` (max 16 CPU/8Gi), `onlyoffice` (max 8 CPU/8Gi).
 
-**Other mutating policies**: `inject-priority-class-from-tier` (sets priorityClassName, **CREATE only**), `inject-ndots` (ndots:2 on all pods), `sync-tier-label-from-namespace`, `goldilocks-vpa-auto-mode` (sets VPA to `initial` for non-core, `off` for core).
+**Other mutating policies**: `inject-priority-class-from-tier` (sets priorityClassName, **CREATE only**), `inject-ndots` (ndots:2 on all pods), `sync-tier-label-from-namespace`, `goldilocks-vpa-auto-mode` (sets VPA to `off` for ALL namespaces — Terraform owns container resources, Goldilocks is observe-only).
 
-**Goldilocks VPA warning**: VPA in Initial mode overrides explicit container resource limits on pod creation. To disable for a deployment: annotate with `goldilocks.fairwinds.com/enabled=false` and set namespace label `goldilocks.fairwinds.com/vpa-update-mode=off`.
+**Goldilocks VPA**: VPA is in `off` mode globally — it provides resource recommendations only via the Goldilocks dashboard, but never mutates pods. Terraform is the sole authority for container resources.
 
 **Security policies** (ALL Audit mode, log-only): `deny-privileged-containers`, `deny-host-namespaces`, `restrict-sys-admin`, `require-trusted-registries`.
 
@@ -187,8 +187,7 @@ Custom quota namespaces: `authentik` (16 req CPU/16Gi req mem/48 lim CPU/96Gi li
 3. **Evicted?** → aux-tier pods (priority 200K, Never preempt) are first evicted under pressure.
 4. **Unexpected limits?** → LimitRange injects defaults when `resources: {}` or no resources block exists. Always set explicit resources.
 5. **Need more?** → Set explicit `resources {}` on container (overrides LimitRange defaults) or add `resource-governance/custom-quota=true` label + `resource-governance/custom-limitrange=true` label with custom resources in the stack.
-6. **VPA overriding resources?** → Goldilocks VPA in `initial` mode scales down explicit limits. Annotate deployment with `goldilocks.fairwinds.com/enabled=false`.
-7. **Pod patch failing with immutable spec?** → Kyverno `inject-priority-class-from-tier` was fixed to CREATE-only. If similar issues arise, check mutating webhooks with `kubectl get mutatingwebhookconfigurations`.
+6. **Pod patch failing with immutable spec?** → Kyverno `inject-priority-class-from-tier` was fixed to CREATE-only. If similar issues arise, check mutating webhooks with `kubectl get mutatingwebhookconfigurations`.
 
 ---
 
