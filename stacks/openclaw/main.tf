@@ -77,10 +77,12 @@ resource "kubernetes_config_map" "openclaw_config" {
   data = {
     "openclaw.json" = jsonencode({
       gateway = {
+        mode           = "local"
         bind           = "lan"
         trustedProxies = ["10.0.0.0/8"]
         controlUi = {
-          dangerouslyDisableDeviceAuth = true
+          dangerouslyDisableDeviceAuth             = true
+          dangerouslyAllowHostHeaderOriginFallback = true
         }
       }
       agents = {
@@ -130,11 +132,12 @@ resource "kubernetes_config_map" "openclaw_config" {
       }
       channels = {
         telegram = {
-          enabled      = true
-          botToken     = var.openclaw_telegram_bot_token
-          dmPolicy     = "allowlist"
-          allowFrom    = ["tg:8281953845"]
-          historyLimit = 50
+          enabled     = true
+          botToken    = var.openclaw_telegram_bot_token
+          dmPolicy    = "allowlist"
+          allowFrom   = ["tg:8281953845"]
+          groupPolicy = "allowlist"
+          streamMode  = "partial"
         }
       }
       models = {
@@ -172,6 +175,12 @@ resource "kubernetes_config_map" "openclaw_config" {
             ]
           }
         }
+      }
+      wizard = {
+        lastRunAt      = "2026-03-01T15:11:54.176Z"
+        lastRunVersion = "2026.2.9"
+        lastRunCommand = "configure"
+        lastRunMode    = "local"
       }
     })
   }
@@ -294,6 +303,11 @@ resource "kubernetes_deployment" "openclaw" {
             # Symlink Claude skills into OpenClaw skills directory
             ln -sfn /workspace/infra/.claude/skills /openclaw-home/skills
 
+            # Create required directories (owned by node user, UID 1000)
+            mkdir -p /openclaw-home/agents/main/sessions /openclaw-home/credentials /openclaw-home/canvas /openclaw-home/devices /openclaw-home/cron
+            chown -R 1000:1000 /openclaw-home
+            chmod 700 /openclaw-home
+
             # Generate kubeconfig from in-cluster ServiceAccount credentials
             SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
             SA_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -354,8 +368,8 @@ resource "kubernetes_deployment" "openclaw" {
         # Main container: OpenClaw
         container {
           name    = "openclaw"
-          image   = "ghcr.io/openclaw/openclaw:2026.2.9"
-          command = ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
+          image   = "ghcr.io/openclaw/openclaw:2026.2.26"
+          command = ["sh", "-c", "node openclaw.mjs doctor --fix 2>/dev/null; exec node openclaw.mjs gateway --allow-unconfigured --bind lan"]
           port {
             container_port = 18789
           }
