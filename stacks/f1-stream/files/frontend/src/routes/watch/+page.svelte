@@ -97,21 +97,50 @@
 	}
 
 	function playStream(stream) {
-		if (!Hls) return;
-
 		// If already playing this stream, don't add a duplicate
-		if (isStreamActive(stream.url)) return;
+		const streamUrl = stream.stream_type === 'embed' ? stream.embed_url : stream.url;
+		if (isStreamActive(streamUrl)) return;
 
 		// If at max players, replace the last one
 		if (players.length >= MAX_PLAYERS) {
 			removePlayer(players.length - 1);
 		}
 
+		if (stream.stream_type === 'embed') {
+			// Embed/iframe player — no hls.js needed
+			const newPlayer = {
+				id: Date.now(),
+				proxyUrl: '',
+				originalUrl: stream.embed_url,
+				embedUrl: stream.embed_url,
+				streamType: 'embed',
+				siteKey: stream.site_key || '',
+				siteName: stream.site_name || stream.site_key || 'Unknown',
+				quality: stream.quality || '',
+				isPlaying: true,
+				isMuted: false,
+				volume: 1,
+				showControls: true,
+				error: null,
+				videoEl: null,
+				containerEl: null,
+				hls: null,
+				controlsTimer: null,
+			};
+			players = [...players, newPlayer];
+			return;
+		}
+
+		// m3u8 player — use hls.js
+		if (!Hls) return;
+
 		const proxyUrl = getProxyUrl(stream.url);
 		const newPlayer = {
 			id: Date.now(),
 			proxyUrl,
 			originalUrl: stream.url,
+			embedUrl: '',
+			streamType: 'm3u8',
 			siteKey: stream.site_key || '',
 			siteName: stream.site_name || stream.site_key || 'Unknown',
 			quality: stream.quality || '',
@@ -296,12 +325,23 @@
 						<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
 					</button>
 
-					<!-- Video -->
-					<video
-						bind:this={player.videoEl}
-						class="w-full aspect-video bg-black"
-						playsinline
-					></video>
+					<!-- Video or Iframe -->
+					{#if player.streamType === 'embed'}
+						<iframe
+							src={player.embedUrl}
+							class="w-full aspect-video bg-black"
+							allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+							allowfullscreen
+							frameborder="0"
+							title="{player.siteName} stream"
+						></iframe>
+					{:else}
+						<video
+							bind:this={player.videoEl}
+							class="w-full aspect-video bg-black"
+							playsinline
+						></video>
+					{/if}
 
 					<!-- Controls Overlay -->
 					<div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2 transition-opacity duration-300 {player.showControls ? 'opacity-100' : 'opacity-0'}">
@@ -388,13 +428,16 @@
 		{:else}
 			<div class="space-y-2">
 				{#each streamsData.streams as stream, i}
-					{@const active = isStreamActive(stream.url)}
+					{@const active = isStreamActive(stream.stream_type === 'embed' ? stream.embed_url : stream.url)}
 					<div class="bg-f1-surface border rounded-lg px-4 py-3 flex items-center gap-4 {active ? 'border-f1-red' : 'border-f1-border hover:border-f1-border'}">
 						<div class="flex-1 min-w-0">
 							<div class="flex items-center gap-2">
 								<span class="text-sm font-medium text-white truncate">{stream.site_name || stream.site_key || 'Unknown'}</span>
 								{#if stream.is_live}
 									<span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-f1-red text-white">Live</span>
+								{/if}
+								{#if stream.stream_type === 'embed'}
+									<span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-600 text-white">Embed</span>
 								{/if}
 								{#if active}
 									<span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-600 text-white">Playing</span>
