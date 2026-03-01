@@ -80,6 +80,16 @@ resource "kubernetes_deployment" "send" {
             name       = "data"
             mount_path = "/uploads"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
+          }
         }
         volume {
           name = "data"

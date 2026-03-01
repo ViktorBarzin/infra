@@ -80,12 +80,12 @@ resource "kubernetes_deployment" "atuin" {
 
           resources {
             requests = {
-              memory = "64Mi"
-              cpu    = "50m"
+              memory = "16Mi"
+              cpu    = "10m"
             }
             limits = {
-              memory = "256Mi"
-              cpu    = "500m"
+              memory = "128Mi"
+              cpu    = "100m"
             }
           }
 

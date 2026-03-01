@@ -64,6 +64,16 @@ resource "kubernetes_deployment" "shadowsocks" {
             container_port = 8388
             protocol       = "UDP"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "64Mi"
+            }
+          }
         }
       }
     }

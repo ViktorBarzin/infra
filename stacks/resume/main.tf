@@ -74,11 +74,11 @@ resource "kubernetes_deployment" "printer" {
           resources {
             requests = {
               memory = "128Mi"
-              cpu    = "50m"
+              cpu    = "25m"
             }
             limits = {
-              memory = "512Mi"
-              cpu    = "1"
+              memory = "1536Mi"
+              cpu    = "500m"
             }
           }
 
@@ -221,12 +221,12 @@ resource "kubernetes_deployment" "resume" {
 
           resources {
             requests = {
-              memory = "128Mi"
-              cpu    = "25m"
+              memory = "64Mi"
+              cpu    = "15m"
             }
             limits = {
               memory = "384Mi"
-              cpu    = "500m"
+              cpu    = "250m"
             }
           }
 

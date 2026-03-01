@@ -73,6 +73,16 @@ resource "kubernetes_deployment" "tor-proxy" {
             container_port = 9050
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
+          }
           #   volume_mount {
           #     name       = "tor-config"
           #     mount_path = "/etc/tor/torrc"

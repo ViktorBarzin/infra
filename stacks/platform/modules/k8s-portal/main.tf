@@ -66,6 +66,16 @@ resource "kubernetes_deployment" "k8s_portal" {
             mount_path = "/config"
             read_only  = true
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
 
         volume {

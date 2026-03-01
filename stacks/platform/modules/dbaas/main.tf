@@ -221,8 +221,8 @@ resource "kubernetes_service" "mysql" {
   spec {
     publish_not_ready_addresses = true # bypass InnoDB Cluster readiness gate during partial failures
     selector = {
-      "component"                    = "mysqld"
-      "mysql.oracle.com/cluster"     = "mysql-cluster"
+      "component"                     = "mysqld"
+      "mysql.oracle.com/cluster"      = "mysql-cluster"
       "mysql.oracle.com/cluster-role" = "PRIMARY"
     }
     port {
@@ -476,6 +476,16 @@ resource "kubernetes_deployment" "phpmyadmin" {
           env {
             name  = "UPLOAD_LIMIT"
             value = "300M"
+          }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
           }
         }
         dns_config {
@@ -763,12 +773,12 @@ module "ingress" {
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
-    instances      = "2"
-    image          = "ghcr.io/cloudnative-pg/postgis:16"
-    storage_size   = "20Gi"
-    storage_class  = "local-path"
-    memory_limit   = "4Gi"
-    cpu_limit      = "2"
+    instances     = "2"
+    image         = "ghcr.io/cloudnative-pg/postgis:16"
+    storage_size  = "20Gi"
+    storage_class = "local-path"
+    memory_limit  = "4Gi"
+    cpu_limit     = "2"
   }
 
   provisioner "local-exec" {
@@ -898,6 +908,17 @@ resource "kubernetes_deployment" "pgadmin" {
           volume_mount {
             name       = "pgadmin"
             mount_path = "/var/lib/pgadmin/"
+          }
+
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
           }
 
         }

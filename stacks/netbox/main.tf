@@ -134,11 +134,11 @@ resource "kubernetes_deployment" "netbox" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
-              cpu    = "1"
-              memory = "512Mi"
+              cpu    = "500m"
+              memory = "1Gi"
             }
           }
           port {

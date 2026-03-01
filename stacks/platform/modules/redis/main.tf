@@ -119,10 +119,10 @@ resource "kubernetes_service" "redis" {
   }
   spec {
     selector = {
-      "app.kubernetes.io/component"          = "node"
-      "app.kubernetes.io/instance"           = "redis"
-      "app.kubernetes.io/name"               = "redis"
-      "statefulset.kubernetes.io/pod-name"   = "redis-node-0"
+      "app.kubernetes.io/component"        = "node"
+      "app.kubernetes.io/instance"         = "redis"
+      "app.kubernetes.io/name"             = "redis"
+      "statefulset.kubernetes.io/pod-name" = "redis-node-0"
     }
     port {
       name        = "tcp-redis"

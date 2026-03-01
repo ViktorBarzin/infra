@@ -58,6 +58,16 @@ resource "kubernetes_deployment" "changedetection" {
               add = ["SYS_ADMIN"]
             }
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
         }
 
         container {
@@ -87,6 +97,16 @@ resource "kubernetes_deployment" "changedetection" {
             name           = "http"
             container_port = 5000
             protocol       = "TCP"
+          }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
           }
         }
         # security_context {

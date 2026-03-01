@@ -65,7 +65,7 @@ resource "kubernetes_deployment" "forgejo" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
+              cpu    = "250m"
               memory = "512Mi"
             }
           }

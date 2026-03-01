@@ -52,6 +52,16 @@ resource "kubernetes_deployment" "cyberchef" {
           port {
             container_port = 8000
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
       }
     }
