@@ -524,7 +524,10 @@ resource "kubernetes_deployment" "openclaw" {
         }
         volume {
           name = "openclaw-home"
-          empty_dir {}
+          nfs {
+            server = var.nfs_server
+            path   = "/mnt/main/openclaw/home"
+          }
         }
         volume {
           name = "workspace"
