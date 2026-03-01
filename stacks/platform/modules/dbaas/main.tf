@@ -30,30 +30,99 @@ module "tls_secret" {
 }
 
 
-resource "kubernetes_config_map" "mycnf" {
-  metadata {
-    name      = "mycnf"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-    annotations = {
-      "reloader.stakater.com/match" = "true"
-    }
-  }
-  data = {
-    "my.cnf" = <<-EOT
-    [mysqld]
-    skip-name-resolve
-    datadir=/var/lib/mysql
-    socket=/var/run/mysqld/mysqld.sock
-    secure-file-priv=/var/lib/mysql-files
-    user=mysql
-    pid-file=/var/run/mysqld/mysqld.pid
-    [client]
-    socket=/var/run/mysqld/mysqld.sock
-    !includedir /etc/mysql/conf.d/
-    EOT
-  }
+#### MYSQL — InnoDB Cluster via MySQL Operator
+#
+# 3 MySQL servers with Group Replication + 1 MySQL Router for auto-failover.
+# Operator installed in mysql-operator namespace (toleration for control-plane).
+# Init containers are slow (~20 min each) due to mysqlsh plugin loading.
+
+resource "helm_release" "mysql_operator" {
+  namespace        = "mysql-operator"
+  create_namespace = true
+  name             = "mysql-operator"
+  timeout          = 300
+
+  repository = "https://mysql.github.io/mysql-operator/"
+  chart      = "mysql-operator"
+  version    = "2.2.7"
 }
 
+resource "helm_release" "mysql_cluster" {
+  namespace        = kubernetes_namespace.dbaas.metadata[0].name
+  create_namespace = false
+  name             = "mysql-cluster"
+  timeout          = 900
+
+  repository = "https://mysql.github.io/mysql-operator/"
+  chart      = "mysql-innodbcluster"
+  version    = "2.2.7"
+
+  values = [yamlencode({
+    serverInstances = 3
+    routerInstances = 1
+    serverVersion   = "9.2.0"
+
+    credentials = {
+      root = {
+        user     = "root"
+        password = var.dbaas_root_password
+        host     = "%"
+      }
+    }
+
+    tls = {
+      useSelfSigned = true
+    }
+
+    datadirVolumeClaimTemplate = {
+      storageClassName = "local-path"
+      resources = {
+        requests = {
+          storage = "30Gi"
+        }
+      }
+    }
+
+    serverConfig = {
+      "my.cnf" = <<-EOT
+        [mysqld]
+        skip-name-resolve
+      EOT
+    }
+
+    resources = {
+      requests = {
+        cpu    = "250m"
+        memory = "1Gi"
+      }
+      limits = {
+        cpu    = "2"
+        memory = "2Gi"
+      }
+    }
+
+    podSpec = {
+      containers = [{
+        name = "mysql"
+        resources = {
+          requests = {
+            memory = "1Gi"
+            cpu    = "250m"
+          }
+          limits = {
+            memory = "2Gi"
+            cpu    = "2"
+          }
+        }
+      }]
+    }
+  })]
+
+  depends_on = [helm_release.mysql_operator]
+}
+
+# Compatibility service: mysql.dbaas points at InnoDB Cluster Router
+# Router handles automatic failover — clients connect here transparently
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
@@ -61,98 +130,16 @@ resource "kubernetes_service" "mysql" {
   }
   spec {
     selector = {
-      app = "mysql"
+      "component"                = "mysqlrouter"
+      "mysql.oracle.com/cluster" = "mysql-cluster"
     }
     port {
-      port = 3306
+      port        = 3306
+      target_port = 6446
     }
   }
-}
 
-# MySQL — single instance on NFS (temporary, pending replication migration)
-resource "kubernetes_deployment" "mysql" {
-  metadata {
-    name      = "mysql"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-    annotations = {
-      "reloader.stakater.com/search" = "true"
-    }
-    labels = {
-      tier = var.tier
-    }
-  }
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        app = "mysql"
-      }
-    }
-    strategy {
-      type = "Recreate"
-    }
-    template {
-      metadata {
-        labels = {
-          app = "mysql"
-        }
-      }
-      spec {
-        container {
-          image = "mysql:9.2.0"
-          name  = "mysql"
-
-          resources {
-            requests = {
-              cpu    = "250m"
-              memory = "512Mi"
-            }
-            limits = {
-              cpu    = "1"
-              memory = "2Gi"
-            }
-          }
-
-          env {
-            name  = "MYSQL_ROOT_PASSWORD"
-            value = var.dbaas_root_password
-          }
-          port {
-            container_port = 3306
-            name           = "mysql"
-          }
-          volume_mount {
-            name       = "mysql-persistent-storage"
-            mount_path = "/var/lib/mysql"
-          }
-          volume_mount {
-            name       = "mycnf"
-            mount_path = "/etc/my.cnf"
-            sub_path   = "my.cnf"
-          }
-        }
-        volume {
-          name = "mysql-persistent-storage"
-          nfs {
-            path   = "/mnt/main/mysql"
-            server = var.nfs_server
-          }
-        }
-        volume {
-          name = "mycnf"
-          config_map {
-            name = "mycnf"
-          }
-        }
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
-          }
-        }
-      }
-    }
-  }
+  depends_on = [helm_release.mysql_cluster]
 }
 
 resource "kubernetes_cron_job_v1" "mysql-backup" {
