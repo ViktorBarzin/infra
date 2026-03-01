@@ -5,6 +5,7 @@ variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
 variable "openrouter_api_key" { type = string }
 variable "nvidia_api_key" { type = string }
+variable "openclaw_telegram_bot_token" { type = string }
 variable "nfs_server" { type = string }
 
 
@@ -126,6 +127,15 @@ resource "kubernetes_config_map" "openclaw_config" {
           }
         }
       }
+      channels = {
+        telegram = {
+          enabled      = true
+          botToken     = var.openclaw_telegram_bot_token
+          dmPolicy     = "allowlist"
+          allowFrom    = ["tg:8281953845"]
+          historyLimit = 50
+        }
+      }
       models = {
         mode = "merge"
         providers = {
@@ -199,7 +209,7 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
-        # Init container: Download tools + clone repo + terraform init (parallelized)
+        # Init container: Download tools + clone repo (parallelized)
         init_container {
           name  = "setup"
           image = "alpine:3.20"
@@ -229,6 +239,10 @@ resource "kubernetes_deployment" "openclaw" {
             (curl -sL --retry 3 --retry-delay 5 "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
             PID_TF=$!
 
+            # terragrunt
+            (curl -sL --retry 3 --retry-delay 5 "https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64" -o /tools/terragrunt && chmod +x /tools/terragrunt) &
+            PID_TG=$!
+
             # git-crypt (already installed via apk)
             cp /usr/bin/git-crypt /tools/git-crypt
 
@@ -243,6 +257,8 @@ resource "kubernetes_deployment" "openclaw" {
 
             # Wait for all parallel tasks
             wait $PID_KUBECTL || { echo "kubectl download failed"; exit 1; }
+            wait $PID_TF || { echo "terraform download failed"; exit 1; }
+            wait $PID_TG || { echo "terragrunt download failed"; exit 1; }
             wait $PID_GIT || { echo "git clone/pull failed"; exit 1; }
 
             # Unlock git-crypt (needs clone done)
@@ -281,9 +297,7 @@ resource "kubernetes_deployment" "openclaw" {
                 token: $SA_TOKEN
             KUBEEOF
 
-            # Terraform init (needs terraform + clone done)
-            wait $PID_TF || { echo "terraform download failed"; exit 1; }
-            /tools/terraform init
+            echo "Setup complete: kubectl, terraform, terragrunt, git-crypt installed"
           EOF
           ]
           env {
