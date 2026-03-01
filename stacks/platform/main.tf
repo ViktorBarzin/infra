@@ -162,6 +162,7 @@ module "traefik" {
   source           = "./modules/traefik"
   tier             = local.tiers.core
   crowdsec_api_key = var.ingress_crowdsec_api_key
+  redis_host       = var.redis_host
   tls_secret_name  = var.tls_secret_name
 }
 

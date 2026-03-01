@@ -1,5 +1,6 @@
 variable "tier" { type = string }
 variable "crowdsec_api_key" { type = string }
+variable "redis_host" { type = string }
 variable "tls_secret_name" {}
 
 resource "kubernetes_namespace" "traefik" {
