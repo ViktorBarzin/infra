@@ -209,7 +209,7 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
-        # Init container: Download tools + clone repo (parallelized)
+        # Init container: Download tools + clone repo (parallelized, cached on NFS)
         init_container {
           name  = "setup"
           image = "alpine:3.20"
@@ -217,9 +217,14 @@ resource "kubernetes_deployment" "openclaw" {
             set -e
             apk add --no-cache curl unzip git-crypt openssh-client git bash
 
-            # Install pip and Python packages for skills
-            python3 -m ensurepip 2>/dev/null || apk add --no-cache py3-pip
-            pip3 install --break-system-packages --target=/tools/python-libs requests caldav icalendar uptime-kuma-api
+            # Install Python packages (skip if already cached)
+            if [ ! -f /tools/python-libs/.installed ]; then
+              python3 -m ensurepip 2>/dev/null || apk add --no-cache py3-pip
+              pip3 install --break-system-packages --target=/tools/python-libs requests caldav icalendar uptime-kuma-api
+              touch /tools/python-libs/.installed
+            else
+              echo "Python packages already cached, skipping pip install"
+            fi
 
             # Copy OpenClaw config to writable home dir
             cp /openclaw-config-src/openclaw.json /openclaw-home/openclaw.json
@@ -230,21 +235,35 @@ resource "kubernetes_deployment" "openclaw" {
             chmod 600 /root/.ssh/id_rsa
             ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
 
-            # --- Run downloads and clone in parallel ---
+            # --- Download tools only if missing or version changed ---
             # kubectl
-            (curl -sL --retry 3 --retry-delay 5 "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
-            PID_KUBECTL=$!
+            if [ ! -x /tools/kubectl ]; then
+              (curl -sL --retry 3 --retry-delay 5 "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
+              PID_KUBECTL=$!
+            else
+              echo "kubectl already cached" & PID_KUBECTL=$!
+            fi
 
             # terraform
-            (curl -sL --retry 3 --retry-delay 5 "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
-            PID_TF=$!
+            if [ ! -x /tools/terraform ]; then
+              (curl -sL --retry 3 --retry-delay 5 "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
+              PID_TF=$!
+            else
+              echo "terraform already cached" & PID_TF=$!
+            fi
 
             # terragrunt
-            (curl -sL --retry 3 --retry-delay 5 "https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64" -o /tools/terragrunt && chmod +x /tools/terragrunt) &
-            PID_TG=$!
+            if [ ! -x /tools/terragrunt ]; then
+              (curl -sL --retry 3 --retry-delay 5 "https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64" -o /tools/terragrunt && chmod +x /tools/terragrunt) &
+              PID_TG=$!
+            else
+              echo "terragrunt already cached" & PID_TG=$!
+            fi
 
-            # git-crypt (already installed via apk)
-            cp /usr/bin/git-crypt /tools/git-crypt
+            # git-crypt
+            if [ ! -x /tools/git-crypt ]; then
+              cp /usr/bin/git-crypt /tools/git-crypt
+            fi
 
             # Clone/pull repo
             if [ ! -d /workspace/infra/.git ]; then
@@ -423,7 +442,10 @@ resource "kubernetes_deployment" "openclaw" {
 
         volume {
           name = "tools"
-          empty_dir {}
+          nfs {
+            server = var.nfs_server
+            path   = "/mnt/main/openclaw/tools"
+          }
         }
         volume {
           name = "openclaw-home"
