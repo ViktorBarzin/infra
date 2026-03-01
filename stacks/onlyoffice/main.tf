@@ -11,8 +11,7 @@ resource "kubernetes_namespace" "onlyoffice" {
     name = "onlyoffice"
     labels = {
       "istio-injection" : "disabled"
-      tier                                           = local.tiers.edge
-      "goldilocks.fairwinds.com/vpa-update-mode" = "off"
+      tier                                       = local.tiers.edge
       "resource-governance/custom-limitrange"     = "true"
       "resource-governance/custom-quota"           = "true"
     }
