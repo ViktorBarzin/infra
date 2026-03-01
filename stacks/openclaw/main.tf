@@ -91,9 +91,10 @@ resource "kubernetes_config_map" "openclaw_config" {
           bootstrapMaxChars = 30000
           model = {
             primary   = "nim/mistralai/mistral-large-3-675b-instruct-2512"
-            fallbacks = ["nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8"]
+            fallbacks = ["nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "modelrelay/auto-fastest"]
           }
           models = {
+            "modelrelay/auto-fastest"                                = {}
             "nim/deepseek-ai/deepseek-v3.2"                          = {}
             "nim/qwen/qwen3.5-397b-a17b"                             = {}
             "nim/mistralai/mistral-large-3-675b-instruct-2512"       = {}
@@ -143,6 +144,14 @@ resource "kubernetes_config_map" "openclaw_config" {
       models = {
         mode = "merge"
         providers = {
+          modelrelay = {
+            baseUrl = "http://127.0.0.1:7352/v1"
+            api     = "openai-completions"
+            apiKey  = "modelrelay"
+            models = [
+              { id = "auto-fastest", name = "Auto (Fastest)", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+            ]
+          }
           nim = {
             baseUrl = "https://integrate.api.nvidia.com/v1"
             api     = "openai-completions"
@@ -460,6 +469,48 @@ resource "kubernetes_deployment" "openclaw" {
             requests = {
               cpu    = "100m"
               memory = "512Mi"
+            }
+          }
+        }
+
+        # Sidecar: modelrelay — auto-routes to fastest healthy free model
+        container {
+          name  = "modelrelay"
+          image = "node:22-alpine"
+          command = ["sh", "-c", <<-EOF
+            if [ ! -f /tools/modelrelay/node_modules/.package-lock.json ]; then
+              mkdir -p /tools/modelrelay
+              cd /tools/modelrelay
+              npm init -y > /dev/null 2>&1
+              npm install modelrelay > /dev/null 2>&1
+            fi
+            cd /tools/modelrelay
+            exec npx modelrelay --port 7352
+          EOF
+          ]
+          port {
+            container_port = 7352
+          }
+          env {
+            name  = "NVIDIA_API_KEY"
+            value = var.nvidia_api_key
+          }
+          env {
+            name  = "OPENROUTER_API_KEY"
+            value = var.openrouter_api_key
+          }
+          volume_mount {
+            name       = "tools"
+            mount_path = "/tools"
+          }
+          resources {
+            limits = {
+              cpu    = "500m"
+              memory = "256Mi"
+            }
+            requests = {
+              cpu    = "25m"
+              memory = "64Mi"
             }
           }
         }
