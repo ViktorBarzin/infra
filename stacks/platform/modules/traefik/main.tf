@@ -186,7 +186,7 @@ resource "helm_release" "traefik" {
       "--serversTransport.insecureSkipVerify=true",
       # Increase timeouts for services like Immich
       "--serversTransport.forwardingTimeouts.dialTimeout=60s",
-      "--serversTransport.forwardingTimeouts.responseHeaderTimeout=0s",
+      "--serversTransport.forwardingTimeouts.responseHeaderTimeout=30s",
       "--serversTransport.forwardingTimeouts.idleConnTimeout=90s",
       # Use forwarded headers from trusted proxies
       "--entryPoints.websecure.forwardedHeaders.insecure=false",
@@ -207,6 +207,22 @@ resource "helm_release" "traefik" {
     }
 
     tolerations = []
+
+    topologySpreadConstraints = [{
+      maxSkew           = 1
+      topologyKey       = "kubernetes.io/hostname"
+      whenUnsatisfiable = "DoNotSchedule"
+      labelSelector = {
+        matchLabels = {
+          "app.kubernetes.io/name" = "traefik"
+        }
+      }
+    }]
+
+    podDisruptionBudget = {
+      enabled      = true
+      minAvailable = 2
+    }
   })]
 }
 
