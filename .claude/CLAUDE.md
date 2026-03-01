@@ -148,6 +148,42 @@ terraform fmt -recursive                       # Format all
 - Governance: Kyverno in `stacks/platform/modules/kyverno/` (resource-governance.tf, security-policies.tf)
 - Prometheus alerts: `stacks/platform/modules/monitoring/prometheus_chart_values.tpl`
 
+### Kyverno Resource Governance (CRITICAL for debugging container failures)
+
+**LimitRange defaults** — Kyverno auto-generates a `tier-defaults` LimitRange in every namespace. Containers WITHOUT explicit `resources {}` get these injected:
+
+| Tier | Default CPU | Default Mem | Request CPU | Request Mem | Max CPU | Max Mem |
+|------|-------------|-------------|-------------|-------------|---------|---------|
+| 0-core | 500m | 512Mi | 50m | 64Mi | 4 | 8Gi |
+| 1-cluster | 500m | 512Mi | 50m | 64Mi | 2 | 4Gi |
+| 2-gpu | 1 | 2Gi | 100m | 256Mi | 8 | 16Gi |
+| 3-edge | 250m | 256Mi | 25m | 64Mi | 2 | 4Gi |
+| 4-aux | 250m | 256Mi | 25m | 64Mi | 2 | 4Gi |
+| No tier | 250m | 256Mi | 25m | 64Mi | 1 | 2Gi |
+
+**ResourceQuota** — auto-generated per namespace (opt-out: label `resource-governance/custom-quota=true`):
+
+| Tier | req CPU | req Mem | lim CPU | lim Mem | Pods |
+|------|---------|--------|---------|---------|------|
+| 0-core | 8 | 8Gi | 32 | 64Gi | 100 |
+| 1-cluster | 4 | 4Gi | 16 | 32Gi | 30 |
+| 2-gpu | 8 | 8Gi | 48 | 96Gi | 40 |
+| 3-edge | 4 | 4Gi | 16 | 32Gi | 30 |
+| 4-aux | 2 | 2Gi | 8 | 16Gi | 20 |
+
+Custom quota namespaces: `authentik` (16 req CPU/16Gi req mem/48 lim CPU/96Gi lim mem/50 pods), `monitoring` (opted out, no replacement), `nvidia` (opted out, no replacement).
+
+**Other mutating policies**: `inject-priority-class-from-tier` (sets priorityClassName), `inject-ndots` (ndots:2 on all pods), `sync-tier-label-from-namespace`.
+
+**Security policies** (ALL Audit mode, log-only): `deny-privileged-containers`, `deny-host-namespaces`, `restrict-sys-admin`, `require-trusted-registries`.
+
+**Debugging container failures checklist**:
+1. **OOMKilled?** → Check `kubectl describe limitrange tier-defaults -n <ns>`. Containers without explicit resources get 256Mi limit in edge/aux tiers.
+2. **Won't schedule?** → Check `kubectl describe resourcequota tier-quota -n <ns>`. Namespace may be at capacity.
+3. **Evicted?** → aux-tier pods (priority 200K, Never preempt) are first evicted under pressure.
+4. **Unexpected limits?** → LimitRange injects defaults when `resources: {}` or no resources block exists. Always set explicit resources.
+5. **Need more?** → Set explicit `resources {}` on container (overrides LimitRange defaults) or add `resource-governance/custom-quota=true` label.
+
 ---
 
 ## User Preferences
