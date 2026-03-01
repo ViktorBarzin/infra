@@ -150,9 +150,14 @@ resource "kubernetes_manifest" "middleware_crowdsec" {
     spec = {
       plugin = {
         crowdsec-bouncer = {
-          crowdsecLapiKey  = var.crowdsec_api_key
-          crowdsecLapiHost = "crowdsec-service.crowdsec.svc.cluster.local:8080"
-          crowdsecMode     = "stream"
+          crowdsecLapiKey                = var.crowdsec_api_key
+          crowdsecLapiHost               = "crowdsec-service.crowdsec.svc.cluster.local:8080"
+          crowdsecMode                   = "stream"
+          updateMaxFailure               = -1   # fail-open: serve from cache when LAPI is unreachable
+          redisCacheEnabled              = true
+          redisCacheHost                 = var.redis_host
+          redisCacheUnreachableBlock     = false # don't block traffic if Redis is also unreachable
+          clientTrustedIPs               = ["10.0.20.0/24", "10.10.0.0/16"] # node + pod CIDRs bypass CrowdSec
         }
       }
     }
