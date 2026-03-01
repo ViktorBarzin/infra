@@ -89,6 +89,9 @@ resource "kubernetes_config_map" "openclaw_config" {
         defaults = {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
+          sandbox = {
+            mode = "off"
+          }
           model = {
             primary   = "nim/mistralai/mistral-large-3-675b-instruct-2512"
             fallbacks = ["nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "modelrelay/auto-fastest"]
