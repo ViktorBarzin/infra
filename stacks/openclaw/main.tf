@@ -110,7 +110,7 @@ resource "kubernetes_config_map" "openclaw_config" {
       }
       tools = {
         profile = "full"
-        deny    = ["sessions_spawn", "sessions_list", "sessions_history", "sessions_send", "subagents", "browser"]
+        deny    = []
         exec = {
           host        = "sandbox"
           security    = "full"
