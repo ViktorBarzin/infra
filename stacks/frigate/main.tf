@@ -109,6 +109,25 @@ resource "kubernetes_deployment" "frigate" {
             name       = "media"
             mount_path = "/media/frigate"
           }
+          # Restart pod if GPU becomes unavailable or Frigate hangs
+          liveness_probe {
+            exec {
+              command = ["sh", "-c", "nvidia-smi > /dev/null 2>&1 && curl -sf http://localhost:5000/api/version > /dev/null"]
+            }
+            initial_delay_seconds = 120
+            period_seconds        = 60
+            timeout_seconds       = 10
+            failure_threshold     = 3
+          }
+          # TensorRT model loading can take several minutes
+          startup_probe {
+            http_get {
+              path = "/api/version"
+              port = 5000
+            }
+            period_seconds    = 10
+            failure_threshold = 30 # up to 5 minutes for startup
+          }
           security_context {
             privileged = true
           }
