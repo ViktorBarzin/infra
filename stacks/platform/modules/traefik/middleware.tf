@@ -284,7 +284,7 @@ resource "kubernetes_manifest" "middleware_ai_bot_block" {
     }
     spec = {
       forwardAuth = {
-        address            = "http://poison-fountain.poison-fountain.svc.cluster.local:8080/auth"
+        address            = "http://bot-block-proxy.traefik.svc.cluster.local:8080/auth"
         trustForwardHeader = true
       }
     }
