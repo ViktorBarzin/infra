@@ -13,8 +13,7 @@ resource "kubernetes_namespace" "openclaw" {
   metadata {
     name = "openclaw"
     labels = {
-      tier                                       = local.tiers.aux
-      "goldilocks.fairwinds.com/vpa-update-mode" = "off"
+      tier = local.tiers.aux
     }
   }
 }

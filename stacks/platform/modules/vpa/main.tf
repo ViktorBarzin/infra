@@ -86,12 +86,12 @@ module "ingress" {
 }
 
 # -----------------------------------------------------------------------------
-# Kyverno policy — label namespaces for VPA mode by tier
+# Kyverno policy — label namespaces for VPA observe-only mode
 # -----------------------------------------------------------------------------
 # Goldilocks reads the goldilocks.fairwinds.com/vpa-update-mode label on
 # namespaces to decide the updateMode for VPA objects it creates.
-# Tier 0-core gets "off" (recommend only — these are critical infra where
-# evictions cause downtime). All other namespaces get "auto".
+# All namespaces get "off" — Terraform is the authoritative source of truth
+# for container resources. Goldilocks provides recommendations only.
 
 resource "kubernetes_manifest" "vpa_auto_mode_label" {
   manifest = {
@@ -100,25 +100,19 @@ resource "kubernetes_manifest" "vpa_auto_mode_label" {
     metadata = {
       name = "goldilocks-vpa-auto-mode"
       annotations = {
-        "policies.kyverno.io/title"       = "Goldilocks VPA Mode by Tier"
-        "policies.kyverno.io/description" = "Sets VPA update mode per namespace: Off for tier-0 critical infra (no evictions), Auto for all others."
+        "policies.kyverno.io/title"       = "Goldilocks VPA Observe-Only Mode"
+        "policies.kyverno.io/description" = "Sets VPA update mode to off for all namespaces. Terraform owns container resources; Goldilocks provides recommendations only."
       }
     }
     spec = {
       rules = [
-        # Tier 0-core: recommend only, never evict
         {
-          name = "label-vpa-off-tier-0"
+          name = "label-vpa-off-all"
           match = {
             any = [
               {
                 resources = {
                   kinds = ["Namespace"]
-                  selector = {
-                    matchLabels = {
-                      tier = "0-core"
-                    }
-                  }
                 }
               }
             ]
@@ -128,42 +122,6 @@ resource "kubernetes_manifest" "vpa_auto_mode_label" {
               metadata = {
                 labels = {
                   "goldilocks.fairwinds.com/vpa-update-mode" = "off"
-                }
-              }
-            }
-          }
-        },
-        # All other namespaces: initial mode (compatible with Terraform —
-        # VPA mutates pods at creation, not the deployment spec)
-        {
-          name = "label-vpa-initial-default"
-          match = {
-            any = [
-              {
-                resources = {
-                  kinds = ["Namespace"]
-                }
-              }
-            ]
-          }
-          exclude = {
-            any = [
-              {
-                resources = {
-                  selector = {
-                    matchLabels = {
-                      tier = "0-core"
-                    }
-                  }
-                }
-              }
-            ]
-          }
-          mutate = {
-            patchStrategicMerge = {
-              metadata = {
-                labels = {
-                  "goldilocks.fairwinds.com/vpa-update-mode" = "initial"
                 }
               }
             }

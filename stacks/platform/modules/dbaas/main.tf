@@ -150,7 +150,7 @@ resource "helm_release" "mysql_cluster" {
       }
       limits = {
         cpu    = "2"
-        memory = "2Gi"
+        memory = "3Gi"
       }
     }
 
@@ -176,7 +176,7 @@ resource "helm_release" "mysql_cluster" {
             cpu    = "250m"
           }
           limits = {
-            memory = "2Gi"
+            memory = "3Gi"
             cpu    = "2"
           }
         }
