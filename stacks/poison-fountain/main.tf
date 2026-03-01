@@ -7,7 +7,7 @@ resource "kubernetes_namespace" "poison_fountain" {
     name = "poison-fountain"
     labels = {
       "istio-injection" = "disabled"
-      tier              = local.tiers.aux
+      tier              = local.tiers.cluster
     }
   }
 }
@@ -49,7 +49,7 @@ resource "kubernetes_deployment" "poison_fountain" {
     namespace = kubernetes_namespace.poison_fountain.metadata[0].name
     labels = {
       app  = "poison-fountain"
-      tier = local.tiers.aux
+      tier = local.tiers.cluster
     }
   }
 
