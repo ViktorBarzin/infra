@@ -156,6 +156,16 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           port {
             container_port = 8083
           }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "1Gi"
+            }
+          }
           volume_mount {
             name       = "config"
             mount_path = "/config"
