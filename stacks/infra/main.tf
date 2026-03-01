@@ -66,25 +66,17 @@ module "k8s-node-template" {
   # Set up config_path for per-registry mirror configuration
   sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
 
-  # Create hosts.toml for docker.io (Docker Hub)
+  # Create hosts.toml for docker.io (Docker Hub) — high traffic, rate-limited
   mkdir -p /etc/containerd/certs.d/docker.io
   printf 'server = "https://registry-1.docker.io"\n\n[host."http://10.0.20.10:5000"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/docker.io/hosts.toml
 
-  # Create hosts.toml for ghcr.io
+  # Create hosts.toml for ghcr.io — medium traffic
   mkdir -p /etc/containerd/certs.d/ghcr.io
   printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
 
-  # Create hosts.toml for quay.io
-  mkdir -p /etc/containerd/certs.d/quay.io
-  printf 'server = "https://quay.io"\n\n[host."http://10.0.20.10:5020"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/quay.io/hosts.toml
-
-  # Create hosts.toml for registry.k8s.io
-  mkdir -p /etc/containerd/certs.d/registry.k8s.io
-  printf 'server = "https://registry.k8s.io"\n\n[host."http://10.0.20.10:5030"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/registry.k8s.io/hosts.toml
-
-  # Create hosts.toml for reg.kyverno.io
-  mkdir -p /etc/containerd/certs.d/reg.kyverno.io
-  printf 'server = "https://reg.kyverno.io"\n\n[host."http://10.0.20.10:5040"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/reg.kyverno.io/hosts.toml
+  # Low-traffic registries (registry.k8s.io, quay.io, reg.kyverno.io) pull directly.
+  # Pull-through cache removed: caused corrupted images (truncated downloads)
+  # breaking VPA certgen and Kyverno image pulls.
 
   sed -i 's/.*max_concurrent_downloads = 3/max_concurrent_downloads = 20/g' /etc/containerd/config.toml # Enable multiple concurrent downloads
   sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
@@ -275,13 +267,14 @@ module "docker-registry-vm" {
   bridge         = "vmbr1"
   vlan_tag       = "20"
   ipconfig0      = "ip=10.0.20.10/24,gw=10.0.20.1"
-  # All ports go through nginx for request serialization (proxy_cache_lock):
+  # Active pull-through caches (docker.io + ghcr.io only):
   # 5000 -> nginx -> registry-dockerhub (docker.io proxy)
   # 5001 -> registry-dockerhub direct (Prometheus metrics)
   # 5010 -> nginx -> registry-ghcr (ghcr.io proxy)
-  # 5020 -> nginx -> registry-quay (quay.io proxy)
-  # 5030 -> nginx -> registry-k8s (registry.k8s.io proxy)
-  # 5040 -> nginx -> registry-kyverno (reg.kyverno.io proxy)
+  # Disabled caches (low-traffic, caused corrupted images):
+  # 5020 -> registry-quay (quay.io) — DISABLED
+  # 5030 -> registry-k8s (registry.k8s.io) — DISABLED, broke VPA certgen
+  # 5040 -> registry-kyverno (reg.kyverno.io) — DISABLED
   # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
 }
