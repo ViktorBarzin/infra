@@ -112,8 +112,8 @@ resource "kubernetes_config_map" "openclaw_config" {
         profile = "full"
         deny    = []
         exec = {
-          host        = "local"
-          security    = "off"
+          host        = "node"
+          security    = "full"
           ask         = "off"
           pathPrepend = ["/tools", "/workspace/infra"]
         }
