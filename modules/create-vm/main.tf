@@ -36,7 +36,7 @@ variable "ipconfig0" {
 }
 variable "agent" {
   type    = number
-  default = 0
+  default = 1
 }
 
 resource "proxmox_vm_qemu" "cloudinit-vm" {
