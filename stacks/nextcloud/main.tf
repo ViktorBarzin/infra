@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "nextcloud" {
     name = "nextcloud"
     labels = {
       "istio-injection" : "disabled"
-      tier                                     = local.tiers.edge
+      tier                                    = local.tiers.edge
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
     }

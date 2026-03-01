@@ -159,6 +159,16 @@ resource "kubernetes_deployment" "crowdsec-web" {
             container_port = 8000
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
+          }
         }
         dns_config {
           option {

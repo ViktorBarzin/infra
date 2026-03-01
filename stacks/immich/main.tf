@@ -164,6 +164,16 @@ resource "kubernetes_deployment" "immich_server" {
             name       = "upload"
             mount_path = "/usr/src/app/upload/upload"
           }
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "2Gi"
+            }
+          }
         }
 
         # volume {
@@ -292,6 +302,16 @@ resource "kubernetes_deployment" "immich-postgres" {
           volume_mount {
             name       = "postgresql-persistent-storage"
             mount_path = "/var/lib/postgresql/data"
+          }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "1Gi"
+            }
           }
         }
         volume {
@@ -425,8 +445,14 @@ resource "kubernetes_deployment" "immich-machine-learning" {
             mount_path = "/cache"
           }
           resources {
+            requests = {
+              cpu    = "100m"
+              memory = "1Gi"
+            }
             limits = {
-              "nvidia.com/gpu" = "1" # Used for inference
+              cpu              = "2"
+              memory           = "4Gi"
+              "nvidia.com/gpu" = "1"
             }
           }
         }

@@ -87,6 +87,16 @@ resource "kubernetes_deployment" "ntfy" {
             name       = "data"
             mount_path = "/var/lib/ntfy/"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
         volume {
           name = "data"

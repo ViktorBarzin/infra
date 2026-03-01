@@ -30,6 +30,28 @@ locals {
 }
 
 
+resource "kubernetes_config_map" "clickhouse_config" {
+  metadata {
+    name      = "clickhouse-config"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+  }
+  data = {
+    "docker_related_config.xml" = <<-XML
+      <clickhouse>
+        <listen_host>::</listen_host>
+        <listen_host>0.0.0.0</listen_host>
+        <listen_try>1</listen_try>
+      </clickhouse>
+    XML
+    "disable-system-logs.xml"   = <<-XML
+      <clickhouse>
+        <background_pool_size>4</background_pool_size>
+        <background_schedule_pool_size>16</background_schedule_pool_size>
+      </clickhouse>
+    XML
+  }
+}
+
 resource "kubernetes_deployment" "clickhouse" {
   metadata {
     name      = "clickhouse"
@@ -60,10 +82,6 @@ resource "kubernetes_deployment" "clickhouse" {
             name  = "CLICKHOUSE_DB"
             value = local.clickhouse_db
           }
-          # env {
-          #   name  = "CLICKHOUSE_USER"
-          #   value = "clickhouse"
-          # }
           env {
             name  = "CLICKHOUSE_PASSWORD"
             value = var.clickhouse_password
@@ -76,6 +94,12 @@ resource "kubernetes_deployment" "clickhouse" {
           volume_mount {
             name       = "data"
             mount_path = "/var/lib/clickhouse"
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/clickhouse-server/config.d/zzz-custom.xml"
+            sub_path   = "disable-system-logs.xml"
+            read_only  = true
           }
           resources {
             requests = {
@@ -93,6 +117,12 @@ resource "kubernetes_deployment" "clickhouse" {
           nfs {
             path   = "/mnt/main/clickhouse"
             server = var.nfs_server
+          }
+        }
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.clickhouse_config.metadata[0].name
           }
         }
       }
@@ -208,6 +238,16 @@ resource "kubernetes_deployment" "rybbit" {
           port {
             container_port = 3001
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+          }
         }
       }
     }
@@ -273,6 +313,16 @@ resource "kubernetes_deployment" "rybbit-client" {
             name           = "rybbit-client"
             protocol       = "TCP"
             container_port = 3002
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
           }
         }
       }

@@ -141,6 +141,16 @@ resource "kubernetes_deployment" "wireguard" {
               add = ["NET_ADMIN", "SYS_MODULE"]
             }
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
 
         container {
@@ -161,6 +171,16 @@ resource "kubernetes_deployment" "wireguard" {
           port {
             container_port = 9586
             protocol       = "TCP"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
           }
         }
         volume {

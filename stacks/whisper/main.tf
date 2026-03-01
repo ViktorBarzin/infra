@@ -67,6 +67,16 @@ resource "kubernetes_deployment" "whisper" {
             name       = "data"
             mount_path = "/data"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "1536Mi"
+            }
+          }
         }
 
         volume {
@@ -176,6 +186,16 @@ resource "kubernetes_deployment" "piper" {
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
           }
         }
 

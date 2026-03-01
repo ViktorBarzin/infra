@@ -63,12 +63,12 @@ resource "kubernetes_deployment" "aiostreams" {
           }
           resources {
             requests = {
-              cpu    = "50m"
+              cpu    = "25m"
               memory = "256Mi"
             }
             limits = {
               cpu    = "500m"
-              memory = "768Mi"
+              memory = "1Gi"
             }
           }
         }

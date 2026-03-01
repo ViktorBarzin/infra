@@ -106,6 +106,16 @@ resource "kubernetes_deployment" "hackmd" {
             container_port = 3000
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+          }
         }
         security_context {
           fs_group = "1500"

@@ -136,6 +136,16 @@ resource "kubernetes_deployment" "tandoor" {
             name       = "data"
             mount_path = "/opt/recipes/staticfiles"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "1536Mi"
+            }
+          }
         }
 
         volume {

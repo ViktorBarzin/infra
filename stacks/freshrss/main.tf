@@ -75,6 +75,16 @@ resource "kubernetes_deployment" "freshrss" {
             container_port = 80
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "256Mi"
+            }
+          }
         }
         volume {
           name = "data"

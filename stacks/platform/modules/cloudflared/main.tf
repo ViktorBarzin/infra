@@ -60,6 +60,16 @@ resource "kubernetes_deployment" "cloudflared" {
           port {
             container_port = 14333
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
         }
         dns_config {
           option {

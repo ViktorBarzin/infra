@@ -102,6 +102,16 @@ resource "kubernetes_deployment" "n8n" {
             container_port = 5678
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "1Gi"
+            }
+          }
         }
         volume {
           name = "data"

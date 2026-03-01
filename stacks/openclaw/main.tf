@@ -517,7 +517,7 @@ resource "kubernetes_deployment" "openclaw" {
           resources {
             limits = {
               cpu    = "500m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             requests = {
               cpu    = "25m"
