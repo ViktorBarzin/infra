@@ -36,7 +36,7 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image             = "viktorbarzin/f1-stream:v5.0.0"
+          image             = "viktorbarzin/f1-stream:v5.2.0"
           image_pull_policy = "Always"
           name              = "f1-stream"
           resources {
