@@ -229,6 +229,7 @@ Kubernetes thinks it's fine.
 - This ensures Kubernetes detects hung pods and restarts them automatically.
 
 ## See Also
+- **nfsv4-idmapd-uid-mapping** — All UIDs show as 65534 (nobody) inside containers. Different from permission denied; the UIDs are wrong, not the permissions.
 - TrueNAS NFS configuration documentation
 - Kubernetes NFS volume documentation
 - k8s-limitrange-oom-silent-kill (for OOM issues often confused with NFS hangs)
