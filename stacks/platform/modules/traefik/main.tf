@@ -244,3 +244,158 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
 }
+
+# Bot-block resilience proxy: nginx reverse proxy in front of Poison Fountain
+# Returns 200 (allow all traffic) if Poison Fountain is unreachable (fail-open)
+resource "kubernetes_config_map" "bot_block_proxy_config" {
+  metadata {
+    name      = "bot-block-proxy-config"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+
+  data = {
+    "default.conf" = <<-EOT
+      upstream poison_fountain {
+          server poison-fountain.poison-fountain.svc.cluster.local:8080;
+      }
+      server {
+          listen 8080;
+          location /auth {
+              proxy_pass http://poison_fountain;
+              proxy_connect_timeout 3s;
+              proxy_read_timeout 5s;
+              proxy_send_timeout 5s;
+              proxy_intercept_errors on;
+              error_page 502 503 504 =200 /fallback-allow;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+          location = /fallback-allow {
+              internal;
+              return 200 "allowed";
+          }
+          location /healthz {
+              access_log off;
+              return 200 "ok";
+          }
+      }
+    EOT
+  }
+}
+
+resource "kubernetes_deployment" "bot_block_proxy" {
+  metadata {
+    name      = "bot-block-proxy"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels = {
+      app = "bot-block-proxy"
+    }
+  }
+
+  spec {
+    replicas = 2
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
+    }
+    selector {
+      match_labels = {
+        app = "bot-block-proxy"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "bot-block-proxy"
+        }
+      }
+      spec {
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "DoNotSchedule"
+          label_selector {
+            match_labels = {
+              app = "bot-block-proxy"
+            }
+          }
+        }
+        container {
+          name  = "nginx"
+          image = "nginx:1-alpine"
+
+          port {
+            container_port = 8080
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/nginx/conf.d"
+            read_only  = true
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 3
+            period_seconds        = 10
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 5
+          }
+
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "50m"
+              memory = "32Mi"
+            }
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.bot_block_proxy_config.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "bot_block_proxy" {
+  metadata {
+    name      = "bot-block-proxy"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels = {
+      app = "bot-block-proxy"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "bot-block-proxy"
+    }
+    port {
+      name        = "http"
+      port        = 8080
+      target_port = 8080
+    }
+  }
+}
