@@ -122,7 +122,7 @@ terraform fmt -recursive                       # Format all
 ## Infrastructure
 - Proxmox hypervisor (192.168.1.127) — see `.claude/reference/proxmox-inventory.md` for full VM table
 - Kubernetes cluster: 5 nodes (k8s-master + k8s-node1-4, v1.34.2), GPU on node1 (Tesla T4)
-- Docker registry pull-through cache at `10.0.20.10` (ports 5000/5010/5020/5030/5040)
+- Docker registry pull-through cache at `10.0.20.10` — only docker.io (port 5000) and ghcr.io (port 5010) are active. quay.io/registry.k8s.io/reg.kyverno.io caches disabled (caused corrupted images).
 - GPU workloads need: `node_selector = { "gpu": "true" }` + `toleration { key = "nvidia.com/gpu", value = "true", effect = "NoSchedule" }`
 
 ### Node Rebuild Procedure
