@@ -41,6 +41,11 @@ variable "dbaas_pgadmin_password" { type = string }
 
 # --- traefik ---
 variable "ingress_crowdsec_api_key" { type = string }
+variable "auth_fallback_htpasswd" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
 
 # --- technitium ---
 variable "technitium_db_password" { type = string }
@@ -159,11 +164,12 @@ module "redis" {
 # Traefik — Ingress controller (Helm)
 # -----------------------------------------------------------------------------
 module "traefik" {
-  source           = "./modules/traefik"
-  tier             = local.tiers.core
-  crowdsec_api_key = var.ingress_crowdsec_api_key
-  redis_host       = var.redis_host
-  tls_secret_name  = var.tls_secret_name
+  source                 = "./modules/traefik"
+  tier                   = local.tiers.core
+  crowdsec_api_key       = var.ingress_crowdsec_api_key
+  redis_host             = var.redis_host
+  tls_secret_name        = var.tls_secret_name
+  auth_fallback_htpasswd = var.auth_fallback_htpasswd
 }
 
 # -----------------------------------------------------------------------------
