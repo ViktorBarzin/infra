@@ -13,7 +13,8 @@ resource "kubernetes_namespace" "openclaw" {
   metadata {
     name = "openclaw"
     labels = {
-      tier = local.tiers.aux
+      tier                                       = local.tiers.aux
+      "goldilocks.fairwinds.com/vpa-update-mode" = "off"
     }
   }
 }
@@ -358,6 +359,13 @@ resource "kubernetes_deployment" "openclaw" {
           port {
             container_port = 18789
           }
+          readiness_probe {
+            tcp_socket {
+              port = 18789
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+          }
           env {
             name  = "OPENCLAW_GATEWAY_TOKEN"
             value = random_password.gateway_token.result
@@ -432,10 +440,12 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "1Gi"
+              cpu    = "2"
+              memory = "2Gi"
             }
             requests = {
-              memory = "64Mi"
+              cpu    = "100m"
+              memory = "512Mi"
             }
           }
         }
