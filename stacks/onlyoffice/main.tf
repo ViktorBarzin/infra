@@ -13,6 +13,48 @@ resource "kubernetes_namespace" "onlyoffice" {
       "istio-injection" : "disabled"
       tier                                           = local.tiers.edge
       "goldilocks.fairwinds.com/vpa-update-mode" = "off"
+      "resource-governance/custom-limitrange"     = "true"
+      "resource-governance/custom-quota"           = "true"
+    }
+  }
+}
+
+resource "kubernetes_limit_range" "onlyoffice" {
+  metadata {
+    name      = "onlyoffice-limits"
+    namespace = kubernetes_namespace.onlyoffice.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        cpu    = "250m"
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "25m"
+        memory = "64Mi"
+      }
+      max = {
+        cpu    = "8"
+        memory = "8Gi"
+      }
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "onlyoffice" {
+  metadata {
+    name      = "onlyoffice-quota"
+    namespace = kubernetes_namespace.onlyoffice.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "4Gi"
+      "limits.cpu"      = "16"
+      "limits.memory"   = "16Gi"
+      pods              = "10"
     }
   }
 }
@@ -51,11 +93,11 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           image = "onlyoffice/documentserver:8.2.3"
           resources {
             requests = {
-              cpu    = "100m"
+              cpu    = "250m"
               memory = "512Mi"
             }
             limits = {
-              cpu    = "2"
+              cpu    = "8"
               memory = "4Gi"
             }
           }
