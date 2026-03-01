@@ -70,6 +70,16 @@ resource "kubernetes_deployment" "audiobookshelf" {
             name       = "metadata"
             mount_path = "/metadata"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "512Mi"
+            }
+          }
         }
         volume {
           name = "audiobooks"

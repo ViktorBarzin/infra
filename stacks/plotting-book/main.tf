@@ -60,12 +60,12 @@ resource "kubernetes_deployment" "plotting-book" {
           }
           resources {
             requests = {
-              memory = "128Mi"
-              cpu    = "50m"
+              memory = "32Mi"
+              cpu    = "10m"
             }
             limits = {
-              memory = "512Mi"
-              cpu    = "500m"
+              memory = "256Mi"
+              cpu    = "100m"
             }
           }
         }

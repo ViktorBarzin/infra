@@ -58,12 +58,12 @@ resource "kubernetes_deployment" "kms-web-page" {
           image_pull_policy = "IfNotPresent"
           resources {
             limits = {
-              cpu    = "0.5"
-              memory = "512Mi"
+              cpu    = "50m"
+              memory = "64Mi"
             }
             requests = {
-              cpu    = "0.5"
-              memory = "512Mi"
+              cpu    = "10m"
+              memory = "16Mi"
             }
           }
           port {
@@ -147,12 +147,12 @@ resource "kubernetes_deployment" "windows_kms" {
           name  = "windows-kms"
           resources {
             limits = {
-              cpu    = "1"
-              memory = "512Mi"
+              cpu    = "100m"
+              memory = "128Mi"
             }
             requests = {
-              cpu    = "1"
-              memory = "50Mi"
+              cpu    = "10m"
+              memory = "32Mi"
             }
           }
           port {

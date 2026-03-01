@@ -104,10 +104,10 @@ resource "kubernetes_deployment" "speedtest" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
+              cpu    = "1"
               memory = "512Mi"
             }
           }

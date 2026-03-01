@@ -30,19 +30,19 @@ variable "gemini_api_key" {
 }
 variable "cpu_limit" {
   type    = string
-  default = "500m"
+  default = "250m"
 }
 variable "memory_limit" {
   type    = string
-  default = "512Mi"
+  default = "256Mi"
 }
 variable "cpu_request" {
   type    = string
-  default = "100m"
+  default = "15m"
 }
 variable "memory_request" {
   type    = string
-  default = "256Mi"
+  default = "64Mi"
 }
 
 

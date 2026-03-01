@@ -49,6 +49,16 @@ resource "kubernetes_deployment" "echo" {
           port {
             container_port = 8443
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
       }
     }

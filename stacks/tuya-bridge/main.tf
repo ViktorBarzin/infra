@@ -66,6 +66,16 @@ resource "kubernetes_deployment" "tuya-bridge" {
             name  = "SLACK_URL"
             value = var.tiny_tuya_slack_url
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
+          }
         }
       }
     }

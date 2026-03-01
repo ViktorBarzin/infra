@@ -95,8 +95,8 @@ resource "kubernetes_deployment" "meshcentral" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
-              memory = "384Mi"
+              cpu    = "250m"
+              memory = "512Mi"
             }
           }
           volume_mount {

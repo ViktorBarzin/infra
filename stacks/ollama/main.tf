@@ -93,9 +93,9 @@ resource "kubernetes_deployment" "ollama" {
           "gpu" = "true"
         }
         toleration {
-          key      = "nvidia.com/gpu"
-          value    = "true"
-          effect   = "NoSchedule"
+          key    = "nvidia.com/gpu"
+          value  = "true"
+          effect = "NoSchedule"
         }
         container {
           image = "ollama/ollama:latest"
@@ -122,12 +122,10 @@ resource "kubernetes_deployment" "ollama" {
           }
           resources {
             requests = {
-              cpu    = "500m"
-              memory = "4Gi"
+              cpu    = "100m"
+              memory = "256Mi"
             }
             limits = {
-              cpu              = "4"
-              memory           = "12Gi"
               "nvidia.com/gpu" = "1"
             }
           }
@@ -270,6 +268,16 @@ resource "kubernetes_deployment" "ollama-ui" {
           volume_mount {
             name       = "data"
             mount_path = "/app/backend/data"
+          }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "1536Mi"
+            }
           }
         }
         volume {

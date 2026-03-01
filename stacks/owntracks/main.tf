@@ -94,6 +94,16 @@ resource "kubernetes_deployment" "owntracks" {
             name       = "data"
             mount_path = "/config"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "64Mi"
+            }
+          }
         }
         volume {
           name = "data"

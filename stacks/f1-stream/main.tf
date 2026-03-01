@@ -41,11 +41,11 @@ resource "kubernetes_deployment" "f1-stream" {
           name              = "f1-stream"
           resources {
             limits = {
-              cpu    = "500m"
+              cpu    = "250m"
               memory = "256Mi"
             }
             requests = {
-              cpu    = "50m"
+              cpu    = "25m"
               memory = "64Mi"
             }
           }

@@ -66,6 +66,16 @@ resource "kubernetes_deployment" "navidrome" {
             container_port = 4533
             protocol       = "TCP"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "384Mi"
+            }
+          }
         }
         volume {
           name = "data"

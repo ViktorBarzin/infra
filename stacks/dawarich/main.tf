@@ -140,6 +140,16 @@ resource "kubernetes_deployment" "dawarich" {
           #     name       = "watched"
           #     mount_path = "/var/app/tmp/imports/watched"
           #   }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "250m"
+              memory = "1Gi"
+            }
+          }
         }
         # container {
         #   image   = "freikin/dawarich:${var.image_version}"

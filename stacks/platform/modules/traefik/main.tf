@@ -380,11 +380,11 @@ resource "kubernetes_deployment" "bot_block_proxy" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "16Mi"
+              memory = "32Mi"
             }
             limits = {
               cpu    = "50m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
           }
         }
@@ -569,11 +569,11 @@ resource "kubernetes_deployment" "auth_proxy" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "16Mi"
+              memory = "32Mi"
             }
             limits = {
               cpu    = "50m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
           }
         }

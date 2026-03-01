@@ -56,11 +56,11 @@ resource "kubernetes_deployment" "vaultwarden" {
 
           resources {
             requests = {
-              cpu    = "50m"
-              memory = "64Mi"
+              cpu    = "10m"
+              memory = "32Mi"
             }
             limits = {
-              cpu    = "200m"
+              cpu    = "100m"
               memory = "256Mi"
             }
           }

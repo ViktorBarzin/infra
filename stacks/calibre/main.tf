@@ -158,11 +158,11 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           }
           resources {
             requests = {
-              cpu    = "50m"
+              cpu    = "25m"
               memory = "256Mi"
             }
             limits = {
-              cpu    = "1"
+              cpu    = "500m"
               memory = "1Gi"
             }
           }

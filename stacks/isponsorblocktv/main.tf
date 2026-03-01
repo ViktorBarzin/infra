@@ -43,6 +43,16 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
             name       = "data"
             mount_path = "/app/data"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
+          }
         }
         volume {
           name = "data"

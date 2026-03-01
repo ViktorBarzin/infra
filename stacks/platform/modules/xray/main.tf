@@ -114,6 +114,16 @@ resource "kubernetes_deployment" "xray" {
             mount_path = "/etc/xray/config.json"
             sub_path   = "config.json"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "128Mi"
+            }
+          }
         }
 
         volume {

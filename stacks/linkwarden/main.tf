@@ -91,6 +91,16 @@ resource "kubernetes_deployment" "linkwarden" {
             name  = "AUTHENTIK_CLIENT_SECRET"
             value = var.linkwarden_authentik_client_secret
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "1536Mi"
+            }
+          }
         }
       }
     }

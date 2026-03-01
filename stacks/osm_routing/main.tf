@@ -52,6 +52,16 @@ resource "kubernetes_deployment" "osrm-foot" {
             name       = "osrm-data"
             mount_path = "/data"
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "1Gi"
+            }
+          }
         }
         volume {
           name = "osrm-data"
@@ -127,10 +137,10 @@ resource "kubernetes_deployment" "osrm-bicycle" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
-              cpu    = "250m"
+              cpu    = "100m"
               memory = "1Gi"
             }
           }

@@ -128,12 +128,12 @@ resource "kubernetes_deployment" "coturn" {
 
           resources {
             requests = {
-              cpu    = "100m"
-              memory = "128Mi"
+              cpu    = "10m"
+              memory = "32Mi"
             }
             limits = {
-              cpu    = "1"
-              memory = "512Mi"
+              cpu    = "100m"
+              memory = "128Mi"
             }
           }
         }

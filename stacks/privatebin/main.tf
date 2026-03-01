@@ -56,6 +56,16 @@ resource "kubernetes_deployment" "privatebin" {
             mount_path = "/srv/data"
             sub_path   = "data"
           }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "150m"
+              memory = "256Mi"
+            }
+          }
         }
 
         volume {

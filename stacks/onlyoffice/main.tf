@@ -11,9 +11,9 @@ resource "kubernetes_namespace" "onlyoffice" {
     name = "onlyoffice"
     labels = {
       "istio-injection" : "disabled"
-      tier                                       = local.tiers.edge
-      "resource-governance/custom-limitrange"     = "true"
-      "resource-governance/custom-quota"           = "true"
+      tier                                    = local.tiers.edge
+      "resource-governance/custom-limitrange" = "true"
+      "resource-governance/custom-quota"      = "true"
     }
   }
 }
@@ -92,11 +92,11 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           image = "onlyoffice/documentserver:8.2.3"
           resources {
             requests = {
-              cpu    = "250m"
+              cpu    = "100m"
               memory = "512Mi"
             }
             limits = {
-              cpu    = "8"
+              cpu    = "2"
               memory = "4Gi"
             }
           }
