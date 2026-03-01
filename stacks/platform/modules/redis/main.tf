@@ -109,6 +109,36 @@ resource "helm_release" "redis" {
   })]
 }
 
+# Override the Helm-managed service to pin to master pod
+# Sentinel clients can use the headless service for discovery,
+# but simple redis:// clients (paperless-ngx, etc.) need to hit the master
+resource "kubernetes_service" "redis" {
+  metadata {
+    name      = "redis"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app.kubernetes.io/component"          = "node"
+      "app.kubernetes.io/instance"           = "redis"
+      "app.kubernetes.io/name"               = "redis"
+      "statefulset.kubernetes.io/pod-name"   = "redis-node-0"
+    }
+    port {
+      name        = "tcp-redis"
+      port        = 6379
+      target_port = 6379
+    }
+    port {
+      name        = "tcp-sentinel"
+      port        = 26379
+      target_port = 26379
+    }
+  }
+
+  depends_on = [helm_release.redis]
+}
+
 # Hourly backup: copy RDB snapshot from master to NFS
 resource "kubernetes_cron_job_v1" "redis-backup" {
   metadata {
