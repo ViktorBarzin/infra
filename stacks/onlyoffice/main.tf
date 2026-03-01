@@ -142,36 +142,16 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
             name  = "JWT_SECRET"
             value = var.onlyoffice_jwt_token
           }
-          env {
-            name  = "GENERATE_FONTS"
-            value = "false"
-          }
 
           volume_mount {
             name       = "data"
             mount_path = "/var/www/onlyoffice/Data"
-          }
-          volume_mount {
-            name       = "font-cache"
-            mount_path = "/var/www/onlyoffice/documentserver/fonts"
-          }
-          volume_mount {
-            name       = "font-cache"
-            mount_path = "/var/www/onlyoffice/documentserver/sdkjs/common/Images"
-            sub_path   = "images"
           }
         }
         volume {
           name = "data"
           nfs {
             path   = "/mnt/main/onlyoffice"
-            server = var.nfs_server
-          }
-        }
-        volume {
-          name = "font-cache"
-          nfs {
-            path   = "/mnt/main/onlyoffice-cache"
             server = var.nfs_server
           }
         }
