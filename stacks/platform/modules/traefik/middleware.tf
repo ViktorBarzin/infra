@@ -341,3 +341,23 @@ resource "kubernetes_manifest" "middleware_anti_ai_trap_links" {
 
   depends_on = [helm_release.traefik]
 }
+
+# Retry middleware for transient backend failures (502/503 during restarts)
+resource "kubernetes_manifest" "middleware_retry" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "retry"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      retry = {
+        attempts        = 2
+        initialInterval = "100ms"
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
