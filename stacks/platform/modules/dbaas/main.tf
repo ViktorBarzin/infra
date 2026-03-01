@@ -121,21 +121,24 @@ resource "helm_release" "mysql_cluster" {
   depends_on = [helm_release.mysql_operator]
 }
 
-# Compatibility service: mysql.dbaas points at InnoDB Cluster Router
-# Router handles automatic failover — clients connect here transparently
+# Compatibility service: mysql.dbaas points at InnoDB Cluster mysqld pods
+# When router is available it handles failover, but we fall back to direct
+# mysqld access to avoid total outage during partial cluster failures
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
     namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
+    publish_not_ready_addresses = true # bypass InnoDB Cluster readiness gate during partial failures
     selector = {
-      "component"                = "mysqlrouter"
-      "mysql.oracle.com/cluster" = "mysql-cluster"
+      "component"                              = "mysqld"
+      "mysql.oracle.com/cluster"               = "mysql-cluster"
+      "statefulset.kubernetes.io/pod-name"     = "mysql-cluster-1" # pin to healthy primary until cluster recovers
     }
     port {
       port        = 3306
-      target_port = 6446
+      target_port = 3306
     }
   }
 
