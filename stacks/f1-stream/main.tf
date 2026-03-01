@@ -1,5 +1,8 @@
 variable "tls_secret_name" { type = string }
 variable "nfs_server" { type = string }
+variable "discord_user_token" { type = string }
+variable "discord_f1_guild_id" { type = string }
+variable "discord_f1_channel_ids" { type = string }
 
 
 resource "kubernetes_namespace" "f1-stream" {
@@ -51,6 +54,14 @@ resource "kubernetes_deployment" "f1-stream" {
           }
           port {
             container_port = 8000
+          }
+          env {
+            name  = "DISCORD_TOKEN"
+            value = var.discord_user_token
+          }
+          env {
+            name  = "DISCORD_CHANNELS"
+            value = var.discord_f1_channel_ids
           }
           volume_mount {
             name       = "data"
