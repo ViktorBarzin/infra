@@ -1,12 +1,11 @@
 variable "tls_secret_name" { type = string }
 variable "openclaw_ssh_key" { type = string }
 variable "openclaw_skill_secrets" { type = map(string) }
-variable "gemini_api_key" { type = string }
 variable "llama_api_key" { type = string }
 variable "brave_api_key" { type = string }
-variable "modal_api_key" { type = string }
+variable "openrouter_api_key" { type = string }
+variable "nvidia_api_key" { type = string }
 variable "nfs_server" { type = string }
-variable "ollama_host" { type = string }
 
 
 resource "kubernetes_namespace" "openclaw" {
@@ -87,14 +86,20 @@ resource "kubernetes_config_map" "openclaw_config" {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
           model = {
-            primary   = "modal/zai-org/GLM-5-FP8"
-            fallbacks = ["gemini/gemini-2.5-flash", "llama-as-openai/Llama-3.3-70B-Instruct"]
+            primary   = "nim/mistralai/mistral-large-3-675b-instruct-2512"
+            fallbacks = ["nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8"]
           }
           models = {
-            "modal/zai-org/GLM-5-FP8"                            = { streaming = false }
-            "gemini/gemini-2.5-flash"                            = {}
-            "llama-as-openai/Llama-3.3-70B-Instruct"             = {}
-            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8" = {}
+            "nim/deepseek-ai/deepseek-v3.2"                          = {}
+            "nim/qwen/qwen3.5-397b-a17b"                             = {}
+            "nim/mistralai/mistral-large-3-675b-instruct-2512"       = {}
+            "nim/qwen/qwen3-coder-480b-a35b-instruct"                = {}
+            "nim/nvidia/llama-3.1-nemotron-ultra-253b-v1"            = {}
+            "nim/z-ai/glm5"                                          = {}
+            "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8" = {}
+            "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"     = {}
+            "openrouter/stepfun/step-3.5-flash:free"                 = {}
+            "openrouter/arcee-ai/trinity-large-preview:free"         = {}
           }
         }
       }
@@ -124,30 +129,26 @@ resource "kubernetes_config_map" "openclaw_config" {
       models = {
         mode = "merge"
         providers = {
-          modal = {
-            baseUrl = "https://api.us-west-2.modal.direct/v1"
+          nim = {
+            baseUrl = "https://integrate.api.nvidia.com/v1"
             api     = "openai-completions"
-            apiKey  = var.modal_api_key
+            apiKey  = var.nvidia_api_key
             models = [
-              { id = "zai-org/GLM-5-FP8", name = "GLM-5", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "deepseek-ai/deepseek-v3.2", name = "DeepSeek V3.2", reasoning = false, input = ["text"], contextWindow = 164000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "qwen/qwen3.5-397b-a17b", name = "Qwen 3.5", reasoning = true, input = ["text"], contextWindow = 262000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "mistralai/mistral-large-3-675b-instruct-2512", name = "Mistral Large 3", reasoning = false, input = ["text"], contextWindow = 262000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "qwen/qwen3-coder-480b-a35b-instruct", name = "Qwen 3 Coder", reasoning = false, input = ["text"], contextWindow = 262000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "nvidia/llama-3.1-nemotron-ultra-253b-v1", name = "Nemotron Ultra 253B", reasoning = true, input = ["text"], contextWindow = 128000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "z-ai/glm5", name = "GLM-5", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
-          gemini = {
-            baseUrl = "https://generativelanguage.googleapis.com/v1beta"
-            api     = "google-generative-ai"
-            apiKey  = var.gemini_api_key
-            models = [
-              { id = "gemini-2.5-flash", name = "gemini-2.5-flash", reasoning = true, input = ["text", "image"], contextWindow = 1048576, maxTokens = 65536, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-            ]
-          }
-          ollama = {
-            baseUrl = "http://${var.ollama_host}:11434/v1"
+          openrouter = {
+            baseUrl = "https://openrouter.ai/api/v1"
             api     = "openai-completions"
-            apiKey  = "ollama"
+            apiKey  = var.openrouter_api_key
             models = [
-              { id = "qwen2.5-coder:14b", name = "qwen2.5-coder:14b", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-              { id = "qwen2.5:14b", name = "qwen2.5:14b", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-              { id = "deepseek-r1:14b", name = "deepseek-r1:14b", reasoning = true, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "stepfun/step-3.5-flash:free", name = "Step 3.5 Flash", reasoning = true, input = ["text"], contextWindow = 256000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "arcee-ai/trinity-large-preview:free", name = "Trinity Large", reasoning = false, input = ["text"], contextWindow = 131000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
           llama-as-openai = {
@@ -155,9 +156,8 @@ resource "kubernetes_config_map" "openclaw_config" {
             apiKey  = var.llama_api_key
             api     = "openai-completions"
             models = [
-              { id = "Llama-3.3-70B-Instruct", name = "Llama-3.3-70B-Instruct", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-              { id = "Llama-4-Scout-17B-16E-Instruct-FP8", name = "Llama-4-Scout-17B-16E-Instruct-FP8", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-              { id = "Llama-4-Maverick-17B-128E-Instruct-FP8", name = "Llama-4-Maverick-17B-128E-Instruct-FP8", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 8192, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "Llama-4-Maverick-17B-128E-Instruct-FP8", name = "Llama 4 Maverick", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "Llama-4-Scout-17B-16E-Instruct-FP8", name = "Llama 4 Scout", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
         }
@@ -344,10 +344,6 @@ resource "kubernetes_deployment" "openclaw" {
           env {
             name  = "GIT_CONFIG_GLOBAL"
             value = "/home/node/.openclaw/.gitconfig"
-          }
-          env {
-            name  = "GEMINI_API_KEY"
-            value = var.gemini_api_key
           }
           # Skill secrets - Home Assistant
           env {
