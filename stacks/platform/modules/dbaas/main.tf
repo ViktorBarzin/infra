@@ -18,7 +18,24 @@ resource "kubernetes_namespace" "dbaas" {
   metadata {
     name = "dbaas"
     labels = {
-      tier = var.tier
+      tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "dbaas" {
+  metadata {
+    name      = "dbaas-quota"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "12Gi"
+      "limits.cpu"      = "32"
+      "limits.memory"   = "64Gi"
+      pods              = "30"
     }
   }
 }
@@ -60,7 +77,7 @@ resource "helm_release" "mysql_cluster" {
   values = [yamlencode({
     serverInstances = 3
     routerInstances = 1
-    serverVersion   = "9.2.0"
+    serverVersion   = "8.4.4"
 
     credentials = {
       root = {
@@ -102,6 +119,19 @@ resource "helm_release" "mysql_cluster" {
     }
 
     podSpec = {
+      affinity = {
+        nodeAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = {
+            nodeSelectorTerms = [{
+              matchExpressions = [{
+                key      = "kubernetes.io/hostname"
+                operator = "NotIn"
+                values   = ["k8s-node2"]
+              }]
+            }]
+          }
+        }
+      }
       containers = [{
         name = "mysql"
         resources = {
@@ -115,6 +145,29 @@ resource "helm_release" "mysql_cluster" {
           }
         }
       }]
+      initContainers = [
+        {
+          name = "fixdatadir"
+          resources = {
+            requests = { memory = "64Mi", cpu = "25m" }
+            limits   = { memory = "256Mi", cpu = "500m" }
+          }
+        },
+        {
+          name = "initconf"
+          resources = {
+            requests = { memory = "256Mi", cpu = "50m" }
+            limits   = { memory = "1Gi", cpu = "1" }
+          }
+        },
+        {
+          name = "initmysql"
+          resources = {
+            requests = { memory = "512Mi", cpu = "250m" }
+            limits   = { memory = "2Gi", cpu = "2" }
+          }
+        }
+      ]
     }
   })]
 
@@ -132,9 +185,9 @@ resource "kubernetes_service" "mysql" {
   spec {
     publish_not_ready_addresses = true # bypass InnoDB Cluster readiness gate during partial failures
     selector = {
-      "component"                              = "mysqld"
-      "mysql.oracle.com/cluster"               = "mysql-cluster"
-      "statefulset.kubernetes.io/pod-name"     = "mysql-cluster-1" # pin to healthy primary until cluster recovers
+      "component"                    = "mysqld"
+      "mysql.oracle.com/cluster"     = "mysql-cluster"
+      "mysql.oracle.com/cluster-role" = "PRIMARY"
     }
     port {
       port        = 3306
