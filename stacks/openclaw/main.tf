@@ -319,6 +319,7 @@ resource "kubernetes_deployment" "openclaw" {
             # Mark repo as safe for the node user (different UID from init container)
             git config --global --add safe.directory /workspace/infra
             cp /root/.gitconfig /openclaw-home/.gitconfig 2>/dev/null || true
+            chown -R 1000:1000 /workspace/infra
 
             # Symlink Claude skills into OpenClaw skills directory
             ln -sfn /workspace/infra/.claude/skills /openclaw-home/skills
