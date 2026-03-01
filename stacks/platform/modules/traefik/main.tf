@@ -2,6 +2,11 @@ variable "tier" { type = string }
 variable "crowdsec_api_key" { type = string }
 variable "redis_host" { type = string }
 variable "tls_secret_name" {}
+variable "auth_fallback_htpasswd" {
+  type        = string
+  description = "htpasswd-format string for emergency basicAuth fallback when Authentik is down"
+  sensitive   = true
+}
 
 resource "kubernetes_namespace" "traefik" {
   metadata {
@@ -396,6 +401,201 @@ resource "kubernetes_service" "bot_block_proxy" {
       name        = "http"
       port        = 8080
       target_port = 8080
+    }
+  }
+}
+
+# Resilience proxy for Authentik ForwardAuth
+# Falls back to basicAuth when Authentik is unreachable
+resource "kubernetes_secret" "auth_proxy_htpasswd" {
+  metadata {
+    name      = "auth-proxy-htpasswd"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+
+  data = {
+    "htpasswd" = var.auth_fallback_htpasswd
+  }
+}
+
+resource "kubernetes_config_map" "auth_proxy_config" {
+  metadata {
+    name      = "auth-proxy-config"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+
+  data = {
+    "default.conf" = <<-EOT
+      upstream authentik {
+          server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
+      }
+      server {
+          listen 9000;
+
+          location /outpost.goauthentik.io/auth/traefik {
+              proxy_pass http://authentik;
+              proxy_connect_timeout 3s;
+              proxy_read_timeout 5s;
+              proxy_send_timeout 5s;
+              proxy_intercept_errors on;
+              error_page 502 503 504 = @fallback_auth;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+          }
+
+          location @fallback_auth {
+              auth_basic "Emergency Access";
+              auth_basic_user_file /etc/nginx/htpasswd;
+              add_header X-authentik-username $remote_user always;
+              add_header X-Auth-Fallback "true" always;
+              return 200;
+          }
+
+          location /outpost.goauthentik.io/ {
+              proxy_pass http://authentik;
+              proxy_connect_timeout 3s;
+              proxy_read_timeout 10s;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /healthz {
+              access_log off;
+              return 200 "ok";
+          }
+      }
+    EOT
+  }
+}
+
+resource "kubernetes_deployment" "auth_proxy" {
+  metadata {
+    name      = "auth-proxy"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels = {
+      app = "auth-proxy"
+    }
+  }
+
+  spec {
+    replicas = 2
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_unavailable = 0
+        max_surge       = 1
+      }
+    }
+    selector {
+      match_labels = {
+        app = "auth-proxy"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "auth-proxy"
+        }
+      }
+      spec {
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "DoNotSchedule"
+          label_selector {
+            match_labels = {
+              app = "auth-proxy"
+            }
+          }
+        }
+        container {
+          name  = "nginx"
+          image = "nginx:1-alpine"
+
+          port {
+            container_port = 9000
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/nginx/conf.d"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "htpasswd"
+            mount_path = "/etc/nginx/htpasswd"
+            sub_path   = "htpasswd"
+            read_only  = true
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 9000
+            }
+            initial_delay_seconds = 3
+            period_seconds        = 10
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 9000
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 5
+          }
+
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "50m"
+              memory = "32Mi"
+            }
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.auth_proxy_config.metadata[0].name
+          }
+        }
+        volume {
+          name = "htpasswd"
+          secret {
+            secret_name = kubernetes_secret.auth_proxy_htpasswd.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "auth_proxy" {
+  metadata {
+    name      = "auth-proxy"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels = {
+      app = "auth-proxy"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "auth-proxy"
+    }
+    port {
+      name        = "http"
+      port        = 9000
+      target_port = 9000
     }
   }
 }
