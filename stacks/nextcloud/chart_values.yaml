@@ -63,7 +63,7 @@ collabora:
 
 resources:
   limits:
-    cpu: "2"
+    cpu: "16"
     memory: 6Gi
   requests:
     cpu: 100m
