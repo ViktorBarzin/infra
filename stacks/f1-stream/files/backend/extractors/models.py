@@ -18,6 +18,8 @@ class ExtractedStream:
     response_time_ms: int = 0  # Health check response time (lower = better)
     checked_at: str = ""  # ISO timestamp of last health check
     bitrate: int = 0  # Bitrate in bps if detectable from m3u8 playlist
+    stream_type: str = "m3u8"  # "m3u8" for direct HLS, "embed" for iframe embed URL
+    embed_url: str = ""  # The iframe-embeddable URL (when stream_type is "embed")
 
     def to_dict(self) -> dict:
         """Serialize to a plain dictionary for JSON responses."""
@@ -32,4 +34,6 @@ class ExtractedStream:
             "response_time_ms": self.response_time_ms,
             "checked_at": self.checked_at,
             "bitrate": self.bitrate,
+            "stream_type": self.stream_type,
+            "embed_url": self.embed_url,
         }

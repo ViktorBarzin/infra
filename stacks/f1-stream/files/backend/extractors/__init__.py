@@ -11,10 +11,13 @@ Example:
     registry.register(MySiteExtractor())
 """
 
+from backend.extractors.aceztrims import AceztrimsExtractor
+from backend.extractors.daddylive import DaddyLiveExtractor
 from backend.extractors.demo import DemoExtractor
 from backend.extractors.models import ExtractedStream
 from backend.extractors.registry import ExtractorRegistry
 from backend.extractors.service import ExtractionService
+from backend.extractors.streamed import StreamedExtractor
 
 __all__ = [
     "ExtractedStream",
@@ -34,7 +37,9 @@ def create_registry() -> ExtractorRegistry:
 
     # --- Register extractors below ---
     registry.register(DemoExtractor())
-    # registry.register(MySiteExtractor())  # Add new extractors here
+    registry.register(StreamedExtractor())
+    registry.register(DaddyLiveExtractor())
+    registry.register(AceztrimsExtractor())
 
     return registry
 
