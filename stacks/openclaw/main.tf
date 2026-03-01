@@ -89,6 +89,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         defaults = {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
+          workspace         = "/workspace/infra"
           sandbox = {
             mode = "off"
           }
@@ -114,6 +115,9 @@ resource "kubernetes_config_map" "openclaw_config" {
       tools = {
         profile = "full"
         deny    = []
+        elevated = {
+          enabled = true
+        }
         exec = {
           host        = "gateway"
           security    = "full"
@@ -133,6 +137,10 @@ resource "kubernetes_config_map" "openclaw_config" {
             timeoutSeconds = 30
           }
         }
+      }
+      commands = {
+        native       = true
+        nativeSkills = true
       }
       channels = {
         telegram = {
