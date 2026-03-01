@@ -16,7 +16,32 @@ resource "kubernetes_namespace" "nextcloud" {
     name = "nextcloud"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier                                     = local.tiers.edge
+      "resource-governance/custom-limitrange" = "true"
+    }
+  }
+}
+
+resource "kubernetes_limit_range" "nextcloud" {
+  metadata {
+    name      = "nextcloud-limits"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        cpu    = "250m"
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "25m"
+        memory = "64Mi"
+      }
+      max = {
+        cpu    = "4"
+        memory = "8Gi"
+      }
     }
   }
 }

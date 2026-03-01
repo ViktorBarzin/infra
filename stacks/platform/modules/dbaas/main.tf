@@ -64,6 +64,42 @@ resource "helm_release" "mysql_operator" {
   version    = "2.2.7"
 }
 
+# The mysql-sidecar ClusterRole created by the Helm chart is missing
+# namespace and CRD list/watch permissions needed by the kopf framework
+# in the sidecar container. Without these, the sidecar enters degraded
+# mode and never completes InnoDB cluster join operations.
+resource "kubernetes_cluster_role" "mysql_sidecar_extra" {
+  metadata {
+    name = "mysql-sidecar-extra"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["namespaces"]
+    verbs      = ["list", "watch"]
+  }
+  rule {
+    api_groups = ["apiextensions.k8s.io"]
+    resources  = ["customresourcedefinitions"]
+    verbs      = ["list", "watch"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "mysql_sidecar_extra" {
+  metadata {
+    name = "mysql-sidecar-extra"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.mysql_sidecar_extra.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "mysql-cluster-sa"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+}
+
 resource "helm_release" "mysql_cluster" {
   namespace        = kubernetes_namespace.dbaas.metadata[0].name
   create_namespace = false
