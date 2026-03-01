@@ -23,6 +23,14 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
+module "nfs_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "speedtest-config"
+  namespace  = kubernetes_namespace.speedtest.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/speedtest"
+}
+
 resource "kubernetes_deployment" "speedtest" {
   metadata {
     name      = "speedtest"
@@ -118,9 +126,8 @@ resource "kubernetes_deployment" "speedtest" {
         }
         volume {
           name = "config"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/speedtest"
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
       }

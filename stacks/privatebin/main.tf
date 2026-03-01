@@ -18,6 +18,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "privatebin-data"
+  namespace  = kubernetes_namespace.privatebin.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/privatebin"
+}
+
 resource "kubernetes_deployment" "privatebin" {
   metadata {
     name      = "privatebin"
@@ -70,9 +78,8 @@ resource "kubernetes_deployment" "privatebin" {
 
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/privatebin"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
