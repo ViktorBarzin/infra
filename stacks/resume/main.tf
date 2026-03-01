@@ -122,6 +122,14 @@ resource "kubernetes_service" "printer" {
   }
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "resume-data"
+  namespace  = kubernetes_namespace.resume.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/resume"
+}
+
 # Reactive Resume app
 resource "kubernetes_deployment" "resume" {
   metadata {
@@ -251,9 +259,8 @@ resource "kubernetes_deployment" "resume" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/resume"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
