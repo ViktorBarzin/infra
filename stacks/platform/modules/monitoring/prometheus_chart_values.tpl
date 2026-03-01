@@ -71,6 +71,11 @@ alertmanager:
           - alertname = TraefikDown
         target_matchers:
           - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections"
+      # Traefik down makes ForwardAuth alerts redundant
+      - source_matchers:
+          - alertname = TraefikDown
+        target_matchers:
+          - alertname =~ "PoisonFountainDown|ForwardAuthFallbackActive"
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -433,6 +438,13 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Authentik auth server has no available replicas"
+          - alert: PoisonFountainDown
+            expr: (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Poison Fountain is down - AI bot blocking degraded to fail-open"
           - alert: LokiDown
             expr: (kube_statefulset_status_replicas_ready{namespace="monitoring", statefulset=~"loki.*"} or on() vector(0)) < 1
             for: 5m
@@ -585,6 +597,15 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.service }} has {{ $value | printf \"%.0f\" }} open connections (threshold: 500)"
+          - alert: ForwardAuthFallbackActive
+            expr: |
+              (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
+              or (kube_deployment_status_replicas_available{namespace="authentik", deployment="goauthentik-server"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ForwardAuth resilience proxy serving fallback - check Poison Fountain and Authentik"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
