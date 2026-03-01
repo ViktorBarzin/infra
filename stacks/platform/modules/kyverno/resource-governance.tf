@@ -82,7 +82,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
       name = "generate-limitrange-by-tier"
       annotations = {
         "policies.kyverno.io/title"       = "Generate LimitRange by Tier"
-        "policies.kyverno.io/description" = "Creates tier-appropriate LimitRange defaults in namespaces based on their tier label. Only affects containers without explicit resource specifications."
+        "policies.kyverno.io/description" = "Creates tier-appropriate LimitRange defaults in namespaces based on their tier label. Only affects containers without explicit resource specifications. Excludes namespaces with resource-governance/custom-limitrange label."
       }
     }
     spec = {
@@ -99,6 +99,19 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   selector = {
                     matchLabels = {
                       tier = "0-core"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      "resource-governance/custom-limitrange" = "true"
                     }
                   }
                 }
@@ -151,6 +164,19 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
               }
             ]
           }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      "resource-governance/custom-limitrange" = "true"
+                    }
+                  }
+                }
+              }
+            ]
+          }
           generate = {
             synchronize = true
             apiVersion  = "v1"
@@ -191,6 +217,19 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   selector = {
                     matchLabels = {
                       tier = "2-gpu"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      "resource-governance/custom-limitrange" = "true"
                     }
                   }
                 }
@@ -243,6 +282,19 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
               }
             ]
           }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      "resource-governance/custom-limitrange" = "true"
+                    }
+                  }
+                }
+              }
+            ]
+          }
           generate = {
             synchronize = true
             apiVersion  = "v1"
@@ -283,6 +335,19 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   selector = {
                     matchLabels = {
                       tier = "4-aux"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  selector = {
+                    matchLabels = {
+                      "resource-governance/custom-limitrange" = "true"
                     }
                   }
                 }
@@ -686,7 +751,8 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
           any = [
             {
               resources = {
-                kinds = ["Pod"]
+                kinds      = ["Pod"]
+                operations = ["CREATE"]
                 namespaceSelector = {
                   matchLabels = {
                     tier = tier
