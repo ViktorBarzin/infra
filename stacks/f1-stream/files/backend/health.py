@@ -10,6 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 import httpx
 
@@ -149,6 +150,21 @@ class StreamHealthChecker:
                 # Extract bitrate info if available
                 bitrate = _extract_bitrate(content)
 
+                # If this is a master playlist, validate at least one variant
+                if "#EXT-X-STREAM-INF:" in content:
+                    variant_ok = await self._check_first_variant(
+                        content, url, client
+                    )
+                    if not variant_ok:
+                        return StreamHealth(
+                            url=url,
+                            is_live=False,
+                            response_time_ms=elapsed_ms,
+                            checked_at=checked_at,
+                            bitrate=bitrate,
+                            error="Master playlist OK but variant playlists are unreachable",
+                        )
+
                 return StreamHealth(
                     url=url,
                     is_live=True,
@@ -187,6 +203,58 @@ class StreamHealthChecker:
                 checked_at=checked_at,
                 error=f"Unexpected error: {e}",
             )
+
+    async def _check_first_variant(
+        self, content: str, base_url: str, client: httpx.AsyncClient
+    ) -> bool:
+        """Check that at least one variant playlist in a master playlist is reachable.
+
+        Extracts the first variant URI from a master playlist and does a HEAD
+        request to verify it returns 200/206. This catches streams where the
+        master playlist is valid but all variant playlists are 404.
+
+        Args:
+            content: The master playlist text content.
+            base_url: The URL of the master playlist (for resolving relative URIs).
+            client: An existing httpx client to reuse.
+
+        Returns:
+            True if at least one variant is reachable, False otherwise.
+        """
+        lines = content.splitlines()
+        for i, line in enumerate(lines):
+            if not line.strip().startswith("#EXT-X-STREAM-INF:"):
+                continue
+            # Next non-empty, non-comment line is the variant URI
+            for j in range(i + 1, len(lines)):
+                variant_uri = lines[j].strip()
+                if variant_uri and not variant_uri.startswith("#"):
+                    # Resolve relative URI
+                    if not variant_uri.startswith(("http://", "https://")):
+                        variant_uri = urljoin(base_url, variant_uri)
+                    try:
+                        resp = await client.head(variant_uri)
+                        if resp.status_code in (200, 206):
+                            return True
+                        # HEAD might not be supported, try GET
+                        resp = await client.get(
+                            variant_uri,
+                            headers={"Range": f"bytes=0-{MAX_CONTENT_BYTES - 1}"},
+                        )
+                        if resp.status_code in (200, 206):
+                            return True
+                        logger.debug(
+                            "Variant playlist %s returned HTTP %d",
+                            variant_uri, resp.status_code,
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            "Variant check failed for %s: %s", variant_uri, e
+                        )
+                    # Only check the first variant
+                    return False
+        # No variants found (shouldn't happen if #EXT-X-STREAM-INF was detected)
+        return True
 
     async def check_all(
         self, streams: list[dict],

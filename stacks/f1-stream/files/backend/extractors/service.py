@@ -45,18 +45,29 @@ class ExtractionService:
 
         # Run health checks on all extracted streams
         if streams:
-            stream_dicts = [s.to_dict() for s in streams]
-            health_map = await self._health_checker.check_all(stream_dicts)
+            # Separate m3u8 streams (need health check) from embed streams (skip)
+            m3u8_streams = [s for s in streams if s.stream_type != "embed"]
+            embed_streams = [s for s in streams if s.stream_type == "embed"]
 
-            # Update stream objects with health check results
-            for stream in streams:
-                health = health_map.get(stream.url)
-                if health:
-                    stream.is_live = health.is_live
-                    stream.response_time_ms = health.response_time_ms
-                    stream.checked_at = health.checked_at
-                    if health.bitrate > 0:
-                        stream.bitrate = health.bitrate
+            # Mark embed streams as live (no health check possible for iframes)
+            for stream in embed_streams:
+                stream.is_live = True
+                stream.response_time_ms = 0
+                stream.checked_at = start.isoformat()
+
+            # Health-check only m3u8 streams
+            if m3u8_streams:
+                stream_dicts = [s.to_dict() for s in m3u8_streams]
+                health_map = await self._health_checker.check_all(stream_dicts)
+
+                for stream in m3u8_streams:
+                    health = health_map.get(stream.url)
+                    if health:
+                        stream.is_live = health.is_live
+                        stream.response_time_ms = health.response_time_ms
+                        stream.checked_at = health.checked_at
+                        if health.bitrate > 0:
+                            stream.bitrate = health.bitrate
 
         # Group streams by site_key and update cache
         new_cache: dict[str, list[ExtractedStream]] = {}

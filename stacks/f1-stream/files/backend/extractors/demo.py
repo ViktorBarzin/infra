@@ -59,11 +59,11 @@ class DemoExtractor(BaseExtractor):
                 is_live=False,
             ),
             ExtractedStream(
-                url="https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8",
+                url="https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8",
                 site_key=self.site_key,
                 site_name=self.site_name,
-                quality="",
-                title="Akamai Live Test Stream",
+                quality="1080p",
+                title="Tears of Steel (Test Stream)",
                 is_live=False,
             ),
         ]
