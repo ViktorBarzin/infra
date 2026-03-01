@@ -30,28 +30,6 @@ locals {
 }
 
 
-resource "kubernetes_config_map" "clickhouse_config" {
-  metadata {
-    name      = "clickhouse-config"
-    namespace = kubernetes_namespace.rybbit.metadata[0].name
-  }
-  data = {
-    "docker_related_config.xml" = <<-XML
-      <clickhouse>
-        <listen_host>::</listen_host>
-        <listen_host>0.0.0.0</listen_host>
-        <listen_try>1</listen_try>
-      </clickhouse>
-    XML
-    "disable-system-logs.xml"   = <<-XML
-      <clickhouse>
-        <background_pool_size>4</background_pool_size>
-        <background_schedule_pool_size>16</background_schedule_pool_size>
-      </clickhouse>
-    XML
-  }
-}
-
 resource "kubernetes_deployment" "clickhouse" {
   metadata {
     name      = "clickhouse"
@@ -95,12 +73,6 @@ resource "kubernetes_deployment" "clickhouse" {
             name       = "data"
             mount_path = "/var/lib/clickhouse"
           }
-          volume_mount {
-            name       = "config"
-            mount_path = "/etc/clickhouse-server/config.d/zzz-custom.xml"
-            sub_path   = "disable-system-logs.xml"
-            read_only  = true
-          }
           resources {
             requests = {
               cpu    = "100m"
@@ -117,12 +89,6 @@ resource "kubernetes_deployment" "clickhouse" {
           nfs {
             path   = "/mnt/main/clickhouse"
             server = var.nfs_server
-          }
-        }
-        volume {
-          name = "config"
-          config_map {
-            name = kubernetes_config_map.clickhouse_config.metadata[0].name
           }
         }
       }
@@ -148,6 +114,47 @@ resource "kubernetes_service" "clickhouse" {
       target_port = 8123
       port        = 8123
       protocol    = "TCP"
+    }
+  }
+}
+
+# CronJob to truncate ClickHouse system log tables every 6 hours.
+# These tables grow unboundedly on NFS and trigger CPU-heavy background merges.
+resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
+  metadata {
+    name      = "clickhouse-truncate-logs"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+  }
+  spec {
+    schedule = "0 */6 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "truncate"
+              image = "curlimages/curl:8.12.1"
+              command = [
+                "sh", "-c",
+                join(" && ", [
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.metric_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.trace_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.text_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.asynchronous_metric_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.query_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.part_log'",
+                  "echo 'System logs truncated'"
+                ])
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }
