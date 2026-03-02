@@ -54,6 +54,14 @@ resource "kubernetes_cluster_role_binding" "diun" {
   }
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "diun-data"
+  namespace  = kubernetes_namespace.diun.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/diun"
+}
+
 resource "kubernetes_deployment" "diun" {
   metadata {
     name      = "diun"
@@ -176,9 +184,8 @@ resource "kubernetes_deployment" "diun" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/diun"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

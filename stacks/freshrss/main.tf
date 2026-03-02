@@ -17,6 +17,22 @@ resource "kubernetes_namespace" "immich" {
   }
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "freshrss-data"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/freshrss/data"
+}
+
+module "nfs_extensions" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "freshrss-extensions"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/freshrss/extensions"
+}
+
 
 resource "kubernetes_deployment" "freshrss" {
   metadata {
@@ -88,16 +104,14 @@ resource "kubernetes_deployment" "freshrss" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/freshrss/data"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {
           name = "extensions"
-          nfs {
-            path   = "/mnt/main/freshrss/extensions"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_extensions.claim_name
           }
         }
       }

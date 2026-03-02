@@ -18,6 +18,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "atuin-config"
+  namespace  = kubernetes_namespace.atuin.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/atuin"
+}
+
 resource "kubernetes_deployment" "atuin" {
   wait_for_rollout = false
   metadata {
@@ -110,9 +118,8 @@ resource "kubernetes_deployment" "atuin" {
 
         volume {
           name = "config"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/atuin"
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
       }

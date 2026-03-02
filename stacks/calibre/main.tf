@@ -21,6 +21,38 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_library" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "calibre-library"
+  namespace  = kubernetes_namespace.calibre.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/calibre-web-automated/calibre-library"
+}
+
+module "nfs_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "calibre-config"
+  namespace  = kubernetes_namespace.calibre.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/calibre-web-automated/config"
+}
+
+module "nfs_ingest" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "calibre-ingest"
+  namespace  = kubernetes_namespace.calibre.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
+}
+
+module "nfs_stacks_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "calibre-stacks-config"
+  namespace  = kubernetes_namespace.calibre.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/calibre-web-automated/stacks"
+}
+
 # resource "kubernetes_deployment" "calibre" {
 #   metadata {
 #     name      = "calibre"
@@ -181,23 +213,20 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         }
         volume {
           name = "library"
-          nfs {
-            path   = "/mnt/main/calibre-web-automated/calibre-library"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_library.claim_name
           }
         }
         volume {
           name = "config"
-          nfs {
-            path   = "/mnt/main/calibre-web-automated/config"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
         volume {
           name = "ingest"
-          nfs {
-            path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_ingest.claim_name
           }
         }
       }
@@ -292,16 +321,14 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
         }
         volume {
           name = "config"
-          nfs {
-            path   = "/mnt/main/calibre-web-automated/stacks"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_stacks_config.claim_name
           }
         }
         volume {
           name = "ingest"
-          nfs {
-            path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_ingest.claim_name
           }
         }
       }

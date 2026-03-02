@@ -31,6 +31,14 @@ resource "random_string" "random" {
   lower  = true
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "wealthfolio-data"
+  namespace  = kubernetes_namespace.wealthfolio.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/wealthfolio"
+}
+
 resource "kubernetes_deployment" "wealthfolio" {
   metadata {
     name      = "wealthfolio"
@@ -101,9 +109,8 @@ resource "kubernetes_deployment" "wealthfolio" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/wealthfolio"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

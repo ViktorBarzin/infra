@@ -18,6 +18,38 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_audiobooks" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "audiobookshelf-audiobooks"
+  namespace  = kubernetes_namespace.audiobookshelf.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/audiobookshelf/audiobooks"
+}
+
+module "nfs_podcasts" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "audiobookshelf-podcasts"
+  namespace  = kubernetes_namespace.audiobookshelf.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/audiobookshelf/podcasts"
+}
+
+module "nfs_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "audiobookshelf-config"
+  namespace  = kubernetes_namespace.audiobookshelf.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/audiobookshelf/config"
+}
+
+module "nfs_metadata" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "audiobookshelf-metadata"
+  namespace  = kubernetes_namespace.audiobookshelf.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/audiobookshelf/metadata"
+}
+
 resource "kubernetes_deployment" "audiobookshelf" {
   metadata {
     name      = "audiobookshelf"
@@ -83,30 +115,26 @@ resource "kubernetes_deployment" "audiobookshelf" {
         }
         volume {
           name = "audiobooks"
-          nfs {
-            path   = "/mnt/main/audiobookshelf/audiobooks"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_audiobooks.claim_name
           }
         }
         volume {
           name = "podcasts"
-          nfs {
-            path   = "/mnt/main/audiobookshelf/podcasts"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_podcasts.claim_name
           }
         }
         volume {
           name = "config"
-          nfs {
-            path   = "/mnt/main/audiobookshelf/config"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
         volume {
           name = "metadata"
-          nfs {
-            path   = "/mnt/main/audiobookshelf/metadata"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_metadata.claim_name
           }
         }
       }

@@ -21,6 +21,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "grampsweb-data"
+  namespace  = kubernetes_namespace.grampsweb.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/grampsweb"
+}
+
 resource "random_password" "secret_key" {
   length  = 64
   special = false
@@ -233,9 +241,8 @@ resource "kubernetes_deployment" "grampsweb" {
 
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/grampsweb"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

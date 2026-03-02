@@ -12,6 +12,14 @@ resource "kubernetes_namespace" "isponsorblocktv" {
 # Before running, setup config using 
 # docker run --rm -it -v ./youtube:/app/data -e TERM=$TERM -e COLORTERM=$COLORTERM ghcr.io/dmunozv04/isponsorblocktv --setup
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "isponsorblocktv-data"
+  namespace  = kubernetes_namespace.isponsorblocktv.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/isponsorblocktv/vermont"
+}
+
 # Mute and skip ads for vermont smart tv
 resource "kubernetes_deployment" "isponsorblocktv-vermont" {
   metadata {
@@ -56,9 +64,8 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/isponsorblocktv/vermont"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

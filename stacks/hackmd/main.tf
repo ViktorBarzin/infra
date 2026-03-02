@@ -20,6 +20,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "hackmd-data"
+  namespace  = kubernetes_namespace.hackmd.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/hackmd"
+}
+
 resource "kubernetes_deployment" "hackmd" {
   metadata {
     name      = "hackmd"
@@ -122,17 +130,9 @@ resource "kubernetes_deployment" "hackmd" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/hackmd"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
-          #   iscsi {
-          #     target_portal = "iscsi.viktorbarzin.lan:3260"
-          #     fs_type       = "ext4"
-          #     iqn           = "iqn.2020-12.lan.viktorbarzin:storage:hackmd"
-          #     lun           = 0
-          #     read_only     = false
-          #   }
         }
       }
     }

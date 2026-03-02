@@ -18,6 +18,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "changedetection-data"
+  namespace  = kubernetes_namespace.changedetection.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/changedetection"
+}
+
 resource "kubernetes_deployment" "changedetection" {
   metadata {
     name      = "changedetection"
@@ -114,9 +122,8 @@ resource "kubernetes_deployment" "changedetection" {
         # }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/changedetection"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
