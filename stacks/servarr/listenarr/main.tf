@@ -3,6 +3,22 @@ variable "tier" { type = string }
 variable "nfs_server" { type = string }
 
 
+module "nfs_data" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-listenarr-data"
+  namespace  = "servarr"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/servarr/listenarr"
+}
+
+module "nfs_downloads" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-listenarr-downloads"
+  namespace  = "servarr"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/servarr/downloads"
+}
+
 resource "kubernetes_deployment" "listenarr" {
   metadata {
     name      = "listenarr"
@@ -53,16 +69,14 @@ resource "kubernetes_deployment" "listenarr" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/servarr/listenarr"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {
           name = "downloads"
-          nfs {
-            path   = "/mnt/main/servarr/downloads"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_downloads.claim_name
           }
         }
       }
