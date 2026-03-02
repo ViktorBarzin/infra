@@ -27,6 +27,18 @@ resource "helm_release" "kyverno" {
       }
     }
 
+    reportsController = {
+      resources = {
+        limits = {
+          memory = "512Mi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "128Mi"
+        }
+      }
+    }
+
     admissionController = {
       replicas = 2
 
