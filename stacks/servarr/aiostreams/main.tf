@@ -16,6 +16,14 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
+module "nfs_data" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "aiostreams-data"
+  namespace  = kubernetes_namespace.aiostreams.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/servarr/aiostreams"
+}
+
 resource "kubernetes_deployment" "aiostreams" {
   metadata {
     name      = "aiostreams"
@@ -74,9 +82,8 @@ resource "kubernetes_deployment" "aiostreams" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/servarr/aiostreams"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
