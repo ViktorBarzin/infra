@@ -139,6 +139,14 @@ resource "kubernetes_service" "redis" {
   depends_on = [helm_release.redis]
 }
 
+module "nfs_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "redis-backup"
+  namespace  = kubernetes_namespace.redis.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/redis-backup"
+}
+
 # Hourly backup: copy RDB snapshot from master to NFS
 resource "kubernetes_cron_job_v1" "redis-backup" {
   metadata {
@@ -179,9 +187,8 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
             }
             volume {
               name = "backup"
-              nfs {
-                path   = "/mnt/main/redis-backup"
-                server = var.nfs_server
+              persistent_volume_claim {
+                claim_name = module.nfs_backup.claim_name
               }
             }
           }

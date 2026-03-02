@@ -19,6 +19,73 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# NFS volumes for immich-server
+module "nfs_backups" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-backups"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/immich/backups"
+}
+
+module "nfs_encoded_video" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-encoded-video"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/immich/encoded-video"
+}
+
+module "nfs_library" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-library"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/immich/library"
+}
+
+module "nfs_profile" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-profile"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/immich/profile"
+}
+
+module "nfs_thumbs" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-thumbs"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/ssd/immich/thumbs"
+}
+
+module "nfs_upload" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-upload"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/immich/upload"
+}
+
+# NFS volume for immich-postgresql (shared with backup cronjob)
+module "nfs_postgresql" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-postgresql-data"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/immich/data-immich-postgresql"
+}
+
+# NFS volume for immich-machine-learning cache
+module "nfs_ml_cache" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-ml-cache"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/ssd/immich/machine-learning"
+}
+
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
@@ -186,44 +253,38 @@ resource "kubernetes_deployment" "immich_server" {
 
         volume {
           name = "backups"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/immich/immich/backups"
+          persistent_volume_claim {
+            claim_name = module.nfs_backups.claim_name
           }
         }
         volume {
           name = "encoded-video"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/immich/immich/encoded-video"
+          persistent_volume_claim {
+            claim_name = module.nfs_encoded_video.claim_name
           }
         }
         volume {
           name = "library"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/immich/immich/library"
+          persistent_volume_claim {
+            claim_name = module.nfs_library.claim_name
           }
         }
         volume {
           name = "profile"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/immich/immich/profile"
+          persistent_volume_claim {
+            claim_name = module.nfs_profile.claim_name
           }
         }
         volume {
           name = "thumbs"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/ssd/immich/thumbs"
+          persistent_volume_claim {
+            claim_name = module.nfs_thumbs.claim_name
           }
         }
         volume {
           name = "upload"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/immich/immich/upload"
+          persistent_volume_claim {
+            claim_name = module.nfs_upload.claim_name
           }
         }
       }
@@ -316,9 +377,8 @@ resource "kubernetes_deployment" "immich-postgres" {
         }
         volume {
           name = "postgresql-persistent-storage"
-          nfs {
-            path   = "/mnt/main/immich/data-immich-postgresql"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_postgresql.claim_name
           }
         }
       }
@@ -458,10 +518,8 @@ resource "kubernetes_deployment" "immich-machine-learning" {
         }
         volume {
           name = "cache"
-          nfs {
-            # path   = "/mnt/main/immich/machine-learning"
-            path   = "/mnt/ssd/immich/machine-learning" # load cache from ssd
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_ml_cache.claim_name
           }
         }
       }
@@ -550,9 +608,8 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             }
             volume {
               name = "postgresql-backup"
-              nfs {
-                path   = "/mnt/main/immich/data-immich-postgresql"
-                server = var.nfs_server
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql.claim_name
               }
             }
           }

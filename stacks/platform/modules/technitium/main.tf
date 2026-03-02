@@ -81,6 +81,14 @@ resource "kubernetes_config_map" "coredns" {
   }
 }
 
+module "nfs_config" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "technitium-config"
+  namespace  = kubernetes_namespace.technitium.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/technitium"
+}
+
 resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
@@ -196,9 +204,8 @@ resource "kubernetes_deployment" "technitium" {
         }
         volume {
           name = "nfs-config"
-          nfs {
-            path   = "/mnt/main/technitium"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
         volume {

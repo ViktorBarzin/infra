@@ -73,6 +73,14 @@ locals {
   ]
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "affine-data"
+  namespace  = kubernetes_namespace.affine.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/affine"
+}
+
 resource "kubernetes_deployment" "affine" {
   metadata {
     name      = "affine"
@@ -181,9 +189,8 @@ resource "kubernetes_deployment" "affine" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/affine"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

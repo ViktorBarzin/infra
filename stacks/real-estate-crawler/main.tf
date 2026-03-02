@@ -23,6 +23,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "real-estate-crawler-data"
+  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/real-estate-crawler"
+}
+
 resource "kubernetes_deployment" "realestate-crawler-ui" {
   metadata {
     name      = "realestate-crawler-ui"
@@ -207,9 +215,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/real-estate-crawler"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
@@ -341,9 +348,8 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/real-estate-crawler"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
@@ -439,9 +445,8 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/real-estate-crawler"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

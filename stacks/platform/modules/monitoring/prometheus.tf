@@ -14,7 +14,8 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
       }
     }
     # storage_class_name = "standard"
-    volume_name = "prometheus-iscsi-pv"
+    storage_class_name = "nfs-truenas"
+    volume_name        = "prometheus-iscsi-pv"
   }
 }
 
@@ -28,18 +29,16 @@ resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
     }
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/prometheus"
-        server = var.nfs_server
+      csi {
+        driver        = "nfs.csi.k8s.io"
+        volume_handle = "prometheus-iscsi-pv"
+        volume_attributes = {
+          server = var.nfs_server
+          share  = "/mnt/main/prometheus"
+        }
       }
-      # iscsi {
-      #   fs_type       = "ext4"
-      #   iqn           = "iqn.2020-12.lan.viktorbarzin:storage:monitoring:prometheus"
-      #   lun           = 0
-      #   target_portal = "iscsi.viktorbarzin.me:3260"
-      # }
-
     }
+    storage_class_name               = "nfs-truenas"
     persistent_volume_reclaim_policy = "Retain"
     volume_mode                      = "Filesystem"
   }

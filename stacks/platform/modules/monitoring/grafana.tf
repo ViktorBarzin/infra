@@ -34,11 +34,16 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
     }
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/alertmanager"
-        server = var.nfs_server
+      csi {
+        driver        = "nfs.csi.k8s.io"
+        volume_handle = "alertmanager-pv"
+        volume_attributes = {
+          server = var.nfs_server
+          share  = "/mnt/main/alertmanager"
+        }
       }
     }
+    storage_class_name = "nfs-truenas"
   }
 }
 # resource "kubernetes_persistent_volume_claim" "grafana_pvc" {
