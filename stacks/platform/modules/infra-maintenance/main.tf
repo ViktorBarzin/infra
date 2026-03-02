@@ -66,6 +66,14 @@ variable "nfs_server" { type = string }
 #   }
 # }
 
+module "nfs_etcd_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "infra-etcd-backup"
+  namespace  = "default"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/etcd-backup"
+}
+
 # # backup etcd
 resource "kubernetes_cron_job_v1" "backup-etcd" {
   metadata {
@@ -123,9 +131,8 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
 
             volume {
               name = "backup"
-              nfs {
-                path   = "/mnt/main/etcd-backup"
-                server = var.nfs_server
+              persistent_volume_claim {
+                claim_name = module.nfs_etcd_backup.claim_name
               }
             }
             volume {

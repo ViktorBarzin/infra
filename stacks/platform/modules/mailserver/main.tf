@@ -154,6 +154,14 @@ resource "kubernetes_secret" "opendkim_key" {
 }
 
 
+module "nfs_data" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "mailserver-data"
+  namespace  = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/mailserver"
+}
+
 resource "kubernetes_deployment" "mailserver" {
   metadata {
     name      = "mailserver"
@@ -413,9 +421,8 @@ resource "kubernetes_deployment" "mailserver" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/mailserver"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
           # iscsi {
           #   target_portal = "iscsi.viktorbarzin.lan:3260"

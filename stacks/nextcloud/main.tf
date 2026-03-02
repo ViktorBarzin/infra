@@ -91,6 +91,23 @@ resource "helm_release" "nextcloud" {
 #   }
 # }
 
+module "nfs_nextcloud_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "nextcloud-data"
+  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/nextcloud"
+  storage    = "100Gi"
+}
+
+module "nfs_nextcloud_backup" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "nextcloud-backup"
+  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/nextcloud-backup"
+}
+
 resource "kubernetes_deployment" "whiteboard" {
   metadata {
     name      = "whiteboard"
@@ -157,40 +174,6 @@ resource "kubernetes_service" "whiteboard" {
       port        = 80
       target_port = 3002
     }
-  }
-}
-
-resource "kubernetes_persistent_volume" "nextcloud-data-pv" {
-  metadata {
-    name = "nextcloud-data-pv"
-  }
-  spec {
-    capacity = {
-      "storage" = "100Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/nextcloud"
-        server = var.nfs_server
-      }
-    }
-  }
-}
-
-resource "kubernetes_persistent_volume_claim" "nextcloud-data-pvc" {
-  metadata {
-    name      = "nextcloud-data-pvc"
-    namespace = kubernetes_namespace.nextcloud.metadata[0].name
-  }
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = {
-        "storage" = "100Gi"
-      }
-    }
-    volume_name = "nextcloud-data-pv"
   }
 }
 
@@ -333,17 +316,15 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
 
             volume {
               name = "nextcloud-data"
-              nfs {
-                server = var.nfs_server
-                path   = "/mnt/main/nextcloud"
+              persistent_volume_claim {
+                claim_name = module.nfs_nextcloud_data.claim_name
               }
             }
 
             volume {
               name = "backup"
-              nfs {
-                server = var.nfs_server
-                path   = "/mnt/main/nextcloud-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_nextcloud_backup.claim_name
               }
             }
 

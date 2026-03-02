@@ -20,6 +20,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "uptime-kuma-data"
+  namespace  = kubernetes_namespace.uptime-kuma.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/uptime-kuma"
+}
+
 resource "kubernetes_deployment" "uptime-kuma" {
   metadata {
     name      = "uptime-kuma"
@@ -78,9 +86,8 @@ resource "kubernetes_deployment" "uptime-kuma" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/uptime-kuma"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         dns_config {

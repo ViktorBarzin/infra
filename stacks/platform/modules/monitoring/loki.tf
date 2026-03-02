@@ -24,11 +24,16 @@ resource "kubernetes_persistent_volume" "loki" {
     }
     access_modes = ["ReadWriteOnce"]
     persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/loki/loki"
-        server = var.nfs_server
+      csi {
+        driver        = "nfs.csi.k8s.io"
+        volume_handle = "loki"
+        volume_attributes = {
+          server = var.nfs_server
+          share  = "/mnt/main/loki/loki"
+        }
       }
     }
+    storage_class_name               = "nfs-truenas"
     persistent_volume_reclaim_policy = "Retain"
     volume_mode                      = "Filesystem"
   }

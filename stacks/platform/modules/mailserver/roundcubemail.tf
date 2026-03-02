@@ -1,6 +1,22 @@
 variable "roundcube_db_password" { type = string }
 variable "mysql_host" { type = string }
 
+module "nfs_roundcube_html" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "roundcubemail-html"
+  namespace  = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/roundcubemail/html"
+}
+
+module "nfs_roundcube_enigma" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "roundcubemail-enigma"
+  namespace  = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/roundcubemail/enigma"
+}
+
 # If you want to override settings mount this in /var/roundcube/config
 # more info in https://github.com/roundcube/roundcubemail-docker?tab=readme-ov-file
 # resource "kubernetes_config_map" "roundcubemail_config" {
@@ -147,16 +163,14 @@ resource "kubernetes_deployment" "roundcubemail" {
 
         volume {
           name = "html"
-          nfs {
-            path   = "/mnt/main/roundcubemail/html"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_roundcube_html.claim_name
           }
         }
         volume {
           name = "enigma"
-          nfs {
-            path   = "/mnt/main/roundcubemail/enigma"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_roundcube_enigma.claim_name
           }
         }
         dns_config {
