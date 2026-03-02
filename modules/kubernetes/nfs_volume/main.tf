@@ -43,6 +43,13 @@ resource "kubernetes_persistent_volume" "this" {
     storage_class_name               = "nfs-truenas"
     volume_mode                      = "Filesystem"
 
+    mount_options = [
+      "soft",
+      "timeo=30",
+      "retrans=3",
+      "actimeo=5",
+    ]
+
     persistent_volume_source {
       csi {
         driver        = "nfs.csi.k8s.io"
