@@ -38,6 +38,12 @@ resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
         }
       }
     }
+    mount_options = [
+      "soft",
+      "timeo=30",
+      "retrans=3",
+      "actimeo=5",
+    ]
     storage_class_name               = "nfs-truenas"
     persistent_volume_reclaim_policy = "Retain"
     volume_mode                      = "Filesystem"
