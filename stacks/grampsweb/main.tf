@@ -182,6 +182,17 @@ resource "kubernetes_deployment" "grampsweb" {
             mount_path = "/tmp"
             sub_path   = "tmp"
           }
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
         }
 
         container {
@@ -236,6 +247,17 @@ resource "kubernetes_deployment" "grampsweb" {
             name       = "data"
             mount_path = "/tmp"
             sub_path   = "tmp"
+          }
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
           }
         }
 

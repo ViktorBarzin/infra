@@ -121,6 +121,13 @@ server:
     existingClaim: prometheus-iscsi-pvc
     # storageClass: rook-cephfs
   retention: "52w"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
