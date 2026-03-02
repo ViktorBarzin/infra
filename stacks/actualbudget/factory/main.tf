@@ -14,6 +14,14 @@ variable "budget_encryption_password" {
 }
 variable "nfs_server" { type = string }
 
+module "nfs_data" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "actualbudget-${var.name}-data"
+  namespace  = "actualbudget"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/actualbudget/${var.name}"
+}
+
 resource "kubernetes_deployment" "actualbudget" {
   metadata {
     name      = "actualbudget-${var.name}"
@@ -58,9 +66,8 @@ resource "kubernetes_deployment" "actualbudget" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/actualbudget/${var.name}"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

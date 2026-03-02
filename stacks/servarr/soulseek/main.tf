@@ -3,6 +3,14 @@ variable "tier" { type = string }
 variable "nfs_server" { type = string }
 
 
+module "nfs_lidarr" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-soulseek-lidarr"
+  namespace  = "servarr"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/servarr/lidarr"
+}
+
 resource "kubernetes_deployment" "soulseek" {
   metadata {
     name      = "soulseek"
@@ -58,16 +66,14 @@ resource "kubernetes_deployment" "soulseek" {
         }
         volume {
           name = "config"
-          nfs {
-            path   = "/mnt/main/servarr/lidarr"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_lidarr.claim_name
           }
         }
         volume {
           name = "downloads"
-          nfs {
-            path   = "/mnt/main/servarr/lidarr"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_lidarr.claim_name
           }
         }
       }
