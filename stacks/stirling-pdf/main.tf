@@ -18,6 +18,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_configs" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "stirling-pdf-configs"
+  namespace  = kubernetes_namespace.stirling-pdf.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/stirling-pdf"
+}
+
 resource "kubernetes_deployment" "stirling-pdf" {
   metadata {
     name      = "stirling-pdf"
@@ -65,9 +73,8 @@ resource "kubernetes_deployment" "stirling-pdf" {
         }
         volume {
           name = "configs"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/stirling-pdf"
+          persistent_volume_claim {
+            claim_name = module.nfs_configs.claim_name
           }
         }
       }

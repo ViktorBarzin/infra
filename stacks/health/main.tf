@@ -20,6 +20,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_uploads" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "health-uploads"
+  namespace  = kubernetes_namespace.health.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/health"
+}
+
 resource "kubernetes_deployment" "health" {
   metadata {
     name      = "health"
@@ -94,9 +102,8 @@ resource "kubernetes_deployment" "health" {
         }
         volume {
           name = "uploads"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/health"
+          persistent_volume_claim {
+            claim_name = module.nfs_uploads.claim_name
           }
         }
       }

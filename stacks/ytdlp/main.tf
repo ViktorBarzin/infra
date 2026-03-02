@@ -23,6 +23,22 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "ytdlp-data"
+  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/ytdlp"
+}
+
+module "nfs_highlights_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "ytdlp-highlights-data"
+  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/ytdlp-highlights"
+}
+
 resource "kubernetes_deployment" "ytdlp" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
@@ -92,9 +108,8 @@ resource "kubernetes_deployment" "ytdlp" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/ytdlp"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         # }
@@ -288,9 +303,8 @@ resource "kubernetes_deployment" "yt_highlights" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/ytdlp-highlights"
+          persistent_volume_claim {
+            claim_name = module.nfs_highlights_data.claim_name
           }
         }
       }

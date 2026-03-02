@@ -18,39 +18,21 @@ module "tls_secret" {
   namespace       = kubernetes_namespace.ollama.metadata[0].name
   tls_secret_name = var.tls_secret_name
 }
-resource "kubernetes_persistent_volume_claim" "ollama-pvc" {
-  metadata {
-    name      = "ollama-pvc"
-    namespace = kubernetes_namespace.ollama.metadata[0].name
-  }
 
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = {
-        storage = "30Gi"
-      }
-    }
-    volume_name = "ollama-pv"
-  }
+module "nfs_ollama_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "ollama-data"
+  namespace  = kubernetes_namespace.ollama.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/ssd/ollama"
 }
 
-resource "kubernetes_persistent_volume" "ollama-pv" {
-  metadata {
-    name = "ollama-pv"
-  }
-  spec {
-    capacity = {
-      "storage" = "30Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      nfs {
-        path   = "/mnt/main/ollama"
-        server = var.nfs_server
-      }
-    }
-  }
+module "nfs_ollama_ui_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "ollama-ui-data"
+  namespace  = kubernetes_namespace.ollama.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/ollama"
 }
 
 # resource "helm_release" "ollama" {
@@ -132,10 +114,8 @@ resource "kubernetes_deployment" "ollama" {
         }
         volume {
           name = "ollama-data"
-          nfs {
-            # path   = "/mnt/main/ollama"
-            path   = "/mnt/ssd/ollama"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_ollama_data.claim_name
           }
         }
       }
@@ -282,9 +262,8 @@ resource "kubernetes_deployment" "ollama-ui" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/ollama"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_ollama_ui_data.claim_name
           }
         }
       }

@@ -18,6 +18,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "poison-fountain-data"
+  namespace  = kubernetes_namespace.poison_fountain.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/poison-fountain"
+}
+
 # ConfigMap for the Python service code
 resource "kubernetes_config_map" "poison_fountain_code" {
   metadata {
@@ -157,9 +165,8 @@ resource "kubernetes_deployment" "poison_fountain" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/poison-fountain"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
@@ -264,9 +271,8 @@ resource "kubernetes_cron_job_v1" "poison_fetcher" {
             }
             volume {
               name = "data"
-              nfs {
-                server = var.nfs_server
-                path   = "/mnt/main/poison-fountain"
+              persistent_volume_claim {
+                claim_name = module.nfs_data.claim_name
               }
             }
 
