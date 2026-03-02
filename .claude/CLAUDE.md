@@ -39,17 +39,27 @@ Terragrunt-based infrastructure repository managing a home Kubernetes cluster on
 ## Key Patterns
 
 ### NFS Volume Pattern
-**Prefer inline NFS volumes** over separate PV/PVC resources. Use `var.nfs_server` (defined in `terraform.tfvars`, auto-loaded by Terragrunt):
+**Use the `nfs_volume` shared module** for all NFS volumes. This creates CSI-backed PV/PVC with soft mount options (`soft,timeo=30,retrans=3`) — no stale mount hangs:
 ```hcl
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"  # or ../../../ for sub-stacks
+  name       = "<service>-data"       # Must be globally unique (PV is cluster-scoped)
+  namespace  = kubernetes_namespace.<service>.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/<service>"
+}
+
+# In pod spec:
 volume {
   name = "data"
-  nfs {
-    server = var.nfs_server
-    path   = "/mnt/main/<service>"
+  persistent_volume_claim {
+    claim_name = module.nfs_data.claim_name
   }
 }
 ```
-Only use PV/PVC when a Helm chart requires `existingClaim`.
+For platform modules, use `source = "../../../../modules/kubernetes/nfs_volume"`.
+**StorageClass**: `nfs-truenas` (deployed via `stacks/platform/modules/nfs-csi/`).
+**DO NOT use inline `nfs {}` blocks** — they mount with `hard,timeo=600` defaults which hang forever on stale mounts.
 
 ### Adding NFS Exports
 1. **Create the directory on TrueNAS first**: `ssh root@10.0.10.15 "mkdir -p /mnt/main/<service> && chmod 777 /mnt/main/<service>"`
