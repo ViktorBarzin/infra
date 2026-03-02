@@ -20,6 +20,22 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "frigate-config"
+  namespace  = kubernetes_namespace.frigate.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/frigate/config"
+}
+
+module "nfs_media" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "frigate-media"
+  namespace  = kubernetes_namespace.frigate.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/frigate/media"
+}
+
 resource "kubernetes_deployment" "frigate" {
   metadata {
     name      = "frigate"
@@ -135,9 +151,8 @@ resource "kubernetes_deployment" "frigate" {
 
         volume {
           name = "config"
-          nfs {
-            path   = "/mnt/main/frigate/config"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_config.claim_name
           }
         }
         volume {
@@ -149,9 +164,8 @@ resource "kubernetes_deployment" "frigate" {
         }
         volume {
           name = "media"
-          nfs {
-            path   = "/mnt/main/frigate/media"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_media.claim_name
           }
         }
         volume {

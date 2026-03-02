@@ -210,6 +210,38 @@ resource "random_password" "gateway_token" {
   special = false
 }
 
+module "nfs_tools" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "openclaw-tools"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/tools"
+}
+
+module "nfs_openclaw_home" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "openclaw-home"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/home"
+}
+
+module "nfs_workspace" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "openclaw-workspace"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/workspace"
+}
+
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "openclaw-data"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/data"
+}
+
 resource "kubernetes_deployment" "openclaw" {
   metadata {
     name      = "openclaw"
@@ -528,30 +560,26 @@ resource "kubernetes_deployment" "openclaw" {
 
         volume {
           name = "tools"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/openclaw/tools"
+          persistent_volume_claim {
+            claim_name = module.nfs_tools.claim_name
           }
         }
         volume {
           name = "openclaw-home"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/openclaw/home"
+          persistent_volume_claim {
+            claim_name = module.nfs_openclaw_home.claim_name
           }
         }
         volume {
           name = "workspace"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/openclaw/workspace"
+          persistent_volume_claim {
+            claim_name = module.nfs_workspace.claim_name
           }
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/openclaw/data"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {

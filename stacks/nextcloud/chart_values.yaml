@@ -41,7 +41,7 @@ externalDatabase:
 
 persistence:
   enabled: true
-  existingClaim: nextcloud-data-pvc
+  existingClaim: nextcloud-data
 
   accessMode: ReadWriteOnce
   size: 100Gi

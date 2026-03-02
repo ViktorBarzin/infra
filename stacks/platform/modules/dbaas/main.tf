@@ -234,6 +234,30 @@ resource "kubernetes_service" "mysql" {
   depends_on = [helm_release.mysql_cluster]
 }
 
+module "nfs_mysql_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-mysql-backup"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/mysql-backup"
+}
+
+module "nfs_pgadmin" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-pgadmin"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/postgresql/pgadmin"
+}
+
+module "nfs_postgresql_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-postgresql-backup"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/postgresql-backup"
+}
+
 resource "kubernetes_cron_job_v1" "mysql-backup" {
   metadata {
     name      = "mysql-backup"
@@ -281,9 +305,8 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
             }
             volume {
               name = "mysql-backup"
-              nfs {
-                path   = "/mnt/main/mysql-backup"
-                server = var.nfs_server
+              persistent_volume_claim {
+                claim_name = module.nfs_mysql_backup.claim_name
               }
             }
           }
@@ -927,9 +950,8 @@ resource "kubernetes_deployment" "pgadmin" {
           # config_map {
           #   name = "pgadmin-config"
           # }
-          nfs {
-            path   = "/mnt/main/postgresql/pgadmin"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_pgadmin.claim_name
           }
         }
         dns_config {
@@ -1017,9 +1039,8 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             }
             volume {
               name = "postgresql-backup"
-              nfs {
-                path   = "/mnt/main/postgresql-backup"
-                server = var.nfs_server
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql_backup.claim_name
               }
             }
           }

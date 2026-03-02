@@ -20,6 +20,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "vaultwarden-data"
+  namespace  = kubernetes_namespace.vaultwarden.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/vaultwarden"
+}
+
 resource "kubernetes_deployment" "vaultwarden" {
   metadata {
     name      = "vaultwarden"
@@ -108,9 +116,8 @@ resource "kubernetes_deployment" "vaultwarden" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/vaultwarden"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         dns_config {
