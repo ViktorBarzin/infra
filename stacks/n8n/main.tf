@@ -19,6 +19,14 @@ resource "kubernetes_namespace" "n8n" {
   }
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "n8n-data"
+  namespace  = kubernetes_namespace.n8n.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/n8n"
+}
+
 resource "kubernetes_deployment" "n8n" {
   metadata {
     name      = "n8n"
@@ -115,9 +123,8 @@ resource "kubernetes_deployment" "n8n" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/n8n"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

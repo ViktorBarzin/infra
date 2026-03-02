@@ -18,6 +18,30 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "navidrome-data"
+  namespace  = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/navidrome"
+}
+
+module "nfs_music" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "navidrome-music"
+  namespace  = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server = "192.168.1.13"
+  nfs_path   = "/volume1/music"
+}
+
+module "nfs_lidarr" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "navidrome-lidarr"
+  namespace  = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/servarr/lidarr"
+}
+
 resource "kubernetes_deployment" "navidrome" {
   metadata {
     name      = "navidrome"
@@ -79,23 +103,20 @@ resource "kubernetes_deployment" "navidrome" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/navidrome"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {
           name = "music"
-          nfs {
-            path   = "/volume1/music"
-            server = "192.168.1.13"
+          persistent_volume_claim {
+            claim_name = module.nfs_music.claim_name
           }
         }
         volume {
           name = "lidarr"
-          nfs {
-            path   = "/mnt/main/servarr/lidarr"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_lidarr.claim_name
           }
         }
       }

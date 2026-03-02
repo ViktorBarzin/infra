@@ -40,6 +40,14 @@ resource "kubernetes_secret" "basic_auth" {
   }
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "owntracks-data"
+  namespace  = kubernetes_namespace.owntracks.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/owntracks"
+}
+
 resource "kubernetes_deployment" "owntracks" {
   metadata {
     name      = "owntracks"
@@ -107,9 +115,8 @@ resource "kubernetes_deployment" "owntracks" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/owntracks"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

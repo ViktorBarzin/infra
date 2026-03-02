@@ -19,6 +19,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "excalidraw-data"
+  namespace  = kubernetes_namespace.excalidraw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/excalidraw"
+}
+
 resource "kubernetes_deployment" "excalidraw" {
   metadata {
     name      = "excalidraw"
@@ -78,9 +86,8 @@ resource "kubernetes_deployment" "excalidraw" {
         }
         volume {
           name = "data"
-          nfs {
-            server = var.nfs_server
-            path   = "/mnt/main/excalidraw"
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
       }

@@ -101,11 +101,18 @@ resource "kubernetes_persistent_volume" "woodpecker_server_data" {
     capacity = {
       storage = "10Gi"
     }
-    access_modes = ["ReadWriteOnce"]
+    access_modes                     = ["ReadWriteOnce"]
+    persistent_volume_reclaim_policy = "Retain"
+    storage_class_name               = "nfs-truenas"
+    volume_mode                      = "Filesystem"
     persistent_volume_source {
-      nfs {
-        server = var.nfs_server
-        path   = "/mnt/main/woodpecker"
+      csi {
+        driver        = "nfs.csi.k8s.io"
+        volume_handle = "woodpecker-server-data"
+        volume_attributes = {
+          server = var.nfs_server
+          share  = "/mnt/main/woodpecker"
+        }
       }
     }
     claim_ref {

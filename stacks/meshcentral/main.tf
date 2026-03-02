@@ -18,6 +18,30 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "meshcentral-data"
+  namespace  = kubernetes_namespace.meshcentral.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/meshcentral/meshcentral-data"
+}
+
+module "nfs_files" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "meshcentral-files"
+  namespace  = kubernetes_namespace.meshcentral.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/meshcentral/meshcentral-files"
+}
+
+module "nfs_backups" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "meshcentral-backups"
+  namespace  = kubernetes_namespace.meshcentral.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/meshcentral/meshcentral-backups"
+}
+
 resource "kubernetes_deployment" "meshcentral" {
   metadata {
     name      = "meshcentral"
@@ -106,23 +130,20 @@ resource "kubernetes_deployment" "meshcentral" {
         }
         volume {
           name = "data"
-          nfs {
-            path   = "/mnt/main/meshcentral/meshcentral-data"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_data.claim_name
           }
         }
         volume {
           name = "files"
-          nfs {
-            path   = "/mnt/main/meshcentral/meshcentral-files"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_files.claim_name
           }
         }
         volume {
           name = "backups"
-          nfs {
-            path   = "/mnt/main/meshcentral/meshcentral-backups"
-            server = var.nfs_server
+          persistent_volume_claim {
+            claim_name = module.nfs_backups.claim_name
           }
         }
       }
