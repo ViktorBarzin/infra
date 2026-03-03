@@ -190,12 +190,12 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           }
           resources {
             requests = {
-              cpu    = "25m"
+              cpu    = "50m"
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
-              memory = "1Gi"
+              cpu    = "2"
+              memory = "1536Mi"
             }
           }
           volume_mount {
