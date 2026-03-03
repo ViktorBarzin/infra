@@ -335,6 +335,13 @@ serverFiles:
               severity: warning
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} predicted to fill within 24h"
+          - alert: NFSServerUnresponsive
+            expr: sum(rate(node_nfs_requests_total[5m])) == 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "All NFS operations across the cluster are zero for 10m — TrueNAS (10.0.10.15) may be down"
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
@@ -408,29 +415,43 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
+          - alert: EtcdBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "etcd backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: EtcdBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "etcd backup CronJob has never completed successfully"
       - name: Critical Services
         rules:
           - alert: PostgreSQLDown
-            expr: (kube_deployment_status_replicas_available{namespace="dbaas", deployment=~"postgresql.*"} or on() vector(0)) < 1
+            expr: kube_pod_status_ready{namespace="dbaas", pod=~"pg-cluster-.*", condition="true"} != 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "PostgreSQL has no available replicas"
+              summary: "PostgreSQL pod {{ $labels.pod }} is not ready"
           - alert: MySQLDown
-            expr: (kube_deployment_status_replicas_available{namespace="dbaas", deployment=~"mysql.*"} or on() vector(0)) < 1
+            expr: kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-cluster"} < 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "MySQL has no available replicas"
+              summary: "MySQL InnoDB Cluster has no ready replicas"
           - alert: RedisDown
-            expr: (kube_deployment_status_replicas_available{namespace="redis"} or on() vector(0)) < 1
+            expr: kube_statefulset_status_replicas_ready{namespace="redis", statefulset="redis-node"} < 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Redis has no available replicas"
+              summary: "Redis has no ready replicas"
           - alert: HeadscaleDown
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m
