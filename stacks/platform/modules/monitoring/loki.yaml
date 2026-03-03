@@ -70,10 +70,10 @@ singleBinary:
   resources:
     requests:
       cpu: 250m
-      memory: 4Gi
+      memory: 2Gi
     limits:
       cpu: "1"
-      memory: 6Gi
+      memory: 4Gi
 
 # Zero out replica counts of other deployment modes
 backend:

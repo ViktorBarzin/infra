@@ -186,11 +186,11 @@ resource "kubernetes_deployment" "grampsweb" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              cpu    = "500m"
-              memory = "512Mi"
+              cpu    = "1"
+              memory = "2Gi"
             }
           }
         }
@@ -256,7 +256,7 @@ resource "kubernetes_deployment" "grampsweb" {
             }
             limits = {
               cpu    = "500m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
         }
