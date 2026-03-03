@@ -618,7 +618,11 @@ try:
     for mid, name in id_to_name.items():
         beats = heartbeats.get(mid, [])
         if beats:
-            status = beats[-1].get("status", 0)
+            last_beat = beats[-1]
+            # Handle nested lists (some monitors return list of lists)
+            if isinstance(last_beat, list):
+                last_beat = last_beat[-1] if last_beat else {}
+            status = last_beat.get("status", 0) if isinstance(last_beat, dict) else 0
             if status == 1:
                 up_count += 1
             elif status == 3:
