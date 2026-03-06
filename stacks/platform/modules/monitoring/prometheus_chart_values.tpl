@@ -322,12 +322,12 @@ serverFiles:
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
           - alert: PVFillingUp
-            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 85%)"
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 95%)"
           - alert: PVPredictedFull
             expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes
             for: 1h
@@ -591,11 +591,11 @@ serverFiles:
           - alert: HighService4xxRate
             expr: |
               (
-                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service)
-                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service)
+                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service)
                 * 100
               ) > 30
-              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*"}[5m])) by (service) > 0.1
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service) > 0.1
             for: 10m
             labels:
               severity: warning
