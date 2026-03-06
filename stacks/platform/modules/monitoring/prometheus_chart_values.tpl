@@ -118,7 +118,7 @@ server:
     - "storage.tsdb.wal-compression"
   persistentVolume:
     # enabled: false
-    existingClaim: prometheus-iscsi-pvc
+    existingClaim: prometheus-data
     # storageClass: rook-cephfs
   retention: "52w"
   resources:

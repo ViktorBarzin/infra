@@ -2,51 +2,18 @@
 
 resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   metadata {
-    name      = "prometheus-iscsi-pvc"
+    name      = "prometheus-data"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
   }
 
   spec {
-    access_modes = ["ReadWriteOnce"]
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "iscsi-truenas"
     resources {
       requests = {
         storage = "15Gi"
       }
     }
-    # storage_class_name = "standard"
-    storage_class_name = "nfs-truenas"
-    volume_name        = "prometheus-iscsi-pv"
-  }
-}
-
-resource "kubernetes_persistent_volume" "prometheus_server_pvc" {
-  metadata {
-    name = "prometheus-iscsi-pv"
-  }
-  spec {
-    capacity = {
-      storage = "15Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      csi {
-        driver        = "nfs.csi.k8s.io"
-        volume_handle = "prometheus-iscsi-pv"
-        volume_attributes = {
-          server = var.nfs_server
-          share  = "/mnt/main/prometheus"
-        }
-      }
-    }
-    mount_options = [
-      "soft",
-      "timeo=30",
-      "retrans=3",
-      "actimeo=5",
-    ]
-    storage_class_name               = "nfs-truenas"
-    persistent_volume_reclaim_policy = "Retain"
-    volume_mode                      = "Filesystem"
   }
 }
 
