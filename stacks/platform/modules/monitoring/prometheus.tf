@@ -11,7 +11,7 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
     storage_class_name = "iscsi-truenas"
     resources {
       requests = {
-        storage = "15Gi"
+        storage = "30Gi"
       }
     }
   }
