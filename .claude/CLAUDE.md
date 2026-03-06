@@ -227,4 +227,34 @@ Custom quota namespaces: `authentik` (16 req CPU/16Gi req mem/48 lim CPU/96Gi li
 - **Architecture**: 3 server + 3 worker + 3 PgBouncer + embedded outpost
 - **Traefik integration**: Forward auth via `protected = true` in ingress_factory
 - **OIDC for K8s**: Issuer `https://authentik.viktorbarzin.me/application/o/kubernetes/`, client `kubernetes` (public)
-- For management tasks and OIDC gotchas: see `authentik` and `authentik-oidc-kubernetes` skills
+- For management tasks and OIDC gotchas: see archived skills `authentik` and `authentik-oidc-kubernetes`
+
+## Archived Troubleshooting Runbooks
+Skills moved to `.claude/skills/archived/` — reference when the specific issue arises:
+- **authentik** / **authentik-oidc-kubernetes**: Authentik REST API management, OIDC for K8s setup
+- **bluestacks-burp-interception**: Android HTTPS interception via BlueStacks + Burp Suite
+- **clickhouse-k8s-nfs-system-log-bloat**: ClickHouse high CPU from unbounded system log tables on NFS
+- **coturn-k8s-without-hostnetwork**: Deploy coturn on K8s with narrow relay port range + MetalLB
+- **crowdsec-agent-registration-failure**: CrowdSec agents stuck after LAPI restart (stale machine registrations)
+- **fastapi-svelte-gpu-webui**: Pattern for wrapping GPU CLI tools with FastAPI + Svelte web UI
+- **grafana-stale-datasource-cleanup**: Fix stale Grafana datasources via direct MySQL access
+- **helm-release-troubleshooting**: Fix stuck Helm releases (pending-upgrade, failed state)
+- **ingress-factory-migration**: Migrate raw kubernetes_ingress_v1 to ingress_factory module
+- **k8s-container-image-caching**: Pull-through cache setup/troubleshooting for containerd
+- **k8s-gpu-no-nvidia-devices**: Fix pods with GPU allocation but no /dev/nvidia* devices
+- **k8s-hpa-scaling-storm**: Fix HPA scaling to maxReplicas uncontrollably
+- **k8s-nfs-mount-troubleshooting**: Debug NFS mount failures (ContainerCreating, permission denied, stale mounts)
+- **kubelet-static-pod-manifest-update**: Force kubelet to pick up static pod manifest changes
+- **local-llm-gpu-selection**: GPU selection guide for local LLM inference on Dell R730
+- **loki-helm-deployment-pitfalls**: Fix Loki Helm chart issues (read-only FS, canary, stuck releases)
+- **music-assistant-librespot-wrong-account**: Fix librespot "free account" error from stale credential cache
+- **nextcloud-calendar**: CalDAV calendar management via Nextcloud API
+- **nfsv4-idmapd-uid-mapping**: Fix all UIDs showing as 65534 in containers (NFSv4 idmapd)
+- **openclaw-k8s-deployment**: OpenClaw gateway K8s deployment gotchas
+- **pfsense-dnsmasq-interface-binding**: Restrict dnsmasq to specific interfaces for port 53 forwarding
+- **pfsense-nat-rule-creation**: Create NAT rules programmatically via PHP/SSH
+- **proxmox-vm-disk-expansion-pitfalls**: Fix growpart/drain issues when expanding Proxmox VM disks
+- **python-filename-sanitization**: Secure filename sanitization for Python web apps
+- **terraform-state-identity-mismatch**: Fix "Unexpected Identity Change" via state rm + reimport
+- **traefik-helm-configuration**: HTTP/3, UDP routing, plugin download failures
+- **traefik-rewrite-body-troubleshooting**: Fix compression corruption and silent skip in rewrite-body plugin
