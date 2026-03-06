@@ -1522,12 +1522,9 @@ main() {
     print_summary
     send_slack
 
-    # Exit code: 2 for failures, 1 for warnings, 0 for clean
-    if [[ "$FAIL_COUNT" -gt 0 ]]; then
-        exit 2
-    elif [[ "$WARN_COUNT" -gt 0 ]]; then
-        exit 1
-    fi
+    # Always exit 0 — reporting is done via Slack notification.
+    # Non-zero exits mark the CronJob as Failed, which triggers Prometheus
+    # JobFailed alerts, creating a circular alert loop.
     exit 0
 }
 

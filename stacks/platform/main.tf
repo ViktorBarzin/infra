@@ -123,6 +123,16 @@ variable "webhook_handler_git_token" { type = string }
 variable "technitium_username" { type = string }
 variable "technitium_password" { type = string }
 
+# --- iscsi-csi ---
+variable "truenas_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "truenas_ssh_private_key" {
+  type      = string
+  sensitive = true
+}
+
 # =============================================================================
 # Module Calls
 # =============================================================================
@@ -316,6 +326,17 @@ module "nfs-csi" {
   source     = "./modules/nfs-csi"
   tier       = local.tiers.cluster
   nfs_server = var.nfs_server
+}
+
+# -----------------------------------------------------------------------------
+# iSCSI CSI — democratic-csi for TrueNAS iSCSI (database storage)
+# -----------------------------------------------------------------------------
+module "iscsi-csi" {
+  source                 = "./modules/iscsi-csi"
+  tier                   = local.tiers.cluster
+  truenas_host           = var.nfs_server # Same TrueNAS host
+  truenas_api_key        = var.truenas_api_key
+  truenas_ssh_private_key = var.truenas_ssh_private_key
 }
 
 # -----------------------------------------------------------------------------

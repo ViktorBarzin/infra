@@ -62,6 +62,26 @@ resource "kubernetes_deployment" "ntfy" {
           port {
             container_port = 80
           }
+          liveness_probe {
+            http_get {
+              path = "/v1/health"
+              port = 80
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/v1/health"
+              port = 80
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
           env {
             name  = "NTFY_BASE_URL"
             value = "https://ntfy.viktorbarzin.me"

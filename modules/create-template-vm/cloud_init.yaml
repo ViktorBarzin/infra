@@ -38,6 +38,8 @@ packages:
   # kubernetes
   - kubeadm
   - kubelet
+  # iSCSI client for CSI-backed database storage
+  - open-iscsi
   %{endif}
 
 apt:
@@ -60,6 +62,7 @@ runcmd:
   - containerd config default | sudo tee /etc/containerd/config.toml
   - ${containerd_config_update_command}
   - systemctl restart containerd
+  - systemctl enable --now iscsid
   - ${k8s_join_command}
   - systemctl enable kubelet
   - systemctl start kubelet

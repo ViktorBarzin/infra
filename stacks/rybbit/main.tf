@@ -49,6 +49,9 @@ resource "kubernetes_deployment" "clickhouse" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "clickhouse"
@@ -76,6 +79,26 @@ resource "kubernetes_deployment" "clickhouse" {
             name           = "clickhouse"
             protocol       = "TCP"
             container_port = 8123
+          }
+          liveness_probe {
+            http_get {
+              path = "/ping"
+              port = 8123
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/ping"
+              port = 8123
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
           volume_mount {
             name       = "data"
@@ -133,7 +156,7 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
     namespace = kubernetes_namespace.rybbit.metadata[0].name
   }
   spec {
-    schedule = "0 */6 * * *"
+    schedule                      = "0 */6 * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     job_template {
@@ -252,6 +275,26 @@ resource "kubernetes_deployment" "rybbit" {
           port {
             container_port = 3001
           }
+          liveness_probe {
+            http_get {
+              path = "/api/health"
+              port = 3001
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/api/health"
+              port = 3001
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
           resources {
             requests = {
               cpu    = "25m"
@@ -327,6 +370,26 @@ resource "kubernetes_deployment" "rybbit-client" {
             name           = "rybbit-client"
             protocol       = "TCP"
             container_port = 3002
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 3002
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 3002
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
           resources {
             requests = {
