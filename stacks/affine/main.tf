@@ -159,12 +159,12 @@ resource "kubernetes_deployment" "affine" {
 
           resources {
             requests = {
-              memory = "512Mi"
-              cpu    = "100m"
+              memory = "256Mi"
+              cpu    = "50m"
             }
             limits = {
-              memory = "4Gi"
-              cpu    = "2"
+              memory = "512Mi"
+              cpu    = "1"
             }
           }
 
