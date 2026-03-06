@@ -53,7 +53,7 @@ singleBinary:
   persistence:
     enabled: true
     size: 15Gi
-    storageClass: ""
+    storageClass: "iscsi-truenas"
   extraVolumes:
     - name: wal
       emptyDir:

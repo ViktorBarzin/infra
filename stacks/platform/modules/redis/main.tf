@@ -60,7 +60,7 @@ resource "helm_release" "redis" {
     master = {
       persistence = {
         enabled      = true
-        storageClass = "local-path"
+        storageClass = "iscsi-truenas"
         size         = "2Gi"
       }
 
@@ -81,7 +81,7 @@ resource "helm_release" "redis" {
 
       persistence = {
         enabled      = true
-        storageClass = "local-path"
+        storageClass = "iscsi-truenas"
         size         = "2Gi"
       }
 
