@@ -14,37 +14,6 @@ resource "helm_release" "loki" {
   depends_on = [kubernetes_config_map.loki_alert_rules]
 }
 
-resource "kubernetes_persistent_volume" "loki" {
-  metadata {
-    name = "loki"
-  }
-  spec {
-    capacity = {
-      storage = "15Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      csi {
-        driver        = "nfs.csi.k8s.io"
-        volume_handle = "loki"
-        volume_attributes = {
-          server = var.nfs_server
-          share  = "/mnt/main/loki/loki"
-        }
-      }
-    }
-    mount_options = [
-      "soft",
-      "timeo=30",
-      "retrans=3",
-      "actimeo=5",
-    ]
-    storage_class_name               = "nfs-truenas"
-    persistent_volume_reclaim_policy = "Retain"
-    volume_mode                      = "Filesystem"
-  }
-}
-
 # https://grafana.com/docs/alloy/latest/configure/kubernetes/
 resource "helm_release" "alloy" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
