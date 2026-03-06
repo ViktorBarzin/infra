@@ -1155,118 +1155,45 @@ check_cloudflare_tunnel() {
     fi
 }
 
-# --- 25. Resource Overcommitment ---
+# --- 25. Resource Usage ---
 check_overcommit() {
-    section 25 "Resource Overcommitment"
+    section 25 "Resource Usage"
     local detail="" had_issue=false status="PASS"
 
-    local node_file pod_file
-    node_file=$(mktemp)
-    pod_file=$(mktemp)
-    trap "rm -f '$node_file' '$pod_file'" RETURN
+    local usage
+    usage=$($KUBECTL top nodes --no-headers 2>/dev/null) || { fail "Cannot get node metrics"; json_add "overcommit" "FAIL" "No metrics"; return 0; }
 
-    $KUBECTL get nodes -o json >"$node_file" 2>/dev/null || { fail "Cannot get nodes"; json_add "overcommit" "FAIL" "Cannot get nodes"; return 0; }
-    $KUBECTL get pods -A -o json --field-selector=status.phase=Running >"$pod_file" 2>/dev/null || { fail "Cannot get pods"; json_add "overcommit" "FAIL" "Cannot get pods"; return 0; }
-
-    local overcommit_info
-    overcommit_info=$(python3 - "$node_file" "$pod_file" <<'PYEOF'
-import json, sys
-
-def parse_cpu(val):
-    val = str(val)
-    if val.endswith("m"):
-        return float(val[:-1])
-    elif val.endswith("n"):
-        return float(val[:-1]) / 1e6
-    return float(val) * 1000
-
-def parse_mem(val):
-    val = str(val)
-    units = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
-             "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4}
-    for suffix, mult in sorted(units.items(), key=lambda x: -len(x[0])):
-        if val.endswith(suffix):
-            return float(val[:-len(suffix)]) * mult
-    return float(val)
-
-def fmt_mem(b):
-    return f"{b / (1024**3):.1f}Gi"
-
-def fmt_cpu(m):
-    if m >= 1000:
-        return f"{m/1000:.1f}"
-    return f"{m:.0f}m"
-
-with open(sys.argv[1]) as f:
-    nodes = json.load(f)
-with open(sys.argv[2]) as f:
-    pods = json.load(f)
-
-alloc = {}
-for node in nodes["items"]:
-    name = node["metadata"]["name"]
-    a = node["status"].get("allocatable", {})
-    alloc[name] = {
-        "cpu": parse_cpu(a.get("cpu", "0")),
-        "mem": parse_mem(a.get("memory", "0")),
-    }
-
-node_req = {n: {"cpu": 0, "mem": 0} for n in alloc}
-node_lim = {n: {"cpu": 0, "mem": 0} for n in alloc}
-
-for pod in pods["items"]:
-    node = pod.get("spec", {}).get("nodeName")
-    if not node or node not in alloc:
-        continue
-    for c in pod.get("spec", {}).get("containers", []) + pod.get("spec", {}).get("initContainers", []):
-        res = c.get("resources", {})
-        req = res.get("requests", {})
-        lim = res.get("limits", {})
-        node_req[node]["cpu"] += parse_cpu(req.get("cpu", "0"))
-        node_req[node]["mem"] += parse_mem(req.get("memory", "0"))
-        node_lim[node]["cpu"] += parse_cpu(lim.get("cpu", "0"))
-        node_lim[node]["mem"] += parse_mem(lim.get("memory", "0"))
-
-for name in sorted(alloc):
-    a = alloc[name]
-    r = node_req[name]
-    l = node_lim[name]
-    if a["cpu"] <= 0 or a["mem"] <= 0:
-        continue
-
-    req_cpu_pct = (r["cpu"] / a["cpu"]) * 100
-    req_mem_pct = (r["mem"] / a["mem"]) * 100
-    lim_cpu_pct = (l["cpu"] / a["cpu"]) * 100
-    lim_mem_pct = (l["mem"] / a["mem"]) * 100
-
-    level = "OK"
-    if lim_mem_pct > 500 or lim_cpu_pct > 500:
-        level = "FAIL"
-    elif lim_mem_pct > 200 or lim_cpu_pct > 200:
-        level = "WARN"
-
-    print(f"{level}:{name}:req cpu {fmt_cpu(r['cpu'])}/{fmt_cpu(a['cpu'])} ({req_cpu_pct:.0f}%), mem {fmt_mem(r['mem'])}/{fmt_mem(a['mem'])} ({req_mem_pct:.0f}%) | lim cpu {fmt_cpu(l['cpu'])}/{fmt_cpu(a['cpu'])} ({lim_cpu_pct:.0f}%), mem {fmt_mem(l['mem'])}/{fmt_mem(a['mem'])} ({lim_mem_pct:.0f}%)")
-PYEOF
-) || true
-
-    if [[ -z "$overcommit_info" ]]; then
-        pass "Cannot compute overcommitment"
-        json_add "overcommit" "PASS" "No data"
+    if [[ -z "$usage" ]]; then
+        fail "metrics-server returned no data"
+        json_add "overcommit" "FAIL" "No data"
         return 0
     fi
 
     while IFS= read -r line; do
-        local level node_detail
-        level=$(echo "$line" | cut -d: -f1)
-        node_detail=$(echo "$line" | cut -d: -f2-)
+        local name cpu_pct mem_pct cpu_cores mem_bytes level node_detail
+        name=$(echo "$line" | awk '{print $1}')
+        cpu_pct=$(echo "$line" | awk '{print $3}' | tr -d '%')
+        mem_pct=$(echo "$line" | awk '{print $5}' | tr -d '%')
+        cpu_cores=$(echo "$line" | awk '{print $2}')
+        mem_bytes=$(echo "$line" | awk '{print $4}')
+
+        if [[ "$cpu_pct" -gt 90 || "$mem_pct" -gt 90 ]]; then
+            level="FAIL"
+        elif [[ "$cpu_pct" -gt 80 || "$mem_pct" -gt 80 ]]; then
+            level="WARN"
+        else
+            level="OK"
+        fi
+
+        node_detail="${name}: cpu ${cpu_cores} (${cpu_pct}%), mem ${mem_bytes} (${mem_pct}%)"
 
         if [[ "$level" == "FAIL" ]]; then
-            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Resource Overcommitment"
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Resource Usage"
             fail "$node_detail"
             had_issue=true
             status="FAIL"
         elif [[ "$level" == "WARN" ]]; then
-            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Resource Overcommitment"
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Resource Usage"
             warn "$node_detail"
             had_issue=true
             [[ "$status" != "FAIL" ]] && status="WARN"
@@ -1274,7 +1201,7 @@ PYEOF
             pass "$node_detail"
         fi
         detail+="$node_detail; "
-    done <<< "$overcommit_info"
+    done <<< "$usage"
 
     json_add "overcommit" "$status" "$detail"
 }
