@@ -79,6 +79,26 @@ resource "kubernetes_deployment" "uptime-kuma" {
           port {
             container_port = 3001
           }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 3001
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 3001
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/data"

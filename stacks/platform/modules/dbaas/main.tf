@@ -128,7 +128,7 @@ resource "helm_release" "mysql_cluster" {
     }
 
     datadirVolumeClaimTemplate = {
-      storageClassName = "local-path"
+      storageClassName = "iscsi-truenas"
       resources = {
         requests = {
           storage = "30Gi"
@@ -799,7 +799,7 @@ resource "null_resource" "pg_cluster" {
     instances     = "2"
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
-    storage_class = "local-path"
+    storage_class = "iscsi-truenas"
     memory_limit  = "4Gi"
     cpu_limit     = "2"
   }
@@ -822,7 +822,7 @@ resource "null_resource" "pg_cluster" {
         enableSuperuserAccess: true
         storage:
           size: 20Gi
-          storageClass: local-path
+          storageClass: iscsi-truenas
         resources:
           requests:
             cpu: "250m"
