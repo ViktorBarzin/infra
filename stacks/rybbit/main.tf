@@ -110,8 +110,8 @@ resource "kubernetes_deployment" "clickhouse" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "2"
-              memory = "4Gi"
+              cpu    = "1"
+              memory = "2Gi"
             }
           }
         }
