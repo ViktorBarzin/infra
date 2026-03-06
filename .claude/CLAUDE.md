@@ -63,11 +63,10 @@ For platform modules, use `source = "../../../../modules/kubernetes/nfs_volume"`
 
 ### iSCSI Storage for Databases
 **StorageClass**: `iscsi-truenas` (deployed via `stacks/platform/modules/iscsi-csi/` using democratic-csi).
-- Used by: PostgreSQL (CNPG), MySQL (InnoDB Cluster) — any pod, any node, same data
+- Used by: PostgreSQL (CNPG), MySQL (InnoDB Cluster), Redis, Prometheus, Loki — any pod, any node, same data
 - Driver: `freenas-iscsi` (SSH-based, NOT `freenas-api-iscsi` which is TrueNAS SCALE only)
 - ZFS datasets: `main/iscsi` (zvols), `main/iscsi-snaps` (snapshots)
 - All K8s nodes have `open-iscsi` + `iscsid` running
-- Redis stays on `local-path` (StatefulSet `volumeClaimTemplates` are immutable)
 
 ### Adding NFS Exports
 1. **Create the directory on TrueNAS first**: `ssh root@10.0.10.15 "mkdir -p /mnt/main/<service> && chmod 777 /mnt/main/<service>"`
