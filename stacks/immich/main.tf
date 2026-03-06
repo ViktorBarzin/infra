@@ -515,6 +515,26 @@ resource "kubernetes_deployment" "immich-machine-learning" {
               "nvidia.com/gpu" = "1"
             }
           }
+          liveness_probe {
+            http_get {
+              path = "/ping"
+              port = 3003
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/ping"
+              port = 3003
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
         }
         volume {
           name = "cache"

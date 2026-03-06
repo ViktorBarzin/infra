@@ -147,6 +147,26 @@ resource "kubernetes_deployment" "shlink" {
           port {
             container_port = 8080
           }
+          liveness_probe {
+            http_get {
+              path = "/rest/v3/health"
+              port = 8080
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/rest/v3/health"
+              port = 8080
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
         }
       }
     }
@@ -251,6 +271,26 @@ resource "kubernetes_deployment" "shlink-web" {
           }
           port {
             container_port = 8080
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
         }
         volume {

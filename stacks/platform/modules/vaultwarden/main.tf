@@ -109,6 +109,26 @@ resource "kubernetes_deployment" "vaultwarden" {
           port {
             container_port = 80
           }
+          liveness_probe {
+            http_get {
+              path = "/alive"
+              port = 80
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 5
+          }
+          readiness_probe {
+            http_get {
+              path = "/alive"
+              port = 80
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
