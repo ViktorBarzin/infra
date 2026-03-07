@@ -1,0 +1,7 @@
+# SOPS configuration — defines who can decrypt which files
+# age public keys only (safe to commit)
+creation_rules:
+  - path_regex: ^secrets\.sops\.json$
+    age: >-
+      age1z64h9t3acsm2rr74pz7j4846kwj5tutx9sk78jqv46y8fln4vs2sy920ce,
+      age1hrafaswdslw4u63scxp8u5ye4tf8h0xjah0v85w280phy06m0vespz2u0n
