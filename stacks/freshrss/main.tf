@@ -3,6 +3,10 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 module "tls_secret" {
@@ -148,11 +152,15 @@ module "ingress" {
   service_name    = "freshrss"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "FreshRSS"
-    "gethomepage.dev/description"  = "RSS feed reader"
-    "gethomepage.dev/icon"         = "freshrss.png"
-    "gethomepage.dev/group"        = "Productivity"
-    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/enabled"         = "true"
+    "gethomepage.dev/name"            = "FreshRSS"
+    "gethomepage.dev/description"     = "RSS feed reader"
+    "gethomepage.dev/icon"            = "freshrss.png"
+    "gethomepage.dev/group"           = "Productivity"
+    "gethomepage.dev/pod-selector"    = ""
+    "gethomepage.dev/widget.type"     = "freshrss"
+    "gethomepage.dev/widget.url"      = "http://freshrss.freshrss.svc.cluster.local"
+    "gethomepage.dev/widget.username" = var.homepage_credentials["freshrss"]["username"]
+    "gethomepage.dev/widget.password" = var.homepage_credentials["freshrss"]["password"]
   }
 }

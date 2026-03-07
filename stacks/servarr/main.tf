@@ -41,10 +41,11 @@ module "prowlarr" {
 }
 
 module "qbittorrent" {
-  source          = "./qbittorrent"
-  tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.aux
-  nfs_server      = var.nfs_server
+  source               = "./qbittorrent"
+  tls_secret_name      = var.tls_secret_name
+  tier                 = local.tiers.aux
+  nfs_server           = var.nfs_server
+  homepage_credentials = var.homepage_credentials
 }
 
 module "flaresolverr" {
