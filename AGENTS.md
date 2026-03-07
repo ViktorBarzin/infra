@@ -2,31 +2,44 @@
 
 ## Critical Rules (MUST FOLLOW)
 - **ALL changes through Terraform/Terragrunt** — NEVER `kubectl apply/edit/patch/delete` for persistent changes. Read-only kubectl is fine.
-- **NEVER put secrets in committed files** — use `terraform.tfvars` or `secrets/` (git-crypt encrypted)
+- **NEVER put secrets in plaintext** — use `secrets.sops.json` (SOPS-encrypted) or `terraform.tfvars` (git-crypt, legacy)
 - **NEVER restart NFS on TrueNAS** — causes cluster-wide mount failures across all pods
 - **NEVER commit secrets** — triple-check before every commit
 - **`[ci skip]` in commit messages** when changes were already applied locally
 - **Ask before `git push`** — always confirm with the user first
 
 ## Execution
-- **Apply a service**: `cd stacks/<service> && terragrunt apply --non-interactive`
+- **Apply a service**: `scripts/tg apply --non-interactive` (auto-decrypts SOPS secrets)
+- **Legacy apply**: `cd stacks/<service> && terragrunt apply --non-interactive` (uses terraform.tfvars)
 - **kubectl**: `kubectl --kubeconfig $(pwd)/config`
 - **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
 - **Plan all**: `cd stacks && terragrunt run --all --non-interactive -- plan`
+
+## Secrets Management (SOPS)
+- **`config.tfvars`** — plaintext config (hostnames, IPs, DNS records, public keys)
+- **`secrets.sops.json`** — SOPS-encrypted secrets (passwords, tokens, SSH keys, API keys)
+- **`.sops.yaml`** — defines who can decrypt (age public keys: Viktor + CI)
+- **`scripts/tg`** — wrapper that auto-decrypts SOPS before running terragrunt
+- **Edit secrets**: `sops secrets.sops.json` (opens $EDITOR, re-encrypts on save)
+- **Add a secret**: `sops set secrets.sops.json '["new_key"]' '"value"'`
+- **Operators** push PRs → Viktor reviews → CI decrypts and applies. No encryption keys needed for operators.
 
 ## Architecture
 Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Proxmox VMs.
 - **70+ services**, each in `stacks/<service>/` with its own Terraform state
 - **Core platform**: `stacks/platform/modules/` (~22 modules: Traefik, Kyverno, monitoring, dbaas, etc.)
 - **Public domain**: `viktorbarzin.me` (Cloudflare) | **Internal**: `viktorbarzin.lan` (Technitium DNS)
-- **Secrets**: `terraform.tfvars` (git-crypt encrypted)
+- **Onboarding portal**: `https://k8s-portal.viktorbarzin.me` — self-service kubectl setup + docs
+- **CI/CD**: Woodpecker CI — PRs run plan, merges to master auto-apply platform stack
 
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
 - `stacks/platform/modules/<service>/` — core infra modules
 - `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI
 - `modules/kubernetes/nfs_volume/` — NFS volume module (CSI-backed, soft mount)
-- `terraform.tfvars` — all secrets, DNS config, shared variables
+- `config.tfvars` — non-secret configuration (plaintext)
+- `secrets.sops.json` — all secrets (SOPS-encrypted JSON)
+- `terraform.tfvars` — legacy secrets file (git-crypt, kept for reference)
 - `scripts/cluster_healthcheck.sh` — 25-check cluster health script
 
 ## Storage
@@ -47,16 +60,23 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **Proxmox**: 192.168.1.127 (Dell R730, 22c/44t, 142GB RAM)
 - **Nodes**: k8s-master (10.0.20.100), node1 (GPU, Tesla T4), node2-4
 - **GPU**: `node_selector = { "gpu": "true" }` + toleration `nvidia.com/gpu`
-- **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only
+- **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only. Caches stale manifests for :latest tags — use versioned tags or pre-pull with `ctr --hosts-dir ''` to bypass.
 - **pfSense**: 10.0.20.1 (gateway, firewall, DNS forwarding)
 - **MySQL InnoDB Cluster**: 3 instances on iSCSI, anti-affinity excludes node2 (SIGBUS bug)
 - **SMTP**: `var.mail_host` port 587 STARTTLS (not internal svc address — cert mismatch)
+
+## Contributor Onboarding
+1. Get Authentik account + Headscale VPN access (ask Viktor)
+2. Clone repo — `AGENTS.md` is auto-loaded by Codex
+3. Create branch → edit → push → open PR
+4. Viktor reviews → CI applies → Slack notification
+5. Portal: `https://k8s-portal.viktorbarzin.me/onboarding` for full guide
 
 ## Common Operations
 - **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
 - **OOMKilled**: Check `kubectl describe limitrange tier-defaults -n <ns>`. Increase `resources.limits.memory` in the stack's main.tf.
-- **Helm stuck**: If Helm release is in `pending-upgrade`/`failed`, check `reference/patterns.md` for recovery.
+- **Add a secret**: `sops set secrets.sops.json '["key"]' '"value"'` then commit.
 - **NFS exports**: Create dir on TrueNAS first, add to `secrets/nfs_directories.txt`, run `secrets/nfs_exports.sh`.
 
 ## Detailed Reference

@@ -1,0 +1,49 @@
+when:
+  event: push
+  branch: master
+  path:
+    include:
+      - "stacks/platform/modules/k8s-portal/files/**"
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      attempts: 5
+      backoff: 10s
+
+steps:
+  - name: build-and-push
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      username: "viktorbarzin"
+      password:
+        from_secret: dockerhub-pat
+      repo: viktorbarzin/k8s-portal
+      dockerfile: stacks/platform/modules/k8s-portal/files/Dockerfile
+      context: stacks/platform/modules/k8s-portal/files
+      platforms:
+        - linux/amd64
+      auto_tag: true
+      cache_from: "viktorbarzin/k8s-portal:latest"
+      cache_to: "type=inline"
+
+  - name: deploy
+    image: bitnami/kubectl:latest
+    commands:
+      - "kubectl rollout restart deployment/k8s-portal -n k8s-portal"
+      - "kubectl rollout status deployment/k8s-portal -n k8s-portal --timeout=120s"
+      - "echo 'k8s-portal deployed successfully'"
+
+  - name: slack
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"K8s Portal: build + deploy ${CI_PIPELINE_STATUS}\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [success, failure]
