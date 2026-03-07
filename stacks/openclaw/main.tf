@@ -30,6 +30,10 @@ variable "openclaw_telegram_bot_token" {
   type = string
   sensitive = true
 }
+variable "forgejo_api_token" {
+  type      = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 
 
@@ -660,6 +664,199 @@ module "ingress" {
   }
 }
 
+# --- Webhook receiver: triggers task-processor Job on Forgejo issue events ---
+
+resource "kubernetes_config_map" "task_webhook" {
+  metadata {
+    name      = "task-webhook"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  data = {
+    "server.py" = <<-PYEOF
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import subprocess, time, json, os
+
+      BOT_USER = os.environ.get('FORGEJO_BOT_USER', 'viktor')
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_POST(self):
+              try:
+                  body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                  data = json.loads(body)
+                  action = data.get('action', '')
+
+                  # Trigger on: new issue, reopened issue, or new comment
+                  trigger = False
+                  if action in ('opened', 'reopened'):
+                      issue = data.get('issue', {})
+                      print(f"Issue #{issue.get('number','?')} {action}: {issue.get('title','?')}")
+                      trigger = True
+                  elif action == 'created' and 'comment' in data:
+                      comment = data.get('comment', {})
+                      commenter = comment.get('user', {}).get('login', '')
+                      # Skip comments from the bot itself to avoid loops
+                      if commenter != BOT_USER:
+                          issue = data.get('issue', {})
+                          print(f"Comment on #{issue.get('number','?')} by {commenter}")
+                          trigger = True
+                      else:
+                          print(f"Skipping own comment on #{data.get('issue',{}).get('number','?')}")
+
+                  if trigger:
+                      job_name = f"task-processor-{int(time.time())}"
+                      subprocess.run([
+                          'kubectl', 'create', 'job', job_name,
+                          '--from=cronjob/task-processor',
+                          '-n', 'openclaw'
+                      ], check=True)
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b'{"ok":true}')
+                  else:
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b'{"ok":true,"skipped":true}')
+              except Exception as e:
+                  print(f"Error: {e}")
+                  self.send_response(500)
+                  self.end_headers()
+                  self.wfile.write(f'{{"error":"{e}"}}'.encode())
+
+          def do_GET(self):
+              self.send_response(200)
+              self.end_headers()
+              self.wfile.write(b'{"status":"ok"}')
+
+          def log_message(self, fmt, *args):
+              print(f"[webhook] {args[0]} {args[1]} {args[2]}")
+
+      print("Task webhook receiver listening on :8080")
+      HTTPServer(('', 8080), Handler).serve_forever()
+    PYEOF
+  }
+}
+
+resource "kubernetes_service_account" "task_webhook" {
+  metadata {
+    name      = "task-webhook"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "task_webhook" {
+  metadata {
+    name      = "task-webhook-job-creator"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs", "cronjobs"]
+    verbs      = ["get", "list", "create"]
+  }
+}
+
+resource "kubernetes_role_binding" "task_webhook" {
+  metadata {
+    name      = "task-webhook-job-creator"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.task_webhook.metadata[0].name
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.task_webhook.metadata[0].name
+  }
+}
+
+resource "kubernetes_deployment" "task_webhook" {
+  metadata {
+    name      = "task-webhook"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app  = "task-webhook"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "task-webhook"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "task-webhook"
+        }
+      }
+      spec {
+        service_account_name = kubernetes_service_account.task_webhook.metadata[0].name
+        container {
+          name  = "webhook"
+          image = "python:3-alpine"
+          command = ["sh", "-c", "apk add --no-cache curl > /dev/null 2>&1 && curl -sfL https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && exec python3 -u /app/server.py"]
+          port {
+            container_port = 8080
+          }
+          volume_mount {
+            name       = "app"
+            mount_path = "/app"
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "32Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "app"
+          config_map {
+            name = kubernetes_config_map.task_webhook.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "task_webhook" {
+  metadata {
+    name      = "task-webhook"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app = "task-webhook"
+    }
+  }
+  spec {
+    selector = {
+      app = "task-webhook"
+    }
+    port {
+      port        = 80
+      target_port = 8080
+    }
+  }
+}
+
+module "task_webhook_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.openclaw.metadata[0].name
+  name            = "task-webhook"
+  tls_secret_name = var.tls_secret_name
+  host            = "task-webhook"
+  port            = 80
+}
+
 # --- CronJob: Scheduled cluster health check ---
 
 resource "kubernetes_service_account" "healthcheck" {
@@ -751,6 +948,87 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
                 kubectl exec -n openclaw "$POD" -c openclaw -- bash /workspace/infra/.claude/cluster-health.sh
               EOF
               ]
+
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# --- CronJob: Task processor — polls Forgejo issues and triggers OpenClaw ---
+
+resource "kubernetes_cron_job_v1" "task_processor" {
+  metadata {
+    name      = "task-processor"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app  = "task-processor"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    schedule                      = "*/5 * * * *"
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "task-processor"
+        }
+      }
+      spec {
+        active_deadline_seconds = 600
+        backoff_limit           = 0
+        template {
+          metadata {
+            labels = {
+              app = "task-processor"
+            }
+          }
+          spec {
+            service_account_name = kubernetes_service_account.healthcheck.metadata[0].name
+            restart_policy       = "Never"
+
+            container {
+              name  = "task-processor"
+              image = "bitnami/kubectl:latest"
+              command = ["bash", "-c", <<-EOF
+                # Find the openclaw pod
+                POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                if [ -z "$POD" ]; then
+                  echo "ERROR: OpenClaw pod not found"
+                  exit 1
+                fi
+                echo "Executing task processor in pod $POD..."
+                kubectl exec -n openclaw "$POD" -c openclaw -- \
+                  env FORGEJO_TOKEN="$FORGEJO_TOKEN" \
+                      OPENCLAW_TOKEN="$OPENCLAW_TOKEN" \
+                      OPENCLAW_URL="https://integrate.api.nvidia.com" \
+                  bash /workspace/infra/scripts/task-processor.sh
+              EOF
+              ]
+
+              env {
+                name  = "FORGEJO_TOKEN"
+                value = var.forgejo_api_token
+              }
+              env {
+                name  = "OPENCLAW_TOKEN"
+                value = var.nvidia_api_key
+              }
 
               resources {
                 requests = {
