@@ -3,7 +3,15 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "plotting_book_session_secret" {
-  type = string
+  type      = string
+  sensitive = true
+}
+variable "plotting_book_google_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "plotting_book_google_client_secret" {
+  type      = string
   sensitive = true
 }
 
@@ -61,6 +69,18 @@ resource "kubernetes_deployment" "plotting-book" {
             name  = "SESSION_SECRET"
             value = var.plotting_book_session_secret
           }
+          env {
+            name  = "GOOGLE_CLIENT_ID"
+            value = var.plotting_book_google_client_id
+          }
+          env {
+            name  = "GOOGLE_CLIENT_SECRET"
+            value = var.plotting_book_google_client_secret
+          }
+          env {
+            name  = "GOOGLE_CALLBACK_URL"
+            value = "https://plotting-book.viktorbarzin.me/api/auth/google/callback"
+          }
           port {
             container_port = 3001
           }
@@ -107,7 +127,7 @@ module "ingress" {
   name            = "plotting-book"
   tls_secret_name = var.tls_secret_name
 
-  custom_content_security_policy = "default-src 'self' blob: data:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' blob:; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
+  custom_content_security_policy = "default-src 'self' blob: data:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' blob: https://accounts.google.com; form-action 'self' https://accounts.google.com; frame-ancestors 'self' *.viktorbarzin.me viktorbarzin.me"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Plotting Book"
