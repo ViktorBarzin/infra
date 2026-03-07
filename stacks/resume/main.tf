@@ -299,7 +299,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Resume"
     "gethomepage.dev/description"  = "Online resume"
-    "gethomepage.dev/icon"         = "resume.png"
+    "gethomepage.dev/icon"         = "mdi-file-account"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }

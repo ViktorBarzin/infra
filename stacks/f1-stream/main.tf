@@ -132,7 +132,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"
     "gethomepage.dev/description"  = "Formula 1 live streams"
-    "gethomepage.dev/icon"         = "f1.png"
+    "gethomepage.dev/icon"         = "si-f1"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
