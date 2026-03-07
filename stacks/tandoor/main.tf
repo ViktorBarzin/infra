@@ -203,7 +203,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Tandoor"
     "gethomepage.dev/description"  = "Recipe manager"
-    "gethomepage.dev/icon"         = "tandoor.png"
+    "gethomepage.dev/icon"         = "tandoor-recipes.png"
     "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
   }
