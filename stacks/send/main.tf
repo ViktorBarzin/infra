@@ -87,6 +87,15 @@ resource "kubernetes_deployment" "send" {
             name  = "REDIS_HOST"
             value = var.redis_host
           }
+          liveness_probe {
+            http_get {
+              path = "/__version__"
+              port = 1443
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 30
+            failure_threshold     = 3
+          }
           volume_mount {
             name       = "data"
             mount_path = "/uploads"
