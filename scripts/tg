@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# scripts/tg — wrapper: decrypt secrets then run terragrunt
+# Usage: scripts/tg apply --non-interactive
+#        scripts/tg run --all -- plan
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SOPS_FILE="$REPO_ROOT/secrets.sops.json"
+OUT_FILE="$REPO_ROOT/secrets.auto.tfvars.json"
+
+# Decrypt if needed (skips if already decrypted and up-to-date)
+if [ -f "$SOPS_FILE" ]; then
+  if [ ! -f "$OUT_FILE" ] || [ "$SOPS_FILE" -nt "$OUT_FILE" ]; then
+    TEMP=$(mktemp "$OUT_FILE.XXXXXX")
+    trap "rm -f '$TEMP'" EXIT
+    sops -d "$SOPS_FILE" > "$TEMP"
+    mv "$TEMP" "$OUT_FILE"
+    echo "Decrypted secrets.sops.json → secrets.auto.tfvars.json"
+  fi
+fi
+
+exec terragrunt "$@"
