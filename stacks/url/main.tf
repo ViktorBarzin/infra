@@ -1,7 +1,16 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "url_shortener_geolite_license_key" { type = string }
-variable "url_shortener_api_key" { type = string }
-variable "url_shortener_mysql_password" { type = string }
+variable "url_shortener_api_key" {
+  type = string
+  sensitive = true
+}
+variable "url_shortener_mysql_password" {
+  type = string
+  sensitive = true
+}
 variable "mysql_host" { type = string }
 
 

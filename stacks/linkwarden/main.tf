@@ -1,7 +1,16 @@
-variable "tls_secret_name" { type = string }
-variable "linkwarden_postgresql_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "linkwarden_postgresql_password" {
+  type = string
+  sensitive = true
+}
 variable "linkwarden_authentik_client_id" { type = string }
-variable "linkwarden_authentik_client_secret" { type = string }
+variable "linkwarden_authentik_client_secret" {
+  type = string
+  sensitive = true
+}
 variable "postgresql_host" { type = string }
 
 

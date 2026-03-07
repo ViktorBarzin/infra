@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "client_certificate_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "client_certificate_secret_name" {
+  type = string
+  sensitive = true
+}
 
 
 resource "random_password" "csrf_token" {

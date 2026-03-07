@@ -1,4 +1,7 @@
-variable "shadowsocks_password" { type = string }
+variable "shadowsocks_password" {
+  type = string
+  sensitive = true
+}
 
 
 variable "method" {

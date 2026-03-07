@@ -1,13 +1,31 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "woodpecker_github_client_id" { type = string }
-variable "woodpecker_github_client_secret" { type = string }
-variable "woodpecker_agent_secret" { type = string }
-variable "woodpecker_db_password" { type = string }
-variable "dbaas_postgresql_root_password" { type = string }
+variable "woodpecker_github_client_secret" {
+  type = string
+  sensitive = true
+}
+variable "woodpecker_agent_secret" {
+  type = string
+  sensitive = true
+}
+variable "woodpecker_db_password" {
+  type = string
+  sensitive = true
+}
+variable "dbaas_postgresql_root_password" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "woodpecker_forgejo_client_id" { type = string }
-variable "woodpecker_forgejo_client_secret" { type = string }
+variable "woodpecker_forgejo_client_secret" {
+  type = string
+  sensitive = true
+}
 variable "woodpecker_forgejo_url" { type = string }
 
 

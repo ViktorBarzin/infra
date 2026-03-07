@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "wealthfolio_password_hash" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "wealthfolio_password_hash" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 
 

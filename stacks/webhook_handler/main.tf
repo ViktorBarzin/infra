@@ -1,11 +1,32 @@
-variable "tls_secret_name" { type = string }
-variable "webhook_handler_secret" { type = string }
-variable "webhook_handler_fb_verify_token" { type = string }
-variable "webhook_handler_fb_page_token" { type = string }
-variable "webhook_handler_fb_app_secret" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "webhook_handler_secret" {
+  type = string
+  sensitive = true
+}
+variable "webhook_handler_fb_verify_token" {
+  type = string
+  sensitive = true
+}
+variable "webhook_handler_fb_page_token" {
+  type = string
+  sensitive = true
+}
+variable "webhook_handler_fb_app_secret" {
+  type = string
+  sensitive = true
+}
 variable "webhook_handler_git_user" { type = string }
-variable "webhook_handler_git_token" { type = string }
-variable "webhook_handler_ssh_key" { type = string }
+variable "webhook_handler_git_token" {
+  type = string
+  sensitive = true
+}
+variable "webhook_handler_ssh_key" {
+  type = string
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "webhook-handler" {

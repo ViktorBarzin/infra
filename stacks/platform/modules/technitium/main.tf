@@ -5,7 +5,10 @@ variable "technitium_db_password" {}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 variable "technitium_username" { type = string }
-variable "technitium_password" { type = string }
+variable "technitium_password" {
+  type = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "technitium" {
   metadata {

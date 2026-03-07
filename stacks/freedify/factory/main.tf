@@ -11,10 +11,12 @@ variable "protected" {
 variable "listenbrainz_token" {
   type    = string
   default = null
+  sensitive = true
 }
 variable "genius_token" {
   type    = string
   default = null
+  sensitive = true
 }
 variable "dab_visitor_id" {
   type    = string
@@ -27,6 +29,7 @@ variable "dab_session" {
 variable "gemini_api_key" {
   type    = string
   default = null
+  sensitive = true
 }
 variable "cpu_limit" {
   type    = string

@@ -1,17 +1,44 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
-variable "dbaas_postgresql_root_password" { type = string }
-variable "trading_bot_db_password" { type = string }
-variable "trading_bot_alpaca_api_key" { type = string }
-variable "trading_bot_alpaca_secret_key" { type = string }
-variable "trading_bot_jwt_secret" { type = string }
+variable "dbaas_postgresql_root_password" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_db_password" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_alpaca_api_key" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_alpaca_secret_key" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_jwt_secret" {
+  type = string
+  sensitive = true
+}
 variable "trading_bot_reddit_client_id" { type = string }
-variable "trading_bot_reddit_client_secret" { type = string }
-variable "trading_bot_alpha_vantage_api_key" { type = string }
-variable "trading_bot_fmp_api_key" { type = string }
+variable "trading_bot_reddit_client_secret" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_alpha_vantage_api_key" {
+  type = string
+  sensitive = true
+}
+variable "trading_bot_fmp_api_key" {
+  type = string
+  sensitive = true
+}
 
 locals {
   common_env = {

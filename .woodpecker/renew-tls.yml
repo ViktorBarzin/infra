@@ -16,7 +16,7 @@ steps:
       - "apk update && apk add jq curl git git-crypt"
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
-      - "git-crypt unlock /tmp/key"
+      - "git-crypt unlock /tmp/key && rm /tmp/key"
 
   - name: renew-tls
     image: alpine
@@ -35,9 +35,10 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add openssh-client git git-crypt"
-      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - "mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
       - "chmod 400 secrets/deploy_key"
-      - "git add ."
+      # Only add specific paths — never git add .
+      - "git add secrets/ state/ || true"
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
       - "git commit -m 'Woodpecker CI Update TLS Certificates Commit' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master"

@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "ollama_api_credentials" { type = map(string) }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "ollama_api_credentials" {
+  type = map(string)
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "ollama_host" { type = string }
 

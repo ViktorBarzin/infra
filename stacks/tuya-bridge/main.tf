@@ -1,7 +1,19 @@
-variable "tls_secret_name" { type = string }
-variable "tiny_tuya_api_key" { type = string }
-variable "tiny_tuya_api_secret" { type = string }
-variable "tiny_tuya_service_secret" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "tiny_tuya_api_key" {
+  type = string
+  sensitive = true
+}
+variable "tiny_tuya_api_secret" {
+  type = string
+  sensitive = true
+}
+variable "tiny_tuya_service_secret" {
+  type = string
+  sensitive = true
+}
 variable "tiny_tuya_slack_url" { type = string }
 
 

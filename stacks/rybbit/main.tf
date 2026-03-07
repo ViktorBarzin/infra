@@ -1,6 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "clickhouse_password" { type = string }
-variable "clickhouse_postgres_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "clickhouse_password" {
+  type = string
+  sensitive = true
+}
+variable "clickhouse_postgres_password" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 
