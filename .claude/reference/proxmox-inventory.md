@@ -27,7 +27,7 @@
 |------|------|--------|------|-----|---------|------|-------|
 | 101 | pfsense | running | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall |
 | 102 | devvm | running | 16 | 8GB | vmbr1:vlan10 | 100G | Development VM |
-| 103 | home-assistant | running | 8 | 16GB | vmbr0 | 32G | HA, net0(vlan10) disabled |
+| 103 | home-assistant | running | 8 | 8GB | vmbr0 | 64G | HA Sofia, net0(vlan10) disabled, SSH: vbarzin@192.168.1.8 |
 | 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup (unused) |
 | 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |
 | 201 | k8s-node1 | running | 16 | 24GB | vmbr1:vlan20 | 256G | GPU node, Tesla T4 |
