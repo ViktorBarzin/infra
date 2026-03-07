@@ -22,27 +22,10 @@ controller:
     maxSurge: 25%
     maxUnavailable: 25%
 
-# Enable the ingress to expose Homepage to the network.
+# Ingress managed by ingress_factory module in main.tf (routes through caching proxy)
 ingress:
   main:
-    enabled: true
-    labels:
-      gethomepage.dev/enabled: "true"
-    annotations:
-      gethomepage.dev/name: "Homepage"
-      gethomepage.dev/description: "Service dashboard"
-      gethomepage.dev/group: "Core Platform"
-      gethomepage.dev/icon: "homepage.png"
-    ingressClassName: "traefik"
-    hosts:
-      - host: &host "home.viktorbarzin.me"
-        paths:
-          - path: /
-            pathType: Prefix
-    tls:
-      - hosts:
-          - *host
-        secretName: ${tls_secret_name}
+    enabled: false
 
 # All the config files for Homepage can be specified under their relevant config block.
 config:
