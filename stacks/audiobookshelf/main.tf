@@ -193,4 +193,12 @@ module "ingress" {
   name            = "audiobookshelf"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "b38fda4285df"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Audiobookshelf"
+    "gethomepage.dev/description"  = "Audiobook library"
+    "gethomepage.dev/icon"         = "audiobookshelf.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

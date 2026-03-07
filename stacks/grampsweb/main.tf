@@ -304,4 +304,12 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "GrampsWeb"
+    "gethomepage.dev/description"  = "Family tree"
+    "gethomepage.dev/icon"         = "grampsweb.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

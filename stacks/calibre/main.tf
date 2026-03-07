@@ -270,7 +270,7 @@ module "ingress" {
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Book library"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group"       = "Media & Entertainment"
     "gethomepage.dev/icon" : "calibre-web.png"
     "gethomepage.dev/name"            = "Calibre"
     "gethomepage.dev/widget.type"     = "calibreweb"
@@ -371,4 +371,7 @@ module "stacks-ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   rybbit_site_id  = "ce5f8aed6bbb"
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
 }

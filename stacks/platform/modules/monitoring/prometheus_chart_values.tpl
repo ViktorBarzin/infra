@@ -15,6 +15,12 @@ alertmanager:
     annotations:
       traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
       traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/name: "Alertmanager"
+      gethomepage.dev/description: "Alert routing"
+      gethomepage.dev/icon: "alertmanager.png"
+      gethomepage.dev/group: "Core Platform"
+      gethomepage.dev/pod-selector: ""
     tls:
       - secretName: "tls-secret"
         hosts:
@@ -151,6 +157,7 @@ server:
       gethomepage.dev/description: "Prometheus"
       gethomepage.dev/icon: "prometheus.png"
       gethomepage.dev/name: "Prometheus"
+      gethomepage.dev/group: "Core Platform"
       gethomepage.dev/widget.type: "prometheus"
       gethomepage.dev/widget.url: "http://prometheus-server.monitoring.svc.cluster.local:80"
       gethomepage.dev/pod-selector: ""

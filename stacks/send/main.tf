@@ -138,4 +138,12 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 1443
   rybbit_site_id  = "c1b8f8aa831b"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Send"
+    "gethomepage.dev/description"  = "Encrypted file sharing"
+    "gethomepage.dev/icon"         = "firefox-send.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

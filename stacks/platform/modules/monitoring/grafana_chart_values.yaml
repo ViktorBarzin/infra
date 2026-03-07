@@ -18,6 +18,16 @@ ingress:
   annotations:
     traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
     traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Grafana"
+    gethomepage.dev/description: "Dashboards & observability"
+    gethomepage.dev/icon: "grafana.png"
+    gethomepage.dev/group: "Core Platform"
+    gethomepage.dev/pod-selector: ""
+    gethomepage.dev/widget.type: "grafana"
+    gethomepage.dev/widget.url: "http://monitoring-grafana.monitoring.svc.cluster.local"
+    gethomepage.dev/widget.username: "admin"
+    gethomepage.dev/widget.password: "${grafana_admin_password}"
   tls:
     - secretName: "tls-secret"
       hosts:

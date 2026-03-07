@@ -108,4 +108,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.matrix.metadata[0].name
   name            = "matrix"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Matrix"
+    "gethomepage.dev/description"  = "Secure messaging"
+    "gethomepage.dev/icon"         = "matrix.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -178,4 +178,12 @@ module "ingress" {
   name            = "vaultwarden"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "b8fc85e18683"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Vaultwarden"
+    "gethomepage.dev/description"  = "Password manager"
+    "gethomepage.dev/icon"         = "vaultwarden.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -650,6 +650,14 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 80
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "OpenClaw"
+    "gethomepage.dev/description"  = "AI assistant"
+    "gethomepage.dev/icon"         = "openai.png"
+    "gethomepage.dev/group"        = "AI & Data"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # --- CronJob: Scheduled cluster health check ---

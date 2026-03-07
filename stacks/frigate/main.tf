@@ -243,6 +243,16 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   rybbit_site_id  = "0d4044069ff5"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Frigate"
+    "gethomepage.dev/description"  = "NVR & object detection"
+    "gethomepage.dev/icon"         = "frigate.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "frigate"
+    "gethomepage.dev/widget.url"   = "http://frigate.frigate.svc.cluster.local:5000"
+  }
 }
 
 module "ingress-internal" {
@@ -255,4 +265,7 @@ module "ingress-internal" {
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true
   ssl_redirect            = false
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
 }

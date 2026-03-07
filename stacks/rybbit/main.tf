@@ -444,6 +444,14 @@ module "ingress" {
   service_name    = "rybbit-client"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "3c476801a777"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Rybbit"
+    "gethomepage.dev/description"  = "Web analytics"
+    "gethomepage.dev/icon"         = "rybbit.png"
+    "gethomepage.dev/group"        = "Finance & Personal"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "ingress-api" {
@@ -454,4 +462,7 @@ module "ingress-api" {
   service_name    = "rybbit"
   ingress_path    = ["/api"]
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
 }

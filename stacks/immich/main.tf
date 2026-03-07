@@ -593,6 +593,7 @@ module "ingress-immich" {
     "gethomepage.dev/description"  = "Photos library"
     "gethomepage.dev/icon"         = "immich.png"
     "gethomepage.dev/name"         = "Immich"
+    "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/widget.type"  = "immich"
     "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
     "gethomepage.dev/pod-selector" = ""

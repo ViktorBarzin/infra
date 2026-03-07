@@ -120,4 +120,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   name            = "tuya-bridge"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Tuya Bridge"
+    "gethomepage.dev/description"  = "Smart device bridge"
+    "gethomepage.dev/icon"         = "tuya-smart.png"
+    "gethomepage.dev/group"        = "Smart Home"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

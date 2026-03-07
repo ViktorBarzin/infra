@@ -67,8 +67,12 @@ module "ingress" {
   name            = "flaresolverr"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  #   extra_annotations = {
-  #     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
-  #   }
-
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "FlareSolverr"
+    "gethomepage.dev/description"  = "Captcha solver proxy"
+    "gethomepage.dev/icon"         = "flaresolverr.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

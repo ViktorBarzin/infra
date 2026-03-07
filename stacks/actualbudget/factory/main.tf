@@ -14,6 +14,10 @@ variable "budget_encryption_password" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "homepage_annotations" {
+  type    = map(string)
+  default = {}
+}
 
 module "nfs_data" {
   source     = "../../../modules/kubernetes/nfs_volume"
@@ -103,6 +107,7 @@ module "ingress" {
   name            = "budget-${var.name}"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "3e6b6b68088a"
+  extra_annotations = var.homepage_annotations
 }
 
 

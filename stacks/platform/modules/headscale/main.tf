@@ -251,6 +251,14 @@ module "ingress" {
   name            = "headscale"
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Headscale"
+    "gethomepage.dev/description"  = "VPN mesh network"
+    "gethomepage.dev/icon"         = "headscale.png"
+    "gethomepage.dev/group"        = "Identity & Security"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "ingress-ui" {

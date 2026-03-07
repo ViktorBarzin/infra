@@ -94,6 +94,14 @@ module "ingress" {
   protected        = true
   backend_protocol = "HTTPS"
   port             = 443
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Kubernetes Dashboard"
+    "gethomepage.dev/description"  = "Cluster dashboard"
+    "gethomepage.dev/icon"         = "kubernetes-dashboard.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # create token with

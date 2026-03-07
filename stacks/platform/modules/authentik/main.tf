@@ -59,6 +59,14 @@ module "ingress" {
   name            = "authentik"
   service_name    = "goauthentik-server"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Authentik"
+    "gethomepage.dev/description"  = "Identity provider"
+    "gethomepage.dev/icon"         = "authentik.png"
+    "gethomepage.dev/group"        = "Identity & Security"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "ingress-outpost" {

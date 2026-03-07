@@ -160,6 +160,9 @@ module "ollama-ingress" {
   allow_local_access_only = true
   ssl_redirect            = false
   port                    = 11434
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
 }
 
 # Ollama API ingress for external access (basicAuth protected)
@@ -212,6 +215,7 @@ module "ollama-api-ingress" {
   port            = 11434
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.middlewares" = "ollama-ollama-api-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-crowdsec@kubernetescrd"
+    "gethomepage.dev/enabled"                          = "false"
   }
 }
 
@@ -306,4 +310,12 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 80
   rybbit_site_id  = "e73bebea399f"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Ollama"
+    "gethomepage.dev/description"  = "Local LLM inference"
+    "gethomepage.dev/icon"         = "ollama.png"
+    "gethomepage.dev/group"        = "AI & Data"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

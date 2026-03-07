@@ -218,4 +218,12 @@ module "ingress" {
   name            = "webhook-handler"
   host            = "webhook"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Webhook Handler"
+    "gethomepage.dev/description"  = "Webhook relay"
+    "gethomepage.dev/icon"         = "webhook.png"
+    "gethomepage.dev/group"        = "Automation"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

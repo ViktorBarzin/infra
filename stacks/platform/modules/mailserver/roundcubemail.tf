@@ -217,4 +217,12 @@ module "ingress" {
   service_name    = "roundcubemail"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "082f164faa7d"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Roundcube Mail"
+    "gethomepage.dev/description"  = "Webmail client"
+    "gethomepage.dev/icon"         = "roundcube.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -44,6 +44,14 @@ module "viktor" {
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["viktor"], "password", null)
   sync_id                    = lookup(var.actualbudget_credentials["viktor"], "sync_id", null)
+  homepage_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Budget Viktor"
+    "gethomepage.dev/description"  = "Personal budget"
+    "gethomepage.dev/icon"         = "actual-budget.png"
+    "gethomepage.dev/group"        = "Finance & Personal"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://budget-anca.viktorbarzin.me/
@@ -57,6 +65,14 @@ module "anca" {
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["anca"], "password", null)
   sync_id                    = lookup(var.actualbudget_credentials["anca"], "sync_id", null)
+  homepage_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Budget Anca"
+    "gethomepage.dev/description"  = "Personal budget"
+    "gethomepage.dev/icon"         = "actual-budget.png"
+    "gethomepage.dev/group"        = "Finance & Personal"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://budget-emo.viktorbarzin.me/
@@ -70,4 +86,12 @@ module "emo" {
   tier                       = local.tiers.edge
   budget_encryption_password = lookup(var.actualbudget_credentials["emo"], "password", null)
   sync_id                    = lookup(var.actualbudget_credentials["emo"], "sync_id", null)
+  homepage_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Budget Emo"
+    "gethomepage.dev/description"  = "Personal budget"
+    "gethomepage.dev/icon"         = "actual-budget.png"
+    "gethomepage.dev/group"        = "Finance & Personal"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
