@@ -274,7 +274,7 @@ module "ingress" {
     "gethomepage.dev/icon" : "calibre-web.png"
     "gethomepage.dev/name"            = "Calibre"
     "gethomepage.dev/widget.type"     = "calibreweb"
-    "gethomepage.dev/widget.url"      = "https://calibre.viktorbarzin.me"
+    "gethomepage.dev/widget.url"      = "http://calibre.calibre.svc.cluster.local"
     "gethomepage.dev/widget.username" = var.homepage_credentials["calibre-web"]["username"]
     "gethomepage.dev/widget.password" = var.homepage_credentials["calibre-web"]["password"]
     "gethomepage.dev/pod-selector"    = ""

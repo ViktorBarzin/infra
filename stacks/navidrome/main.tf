@@ -164,7 +164,7 @@ module "ingress" {
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "navidrome"
-    "gethomepage.dev/widget.url"   = "http://navidrome.navidrome.svc.cluster.local:4533"
+    "gethomepage.dev/widget.url"   = "http://navidrome.navidrome.svc.cluster.local"
     "gethomepage.dev/widget.user"  = var.homepage_credentials["navidrome"]["user"]
     "gethomepage.dev/widget.token" = var.homepage_credentials["navidrome"]["token"]
     "gethomepage.dev/widget.salt"  = var.homepage_credentials["navidrome"]["salt"]
