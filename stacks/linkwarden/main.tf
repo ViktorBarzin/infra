@@ -12,6 +12,10 @@ variable "linkwarden_authentik_client_secret" {
   sensitive = true
 }
 variable "postgresql_host" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "linkwarden" {
@@ -148,5 +152,8 @@ module "ingress" {
     "gethomepage.dev/icon"         = "linkwarden.png"
     "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "linkwarden"
+    "gethomepage.dev/widget.url"   = "http://linkwarden.linkwarden.svc.cluster.local:3000"
+    "gethomepage.dev/widget.key"   = var.homepage_credentials["linkwarden"]["api_key"]
   }
 }

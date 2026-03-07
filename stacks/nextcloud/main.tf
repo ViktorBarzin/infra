@@ -9,6 +9,10 @@ variable "nextcloud_db_password" {
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 module "tls_secret" {
@@ -191,12 +195,16 @@ module "ingress" {
   port            = 8080
   rybbit_site_id  = "5a3bfe59a3fe"
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Nextcloud"
-    "gethomepage.dev/description"  = "Cloud productivity suite"
-    "gethomepage.dev/icon"         = "nextcloud.png"
-    "gethomepage.dev/group"        = "Productivity"
-    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/enabled"        = "true"
+    "gethomepage.dev/name"           = "Nextcloud"
+    "gethomepage.dev/description"    = "Cloud productivity suite"
+    "gethomepage.dev/icon"           = "nextcloud.png"
+    "gethomepage.dev/group"          = "Productivity"
+    "gethomepage.dev/pod-selector"   = ""
+    "gethomepage.dev/widget.type"     = "nextcloud"
+    "gethomepage.dev/widget.url"      = "http://nextcloud.nextcloud.svc.cluster.local"
+    "gethomepage.dev/widget.username" = var.homepage_credentials["nextcloud"]["username"]
+    "gethomepage.dev/widget.password" = var.homepage_credentials["nextcloud"]["password"]
   }
 }
 
