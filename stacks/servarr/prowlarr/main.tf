@@ -1,6 +1,10 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "nfs_server" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 module "nfs_data" {
@@ -129,5 +133,8 @@ module "ingress" {
     "gethomepage.dev/icon"         = "prowlarr.png"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "prowlarr"
+    "gethomepage.dev/widget.url"   = "http://prowlarr.servarr.svc.cluster.local"
+    "gethomepage.dev/widget.key"   = var.homepage_credentials["prowlarr"]["api_key"]
   }
 }

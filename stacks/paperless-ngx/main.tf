@@ -190,7 +190,7 @@ module "ingress" {
     "gethomepage.dev/icon" : "paperless-ngx.png"
     "gethomepage.dev/name"        = "Paperless-ngx"
     "gethomepage.dev/widget.type" = "paperlessngx"
-    "gethomepage.dev/widget.url"  = "https://pdf.viktorbarzin.me"
+    "gethomepage.dev/widget.url"  = "http://paperless-ngx.paperless-ngx.svc.cluster.local"
     # "gethomepage.dev/widget.token"    = var.homepage_token
     "gethomepage.dev/widget.username" = var.homepage_credentials["paperless-ngx"]["username"]
     "gethomepage.dev/widget.password" = var.homepage_credentials["paperless-ngx"]["password"]

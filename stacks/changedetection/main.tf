@@ -3,6 +3,10 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "changedetection" {
@@ -167,5 +171,8 @@ module "ingress" {
     "gethomepage.dev/icon"         = "changedetection-io.png"
     "gethomepage.dev/group"        = "Automation"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "changedetectionio"
+    "gethomepage.dev/widget.url"   = "http://changedetection.changedetection.svc.cluster.local:5000"
+    "gethomepage.dev/widget.key"   = var.homepage_credentials["changedetection"]["api_key"]
   }
 }

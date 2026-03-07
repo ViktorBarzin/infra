@@ -3,6 +3,10 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "audiobookshelf" {
@@ -200,5 +204,8 @@ module "ingress" {
     "gethomepage.dev/icon"         = "audiobookshelf.png"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "audiobookshelf"
+    "gethomepage.dev/widget.url"   = "http://audiobookshelf.audiobookshelf.svc.cluster.local"
+    "gethomepage.dev/widget.key"   = var.homepage_credentials["audiobookshelf"]["token"]
   }
 }
