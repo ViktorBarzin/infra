@@ -35,6 +35,10 @@ override.tf.json
 
 git_crypt.key
 
+# SOPS — decrypted secrets (temporary, never commit)
+/secrets.auto.tfvars.json
+/secrets.auto.tfvars.json.*
+
 # Claude Code - temporary/sensitive files
 .claude/cmd_input.txt
 .claude/cmd_output.txt
