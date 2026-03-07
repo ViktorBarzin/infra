@@ -202,7 +202,7 @@ module "ingress" {
     "gethomepage.dev/group"          = "Productivity"
     "gethomepage.dev/pod-selector"   = ""
     "gethomepage.dev/widget.type"     = "nextcloud"
-    "gethomepage.dev/widget.url"      = "http://nextcloud.nextcloud.svc.cluster.local:8080"
+    "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
     "gethomepage.dev/widget.username" = var.homepage_credentials["nextcloud"]["username"]
     "gethomepage.dev/widget.password" = var.homepage_credentials["nextcloud"]["password"]
   }

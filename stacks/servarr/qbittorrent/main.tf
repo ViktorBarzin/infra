@@ -167,7 +167,7 @@ module "ingress" {
     "gethomepage.dev/group"            = "Media & Entertainment"
     "gethomepage.dev/pod-selector"     = ""
     "gethomepage.dev/widget.type"      = "qbittorrent"
-    "gethomepage.dev/widget.url"       = "http://qbittorrent.servarr.svc.cluster.local:8080"
+    "gethomepage.dev/widget.url"       = "http://qbittorrent.servarr.svc.cluster.local"
     "gethomepage.dev/widget.username"  = var.homepage_credentials["qbittorrent"]["username"]
     "gethomepage.dev/widget.password"  = var.homepage_credentials["qbittorrent"]["password"]
   }

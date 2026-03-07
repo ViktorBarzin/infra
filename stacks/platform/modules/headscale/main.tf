@@ -263,9 +263,6 @@ module "ingress" {
     "gethomepage.dev/icon"         = "headscale.png"
     "gethomepage.dev/group"        = "Identity & Security"
     "gethomepage.dev/pod-selector" = ""
-    "gethomepage.dev/widget.type"  = "headscale"
-    "gethomepage.dev/widget.url"   = "http://headscale.headscale.svc.cluster.local:8080"
-    "gethomepage.dev/widget.key"   = var.homepage_token
   }
 }
 
