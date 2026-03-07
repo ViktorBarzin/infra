@@ -216,6 +216,9 @@ module "ingress" {
     "gethomepage.dev/icon"         = "shlink.png"
     "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "shlink"
+    "gethomepage.dev/widget.url"   = "http://shlink.shlink.svc.cluster.local:8080"
+    "gethomepage.dev/widget.key"   = var.url_shortener_api_key
   }
 }
 
