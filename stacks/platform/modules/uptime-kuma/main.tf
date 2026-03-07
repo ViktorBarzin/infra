@@ -153,7 +153,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Uptime Kuma"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "uptimekuma"
-    "gethomepage.dev/widget.url"   = "http://uptime-kuma.uptime-kuma.svc.cluster.local:3001"
+    "gethomepage.dev/widget.url"   = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
     "gethomepage.dev/widget.slug"  = "infra"
   }
   rybbit_site_id = "8fef77b1f7fe"

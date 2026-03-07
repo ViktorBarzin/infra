@@ -172,7 +172,7 @@ module "ingress" {
     "gethomepage.dev/group"        = "Automation"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "changedetectionio"
-    "gethomepage.dev/widget.url"   = "http://changedetection.changedetection.svc.cluster.local:5000"
+    "gethomepage.dev/widget.url"   = "http://changedetection.changedetection.svc.cluster.local"
     "gethomepage.dev/widget.key"   = var.homepage_credentials["changedetection"]["api_key"]
   }
 }
