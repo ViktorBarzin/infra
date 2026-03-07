@@ -25,7 +25,7 @@ ingress:
     gethomepage.dev/group: "Core Platform"
     gethomepage.dev/pod-selector: ""
     gethomepage.dev/widget.type: "grafana"
-    gethomepage.dev/widget.url: "http://monitoring-grafana.monitoring.svc.cluster.local"
+    gethomepage.dev/widget.url: "http://grafana.monitoring.svc.cluster.local"
     gethomepage.dev/widget.username: "admin"
     gethomepage.dev/widget.password: "${grafana_admin_password}"
   tls:

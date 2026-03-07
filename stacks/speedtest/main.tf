@@ -180,7 +180,7 @@ module "ingress" {
     "gethomepage.dev/icon"         = "speedtest-tracker.png"
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/widget.type"  = "speedtest"
-    "gethomepage.dev/widget.url"   = "https://speedtest.viktorbarzin.me"
+    "gethomepage.dev/widget.url"   = "http://speedtest.speedtest.svc.cluster.local"
     "gethomepage.dev/pod-selector" = ""
   }
 }
