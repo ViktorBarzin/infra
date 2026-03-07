@@ -44,6 +44,7 @@ module "pfsense" {
     "gethomepage.dev/widget.username" : "admin"
     "gethomepage.dev/widget.password" : var.pfsense_homepage_token
     "gethomepage.dev/widget.fields" = "[\"load\", \"memory\", \"temp\", \"disk\"]"
+    "gethomepage.dev/widget.wan"    = "vtnet0"
   }
   depends_on     = [kubernetes_namespace.reverse-proxy]
   rybbit_site_id = "b029580e5a7c"
