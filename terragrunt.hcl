@@ -13,13 +13,18 @@ remote_state {
   }
 }
 
-# Load terraform.tfvars for all stacks.
-# Variables not declared by a stack are silently ignored (Terraform 1.x behavior).
+# Load config.tfvars (plaintext) + secrets.auto.tfvars.json (SOPS-decrypted).
+# Run `scripts/tg` instead of raw `terragrunt` — it decrypts secrets first.
+# Falls back to terraform.tfvars if it exists (migration compatibility).
 terraform {
   extra_arguments "common_vars" {
     commands = get_terraform_commands_that_need_vars()
     required_var_files = [
-      "${get_repo_root()}/terraform.tfvars"
+      "${get_repo_root()}/config.tfvars"
+    ]
+    optional_var_files = [
+      "${get_repo_root()}/terraform.tfvars",
+      "${get_repo_root()}/secrets.auto.tfvars.json"
     ]
   }
 
@@ -28,6 +33,12 @@ terraform {
     arguments = [
       "-var", "kube_config_path=${get_repo_root()}/config"
     ]
+  }
+
+  # Safety: fail if neither secrets source exists
+  before_hook "check_secrets" {
+    commands = ["apply", "plan", "destroy"]
+    execute  = ["sh", "-c", "test -f ${get_repo_root()}/secrets.auto.tfvars.json || test -f ${get_repo_root()}/terraform.tfvars || (echo 'ERROR: No secrets file found. Run scripts/tg instead of terragrunt directly.' && exit 1)"]
   }
 }
 
