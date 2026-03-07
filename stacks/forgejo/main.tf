@@ -3,6 +3,11 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "forgejo_authentik_client_id" { type = string }
+variable "forgejo_authentik_client_secret" {
+  type      = string
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "forgejo" {
@@ -65,6 +70,29 @@ resource "kubernetes_deployment" "forgejo" {
           env {
             name  = "USER_GID"
             value = 1000
+          }
+          # Root URL for OAuth2 redirect callbacks
+          env {
+            name  = "FORGEJO__server__ROOT_URL"
+            value = "https://forgejo.viktorbarzin.me"
+          }
+          # Disable local registration — only allow OAuth2 (Authentik)
+          env {
+            name  = "FORGEJO__service__DISABLE_REGISTRATION"
+            value = "false"
+          }
+          env {
+            name  = "FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__openid__ENABLE_OPENID_SIGNIN"
+            value = "false"
+          }
+          # Allow webhook delivery to internal k8s services
+          env {
+            name  = "FORGEJO__webhook__ALLOWED_HOST_LIST"
+            value = "*.svc.cluster.local"
           }
           volume_mount {
             name       = "data"
