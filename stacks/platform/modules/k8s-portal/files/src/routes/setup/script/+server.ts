@@ -4,7 +4,6 @@ import { readFileSync } from 'fs';
 const CLUSTER_SERVER = 'https://10.0.20.100:6443';
 const OIDC_ISSUER = 'https://authentik.viktorbarzin.me/application/o/kubernetes/';
 const OIDC_CLIENT_ID = 'kubernetes';
-const PORTAL_URL = 'https://k8s-portal.viktorbarzin.me';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const os = url.searchParams.get('os') || 'mac';
@@ -45,8 +44,6 @@ users:
         - --oidc-extra-scope=profile
         - --oidc-extra-scope=groups
       interactiveMode: IfAvailable`;
-
-	const escapedKubeconfig = kubeconfigContent.replace(/'/g, "'\\''");
 
 	let script: string;
 
@@ -98,7 +95,7 @@ fi
 # Write kubeconfig
 mkdir -p ~/.kube
 cat > ~/.kube/config-home << 'KUBECONFIG_EOF'
-${escapedKubeconfig}
+${kubeconfigContent}
 KUBECONFIG_EOF
 echo "[OK] Kubeconfig written to ~/.kube/config-home"
 
@@ -152,7 +149,7 @@ fi
 # Write kubeconfig
 mkdir -p ~/.kube
 cat > ~/.kube/config-home << 'KUBECONFIG_EOF'
-${escapedKubeconfig}
+${kubeconfigContent}
 KUBECONFIG_EOF
 echo "[OK] Kubeconfig written to ~/.kube/config-home"
 

@@ -4,7 +4,6 @@ variable "tls_secret_name" {
 }
 variable "client_certificate_secret_name" {
   type = string
-  sensitive = true
 }
 
 
