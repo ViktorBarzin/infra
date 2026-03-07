@@ -140,6 +140,16 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
         container {
           image = "jhonderson/actual-http-api:latest"
           name  = "actualbudget"
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "512Mi"
+            }
+          }
 
           port {
             container_port = 5007
