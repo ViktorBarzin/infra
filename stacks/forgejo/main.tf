@@ -121,4 +121,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Forgejo"
+    "gethomepage.dev/description"  = "Git hosting"
+    "gethomepage.dev/icon"         = "forgejo.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -112,4 +112,12 @@ module "ingress" {
   name            = "stirling-pdf"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "a55ac54ec749"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Stirling PDF"
+    "gethomepage.dev/description"  = "PDF toolkit"
+    "gethomepage.dev/icon"         = "stirling-pdf.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -261,6 +261,14 @@ module "ingress" {
   service_name    = "realestate-crawler-ui"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "edee05de453d"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Wrongmove"
+    "gethomepage.dev/description"  = "Property search"
+    "gethomepage.dev/icon"         = "home-assistant.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "ingress-api" {
@@ -271,6 +279,9 @@ module "ingress-api" {
   service_name    = "realestate-crawler-api"
   ingress_path    = ["/api"]
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
 }
 
 

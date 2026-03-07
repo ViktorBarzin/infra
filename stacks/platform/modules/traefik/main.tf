@@ -267,6 +267,14 @@ module "ingress" {
   port            = 8080
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Traefik"
+    "gethomepage.dev/description"  = "Reverse proxy & ingress"
+    "gethomepage.dev/icon"         = "traefik.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # Bot-block resilience proxy: nginx reverse proxy in front of Poison Fountain

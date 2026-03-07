@@ -173,4 +173,14 @@ module "ingress" {
   name            = "speedtest"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Speedtest"
+    "gethomepage.dev/description"  = "Internet speed tracker"
+    "gethomepage.dev/icon"         = "speedtest-tracker.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/widget.type"  = "speedtest"
+    "gethomepage.dev/widget.url"   = "https://speedtest.viktorbarzin.me"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

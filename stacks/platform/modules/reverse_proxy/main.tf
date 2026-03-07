@@ -30,7 +30,7 @@ module "pfsense" {
   extra_annotations = {
     "gethomepage.dev/enabled" : "true"
     "gethomepage.dev/description" : "Cluster Firewall"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group" : "Identity & Security"
     "gethomepage.dev/icon" : "pfsense.png"
     "gethomepage.dev/name" : "pFsense"
     "gethomepage.dev/widget.type" : "pfsense"
@@ -58,6 +58,14 @@ module "nas" {
   max_body_size    = "0m"
   depends_on       = [kubernetes_namespace.reverse-proxy]
   rybbit_site_id   = "1e11f8449f7d"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Synology NAS"
+    "gethomepage.dev/description"  = "Network storage"
+    "gethomepage.dev/icon"         = "synology.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://files.viktorbarzin.me/
@@ -72,6 +80,7 @@ module "nas-files" {
   ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
   max_body_size    = "0m"
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
 # https://idrac.viktorbarzin.me/
@@ -83,7 +92,14 @@ module "idrac" {
   tls_secret_name    = var.tls_secret_name
   backend_protocol   = "HTTPS"
   strip_auth_headers = true
-  extra_annotations  = {}
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "iDRAC"
+    "gethomepage.dev/description"  = "Server management"
+    "gethomepage.dev/icon"         = "dell.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
   depends_on         = [kubernetes_namespace.reverse-proxy]
 }
 
@@ -99,7 +115,7 @@ module "tp-link-gateway" {
   depends_on         = [kubernetes_namespace.reverse-proxy]
   protected          = true
   strip_auth_headers = true
-  extra_annotations  = {}
+  extra_annotations  = { "gethomepage.dev/enabled" = "false" }
 }
 
 # https://truenas.viktorbarzin.me/
@@ -114,7 +130,7 @@ module "truenas" {
   extra_annotations = {
     "gethomepage.dev/enabled" : "true"
     "gethomepage.dev/description" : "TrueNAS"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group" : "Infrastructure"
     "gethomepage.dev/icon" : "truenas.png"
     "gethomepage.dev/name" : "TrueNAS"
     "gethomepage.dev/widget.type" : "truenas"
@@ -136,6 +152,14 @@ module "r730" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "R730"
+    "gethomepage.dev/description"  = "Dell PowerEdge server"
+    "gethomepage.dev/icon"         = "dell.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://proxmox.viktorbarzin.me/
@@ -149,6 +173,14 @@ module "proxmox" {
   max_body_size    = "0" # unlimited
   depends_on       = [kubernetes_namespace.reverse-proxy]
   rybbit_site_id   = "190a7ad3e1c7"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Proxmox"
+    "gethomepage.dev/description"  = "Hypervisor"
+    "gethomepage.dev/icon"         = "proxmox.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://registry.viktorbarzin.me/
@@ -162,6 +194,12 @@ module "docker-registry-ui" {
   extra_annotations = {
     # Override middleware chain to remove rate-limit; the UI fires many API calls to list repos/tags
     "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Docker Registry"
+    "gethomepage.dev/description"  = "Container registry"
+    "gethomepage.dev/icon"         = "docker.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
   }
 }
 
@@ -174,6 +212,7 @@ module "valchedrym" {
   port             = 80
   backend_protocol = "HTTP"
   depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
 # https://ip150.viktorbarzin.me/
@@ -199,6 +238,7 @@ module "mladost3" {
   port            = 8080
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
 # # https://server-switch.viktorbarzin.me/
@@ -221,6 +261,14 @@ module "ha-sofia" {
   depends_on      = [kubernetes_namespace.reverse-proxy]
   protected       = false
   rybbit_site_id  = "590fc392690a"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Home Assistant Sofia"
+    "gethomepage.dev/description"  = "Smart home hub"
+    "gethomepage.dev/icon"         = "home-assistant.png"
+    "gethomepage.dev/group"        = "Smart Home"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://ha-london.viktorbarzin.me/
@@ -232,6 +280,14 @@ module "ha-london" {
   tls_secret_name = var.tls_secret_name
   depends_on      = [kubernetes_namespace.reverse-proxy]
   protected       = false
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Home Assistant London"
+    "gethomepage.dev/description"  = "Smart home hub"
+    "gethomepage.dev/icon"         = "home-assistant.png"
+    "gethomepage.dev/group"        = "Smart Home"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://london.viktorbarzin.me/
@@ -266,6 +322,7 @@ module "pi-lights" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   depends_on      = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
 # module "ups" { # .NET app doesn't work well behind host
@@ -292,4 +349,5 @@ module "mbp14" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   depends_on      = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }

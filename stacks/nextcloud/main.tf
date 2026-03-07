@@ -190,6 +190,14 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 8080
   rybbit_site_id  = "5a3bfe59a3fe"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Nextcloud"
+    "gethomepage.dev/description"  = "Cloud productivity suite"
+    "gethomepage.dev/icon"         = "nextcloud.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "whiteboard_ingress" {

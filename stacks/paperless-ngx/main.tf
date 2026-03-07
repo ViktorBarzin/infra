@@ -186,7 +186,7 @@ module "ingress" {
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Document library"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group"       = "Productivity"
     "gethomepage.dev/icon" : "paperless-ngx.png"
     "gethomepage.dev/name"        = "Paperless-ngx"
     "gethomepage.dev/widget.type" = "paperlessngx"

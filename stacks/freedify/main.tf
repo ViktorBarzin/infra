@@ -45,6 +45,14 @@ module "viktor" {
   dab_session        = lookup(var.freedify_credentials["viktor"], "dab_session", null)
   dab_visitor_id     = lookup(var.freedify_credentials["viktor"], "dab_visitor_id", null)
   gemini_api_key     = lookup(var.freedify_credentials["viktor"], "gemini_api_key", null)
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Freedify (Viktor)"
+    "gethomepage.dev/description"  = "Music streaming"
+    "gethomepage.dev/icon"         = "navidrome.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # https://music-emo.viktorbarzin.me/
@@ -58,4 +66,12 @@ module "emo" {
   protected       = true
   genius_token    = lookup(var.freedify_credentials["emo"], "genius_token", null)
   gemini_api_key  = lookup(var.freedify_credentials["emo"], "gemini_api_key", null)
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Freedify (Emo)"
+    "gethomepage.dev/description"  = "Music streaming"
+    "gethomepage.dev/icon"         = "navidrome.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

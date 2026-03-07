@@ -120,6 +120,14 @@ module "ingress" {
   namespace       = kubernetes_namespace.kms.metadata[0].name
   name            = "kms"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "KMS"
+    "gethomepage.dev/description"  = "License activation server"
+    "gethomepage.dev/icon"         = "microsoft.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 resource "kubernetes_deployment" "windows_kms" {

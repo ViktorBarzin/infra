@@ -204,12 +204,19 @@ resource "kubernetes_service" "shlink" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  namespace         = kubernetes_namespace.shlink.metadata[0].name
-  name              = "url"
-  service_name      = "shlink"
-  tls_secret_name   = var.tls_secret_name
-  extra_annotations = {}
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.shlink.metadata[0].name
+  name            = "url"
+  service_name    = "shlink"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Shlink"
+    "gethomepage.dev/description"  = "URL shortener"
+    "gethomepage.dev/icon"         = "shlink.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 
@@ -341,4 +348,12 @@ module "ingress-web" {
   service_name    = "shlink-web"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "false"
+    "gethomepage.dev/name"         = "Shlink Web"
+    "gethomepage.dev/description"  = "URL shortener web client"
+    "gethomepage.dev/icon"         = "shlink.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

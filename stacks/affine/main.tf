@@ -231,4 +231,12 @@ module "ingress" {
   name            = "affine"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "500m"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Affine"
+    "gethomepage.dev/description"  = "Knowledge base"
+    "gethomepage.dev/icon"         = "affine.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

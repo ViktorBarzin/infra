@@ -161,6 +161,12 @@ module "ingress" {
   port            = 443
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.middlewares" = "owntracks-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+    "gethomepage.dev/enabled"                          = "true"
+    "gethomepage.dev/name"                             = "OwnTracks"
+    "gethomepage.dev/description"                      = "Location tracking"
+    "gethomepage.dev/icon"                             = "owntracks.png"
+    "gethomepage.dev/group"                            = "Smart Home"
+    "gethomepage.dev/pod-selector"                     = ""
   }
 }
 

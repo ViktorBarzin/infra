@@ -47,6 +47,10 @@ variable "memory_request" {
   type    = string
   default = "64Mi"
 }
+variable "extra_annotations" {
+  type    = map(string)
+  default = {}
+}
 
 
 resource "kubernetes_deployment" "freedify" {
@@ -144,9 +148,10 @@ resource "kubernetes_service" "freedify" {
 }
 
 module "ingress" {
-  source          = "../../../modules/kubernetes/ingress_factory"
-  namespace       = "freedify"
-  name            = "music-${var.name}"
-  tls_secret_name = var.tls_secret_name
-  protected       = var.protected
+  source            = "../../../modules/kubernetes/ingress_factory"
+  namespace         = "freedify"
+  name              = "music-${var.name}"
+  tls_secret_name   = var.tls_secret_name
+  protected         = var.protected
+  extra_annotations = var.extra_annotations
 }

@@ -121,6 +121,14 @@ module "ingress" {
   name            = "k8s-portal"
   tls_secret_name = var.tls_secret_name
   protected       = true # Require Authentik login
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "K8s Portal"
+    "gethomepage.dev/description"  = "Kubernetes portal"
+    "gethomepage.dev/icon"         = "kubernetes.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # Unprotected ingress for the setup script (needs to be curl-able without auth)

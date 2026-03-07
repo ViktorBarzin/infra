@@ -101,4 +101,12 @@ module "ingress" {
   name            = "travel"
   tls_secret_name = var.tls_secret_name
   service_name    = "travel-blog"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Travel Blog"
+    "gethomepage.dev/description"  = "Travel stories"
+    "gethomepage.dev/icon"         = "ghost.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

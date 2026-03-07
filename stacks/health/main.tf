@@ -147,4 +147,12 @@ module "ingress" {
   name            = "health"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "100m"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Health"
+    "gethomepage.dev/description"  = "Health dashboard"
+    "gethomepage.dev/icon"         = "healthchecks.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

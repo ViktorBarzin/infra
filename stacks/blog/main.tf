@@ -113,6 +113,14 @@ module "ingress" {
   full_host       = "viktorbarzin.me"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "da853a2438d0"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Blog"
+    "gethomepage.dev/description"  = "Personal blog"
+    "gethomepage.dev/icon"         = "hugo.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 module "ingress-www" {

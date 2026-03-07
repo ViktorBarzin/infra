@@ -183,4 +183,12 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 443
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "MeshCentral"
+    "gethomepage.dev/description"  = "Remote management"
+    "gethomepage.dev/icon"         = "meshcentral.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

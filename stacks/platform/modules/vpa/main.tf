@@ -84,6 +84,14 @@ module "ingress" {
   port            = 80
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Goldilocks"
+    "gethomepage.dev/description"  = "Resource recommendations"
+    "gethomepage.dev/icon"         = "goldilocks.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
 
   depends_on = [helm_release.goldilocks]
 }

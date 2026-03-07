@@ -92,4 +92,12 @@ module "ingress" {
   name            = "city-guesser"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "City Guesser"
+    "gethomepage.dev/description"  = "Geography game"
+    "gethomepage.dev/icon"         = "globe.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

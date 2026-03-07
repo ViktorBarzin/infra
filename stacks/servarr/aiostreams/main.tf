@@ -118,4 +118,12 @@ module "ingress" {
   name            = "aiostreams"
   tls_secret_name = var.tls_secret_name
   #   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "AIOStreams"
+    "gethomepage.dev/description"  = "Streaming addon manager"
+    "gethomepage.dev/icon"         = "stremio.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

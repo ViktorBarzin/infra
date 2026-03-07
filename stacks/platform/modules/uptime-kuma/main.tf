@@ -148,7 +148,7 @@ module "ingress" {
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Uptime monitor"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group"       = "Core Platform"
     "gethomepage.dev/icon" : "uptime-kuma.png"
     "gethomepage.dev/name"         = "Uptime Kuma"
     "gethomepage.dev/widget.type"  = "uptimekuma"

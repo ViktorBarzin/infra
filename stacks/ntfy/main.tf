@@ -171,4 +171,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.ntfy.metadata[0].name
   name            = "ntfy"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "ntfy"
+    "gethomepage.dev/description"  = "Push notifications"
+    "gethomepage.dev/icon"         = "ntfy.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

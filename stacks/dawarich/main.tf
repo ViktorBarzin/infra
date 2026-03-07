@@ -345,4 +345,12 @@ module "ingress" {
   name            = "dawarich"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "0abfd409f2fb"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Dawarich"
+    "gethomepage.dev/description"  = "Location history"
+    "gethomepage.dev/icon"         = "dawarich.png"
+    "gethomepage.dev/group"        = "Smart Home"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

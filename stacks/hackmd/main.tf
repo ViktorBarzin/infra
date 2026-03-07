@@ -168,4 +168,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.hackmd.metadata[0].name
   name            = "hackmd"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "HackMD"
+    "gethomepage.dev/description"  = "Collaborative markdown"
+    "gethomepage.dev/icon"         = "hedgedoc.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

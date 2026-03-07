@@ -160,4 +160,12 @@ module "ingress" {
   name            = "changedetection"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Changedetection"
+    "gethomepage.dev/description"  = "Website change monitor"
+    "gethomepage.dev/icon"         = "changedetection-io.png"
+    "gethomepage.dev/group"        = "Automation"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

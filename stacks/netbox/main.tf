@@ -196,4 +196,12 @@ module "ingress" {
   name            = "netbox"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Netbox"
+    "gethomepage.dev/description"  = "Network documentation"
+    "gethomepage.dev/icon"         = "netbox.png"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
