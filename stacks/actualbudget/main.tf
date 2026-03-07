@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "actualbudget_credentials" { type = map(any) }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "actualbudget_credentials" {
+  type = map(any)
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 
 

@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "coturn_turn_secret" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "coturn_turn_secret" {
+  type = string
+  sensitive = true
+}
 variable "public_ip" { type = string }
 
 

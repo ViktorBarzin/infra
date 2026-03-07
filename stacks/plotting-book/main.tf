@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "plotting_book_session_secret" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "plotting_book_session_secret" {
+  type = string
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "plotting-book" {

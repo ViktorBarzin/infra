@@ -11,6 +11,7 @@ variable "sync_id" {
 variable "budget_encryption_password" {
   type    = string
   default = null # If not passed, we won't run banksync ;known after initial installation
+  sensitive = true
 }
 variable "nfs_server" { type = string }
 

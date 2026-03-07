@@ -11,11 +11,18 @@ terraform {
 variable "kube_config_path" {
   type    = string
   default = "~/.kube/config"
+  sensitive = true
 }
 
 variable "proxmox_pm_api_url" { type = string }
-variable "proxmox_pm_api_token_id" { type = string }
-variable "proxmox_pm_api_token_secret" { type = string }
+variable "proxmox_pm_api_token_id" {
+  type = string
+  sensitive = true
+}
+variable "proxmox_pm_api_token_secret" {
+  type = string
+  sensitive = true
+}
 
 provider "proxmox" {
   pm_api_url          = var.proxmox_pm_api_url

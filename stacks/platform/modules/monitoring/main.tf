@@ -8,13 +8,29 @@ variable "idrac_username" {
 }
 variable "idrac_password" {
   default = "calvin"
+  sensitive = true
 }
 variable "alertmanager_slack_api_url" {}
-variable "tiny_tuya_service_secret" { type = string }
-variable "haos_api_token" { type = string }
-variable "pve_password" { type = string }
-variable "grafana_db_password" { type = string }
-variable "grafana_admin_password" { type = string }
+variable "tiny_tuya_service_secret" {
+  type = string
+  sensitive = true
+}
+variable "haos_api_token" {
+  type = string
+  sensitive = true
+}
+variable "pve_password" {
+  type = string
+  sensitive = true
+}
+variable "grafana_db_password" {
+  type = string
+  sensitive = true
+}
+variable "grafana_admin_password" {
+  type = string
+  sensitive = true
+}
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
 

@@ -1,6 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "dawarich_database_password" { type = string }
-variable "geoapify_api_key" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "dawarich_database_password" {
+  type = string
+  sensitive = true
+}
+variable "geoapify_api_key" {
+  type = string
+  sensitive = true
+}
 
 
 variable "image_version" {

@@ -1,7 +1,19 @@
-variable "tls_secret_name" { type = string }
-variable "immich_postgresql_password" { type = string }
-variable "immich_frame_api_key" { type = string }
-variable "homepage_credentials" { type = map(any) }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "immich_postgresql_password" {
+  type = string
+  sensitive = true
+}
+variable "immich_frame_api_key" {
+  type = string
+  sensitive = true
+}
+variable "homepage_credentials" {
+  type = map(any)
+  sensitive = true
+}
 
 
 variable "immich_version" {

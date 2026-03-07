@@ -1,8 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "tandoor_database_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "tandoor_database_password" {
+  type = string
+  sensitive = true
+}
 variable "tandoor_email_password" {
   type    = string
   default = ""
+  sensitive = true
 }
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }

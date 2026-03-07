@@ -1,11 +1,35 @@
-variable "tls_secret_name" { type = string }
-variable "openclaw_ssh_key" { type = string }
-variable "openclaw_skill_secrets" { type = map(string) }
-variable "llama_api_key" { type = string }
-variable "brave_api_key" { type = string }
-variable "openrouter_api_key" { type = string }
-variable "nvidia_api_key" { type = string }
-variable "openclaw_telegram_bot_token" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "openclaw_ssh_key" {
+  type = string
+  sensitive = true
+}
+variable "openclaw_skill_secrets" {
+  type = map(string)
+  sensitive = true
+}
+variable "llama_api_key" {
+  type = string
+  sensitive = true
+}
+variable "brave_api_key" {
+  type = string
+  sensitive = true
+}
+variable "openrouter_api_key" {
+  type = string
+  sensitive = true
+}
+variable "nvidia_api_key" {
+  type = string
+  sensitive = true
+}
+variable "openclaw_telegram_bot_token" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 
 

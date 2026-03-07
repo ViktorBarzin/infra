@@ -1,6 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "health_postgresql_password" { type = string }
-variable "health_secret_key" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "health_postgresql_password" {
+  type = string
+  sensitive = true
+}
+variable "health_secret_key" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 

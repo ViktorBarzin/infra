@@ -12,7 +12,10 @@ variable "prod" {
   type    = bool
 }
 variable "nfs_server" { type = string }
-variable "kube_config_path" { type = string }
+variable "kube_config_path" {
+  type = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "dbaas" {
   metadata {

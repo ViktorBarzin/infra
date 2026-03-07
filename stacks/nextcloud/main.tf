@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "nextcloud_db_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "nextcloud_db_password" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
