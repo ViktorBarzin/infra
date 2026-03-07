@@ -3,6 +3,11 @@ variable "secret_key" {}
 variable "postgres_password" {}
 variable "tier" { type = string }
 variable "redis_host" { type = string }
+variable "homepage_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
 
 
 module "tls_secret" {
@@ -66,6 +71,9 @@ module "ingress" {
     "gethomepage.dev/icon"         = "authentik.png"
     "gethomepage.dev/group"        = "Identity & Security"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "authentik"
+    "gethomepage.dev/widget.url"   = "http://goauthentik-server.authentik.svc.cluster.local"
+    "gethomepage.dev/widget.key"   = var.homepage_token
   }
 }
 
