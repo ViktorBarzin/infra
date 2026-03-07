@@ -168,7 +168,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Changedetection"
     "gethomepage.dev/description"  = "Website change monitor"
-    "gethomepage.dev/icon"         = "changedetection-io.png"
+    "gethomepage.dev/icon"         = "changedetection.png"
     "gethomepage.dev/group"        = "Automation"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "changedetectionio"

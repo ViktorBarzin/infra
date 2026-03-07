@@ -488,7 +488,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Trading Bot"
     "gethomepage.dev/description"  = "Automated trading"
-    "gethomepage.dev/icon"         = "alpaca.png"
+    "gethomepage.dev/icon"         = "mdi-chart-line"
     "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
