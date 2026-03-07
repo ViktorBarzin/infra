@@ -155,7 +155,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Wealthfolio"
     "gethomepage.dev/description"  = "Investment portfolio tracker"
-    "gethomepage.dev/icon"         = "wealthfolio.png"
+    "gethomepage.dev/icon"         = "mdi-finance"
     "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
   }
