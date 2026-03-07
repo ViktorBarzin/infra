@@ -32,6 +32,22 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_persistent_volume_claim" "plotting-book-data" {
+  metadata {
+    name      = "plotting-book-data"
+    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "iscsi-truenas"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "plotting-book" {
   metadata {
     name      = "plotting-book"
@@ -60,6 +76,12 @@ resource "kubernetes_deployment" "plotting-book" {
         }
       }
       spec {
+        volume {
+          name = "data"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.plotting-book-data.metadata[0].name
+          }
+        }
         container {
           image = "ancamilea/book-plotter:latest"
           # image = "viktorbarzin/book-plotter:7"
@@ -80,6 +102,14 @@ resource "kubernetes_deployment" "plotting-book" {
           env {
             name  = "GOOGLE_CALLBACK_URL"
             value = "https://plotting-book.viktorbarzin.me/api/auth/google/callback"
+          }
+          env {
+            name  = "DB_PATH"
+            value = "/data/database.sqlite"
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
           }
           port {
             container_port = 3001
