@@ -109,6 +109,7 @@ lapi:
         gethomepage.dev/description: "Web Application Firewall"
         gethomepage.dev/icon: "crowdsec.png"
         gethomepage.dev/name: "CrowdSec"
+        gethomepage.dev/group: "Identity & Security"
         gethomepage.dev/widget.type: "crowdsec"
         gethomepage.dev/widget.url: "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
         gethomepage.dev/widget.username: "${homepage_username}"

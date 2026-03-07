@@ -81,4 +81,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.jsoncrack.metadata[0].name
   name            = "json"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "JSON Crack"
+    "gethomepage.dev/description"  = "JSON visualizer"
+    "gethomepage.dev/icon"         = "json.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

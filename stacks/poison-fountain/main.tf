@@ -211,6 +211,14 @@ module "ingress" {
   skip_default_rate_limit = true
   exclude_crowdsec        = true
   anti_ai_scraping        = false
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Poison Fountain"
+    "gethomepage.dev/description"  = "AI bot trap"
+    "gethomepage.dev/icon"         = "shield.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # CronJob to fetch and cache poisoned content from Poison Fountain

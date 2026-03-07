@@ -199,4 +199,12 @@ module "ingress" {
   name            = "onlyoffice"
   service_name    = "onlyoffice-document-server"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "OnlyOffice"
+    "gethomepage.dev/description"  = "Document editor"
+    "gethomepage.dev/icon"         = "onlyoffice.png"
+    "gethomepage.dev/group"        = "Other"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

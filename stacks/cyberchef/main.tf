@@ -99,4 +99,12 @@ module "ingress" {
   name            = "cc"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "7c460afc68c4"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "CyberChef"
+    "gethomepage.dev/description"  = "Data transformation toolkit"
+    "gethomepage.dev/icon"         = "cyberchef.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

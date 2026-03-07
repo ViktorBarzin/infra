@@ -125,4 +125,12 @@ module "ingress" {
   name            = "draw"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Excalidraw"
+    "gethomepage.dev/description"  = "Collaborative whiteboard"
+    "gethomepage.dev/icon"         = "excalidraw.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

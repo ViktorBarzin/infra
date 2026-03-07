@@ -246,6 +246,14 @@ module "ingress" {
   name            = "ebook2audiobook"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Ebook2Audiobook"
+    "gethomepage.dev/description"  = "Book to audio converter"
+    "gethomepage.dev/icon"         = "audiobookshelf.png"
+    "gethomepage.dev/group"        = "AI & Data"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 
@@ -421,4 +429,12 @@ module "audiblez-web-ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   max_body_size   = "500m" # Allow large EPUB uploads
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Audiblez"
+    "gethomepage.dev/description"  = "Book to audio converter"
+    "gethomepage.dev/icon"         = "audiobookshelf.png"
+    "gethomepage.dev/group"        = "AI & Data"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

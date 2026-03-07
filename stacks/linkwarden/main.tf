@@ -141,4 +141,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.linkwarden.metadata[0].name
   name            = "linkwarden"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Linkwarden"
+    "gethomepage.dev/description"  = "Bookmark manager"
+    "gethomepage.dev/icon"         = "linkwarden.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

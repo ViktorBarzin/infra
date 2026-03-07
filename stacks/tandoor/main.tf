@@ -199,4 +199,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.tandoor.metadata[0].name
   name            = "tandoor"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Tandoor"
+    "gethomepage.dev/description"  = "Recipe manager"
+    "gethomepage.dev/icon"         = "tandoor.png"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

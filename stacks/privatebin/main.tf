@@ -118,4 +118,12 @@ module "ingress" {
   tls_secret_name                = var.tls_secret_name
   rybbit_site_id                 = "3ae810b0476d"
   custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "PrivateBin"
+    "gethomepage.dev/description"  = "Encrypted pastebin"
+    "gethomepage.dev/icon"         = "privatebin.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

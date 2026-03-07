@@ -162,4 +162,12 @@ module "ingress" {
   namespace       = kubernetes_namespace.n8n.metadata[0].name
   name            = "n8n"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "n8n"
+    "gethomepage.dev/description"  = "Workflow automation"
+    "gethomepage.dev/icon"         = "n8n.png"
+    "gethomepage.dev/group"        = "Automation"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

@@ -128,4 +128,12 @@ module "ingress" {
   tls_secret_name  = var.tls_secret_name
   rybbit_site_id   = "7e69786f66d5"
   exclude_crowdsec = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "F1 Stream"
+    "gethomepage.dev/description"  = "Formula 1 live streams"
+    "gethomepage.dev/icon"         = "f1.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

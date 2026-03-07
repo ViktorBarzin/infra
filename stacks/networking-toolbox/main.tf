@@ -93,4 +93,12 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   rybbit_site_id  = "50e38577e41c"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Networking Toolbox"
+    "gethomepage.dev/description"  = "Network diagnostic tools"
+    "gethomepage.dev/icon"         = "networking.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

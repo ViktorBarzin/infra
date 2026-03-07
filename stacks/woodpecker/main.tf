@@ -205,4 +205,12 @@ module "ingress" {
   name            = "ci"
   service_name    = "woodpecker-server"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Woodpecker CI"
+    "gethomepage.dev/description"  = "CI/CD pipelines"
+    "gethomepage.dev/icon"         = "woodpecker-ci.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }

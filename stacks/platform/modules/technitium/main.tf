@@ -291,7 +291,7 @@ module "ingress" {
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/description" = "Internal DNS Server and Recursive Resolver"
-    # gethomepage.dev/group: Media
+    "gethomepage.dev/group"       = "Infrastructure"
     "gethomepage.dev/icon" : "technitium.png"
     "gethomepage.dev/name"        = "Technitium"
     "gethomepage.dev/widget.type" = "technitium"

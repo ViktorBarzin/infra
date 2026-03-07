@@ -154,6 +154,14 @@ module "ingress" {
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
   host            = "yt"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "yt-dlp"
+    "gethomepage.dev/description"  = "Video downloader"
+    "gethomepage.dev/icon"         = "youtube-dl.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
 
 # ----------------------
@@ -349,4 +357,12 @@ module "highlights_ingress" {
   tls_secret_name = var.tls_secret_name
   host            = "yt-highlights"
   protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "YT Highlights"
+    "gethomepage.dev/description"  = "AI video highlights"
+    "gethomepage.dev/icon"         = "youtube.png"
+    "gethomepage.dev/group"        = "Media & Entertainment"
+    "gethomepage.dev/pod-selector" = ""
+  }
 }
