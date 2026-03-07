@@ -116,7 +116,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Listenarr"
     "gethomepage.dev/description"  = "Podcast manager"
-    "gethomepage.dev/icon"         = "podcast.png"
+    "gethomepage.dev/icon"         = "mdi-podcast"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }

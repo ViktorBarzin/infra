@@ -97,7 +97,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Networking Toolbox"
     "gethomepage.dev/description"  = "Network diagnostic tools"
-    "gethomepage.dev/icon"         = "networking.png"
+    "gethomepage.dev/icon"         = "mdi-lan"
     "gethomepage.dev/group"        = "Development & CI"
     "gethomepage.dev/pod-selector" = ""
   }

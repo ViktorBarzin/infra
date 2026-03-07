@@ -88,7 +88,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Goldilocks"
     "gethomepage.dev/description"  = "Resource recommendations"
-    "gethomepage.dev/icon"         = "goldilocks.png"
+    "gethomepage.dev/icon"         = "mdi-scale-balance"
     "gethomepage.dev/group"        = "Core Platform"
     "gethomepage.dev/pod-selector" = ""
   }
