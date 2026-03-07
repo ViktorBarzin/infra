@@ -4,6 +4,11 @@
 variable "tls_secret_name" {}
 variable "truenas_homepage_token" {}
 variable "pfsense_homepage_token" {}
+variable "haos_homepage_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "reverse-proxy" {
   metadata {
@@ -287,6 +292,9 @@ module "ha-london" {
     "gethomepage.dev/icon"         = "home-assistant.png"
     "gethomepage.dev/group"        = "Smart Home"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "homeassistant"
+    "gethomepage.dev/widget.url"   = "http://ha-london.viktorbarzin.lan:8123"
+    "gethomepage.dev/widget.key"   = var.haos_homepage_token
   }
 }
 

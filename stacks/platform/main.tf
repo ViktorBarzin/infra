@@ -300,6 +300,7 @@ module "authentik" {
   secret_key        = var.authentik_secret_key
   postgres_password = var.authentik_postgres_password
   redis_host        = var.redis_host
+  homepage_token    = try(var.homepage_credentials["authentik"]["token"], "")
 }
 
 # -----------------------------------------------------------------------------
@@ -381,6 +382,7 @@ module "reverse-proxy" {
   tls_secret_name        = var.tls_secret_name
   truenas_homepage_token = var.homepage_credentials["reverse_proxy"]["truenas_token"]
   pfsense_homepage_token = var.homepage_credentials["reverse_proxy"]["pfsense_token"]
+  haos_homepage_token    = try(var.homepage_credentials["home_assistant"]["token"], "")
 }
 
 # -----------------------------------------------------------------------------
