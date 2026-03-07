@@ -33,7 +33,7 @@ There are **two** Home Assistant instances:
 
 | Instance | URL | SSH | Default? |
 |----------|-----|-----|----------|
-| **ha-london** | `https://ha-london.viktorbarzin.me` | `ssh pi@192.168.8.104` | Yes |
+| **ha-london** | `https://ha-london.viktorbarzin.me` | `ssh hassio@192.168.8.103` | Yes |
 | **ha-sofia** | `https://ha-sofia.viktorbarzin.me` | `ssh vbarzin@192.168.1.8` | No |
 
 - **Default**: ha-london (use unless user specifies "sofia" or "ha-sofia")
@@ -378,9 +378,9 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 ### Overview
 - **HA Version**: 2025.9.1 (Docker container on Raspberry Pi)
 - **Location**: London, UK
-- **Platform**: Raspberry Pi 4, Docker rootless mode (`--network=host`)
-- **SSH**: `ssh pi@192.168.8.104`
-- **Config path**: `/home/pi/docker/homeAssistant/`
+- **Platform**: Raspberry Pi 4, HA OS (not Docker standalone)
+- **SSH**: `ssh hassio@192.168.8.103` (requires `sudo` for file access)
+- **Config path**: `/config/` (requires `sudo` for file access)
 - **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
 - **Zone**: London (home)
 
@@ -460,14 +460,15 @@ docker run -d --name homeassistant --privileged \
 ### SSH Access
 ```bash
 # Read config
-ssh pi@192.168.8.104 "cat /home/pi/docker/homeAssistant/configuration.yaml"
+ssh hassio@192.168.8.103 "sudo cat /config/configuration.yaml"
 
 # Check logs
-ssh pi@192.168.8.104 "tail -50 /home/pi/docker/homeAssistant/home-assistant.log"
+ssh hassio@192.168.8.103 "sudo docker logs homeassistant --tail 50"
 
-# Restart HA container
-ssh pi@192.168.8.104 "docker restart homeassistant"
+# Restart HA via API (preferred)
+curl -s -X POST "http://192.168.8.103:8123/api/services/homeassistant/restart" \
+  -H "Authorization: Bearer ${HOME_ASSISTANT_LONDON_TOKEN}"
 
 # View Docker logs
-ssh pi@192.168.8.104 "docker logs homeassistant --tail 50"
+ssh hassio@192.168.8.103 "sudo docker logs homeassistant --tail 50"
 ```
