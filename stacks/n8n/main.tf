@@ -33,6 +33,49 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/n8n"
 }
 
+# --- RBAC: Allow n8n to exec into OpenClaw pods for task execution ---
+
+resource "kubernetes_service_account" "n8n" {
+  metadata {
+    name      = "n8n"
+    namespace = kubernetes_namespace.n8n.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "n8n_openclaw_exec" {
+  metadata {
+    name      = "n8n-openclaw-exec"
+    namespace = "openclaw"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "n8n_openclaw_exec" {
+  metadata {
+    name      = "n8n-openclaw-exec"
+    namespace = "openclaw"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.n8n.metadata[0].name
+    namespace = kubernetes_namespace.n8n.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.n8n_openclaw_exec.metadata[0].name
+  }
+}
+
 resource "kubernetes_deployment" "n8n" {
   metadata {
     name      = "n8n"
@@ -56,6 +99,7 @@ resource "kubernetes_deployment" "n8n" {
         }
       }
       spec {
+        service_account_name = kubernetes_service_account.n8n.metadata[0].name
         container {
           name  = "n8n"
           image = "docker.n8n.io/n8nio/n8n"
