@@ -153,7 +153,7 @@ module "ingress" {
     "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "linkwarden"
-    "gethomepage.dev/widget.url"   = "http://linkwarden.linkwarden.svc.cluster.local:3000"
+    "gethomepage.dev/widget.url"   = "http://linkwarden.linkwarden.svc.cluster.local"
     "gethomepage.dev/widget.key"   = var.homepage_credentials["linkwarden"]["api_key"]
   }
 }
