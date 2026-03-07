@@ -4,7 +4,6 @@ variable "hackmd_db_password" {
 }
 variable "tls_secret_name" {
   type = string
-  sensitive = true
 }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
