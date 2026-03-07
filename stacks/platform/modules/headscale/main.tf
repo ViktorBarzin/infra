@@ -4,6 +4,11 @@ variable "tier" { type = string }
 variable "headscale_config" {}
 variable "headscale_acl" {}
 variable "nfs_server" { type = string }
+variable "homepage_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "headscale" {
   metadata {
@@ -258,6 +263,9 @@ module "ingress" {
     "gethomepage.dev/icon"         = "headscale.png"
     "gethomepage.dev/group"        = "Identity & Security"
     "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/widget.type"  = "headscale"
+    "gethomepage.dev/widget.url"   = "http://headscale.headscale.svc.cluster.local:8080"
+    "gethomepage.dev/widget.key"   = var.homepage_token
   }
 }
 

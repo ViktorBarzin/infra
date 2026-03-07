@@ -287,6 +287,7 @@ module "headscale" {
   nfs_server       = var.nfs_server
   headscale_config = var.headscale_config
   headscale_acl    = var.headscale_acl
+  homepage_token   = try(var.homepage_credentials["headscale"]["api_key"], "")
   tier             = local.tiers.core
 }
 
