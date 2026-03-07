@@ -37,12 +37,14 @@ Proxmox (Dell R730)
 		<h2>Service Tiers</h2>
 		<p>Services are organized into tiers that control resource limits and restart priority:</p>
 		<table>
-			<tr><th>Tier</th><th>Examples</th><th>Priority</th></tr>
+			<thead><tr><th>Tier</th><th>Examples</th><th>Priority</th></tr></thead>
+			<tbody>
 			<tr><td><strong>0-core</strong></td><td>Traefik, DNS, VPN, Auth</td><td>Highest — never evicted</td></tr>
 			<tr><td><strong>1-cluster</strong></td><td>Redis, Prometheus, CrowdSec</td><td>High</td></tr>
 			<tr><td><strong>2-gpu</strong></td><td>Ollama, Immich ML, Whisper</td><td>Medium</td></tr>
 			<tr><td><strong>3-edge</strong></td><td>Nextcloud, Paperless, Grafana</td><td>Normal</td></tr>
 			<tr><td><strong>4-aux</strong></td><td>Dashy, PrivateBin, CyberChef</td><td>Low — evicted first under pressure</td></tr>
+			</tbody>
 		</table>
 	</section>
 
