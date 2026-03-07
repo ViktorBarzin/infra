@@ -595,7 +595,7 @@ module "ingress-immich" {
     "gethomepage.dev/name"         = "Immich"
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/widget.type"  = "immich"
-    "gethomepage.dev/widget.url"   = "https://immich.viktorbarzin.me"
+    "gethomepage.dev/widget.url"   = "http://immich-server.immich.svc.cluster.local:2283"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.key"   = var.homepage_credentials["immich"]["token"]
   }

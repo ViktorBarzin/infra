@@ -151,9 +151,6 @@ module "ingress" {
     "gethomepage.dev/group"       = "Core Platform"
     "gethomepage.dev/icon" : "uptime-kuma.png"
     "gethomepage.dev/name"         = "Uptime Kuma"
-    "gethomepage.dev/widget.type"  = "uptimekuma"
-    "gethomepage.dev/widget.url"   = "https://uptime.viktorbarzin.me"
-    "gethomepage.dev/widget.slug"  = "cluster-internal"
     "gethomepage.dev/pod-selector" = ""
   }
   rybbit_site_id = "8fef77b1f7fe"

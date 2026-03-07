@@ -251,7 +251,7 @@ module "ingress" {
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "frigate"
-    "gethomepage.dev/widget.url"   = "http://frigate.frigate.svc.cluster.local:5000"
+    "gethomepage.dev/widget.url"   = "http://frigate.frigate.svc.cluster.local"
   }
 }
 
