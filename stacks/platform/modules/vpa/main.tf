@@ -1,4 +1,7 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "tier" { type = string }
 
 resource "kubernetes_namespace" "vpa" {

@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "diun_nfty_token" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "diun_nfty_token" {
+  type = string
+  sensitive = true
+}
 variable "diun_slack_url" { type = string }
 variable "nfs_server" { type = string }
 

@@ -1,5 +1,8 @@
 variable "tier" { type = string }
-variable "crowdsec_api_key" { type = string }
+variable "crowdsec_api_key" {
+  type = string
+  sensitive = true
+}
 variable "redis_host" { type = string }
 variable "tls_secret_name" {}
 variable "auth_fallback_htpasswd" {

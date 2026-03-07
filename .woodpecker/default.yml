@@ -1,5 +1,6 @@
 when:
   event: push
+  branch: master
 
 clone:
   git:
@@ -13,33 +14,44 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add jq curl git git-crypt"
+      # git-crypt for secrets/ directory (TLS certs, deploy key)
       - |
         curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
-      - "git-crypt unlock /tmp/key"
+      - "git-crypt unlock /tmp/key && rm /tmp/key"
+      # SOPS: download to workspace (shared across steps), decrypt secrets
+      - "wget -qO ./sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64 && chmod +x ./sops"
+      - "echo \"$SOPS_AGE_KEY\" > /tmp/age.key && SOPS_AGE_KEY_FILE=/tmp/age.key ./sops -d secrets.sops.json > secrets.auto.tfvars.json && rm -f /tmp/age.key"
+    environment:
+      SOPS_AGE_KEY:
+        from_secret: sops_age_key
 
   - name: terragrunt-apply
     image: alpine
     commands:
       - "apk update && apk add curl unzip git openssh-client"
       # Install Terraform
-      - "wget -O /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
+      - "wget -qO /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
       - "unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform"
       # Install Terragrunt
-      - "wget -O /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
+      - "wget -qO /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
       - "chmod 755 /usr/local/bin/terragrunt"
       # Apply platform stack (core infrastructure services)
       - "cd stacks/platform && terragrunt apply --non-interactive -auto-approve"
 
-  - name: push-commit
+  - name: cleanup-and-push
     image: alpine
     commands:
+      - "rm -f secrets.auto.tfvars.json secrets.auto.tfvars.json.*"
       - "apk update && apk add openssh-client git git-crypt"
-      - "mkdir ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
+      - "mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
       - "chmod 400 secrets/deploy_key"
-      - "git add ."
+      # Only add specific paths — never git add .
+      - "git add stacks/ state/ .woodpecker/ || true"
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
       - "git commit -m 'Woodpecker CI deploy commit [CI SKIP]' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+    when:
+      status: [success, failure]
 
   - name: slack
     image: curlimages/curl
@@ -52,4 +64,4 @@ steps:
       SLACK_WEBHOOK:
         from_secret: slack_webhook
     when:
-      - status: [success, failure]
+      status: [success, failure]

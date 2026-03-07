@@ -3,9 +3,15 @@ variable "homepage_username" {}
 variable "homepage_password" {}
 variable "db_password" {}
 variable "enroll_key" {}
-variable "crowdsec_dash_api_key" { type = string }          # used for web dash
+variable "crowdsec_dash_api_key" {
+  type = string
+  sensitive = true
+}
 variable "crowdsec_dash_machine_id" { type = string }       # used for web dash
-variable "crowdsec_dash_machine_password" { type = string } # used for web dash
+variable "crowdsec_dash_machine_password" {
+  type = string
+  sensitive = true
+}
 variable "tier" { type = string }
 variable "slack_webhook_url" { type = string }
 variable "mysql_host" { type = string }

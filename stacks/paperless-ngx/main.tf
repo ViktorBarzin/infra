@@ -1,6 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "paperless_db_password" { type = string }
-variable "homepage_credentials" { type = map(any) }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "paperless_db_password" {
+  type = string
+  sensitive = true
+}
+variable "homepage_credentials" {
+  type = map(any)
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }

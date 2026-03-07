@@ -1,6 +1,12 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
-variable "discord_user_token" { type = string }
+variable "discord_user_token" {
+  type = string
+  sensitive = true
+}
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 

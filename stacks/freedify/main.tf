@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "freedify_credentials" { type = map(any) }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "freedify_credentials" {
+  type = map(any)
+  sensitive = true
+}
 
 
 # To create a new deployment:

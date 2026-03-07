@@ -1,6 +1,12 @@
-variable "tls_secret_name" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
 variable "resume_database_url" { type = string }
-variable "resume_auth_secret" { type = string }
+variable "resume_auth_secret" {
+  type = string
+  sensitive = true
+}
 variable "mailserver_accounts" { type = map(any) }
 variable "nfs_server" { type = string }
 variable "mail_host" { type = string }

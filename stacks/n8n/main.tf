@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "n8n_postgresql_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "n8n_postgresql_password" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 

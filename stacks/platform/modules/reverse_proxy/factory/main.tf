@@ -17,6 +17,7 @@ variable "protected" {
 variable "ingress_path" {
   type    = list(string)
   default = ["/"]
+  sensitive = true
 }
 variable "max_body_size" {
   type    = string

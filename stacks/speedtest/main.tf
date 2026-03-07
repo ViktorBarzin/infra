@@ -1,5 +1,11 @@
-variable "tls_secret_name" { type = string }
-variable "speedtest_db_password" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "speedtest_db_password" {
+  type = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 

@@ -1,6 +1,15 @@
-variable "tls_secret_name" { type = string }
-variable "openrouter_api_key" { type = string }
-variable "slack_bot_token" { type = string }
+variable "tls_secret_name" {
+  type = string
+  sensitive = true
+}
+variable "openrouter_api_key" {
+  type = string
+  sensitive = true
+}
+variable "slack_bot_token" {
+  type = string
+  sensitive = true
+}
 variable "slack_channel" { type = string }
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
