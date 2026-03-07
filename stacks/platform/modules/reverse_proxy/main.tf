@@ -41,12 +41,10 @@ module "pfsense" {
     "gethomepage.dev/widget.type" : "pfsense"
     "gethomepage.dev/widget.version" : "2"
     "gethomepage.dev/widget.url" : "https://10.0.20.1"
-    # "gethomepage.dev/widget.token"    = var.homepage_token
     "gethomepage.dev/widget.username" : "admin"
     "gethomepage.dev/widget.password" : var.pfsense_homepage_token
     "gethomepage.dev/widget.fields" = "[\"load\", \"memory\", \"wanStatus\", \"disk\"]"
     "gethomepage.dev/widget.wan"    = "vmx0"
-    # "gethomepage.dev/pod-selector" : ""
   }
   depends_on     = [kubernetes_namespace.reverse-proxy]
   rybbit_site_id = "b029580e5a7c"
