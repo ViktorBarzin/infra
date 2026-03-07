@@ -308,7 +308,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "GrampsWeb"
     "gethomepage.dev/description"  = "Family tree"
-    "gethomepage.dev/icon"         = "grampsweb.png"
+    "gethomepage.dev/icon"         = "gramps-web.png"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }

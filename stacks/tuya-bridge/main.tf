@@ -124,7 +124,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Tuya Bridge"
     "gethomepage.dev/description"  = "Smart device bridge"
-    "gethomepage.dev/icon"         = "tuya-smart.png"
+    "gethomepage.dev/icon"         = "mdi-home-automation"
     "gethomepage.dev/group"        = "Smart Home"
     "gethomepage.dev/pod-selector" = ""
   }

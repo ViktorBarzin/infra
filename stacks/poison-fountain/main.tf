@@ -215,7 +215,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Poison Fountain"
     "gethomepage.dev/description"  = "AI bot trap"
-    "gethomepage.dev/icon"         = "shield.png"
+    "gethomepage.dev/icon"         = "mdi-shield-alert"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }

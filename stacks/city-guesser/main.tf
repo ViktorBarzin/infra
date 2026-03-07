@@ -96,7 +96,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "City Guesser"
     "gethomepage.dev/description"  = "Geography game"
-    "gethomepage.dev/icon"         = "globe.png"
+    "gethomepage.dev/icon"         = "mdi-earth"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }
