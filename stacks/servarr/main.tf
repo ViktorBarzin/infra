@@ -4,6 +4,10 @@ variable "tls_secret_name" {
 }
 variable "aiostreams_database_connection_string" { type = string }
 variable "nfs_server" { type = string }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
 
 
 resource "kubernetes_namespace" "servarr" {
@@ -29,10 +33,11 @@ module "tls_secret" {
 # }
 
 module "prowlarr" {
-  source          = "./prowlarr"
-  tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.aux
-  nfs_server      = var.nfs_server
+  source               = "./prowlarr"
+  tls_secret_name      = var.tls_secret_name
+  tier                 = local.tiers.aux
+  nfs_server           = var.nfs_server
+  homepage_credentials = var.homepage_credentials
 }
 
 module "qbittorrent" {
