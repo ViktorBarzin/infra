@@ -1,5 +1,9 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
+variable "k8s_ca_cert" {
+  type    = string
+  default = ""
+}
 
 resource "kubernetes_namespace" "k8s_portal" {
   metadata {
@@ -23,8 +27,7 @@ resource "kubernetes_config_map" "k8s_portal_config" {
   }
 
   data = {
-    # CA cert extracted from kubeconfig — will be populated with cluster CA cert
-    "ca.crt" = ""
+    "ca.crt" = var.k8s_ca_cert
   }
 }
 
