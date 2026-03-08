@@ -24,10 +24,26 @@
 - **Add a secret**: `sops set secrets.sops.json '["new_key"]' '"value"'`
 - **Operators** push PRs → Viktor reviews → CI decrypts and applies. No encryption keys needed for operators.
 
+## Sealed Secrets (User-Managed Secrets)
+For secrets that users manage themselves (no SOPS/git-crypt access needed):
+1. **Create**: `kubectl create secret generic <name> --from-literal=key=value -n <ns> --dry-run=client -o yaml | kubeseal --controller-name sealed-secrets --controller-namespace sealed-secrets -o yaml > sealed-<name>.yaml`
+2. **Commit**: Place `sealed-*.yaml` files in the stack directory (`stacks/<service>/`)
+3. **Terraform picks them up** automatically via `fileset` + `for_each`:
+   ```hcl
+   resource "kubernetes_manifest" "sealed_secrets" {
+     for_each = fileset(path.module, "sealed-*.yaml")
+     manifest = yamldecode(file("${path.module}/${each.value}"))
+   }
+   ```
+4. **Deploy**: Push → CI runs `terragrunt apply` → controller decrypts into real K8s Secrets
+- Only the in-cluster controller has the private key. `kubeseal` uses the public key — safe to distribute.
+- Naming convention: files MUST match `sealed-*.yaml` glob pattern.
+- The `kubernetes_manifest` block is safe to add even with zero sealed-*.yaml files (empty for_each).
+
 ## Architecture
 Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Proxmox VMs.
 - **70+ services**, each in `stacks/<service>/` with its own Terraform state
-- **Core platform**: `stacks/platform/modules/` (~22 modules: Traefik, Kyverno, monitoring, dbaas, etc.)
+- **Core platform**: `stacks/platform/modules/` (~22 modules: Traefik, Kyverno, monitoring, dbaas, sealed-secrets, etc.)
 - **Public domain**: `viktorbarzin.me` (Cloudflare) | **Internal**: `viktorbarzin.lan` (Technitium DNS)
 - **Onboarding portal**: `https://k8s-portal.viktorbarzin.me` — self-service kubectl setup + docs
 - **CI/CD**: Woodpecker CI — PRs run plan, merges to master auto-apply platform stack
