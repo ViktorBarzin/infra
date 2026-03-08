@@ -167,3 +167,9 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# Sealed Secrets — encrypted secrets safe to commit to git
+resource "kubernetes_manifest" "sealed_secrets" {
+  for_each = fileset(path.module, "sealed-*.yaml")
+  manifest = yamldecode(file("${path.module}/${each.value}"))
+}
