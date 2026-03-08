@@ -86,6 +86,24 @@ module "k8s-node-template" {
   sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
   sudo sed -i '/maxParallelImagePulls:/d' /var/lib/kubelet/config.yaml && \
   echo -e 'serializeImagePulls: false\nmaxParallelImagePulls: 50' | sudo tee -a /var/lib/kubelet/config.yaml
+
+  # Memory reservation and eviction — prevent node OOM by reserving memory
+  # for OS/kubelet and evicting pods before the node runs out of memory.
+  sudo sed -i '/systemReserved:/d; /kubeReserved:/d; /evictionHard:/,/^[^ ]/{ /evictionHard:/d; /^  /d }; /evictionSoft:/,/^[^ ]/{ /evictionSoft:/d; /^  /d }; /evictionSoftGracePeriod:/,/^[^ ]/{ /evictionSoftGracePeriod:/d; /^  /d }' /var/lib/kubelet/config.yaml
+  cat <<'KUBELET_PATCH' | sudo tee -a /var/lib/kubelet/config.yaml
+systemReserved:
+  memory: "512Mi"
+kubeReserved:
+  memory: "512Mi"
+evictionHard:
+  memory.available: "500Mi"
+  nodefs.available: "10%"
+  imagefs.available: "15%"
+evictionSoft:
+  memory.available: "1Gi"
+evictionSoftGracePeriod:
+  memory.available: "30s"
+KUBELET_PATCH
   EOF
   k8s_join_command                 = var.k8s_join_command
 }
