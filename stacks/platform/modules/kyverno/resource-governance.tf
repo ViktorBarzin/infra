@@ -134,8 +134,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "512Mi"
                     }
                     defaultRequest = {
-                      cpu    = "50m"
-                      memory = "64Mi"
+                      cpu    = "100m"
+                      memory = "256Mi"
                     }
                     max = {
                       cpu    = "4"
@@ -193,8 +193,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "512Mi"
                     }
                     defaultRequest = {
-                      cpu    = "50m"
-                      memory = "64Mi"
+                      cpu    = "100m"
+                      memory = "256Mi"
                     }
                     max = {
                       cpu    = "2"
@@ -252,8 +252,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "2Gi"
                     }
                     defaultRequest = {
-                      cpu    = "100m"
-                      memory = "256Mi"
+                      cpu    = "200m"
+                      memory = "1Gi"
                     }
                     max = {
                       cpu    = "8"
@@ -311,8 +311,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     defaultRequest = {
-                      cpu    = "25m"
-                      memory = "64Mi"
+                      cpu    = "50m"
+                      memory = "128Mi"
                     }
                     max = {
                       cpu    = "2"
@@ -370,8 +370,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     defaultRequest = {
-                      cpu    = "25m"
-                      memory = "64Mi"
+                      cpu    = "50m"
+                      memory = "128Mi"
                     }
                     max = {
                       cpu    = "2"
@@ -432,8 +432,8 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     defaultRequest = {
-                      cpu    = "25m"
-                      memory = "64Mi"
+                      cpu    = "50m"
+                      memory = "128Mi"
                     }
                     max = {
                       cpu    = "1"
