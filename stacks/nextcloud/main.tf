@@ -86,6 +86,26 @@ resource "helm_release" "nextcloud" {
   timeout = 6000
 }
 
+resource "kubernetes_config_map" "apache_tuning" {
+  metadata {
+    name      = "nextcloud-apache-tuning"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  data = {
+    "mpm_prefork.conf" = <<-EOF
+      # Tuned for container with 6Gi memory limit
+      # Each worker uses ~220MB RSS, so 25 workers ≈ 5.5GB
+      <IfModule mpm_prefork_module>
+        StartServers            3
+        MinSpareServers         2
+        MaxSpareServers         5
+        MaxRequestWorkers       25
+        MaxConnectionsPerChild  200
+      </IfModule>
+    EOF
+  }
+}
+
 # resource "kubernetes_config_map" "config" {
 #   metadata {
 #     name      = "config"
