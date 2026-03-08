@@ -18,7 +18,6 @@ resource "kubernetes_namespace" "realestate-crawler" {
     labels = {
       "istio-injection" : "disabled"
       tier                               = local.tiers.aux
-      "resource-governance/custom-quota" = "true"
     }
   }
 }
@@ -321,6 +320,16 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           image             = "viktorbarzin/realestatecrawler:latest"
           image_pull_policy = "Always"
           command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "512Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "3Gi"
+            }
+          }
           port {
             name           = "metrics"
             container_port = 9090

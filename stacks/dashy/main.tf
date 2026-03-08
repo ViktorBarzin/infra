@@ -71,11 +71,11 @@ resource "kubernetes_deployment" "dashy" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               cpu    = "500m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {

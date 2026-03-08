@@ -56,15 +56,37 @@ module "tls_secret" {
 # Operator installed in mysql-operator namespace (toleration for control-plane).
 # Init containers are slow (~20 min each) due to mysqlsh plugin loading.
 
+resource "kubernetes_namespace" "mysql_operator" {
+  metadata {
+    name = "mysql-operator"
+    labels = {
+      tier = "1-cluster"
+    }
+  }
+}
+
 resource "helm_release" "mysql_operator" {
-  namespace        = "mysql-operator"
-  create_namespace = true
+  namespace        = kubernetes_namespace.mysql_operator.metadata[0].name
+  create_namespace = false
   name             = "mysql-operator"
   timeout          = 300
 
   repository = "https://mysql.github.io/mysql-operator/"
   chart      = "mysql-operator"
   version    = "2.2.7"
+
+  values = [yamlencode({
+    resources = {
+      requests = {
+        cpu    = "100m"
+        memory = "256Mi"
+      }
+      limits = {
+        cpu    = "500m"
+        memory = "512Mi"
+      }
+    }
+  })]
 }
 
 # The mysql-sidecar ClusterRole created by the Helm chart is missing

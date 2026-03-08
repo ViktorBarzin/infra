@@ -48,8 +48,8 @@ resource "kubernetes_resource_quota" "woodpecker" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "64"
-      "limits.memory"   = "128Gi"
+      "limits.cpu"      = "16"
+      "limits.memory"   = "32Gi"
       pods              = "60"
     }
   }

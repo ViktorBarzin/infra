@@ -75,7 +75,6 @@ resource "kubernetes_namespace" "trading-bot" {
     name = "trading-bot"
     labels = {
       tier                               = local.tiers.edge
-      "resource-governance/custom-quota" = "true"
     }
   }
 }

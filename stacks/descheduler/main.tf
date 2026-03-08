@@ -3,6 +3,9 @@
 resource "kubernetes_namespace" "descheduler" {
   metadata {
     name = "descheduler"
+    labels = {
+      tier = local.tiers.cluster
+    }
   }
 }
 

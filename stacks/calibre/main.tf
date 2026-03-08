@@ -313,6 +313,16 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
         container {
           image = "zelest/stacks:latest"
           name  = "annas-archive-stacks"
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "192Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "384Mi"
+            }
+          }
           port {
             container_port = 7788
           }
