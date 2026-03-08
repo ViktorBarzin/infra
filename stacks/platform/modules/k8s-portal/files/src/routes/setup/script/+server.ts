@@ -92,6 +92,19 @@ else
     echo "[OK] kubelogin installed"
 fi
 
+# Install kubeseal
+if command -v kubeseal &>/dev/null; then
+    echo "[OK] kubeseal already installed"
+else
+    echo "[..] Installing kubeseal..."
+    KUBESEAL_VERSION=\$(curl -fsSL -o /dev/null -w "%{url_effective}" https://github.com/bitnami-labs/sealed-secrets/releases/latest | grep -o '[^/]*\$')
+    curl -fsSLO "https://github.com/bitnami-labs/sealed-secrets/releases/download/\${KUBESEAL_VERSION}/kubeseal-\${KUBESEAL_VERSION#v}-linux-amd64.tar.gz"
+    tar -xzf "kubeseal-\${KUBESEAL_VERSION#v}-linux-amd64.tar.gz" kubeseal
+    \$SUDO mv kubeseal "\$INSTALL_DIR/"
+    rm -f "kubeseal-\${KUBESEAL_VERSION#v}-linux-amd64.tar.gz"
+    echo "[OK] kubeseal installed"
+fi
+
 # Write kubeconfig
 mkdir -p ~/.kube
 cat > ~/.kube/config-home << 'KUBECONFIG_EOF'
@@ -144,6 +157,15 @@ else
     echo "[..] Installing kubelogin..."
     brew install int128/kubelogin/kubelogin
     echo "[OK] kubelogin installed"
+fi
+
+# Install kubeseal
+if command -v kubeseal &>/dev/null; then
+    echo "[OK] kubeseal already installed"
+else
+    echo "[..] Installing kubeseal..."
+    brew install kubeseal
+    echo "[OK] kubeseal installed"
 fi
 
 # Write kubeconfig
