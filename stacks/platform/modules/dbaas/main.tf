@@ -143,6 +143,12 @@ resource "helm_release" "mysql_cluster" {
       "my.cnf" = <<-EOT
         [mysqld]
         skip-name-resolve
+        # Auto-recovery after crashes: rejoin group without manual intervention
+        group_replication_autorejoin_tries=2016
+        group_replication_exit_state_action=OFFLINE_MODE
+        group_replication_member_expel_timeout=30
+        group_replication_unreachable_majority_timeout=60
+        group_replication_start_on_boot=ON
       EOT
     }
 
