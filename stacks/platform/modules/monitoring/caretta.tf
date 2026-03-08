@@ -14,6 +14,16 @@ resource "helm_release" "caretta" {
     victoria-metrics-single = {
       enabled = false
     }
+    resources = {
+      requests = {
+        cpu    = "10m"
+        memory = "300Mi"
+      }
+      limits = {
+        cpu    = "200m"
+        memory = "512Mi"
+      }
+    }
   })]
 }
 

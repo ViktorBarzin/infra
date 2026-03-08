@@ -46,6 +46,17 @@ agent:
 lapi:
   priorityClassName: "tier-1-cluster"
   replicas: 3
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: crowdsec
+          type: lapi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
   extraSecrets:
     dbPassword: "${DB_PASSWORD}"
   storeCAPICredentialsInSecret: true

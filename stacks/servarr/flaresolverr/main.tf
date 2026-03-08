@@ -31,6 +31,16 @@ resource "kubernetes_deployment" "flaresolverr" {
           image = "ghcr.io/flaresolverr/flaresolverr:latest"
           name  = "flaresolverr"
 
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "150Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "384Mi"
+            }
+          }
           port {
             container_port = 8191
           }

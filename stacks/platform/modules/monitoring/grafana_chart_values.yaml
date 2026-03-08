@@ -9,6 +9,15 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: grafana
+podDisruptionBudget:
+  maxUnavailable: 1
 persistence:
   enabled: false # using external mysql
   existingClaim: "grafana-pvc"

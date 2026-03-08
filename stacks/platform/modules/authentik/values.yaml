@@ -24,6 +24,13 @@ server:
     limits:
       cpu: "2"
       memory: 1Gi
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: server
   ingress:
     enabled: false
     # hosts:
@@ -46,3 +53,13 @@ worker:
     limits:
       cpu: "1"
       memory: 1Gi
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: worker
+  pdb:
+    enabled: true
+    maxUnavailable: 1

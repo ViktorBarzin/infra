@@ -93,8 +93,10 @@ module "k8s-node-template" {
   cat <<'KUBELET_PATCH' | sudo tee -a /var/lib/kubelet/config.yaml
 systemReserved:
   memory: "512Mi"
+  cpu: "200m"
 kubeReserved:
   memory: "512Mi"
+  cpu: "200m"
 evictionHard:
   memory.available: "500Mi"
   nodefs.available: "10%"

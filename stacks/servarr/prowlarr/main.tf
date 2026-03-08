@@ -53,6 +53,16 @@ resource "kubernetes_deployment" "prowlarr" {
           image = "lscr.io/linuxserver/prowlarr:latest"
           name  = "prowlarr"
 
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "192Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "384Mi"
+            }
+          }
           port {
             container_port = 9696
           }

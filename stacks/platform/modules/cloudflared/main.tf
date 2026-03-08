@@ -47,6 +47,16 @@ resource "kubernetes_deployment" "cloudflared" {
         }
       }
       spec {
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "ScheduleAnyway"
+          label_selector {
+            match_labels = {
+              app = "cloudflared"
+            }
+          }
+        }
         container {
           # image = "wisdomsky/cloudflared-web:latest"
           image   = "cloudflare/cloudflared"
@@ -77,6 +87,21 @@ resource "kubernetes_deployment" "cloudflared" {
             value = "2"
           }
         }
+      }
+    }
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "cloudflared" {
+  metadata {
+    name      = "cloudflared"
+    namespace = kubernetes_namespace.cloudflared.metadata[0].name
+  }
+  spec {
+    max_unavailable = "1"
+    selector {
+      match_labels = {
+        app = "cloudflared"
       }
     }
   }
