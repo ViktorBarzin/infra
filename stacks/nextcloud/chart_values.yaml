@@ -31,6 +31,14 @@ nextcloud:
       max_execution_time = 300
       max_input_time = 300
       default_socket_timeout = 300
+  extraVolumes:
+    - name: apache-tuning
+      configMap:
+        name: nextcloud-apache-tuning
+  extraVolumeMounts:
+    - name: apache-tuning
+      mountPath: /etc/apache2/mods-available/mpm_prefork.conf
+      subPath: mpm_prefork.conf
 
 # internalDatabase:
 #   enabled: false
@@ -96,14 +104,3 @@ resources:
 
 cronjob:
   enabled: true
-
-# Mount custom Apache MPM config to limit worker count
-extraVolumes:
-  - name: apache-tuning
-    configMap:
-      name: nextcloud-apache-tuning
-
-extraVolumeMounts:
-  - name: apache-tuning
-    mountPath: /etc/apache2/mods-enabled/mpm_prefork.conf
-    subPath: mpm_prefork.conf
