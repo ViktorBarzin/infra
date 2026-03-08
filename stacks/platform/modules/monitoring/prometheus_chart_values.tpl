@@ -82,7 +82,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|LokiDown|HackmdDown|PrivatebinDown|Mail server has no replicas available"
+          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|LokiDown|HackmdDown|PrivatebinDown|MailServerDown"
       # NFS down causes mass pod failures
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -396,7 +396,10 @@ serverFiles:
             annotations:
               summary: "Node {{ $labels.node }}: {{ $labels.condition }}"
           - alert: JobFailed
-            expr: kube_job_status_failed > 0
+            expr: |
+              kube_job_status_failed > 0
+              and on(namespace, job_name)
+              (time() - kube_job_status_start_time) < 3600
             for: 30m
             labels:
               severity: warning
@@ -665,13 +668,13 @@ serverFiles:
           #     severity: page
           #   annotations:
           #     summary: OpenWRT high memory usage. Can cause services getting stuck.
-          - alert: Mail server has no replicas available
-            expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
+          - alert: MailServerDown
+            expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: Mail server has no available replicas. This means mail may not be received.
+              summary: "Mail server has no available replicas - mail may not be received"
           - alert: HackmdDown
             expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
             for: 5m
