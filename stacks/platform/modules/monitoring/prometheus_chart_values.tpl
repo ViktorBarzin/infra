@@ -1,13 +1,14 @@
 # Helm values
 # all values - https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus/values.yaml
 alertmanager:
+  replicaCount: 2
   persistentVolume:
     enabled: true
     existingClaim: alertmanager-pvc
     #existingClaim: alertmanager-iscsi-pvc
     # storageClass: rook-cephfs
   strategy:
-    type: Recreate
+    type: RollingUpdate
   baseURL: "https://alertmanager.viktorbarzin.me"
   ingress:
     enabled: true
@@ -72,6 +73,21 @@ alertmanager:
           - alertname = NodeDown
         target_matchers:
           - alertname =~ "NodeNotReady|NodeConditionBad"
+      # Node down suppresses workload alerts (cascade protection)
+      - source_matchers:
+          - alertname = NodeDown
+        target_matchers:
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory"
+      # Node down suppresses service-specific alerts
+      - source_matchers:
+          - alertname = NodeDown
+        target_matchers:
+          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|LokiDown|HackmdDown|PrivatebinDown|Mail server has no replicas available"
+      # NFS down causes mass pod failures
+      - source_matchers:
+          - alertname = NFSServerUnresponsive
+        target_matchers:
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -353,13 +369,14 @@ serverFiles:
         rules:
           - alert: PodCrashLooping
             expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
-            for: 10m
+            for: 15m
             labels:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}: {{ $value | printf \"%.0f\" }} restarts in 1h"
           - alert: ContainerOOMKilled
             expr: increase(container_oom_events_total{container!=""}[15m]) > 0
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -380,7 +397,7 @@ serverFiles:
               summary: "Node {{ $labels.node }}: {{ $labels.condition }}"
           - alert: JobFailed
             expr: kube_job_status_failed > 0
-            for: 15m
+            for: 30m
             labels:
               severity: warning
             annotations:
@@ -403,7 +420,7 @@ serverFiles:
               summary: "CoreDNS SERVFAIL rate: {{ $value | printf \"%.1f\" }}/s (threshold: 1/s)"
           - alert: ScrapeTargetDown
             expr: up{job!~"istiod|envoy-stats|openwrt"} == 0
-            for: 15m
+            for: 30m
             labels:
               severity: warning
             annotations:
@@ -463,7 +480,7 @@ serverFiles:
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m
             labels:
-              severity: critical
+              severity: warning
             annotations:
               summary: "Headscale VPN has no available replicas"
           - alert: AuthentikDown
@@ -491,7 +508,7 @@ serverFiles:
         rules:
           - alert: NodeDown
             expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
-            for: 1m
+            for: 3m
             labels:
               severity: critical
             annotations:
@@ -539,7 +556,7 @@ serverFiles:
                 kube_deployment_spec_replicas
                 - on(namespace, deployment) kube_deployment_status_replicas_available
               ) > 0
-            for: 15m
+            for: 30m
             labels:
               severity: warning
             annotations:
@@ -550,7 +567,7 @@ serverFiles:
                 kube_statefulset_replicas
                 - on(namespace, statefulset) kube_statefulset_status_replicas_ready
               ) > 0
-            for: 15m
+            for: 30m
             labels:
               severity: warning
             annotations:
@@ -561,7 +578,7 @@ serverFiles:
                 kube_daemonset_status_desired_number_scheduled
                 - on(namespace, daemonset) kube_daemonset_status_number_ready
               ) > 0
-            for: 15m
+            for: 30m
             labels:
               severity: warning
             annotations:
@@ -590,7 +607,7 @@ serverFiles:
                 * 100
               ) > 10
               and sum(rate(traefik_service_requests_total[5m])) by (service) > 0.1
-            for: 5m
+            for: 10m
             labels:
               severity: warning
             annotations:
@@ -603,7 +620,7 @@ serverFiles:
                 * 100
               ) > 30
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service) > 0.1
-            for: 10m
+            for: 15m
             labels:
               severity: warning
             annotations:
@@ -652,7 +669,7 @@ serverFiles:
             expr: (kube_deployment_status_replicas_available{namespace="mailserver"} or on() vector(0)) < 1
             for: 5m
             labels:
-              severity: page
+              severity: warning
             annotations:
               summary: Mail server has no available replicas. This means mail may not be received.
           - alert: HackmdDown

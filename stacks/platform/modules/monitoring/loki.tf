@@ -109,44 +109,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
   }
   data = {
     "rules.yaml" = yamlencode({
-      groups = [{
-        name = "log-alerts"
-        rules = [
-          {
-            alert = "HighErrorRate"
-            expr  = "sum(rate({namespace=~\".+\"} |= \"error\" [5m])) by (namespace) > 10"
-            for   = "5m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary = "High error rate in {{ $labels.namespace }}"
-            }
-          },
-          {
-            alert = "PodCrashLoopBackOff"
-            expr  = "count_over_time({namespace=~\".+\"} |= \"CrashLoopBackOff\" [5m]) > 0"
-            for   = "1m"
-            labels = {
-              severity = "critical"
-            }
-            annotations = {
-              summary = "CrashLoopBackOff detected in {{ $labels.namespace }}"
-            }
-          },
-          {
-            alert = "OOMKilled"
-            expr  = "count_over_time({namespace=~\".+\"} |= \"OOMKilled\" [5m]) > 0"
-            for   = "1m"
-            labels = {
-              severity = "critical"
-            }
-            annotations = {
-              summary = "OOMKilled detected in {{ $labels.namespace }}"
-            }
-          }
-        ]
-      }]
+      groups = []
     })
   }
 }
