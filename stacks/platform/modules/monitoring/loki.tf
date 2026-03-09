@@ -109,7 +109,68 @@ resource "kubernetes_config_map" "loki_alert_rules" {
   }
   data = {
     "rules.yaml" = yamlencode({
-      groups = []
+      groups = [
+        {
+          name = "Node Health"
+          rules = [
+            {
+              alert = "KernelOOMKiller"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "OOM killer active on {{ $labels.node }}"
+              }
+            },
+            {
+              alert = "KernelPanic"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Kernel panic\" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "Kernel panic on {{ $labels.node }}"
+              }
+            },
+            {
+              alert = "KernelHungTask"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"blocked for more than\" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary = "Hung task detected on {{ $labels.node }}"
+              }
+            },
+            {
+              alert = "KernelSoftLockup"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)soft lockup\" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "Soft lockup on {{ $labels.node }}"
+              }
+            },
+            {
+              alert = "ContainerdDown"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\", unit=\"containerd.service\"} |~ \"(?i)(dead|failed|deactivating)\" [5m])) > 0"
+              for   = "1m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "containerd service unhealthy on {{ $labels.node }}"
+              }
+            },
+          ]
+        }
+      ]
     })
   }
 }

@@ -586,6 +586,27 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.daemonset }}: {{ $value | printf \"%.0f\" }} pod(s) missing"
+          - alert: NodeMemoryPressureTrending
+            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) > 85
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory usage on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 85%)"
+          - alert: NodeExporterDown
+            expr: up{job="prometheus-prometheus-node-exporter"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node exporter down: {{ $labels.instance }}"
+          - alert: NodeHighIOWait
+            expr: avg by (instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) * 100 > 30
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IOWait on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 30%)"
           - alert: NoNodeLoadData
             expr: (node_load1 OR on() vector(0)) == 0
             for: 10m
