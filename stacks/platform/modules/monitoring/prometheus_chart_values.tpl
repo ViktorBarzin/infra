@@ -605,11 +605,11 @@ serverFiles:
           - alert: HighServiceErrorRate
             expr: |
               (
-                sum(rate(traefik_service_requests_total{code=~"5.."}[5m])) by (service)
-                / sum(rate(traefik_service_requests_total[5m])) by (service)
+                sum(rate(traefik_service_requests_total{code=~"5..", service!~".*nextcloud.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service)
                 * 100
               ) > 10
-              and sum(rate(traefik_service_requests_total[5m])) by (service) > 0.1
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service) > 0.1
             for: 10m
             labels:
               severity: warning
