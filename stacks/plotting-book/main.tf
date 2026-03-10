@@ -64,6 +64,9 @@ resource "kubernetes_deployment" "plotting-book" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "plotting-book"
