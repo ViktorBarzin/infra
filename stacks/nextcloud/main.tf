@@ -122,13 +122,20 @@ resource "kubernetes_config_map" "apache_tuning" {
 #   }
 # }
 
-module "nfs_nextcloud_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-data"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/nextcloud"
-  storage    = "100Gi"
+resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
+  metadata {
+    name      = "nextcloud-data-iscsi"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "iscsi-truenas"
+    resources {
+      requests = {
+        storage = "20Gi"
+      }
+    }
+  }
 }
 
 module "nfs_nextcloud_backup" {

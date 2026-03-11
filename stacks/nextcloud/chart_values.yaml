@@ -58,10 +58,10 @@ externalDatabase:
 
 persistence:
   enabled: true
-  existingClaim: nextcloud-data
+  existingClaim: nextcloud-data-iscsi
 
   accessMode: ReadWriteOnce
-  size: 100Gi
+  size: 20Gi
 
 startupProbe:
   enabled: true
