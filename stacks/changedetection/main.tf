@@ -43,7 +43,7 @@ resource "kubernetes_deployment" "changedetection" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down — sockpuppetbrowser (headless Chromium sidecar) causes node OOM
     strategy {
       type = "Recreate"
     }
