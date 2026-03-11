@@ -43,7 +43,7 @@ resource "kubernetes_deployment" "printer" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down — browserless chromium causes node OOM
     selector {
       match_labels = {
         app = "printer"
@@ -147,7 +147,7 @@ resource "kubernetes_deployment" "resume" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down with printer — depends on browserless chromium
     selector {
       match_labels = {
         app = "resume"

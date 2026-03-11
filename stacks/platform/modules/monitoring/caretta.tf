@@ -14,6 +14,18 @@ resource "helm_release" "caretta" {
     victoria-metrics-single = {
       enabled = false
     }
+    tolerations = [
+      {
+        key      = "node-role.kubernetes.io/control-plane"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      },
+      {
+        key      = "nvidia.com/gpu"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      }
+    ]
     resources = {
       requests = {
         cpu    = "10m"
