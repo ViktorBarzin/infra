@@ -64,3 +64,6 @@ config
 node_modules/
 package-lock.json
 package.json
+
+# Archived - secrets now in SOPS (secrets.auto.tfvars.json)
+terraform.tfvars
