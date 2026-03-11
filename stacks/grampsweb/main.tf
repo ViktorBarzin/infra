@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "mailserver_accounts" { type = map(any) }
@@ -116,7 +116,7 @@ resource "kubernetes_deployment" "grampsweb" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0
     selector {
       match_labels = {
         app = "grampsweb"
