@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "actualbudget_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -37,7 +37,7 @@ module "tls_secret" {
 module "viktor" {
   source                     = "./factory"
   name                       = "viktor"
-  tag                        = "edge"
+  tag                        = "26.3.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -58,7 +58,7 @@ module "viktor" {
 module "anca" {
   source                     = "./factory"
   name                       = "anca"
-  tag                        = "edge"
+  tag                        = "26.3.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -79,7 +79,7 @@ module "anca" {
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
-  tag                        = "edge"
+  tag                        = "26.3.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]

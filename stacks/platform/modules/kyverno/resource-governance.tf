@@ -802,6 +802,58 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
   }
 }
 
+# --- GPU toleration for critical tiers ---
+# Allows pods in tier-0-core and tier-1-cluster namespaces to overflow onto the
+# GPU node during N-1 failures. Uses patchesJson6902 (not patchStrategicMerge)
+# to APPEND the toleration without replacing existing tolerations.
+resource "kubernetes_manifest" "mutate_gpu_toleration" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "gpu-toleration-critical-tiers"
+      annotations = {
+        "policies.kyverno.io/title"       = "GPU Toleration for Critical Tiers"
+        "policies.kyverno.io/description" = "Adds nvidia.com/gpu toleration to pods in tier-0-core and tier-1-cluster namespaces so they can overflow onto the GPU node during N-1 failures."
+      }
+    }
+    spec = {
+      rules = [for tier in ["0-core", "1-cluster"] : {
+        name = "add-gpu-toleration-tier-${split("-", tier)[0]}"
+        match = {
+          any = [
+            {
+              resources = {
+                kinds      = ["Pod"]
+                operations = ["CREATE"]
+                namespaceSelector = {
+                  matchLabels = {
+                    tier = tier
+                  }
+                }
+              }
+            }
+          ]
+        }
+        skipBackgroundRequests = true
+        mutate = {
+          patchesJson6902 = yamlencode([
+            {
+              op   = "add"
+              path = "/spec/tolerations/-"
+              value = {
+                key      = "nvidia.com/gpu"
+                operator = "Exists"
+                effect   = "NoSchedule"
+              }
+            }
+          ])
+        }
+      }]
+    }
+  }
+}
+
 # --- ndots:2 injection ---
 # Kubernetes defaults to ndots:5, which causes 4 wasted NxDomain queries per
 # external DNS lookup (search domain expansion). This policy injects ndots:2

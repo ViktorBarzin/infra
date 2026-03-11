@@ -13,7 +13,7 @@ variable "prod" {
 }
 variable "nfs_server" { type = string }
 variable "kube_config_path" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -193,10 +193,20 @@ resource "helm_release" "mysql_cluster" {
               matchExpressions = [{
                 key      = "kubernetes.io/hostname"
                 operator = "NotIn"
-                values   = ["k8s-node2"]
+                values   = ["k8s-node1", "k8s-node2"]
               }]
             }]
           }
+        }
+        podAntiAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = [{
+            labelSelector = {
+              matchLabels = {
+                "component" = "mysqld"
+              }
+            }
+            topologyKey = "kubernetes.io/hostname"
+          }]
         }
       }
       containers = [{
