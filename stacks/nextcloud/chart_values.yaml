@@ -40,21 +40,20 @@ nextcloud:
       mountPath: /etc/apache2/mods-available/mpm_prefork.conf
       subPath: mpm_prefork.conf
 
-# internalDatabase:
-#   enabled: false
+internalDatabase:
+  enabled: false
 
 externalRedis:
   enabled: true
   host: ${redis_host}
 
-# Currently not in use; we use the nextcloud.db sqlite3
 externalDatabase:
-  enabled: false
+  enabled: true
   type: mysql
   host: ${mysql_host}
   user: nextcloud
   password: ${db_password}
-  databse: nextcloud
+  database: nextcloud
 
 persistence:
   enabled: true
