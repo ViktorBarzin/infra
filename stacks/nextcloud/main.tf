@@ -93,15 +93,15 @@ resource "kubernetes_config_map" "apache_tuning" {
   }
   data = {
     "mpm_prefork.conf" = <<-EOF
-      # Tuned for container with 6Gi memory limit and SQLite backend
-      # Each worker uses ~100-200MB RSS. 10 workers = ~2GB max
-      # Low count prevents fork bomb when SQLite locks cause request pileup
+      # Tuned for container with 4 CPU and 3Gi memory limit using Redis + SQLite
+      # Each worker uses ~80-120MB RSS. 25 workers = ~2.5GB max (fits in 3Gi limit)
+      # Higher count handles concurrent users and prevents health check timeouts
       <IfModule mpm_prefork_module>
-        StartServers            3
-        MinSpareServers         2
-        MaxSpareServers         5
-        MaxRequestWorkers       10
-        MaxConnectionsPerChild  100
+        StartServers            5
+        MinSpareServers         3
+        MaxSpareServers         8
+        MaxRequestWorkers       25
+        MaxConnectionsPerChild  200
       </IfModule>
     EOF
   }
