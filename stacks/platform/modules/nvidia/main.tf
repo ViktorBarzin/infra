@@ -13,6 +13,23 @@ resource "kubernetes_namespace" "nvidia" {
     labels = {
       "istio-injection" : "disabled"
       tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "nvidia_quota" {
+  metadata {
+    name      = "tier-quota"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+  spec {
+    hard = {
+      "limits.cpu"      = "32"
+      "limits.memory"   = "48Gi"
+      "requests.cpu"    = "8"
+      "requests.memory" = "8Gi"
+      pods              = "40"
     }
   }
 }
