@@ -67,24 +67,24 @@ startupProbe:
   enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
-  timeoutSeconds: 10
+  timeoutSeconds: 30
   failureThreshold: 60
   successThreshold: 1
 
 livenessProbe:
   enabled: true
-  initialDelaySeconds: 10
-  periodSeconds: 30
-  timeoutSeconds: 10
-  failureThreshold: 6
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 30
+  failureThreshold: 10
   successThreshold: 1
 
 readinessProbe:
   enabled: true
-  initialDelaySeconds: 10
-  periodSeconds: 30
-  timeoutSeconds: 10
-  failureThreshold: 3
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 30
+  failureThreshold: 5
   successThreshold: 1
 
 podAnnotations:
@@ -96,11 +96,11 @@ collabora:
 
 resources:
   limits:
-    cpu: "16"
-    memory: 6Gi
+    cpu: "4"
+    memory: 3Gi
   requests:
     cpu: 100m
-    memory: 1Gi
+    memory: 512Mi
 
 cronjob:
   enabled: true
