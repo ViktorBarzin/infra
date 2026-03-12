@@ -1032,11 +1032,12 @@ check_dns() {
     local internal_ok=false external_ok=false detail=""
 
     # Try dig first (available locally), fall back to python3 (pod environment)
+    # Use system resolver (no @server) so it works from any host or pod
     if command -v dig &>/dev/null; then
-        if dig @10.0.20.101 viktorbarzin.me +short +time=3 +tries=1 &>/dev/null; then
+        if dig viktorbarzin.me +short +time=3 +tries=1 2>/dev/null | grep -q .; then
             internal_ok=true
         fi
-        if dig @10.0.20.101 google.com +short +time=3 +tries=1 &>/dev/null; then
+        if dig google.com +short +time=3 +tries=1 2>/dev/null | grep -q .; then
             external_ok=true
         fi
     else
