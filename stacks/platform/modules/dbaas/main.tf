@@ -171,6 +171,12 @@ resource "helm_release" "mysql_cluster" {
         group_replication_member_expel_timeout=30
         group_replication_unreachable_majority_timeout=60
         group_replication_start_on_boot=ON
+        # Cap XCom cache to prevent unbounded growth (default 1GB causes OOM)
+        group_replication_message_cache_size=134217728
+        # Reduce log buffer (16MB sufficient for this workload, was 64MB)
+        innodb_log_buffer_size=16777216
+        # Limit connections (peak usage ~40, no need for 151)
+        max_connections=80
       EOT
     }
 
@@ -181,7 +187,7 @@ resource "helm_release" "mysql_cluster" {
       }
       limits = {
         cpu    = "2"
-        memory = "3Gi"
+        memory = "4Gi"
       }
     }
 

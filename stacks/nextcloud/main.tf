@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nextcloud_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -93,15 +93,15 @@ resource "kubernetes_config_map" "apache_tuning" {
   }
   data = {
     "mpm_prefork.conf" = <<-EOF
-      # Tuned for container with 6Gi memory limit
-      # Each worker uses ~220MB RSS, so 50 workers ≈ 11GB (shared pages reduce actual)
-      # Need enough workers so probes can get through during SQLite locks
+      # Tuned for container with 6Gi memory limit and SQLite backend
+      # Each worker uses ~100-200MB RSS. 10 workers = ~2GB max
+      # Low count prevents fork bomb when SQLite locks cause request pileup
       <IfModule mpm_prefork_module>
-        StartServers            5
-        MinSpareServers         3
-        MaxSpareServers         10
-        MaxRequestWorkers       50
-        MaxConnectionsPerChild  200
+        StartServers            3
+        MinSpareServers         2
+        MaxSpareServers         5
+        MaxRequestWorkers       10
+        MaxConnectionsPerChild  100
       </IfModule>
     EOF
   }
@@ -223,12 +223,12 @@ module "ingress" {
   port            = 8080
   rybbit_site_id  = "5a3bfe59a3fe"
   extra_annotations = {
-    "gethomepage.dev/enabled"        = "true"
-    "gethomepage.dev/name"           = "Nextcloud"
-    "gethomepage.dev/description"    = "Cloud productivity suite"
-    "gethomepage.dev/icon"           = "nextcloud.png"
-    "gethomepage.dev/group"          = "Productivity"
-    "gethomepage.dev/pod-selector"   = ""
+    "gethomepage.dev/enabled"         = "true"
+    "gethomepage.dev/name"            = "Nextcloud"
+    "gethomepage.dev/description"     = "Cloud productivity suite"
+    "gethomepage.dev/icon"            = "nextcloud.png"
+    "gethomepage.dev/group"           = "Productivity"
+    "gethomepage.dev/pod-selector"    = ""
     "gethomepage.dev/widget.type"     = "nextcloud"
     "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
     "gethomepage.dev/widget.username" = var.homepage_credentials["nextcloud"]["username"]
