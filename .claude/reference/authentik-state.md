@@ -63,7 +63,7 @@ New users can only sign up via invitation link. Admins generate single-use invit
 | 20 | enrollment-identification | Identification | Shows social login (Google/GitHub/Facebook) + passkey |
 | 30 | enrollment-prompt | Prompt | Collects name and email (pre-filled from social login) |
 | 40 | enrollment-user-write | User Write | Creates user in `Allow Login Users` group |
-| 50 | enrollment-login | User Login | Auto-login after signup |
+| 50 | enrollment-login | User Login | Auto-login after signup (policy: `invitation-group-assignment` adds user to target group from invitation `fixed_data.group`) |
 
 ### Invitation Management
 Script: `.claude/scripts/authentik-invite.sh`
@@ -83,6 +83,7 @@ Script: `.claude/scripts/authentik-invite.sh`
 ```
 
 Invited users sign up via social login (Google/GitHub/Facebook) or passkey. No username/password enrollment.
+The target group (e.g. "Headscale Users") is auto-assigned on enrollment via the `invitation-group-assignment` expression policy. The `assign` command is available for manual post-enrollment group changes.
 
 ## Cleanup Log (2026-03-13)
 ### Deleted Flows
