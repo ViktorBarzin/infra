@@ -864,16 +864,21 @@ for node in data["items"]:
         a = parse_storage(es_alloc)
         if c > 0:
             used_pct = ((c - a) / c) * 100
-            if used_pct > 80:
-                level = "FAIL" if used_pct > 90 else "WARN"
+            if used_pct > 70:  # Lower threshold after node2 containerd corruption incident
+                if used_pct > 85:
+                    level = "FAIL"  # Critical: Risk of containerd corruption
+                elif used_pct > 75:
+                    level = "WARN"  # Warning: Monitor closely
+                else:
+                    level = "WARN"  # Early warning
                 print(f"{level}:{name}:{used_pct:.0f}")
     except (ValueError, ZeroDivisionError):
         pass
 ' 2>/dev/null) || true
 
     if [[ -z "$disk_info" ]]; then
-        pass "All nodes below 80% ephemeral-storage usage"
-        json_add "node_disk" "PASS" "All below 80%"
+        pass "All nodes below 70% ephemeral-storage usage"
+        json_add "node_disk" "PASS" "All below 70%"
     else
         [[ "$QUIET" == true ]] && section_always 17 "Node Disk Usage"
         while IFS= read -r line; do
