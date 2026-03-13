@@ -82,7 +82,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|LokiDown|HackmdDown|PrivatebinDown|MailServerDown"
+          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown"
       # NFS down causes mass pod failures
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -500,13 +500,6 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Poison Fountain is down - AI bot blocking degraded to fail-open"
-          - alert: LokiDown
-            expr: (kube_statefulset_status_replicas_ready{namespace="monitoring", statefulset=~"loki.*"} or on() vector(0)) < 1
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Loki log aggregation has no ready replicas"
       - name: Cluster
         rules:
           - alert: NodeDown
