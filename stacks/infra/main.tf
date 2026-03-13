@@ -83,12 +83,33 @@ module "k8s-node-template" {
   # breaking VPA certgen and Kyverno image pulls.
 
   sed -i 's/.*max_concurrent_downloads = 3/max_concurrent_downloads = 20/g' /etc/containerd/config.toml # Enable multiple concurrent downloads
+  
+  # Configure aggressive garbage collection to prevent disk space exhaustion (node2 incident prevention)
+  # Set up containerd GC for unused images and containers
+  cat >> /etc/containerd/config.toml << 'CONTAINERD_GC'
+
+[plugins."io.containerd.gc.v1.scheduler"]
+  # Run GC every 30 minutes instead of default 1 hour
+  pause_threshold = 0.02
+  deletion_threshold = 0
+  mutation_threshold = 100
+  schedule_delay = "1800s"  # 30 minutes
+
+[plugins."io.containerd.runtime.v2.task"]
+  # More aggressive container cleanup
+  exit_timeout = "5m"
+
+[plugins."io.containerd.metadata.v1.bolt"]
+  # Compact database more frequently 
+  compact_threshold = 5242880  # 5MB instead of default 100MB
+CONTAINERD_GC
   sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
   sudo sed -i '/maxParallelImagePulls:/d' /var/lib/kubelet/config.yaml && \
   echo -e 'serializeImagePulls: false\nmaxParallelImagePulls: 50' | sudo tee -a /var/lib/kubelet/config.yaml
 
-  # Memory reservation and eviction — prevent node OOM by reserving memory
-  # for OS/kubelet and evicting pods before the node runs out of memory.
+  # Memory and disk reservation and eviction — prevent node OOM/disk full
+  # Aggressive disk eviction settings added after node2 containerd corruption incident (2026-03-13)
+  # These settings prevent disk space exhaustion that can corrupt containerd image store
   sudo sed -i '/systemReserved:/d; /kubeReserved:/d; /evictionHard:/,/^[^ ]/{ /evictionHard:/d; /^  /d }; /evictionSoft:/,/^[^ ]/{ /evictionSoft:/d; /^  /d }; /evictionSoftGracePeriod:/,/^[^ ]/{ /evictionSoftGracePeriod:/d; /^  /d }' /var/lib/kubelet/config.yaml
   cat <<'KUBELET_PATCH' | sudo tee -a /var/lib/kubelet/config.yaml
 systemReserved:
@@ -99,12 +120,16 @@ kubeReserved:
   cpu: "200m"
 evictionHard:
   memory.available: "500Mi"
-  nodefs.available: "10%"
-  imagefs.available: "15%"
+  nodefs.available: "15%"  # More aggressive: evict at 15% free (was 10%) 
+  imagefs.available: "20%"  # Much more aggressive: evict at 20% free to prevent containerd corruption
 evictionSoft:
   memory.available: "1Gi"
+  nodefs.available: "20%"  # Start warnings at 20% free
+  imagefs.available: "25%"  # Start warnings at 25% free for containerd safety
 evictionSoftGracePeriod:
   memory.available: "30s"
+  nodefs.available: "60s"  # Grace period for disk space warnings
+  imagefs.available: "30s"  # Shorter grace for critical containerd space
 KUBELET_PATCH
   EOF
   k8s_join_command                 = var.k8s_join_command
