@@ -95,11 +95,11 @@ collabora:
 
 resources:
   limits:
-    cpu: "4"
-    memory: 3Gi
+    cpu: "2"
+    memory: 1Gi
   requests:
-    cpu: 100m
-    memory: 512Mi
+    cpu: 50m
+    memory: 256Mi
 
 cronjob:
   enabled: true
