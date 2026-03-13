@@ -237,6 +237,49 @@ To protect a service via Authentik + Traefik forward auth:
    - `X-authentik-name`
    - `X-authentik-groups`
 
+## Invitation Management
+
+### Create Invitation
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+  -H "Content-Type: application/json" \
+  "https://authentik.viktorbarzin.me/api/v3/stages/invitation/invitations/" \
+  -d '{
+    "name": "invite-slug-name",
+    "single_use": true,
+    "fixed_data": {"group": "Target Group Name"},
+    "flow": "<invitation-enrollment-flow-pk>"
+  }'
+# Returns PK which is the itoken
+# Link: https://authentik.viktorbarzin.me/if/flow/invitation-enrollment/?itoken=<pk>
+```
+
+### List Invitations
+```bash
+curl -s -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+  "https://authentik.viktorbarzin.me/api/v3/stages/invitation/invitations/?page_size=50"
+```
+
+### Delete Invitation
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+  "https://authentik.viktorbarzin.me/api/v3/stages/invitation/invitations/<pk>/"
+```
+
+### Helper Script
+Use `.claude/scripts/authentik-invite.sh` for invitation management:
+```bash
+./authentik-invite.sh create "Group Name" [--days N]
+./authentik-invite.sh assign <username> "Group Name"
+./authentik-invite.sh list
+```
+
+### Important Notes
+- OAuth source `enrollment_flow` is set to `invitation-enrollment` -- new social login users require invitation
+- Source updates require Django ORM (PATCH not supported on `sources/oauth/<slug>/`)
+- Invitation `name` field must be a slug (letters, numbers, hyphens, underscores)
+
 ## Gotchas
 
 1. **API pagination**: All list endpoints return paginated results. Use `?page_size=50` or check `pagination.next` for more pages.
