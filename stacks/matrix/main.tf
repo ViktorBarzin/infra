@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -39,7 +39,7 @@ resource "kubernetes_deployment" "matrix" {
     }
   }
   spec {
-    replicas = 0
+    replicas = 1
     selector {
       match_labels = {
         app = "matrix"
@@ -52,6 +52,15 @@ resource "kubernetes_deployment" "matrix" {
         }
       }
       spec {
+        init_container {
+          name    = "install-psycopg2"
+          image   = "matrixdotorg/synapse:latest"
+          command = ["/bin/sh", "-c", "pip install --target=/extra-packages psycopg2-binary 2>/dev/null"]
+          volume_mount {
+            name       = "extra-packages"
+            mount_path = "/extra-packages"
+          }
+        }
         container {
           image = "matrixdotorg/synapse:latest"
           name  = "matrix"
@@ -66,9 +75,17 @@ resource "kubernetes_deployment" "matrix" {
             name  = "SYNAPSE_REPORT_STATS"
             value = "yes"
           }
+          env {
+            name  = "PYTHONPATH"
+            value = "/extra-packages"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          volume_mount {
+            name       = "extra-packages"
+            mount_path = "/extra-packages"
           }
         }
         volume {
@@ -76,6 +93,10 @@ resource "kubernetes_deployment" "matrix" {
           persistent_volume_claim {
             claim_name = module.nfs_data.claim_name
           }
+        }
+        volume {
+          name = "extra-packages"
+          empty_dir {}
         }
       }
     }
