@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -204,7 +204,7 @@ resource "kubernetes_deployment" "otp" {
     }
   }
   spec {
-    replicas = 0 # Scaled down: TfL GTFS data expired, OTP crash-loops on build
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -232,6 +232,20 @@ resource "kubernetes_deployment" "otp" {
           volume_mount {
             name       = "otp-data"
             mount_path = "/var/opentripplanner"
+          }
+          env {
+            name  = "JAVA_TOOL_OPTIONS"
+            value = "-Xmx1536m"
+          }
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "1Gi"
+            }
+            limits = {
+              cpu    = "2"
+              memory = "2Gi"
+            }
           }
         }
         volume {
