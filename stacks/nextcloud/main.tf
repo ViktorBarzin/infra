@@ -93,15 +93,14 @@ resource "kubernetes_config_map" "apache_tuning" {
   }
   data = {
     "mpm_prefork.conf" = <<-EOF
-      # Conservative SQLite-safe configuration (post-database restoration)
-      # Balance between avoiding health check timeouts and preventing SQLite lock contention
-      # 15 workers = safe concurrency for SQLite while handling multiple users + health checks
+      # Tuned for Nextcloud on MySQL (no SQLite lock contention)
+      # CPU/RAM usage is low (~20m/143Mi), so more workers are safe
       <IfModule mpm_prefork_module>
-        StartServers            4
-        MinSpareServers         2
-        MaxSpareServers         6
-        MaxRequestWorkers       15
-        MaxConnectionsPerChild  150
+        StartServers            5
+        MinSpareServers         5
+        MaxSpareServers         15
+        MaxRequestWorkers       150
+        MaxConnectionsPerChild  500
       </IfModule>
     EOF
   }
