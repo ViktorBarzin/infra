@@ -18,9 +18,9 @@ module "tls_secret" {
 }
 
 # Redis with Sentinel HA via Bitnami Helm chart
-# Architecture: 1 master + 2 replicas + 3 sentinels
+# Architecture: 1 master + 1 replica + 2 sentinels (one per node)
 # Sentinel automatically promotes a replica if master fails
-# The K8s Service always points at the current master
+# HAProxy sits in front and routes only to the current master (see below)
 resource "helm_release" "redis" {
   namespace        = kubernetes_namespace.redis.metadata[0].name
   create_namespace = false
@@ -109,9 +109,127 @@ resource "helm_release" "redis" {
   })]
 }
 
-# Override the Helm-managed service to pin to master pod
-# Sentinel clients can use the headless service for discovery,
-# but simple redis:// clients (paperless-ngx, etc.) need to hit the master
+# HAProxy-based master-only proxy for simple redis:// clients.
+# Health-checks each Redis node via INFO replication and only routes
+# to the current master. On Sentinel failover, HAProxy detects the
+# new master within seconds via its health check interval.
+# Previously this was a K8s Service that routed to all nodes, causing
+# READONLY errors when clients hit a replica.
+
+resource "kubernetes_config_map" "haproxy" {
+  metadata {
+    name      = "redis-haproxy"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  data = {
+    "haproxy.cfg" = <<-EOT
+      global
+        maxconn 256
+
+      defaults
+        mode tcp
+        timeout connect 5s
+        timeout client  30s
+        timeout server  30s
+        timeout check   3s
+
+      frontend redis_front
+        bind *:6379
+        default_backend redis_master
+
+      frontend sentinel_front
+        bind *:26379
+        default_backend redis_sentinel
+
+      backend redis_master
+        option tcp-check
+        tcp-check connect
+        tcp-check send "PING\r\n"
+        tcp-check expect string +PONG
+        tcp-check send "INFO replication\r\n"
+        tcp-check expect string role:master
+        tcp-check send "QUIT\r\n"
+        tcp-check expect string +OK
+        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 3s fall 3 rise 2
+        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 3s fall 3 rise 2
+
+      backend redis_sentinel
+        balance roundrobin
+        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:26379 check inter 5s
+        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:26379 check inter 5s
+    EOT
+  }
+}
+
+resource "kubernetes_deployment" "haproxy" {
+  metadata {
+    name      = "redis-haproxy"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+    labels = {
+      app = "redis-haproxy"
+    }
+  }
+  spec {
+    replicas = 2
+    selector {
+      match_labels = {
+        app = "redis-haproxy"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "redis-haproxy"
+        }
+      }
+      spec {
+        container {
+          name  = "haproxy"
+          image = "docker.io/library/haproxy:3.1-alpine"
+          port {
+            container_port = 6379
+            name           = "redis"
+          }
+          port {
+            container_port = 26379
+            name           = "sentinel"
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/usr/local/etc/haproxy"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "16Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "32Mi"
+            }
+          }
+          liveness_probe {
+            tcp_socket {
+              port = 6379
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+        }
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.haproxy.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.redis]
+}
+
 resource "kubernetes_service" "redis" {
   metadata {
     name      = "redis"
@@ -119,10 +237,7 @@ resource "kubernetes_service" "redis" {
   }
   spec {
     selector = {
-      "app.kubernetes.io/component"        = "node"
-      "app.kubernetes.io/instance"         = "redis"
-      "app.kubernetes.io/name"             = "redis"
-      "statefulset.kubernetes.io/pod-name" = "redis-node-0"
+      app = "redis-haproxy"
     }
     port {
       name        = "tcp-redis"
@@ -136,7 +251,7 @@ resource "kubernetes_service" "redis" {
     }
   }
 
-  depends_on = [helm_release.redis]
+  depends_on = [kubernetes_deployment.haproxy]
 }
 
 module "nfs_backup" {
