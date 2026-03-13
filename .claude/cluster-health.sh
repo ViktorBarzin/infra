@@ -1255,6 +1255,138 @@ check_cloudflare_tunnel() {
     fi
 }
 
+# --- 25. Advanced CPU Monitoring (Prometheus) ---
+check_prometheus_cpu() {
+    section 25 "Advanced CPU Monitoring"
+    local prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
+    local cpu_query="100%20-%20(avg%20by%20(instance)%20(irate(node_cpu_seconds_total%7Bmode%3D%22idle%22%7D%5B5m%5D))%20*%20100)"
+    local detail="" had_issue=false status="PASS"
+    
+    # Try to query Prometheus for CPU metrics
+    local cpu_data
+    cpu_data=$(curl -s --connect-timeout 10 "${prom_url}?query=${cpu_query}" 2>/dev/null) || {
+        warn "Prometheus not accessible for CPU monitoring"
+        json_add "prometheus_cpu" "WARN" "Prometheus unreachable"
+        return 0
+    }
+    
+    # Parse JSON and check CPU usage
+    local cpu_results
+    cpu_results=$(echo "$cpu_data" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    if data.get('status') == 'success':
+        for result in data['data']['result']:
+            instance = result['metric']['instance']
+            usage = float(result['value'][1])
+            # Map IP to node name  
+            if '10.0.20.100' in instance:
+                node = 'k8s-master'
+            elif '10.0.20.101' in instance:
+                node = 'k8s-node1' 
+            elif '10.0.20.102' in instance:
+                node = 'k8s-node2'
+            elif '10.0.20.103' in instance:
+                node = 'k8s-node3'
+            elif '10.0.20.104' in instance:
+                node = 'k8s-node4'
+            elif 'pve-node' in instance:
+                node = 'proxmox-host'
+            else:
+                node = instance
+            print(f'{node}:{usage:.1f}')
+except Exception as e:
+    print(f'ERROR:{e}')
+" 2>/dev/null) || true
+    
+    if [[ "$cpu_results" == *"ERROR"* || -z "$cpu_results" ]]; then
+        warn "Failed to parse Prometheus CPU data"
+        json_add "prometheus_cpu" "WARN" "Parse failed"
+        return 0
+    fi
+    
+    # Check CPU thresholds
+    while IFS=':' read -r node usage; do
+        [[ -z "$node" || -z "$usage" ]] && continue
+        usage_int=${usage%.*}  # Remove decimal
+        
+        if [[ "$usage_int" -gt 85 ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Advanced CPU Monitoring"
+            fail "$node: ${usage}% CPU (critical)"
+            detail+="$node=${usage}% [CRIT]; "
+            had_issue=true
+            status="FAIL"
+        elif [[ "$usage_int" -gt 70 ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 25 "Advanced CPU Monitoring" 
+            warn "$node: ${usage}% CPU (high)"
+            detail+="$node=${usage}% [HIGH]; "
+            had_issue=true
+            [[ "$status" != "FAIL" ]] && status="WARN"
+        else
+            detail+="$node=${usage}% [OK]; "
+        fi
+    done <<< "$cpu_results"
+    
+    [[ "$had_issue" == false ]] && pass "All nodes below 70% CPU usage (5m avg)"
+    json_add "prometheus_cpu" "$status" "$detail"
+}
+
+# --- 26. Power Monitoring ---
+check_power_monitoring() {
+    section 26 "Power Monitoring"
+    local prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
+    local detail="" had_issue=false status="PASS"
+    
+    # GPU Power monitoring
+    local gpu_query="DCGM_FI_DEV_POWER_USAGE"
+    local gpu_data
+    gpu_data=$(curl -s --connect-timeout 10 "${prom_url}?query=${gpu_query}" 2>/dev/null) || {
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 26 "Power Monitoring"
+        warn "GPU power metrics unavailable"
+        detail+="GPU metrics unavailable; "
+        had_issue=true
+        status="WARN"
+    }
+    
+    if [[ -n "$gpu_data" && "$gpu_data" != *"error"* ]]; then
+        local gpu_results
+        gpu_results=$(echo "$gpu_data" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    if data.get('status') == 'success':
+        for result in data['data']['result']:
+            hostname = result['metric'].get('Hostname', 'unknown')
+            power = float(result['value'][1])
+            print(f'{hostname}:{power:.1f}')
+except Exception:
+    pass
+" 2>/dev/null) || true
+        
+        # Check GPU power thresholds (Tesla T4 TDP is ~70W)
+        while IFS=':' read -r node power; do
+            [[ -z "$node" || -z "$power" ]] && continue
+            power_int=${power%.*}
+            
+            if [[ "$power_int" -gt 65 ]]; then  # > 90% of T4 TDP
+                [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 26 "Power Monitoring"
+                warn "GPU $node: ${power}W (high power draw)"
+                detail+="GPU-$node=${power}W [HIGH]; "
+                had_issue=true
+                [[ "$status" != "FAIL" ]] && status="WARN"
+            elif [[ "$power_int" -gt 50 ]]; then  # > 70% of T4 TDP
+                detail+="GPU-$node=${power}W [ACTIVE]; "
+            else
+                detail+="GPU-$node=${power}W [IDLE]; "
+            fi
+        done <<< "$gpu_results"
+    fi
+    
+    [[ "$had_issue" == false ]] && pass "Power consumption within normal ranges"
+    json_add "power_monitoring" "$status" "$detail"
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -1324,6 +1456,8 @@ friendly_check_name() {
         tls_certs)          echo "TLS Certificates" ;;
         gpu)                echo "GPU" ;;
         cloudflare_tunnel)  echo "Cloudflare Tunnel" ;;
+        prometheus_cpu)     echo "Advanced CPU Monitoring" ;;
+        power_monitoring)   echo "Power Monitoring" ;;
         *)                  echo "$1" ;;
     esac
 }
@@ -1377,6 +1511,8 @@ CHECK_NAMES = {
     'tls_certs': 'TLS Certificates',
     'gpu': 'GPU',
     'cloudflare_tunnel': 'Cloudflare Tunnel',
+    'prometheus_cpu': 'Advanced CPU Monitoring',
+    'power_monitoring': 'Power Monitoring',
 }
 
 def format_detail(check, detail):
@@ -1525,6 +1661,8 @@ main() {
     check_tls_certs
     check_gpu
     check_cloudflare_tunnel
+    check_prometheus_cpu
+    check_power_monitoring
     print_summary
     send_slack
 
