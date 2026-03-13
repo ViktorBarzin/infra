@@ -1,5 +1,9 @@
 variable "nfs_server" { type = string }
 
+# LOKI DISABLED - Uncomment to re-enable centralized logging
+# Disabled due to operational overhead vs benefit analysis after node2 incident
+# All configuration preserved in loki.yaml for future re-enabling
+/*
 resource "helm_release" "loki" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -13,8 +17,12 @@ resource "helm_release" "loki" {
 
   depends_on = [kubernetes_config_map.loki_alert_rules]
 }
+*/
 
+# ALLOY DISABLED - Log collection agents (depends on Loki)
 # https://grafana.com/docs/alloy/latest/configure/kubernetes/
+# Configuration preserved in alloy.yaml for future re-enabling
+/*
 resource "helm_release" "alloy" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -28,7 +36,11 @@ resource "helm_release" "alloy" {
 
   depends_on = [helm_release.loki]
 }
+*/
 
+# SYSCTL INOTIFY DISABLED - Was specifically for Loki file watching requirements
+# Can be re-enabled when Loki is restored
+/*
 resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
   metadata {
     name      = "sysctl-inotify"
@@ -89,6 +101,7 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
     }
   }
 }
+*/
 
 # resource "helm_release" "k8s-monitoring" {
 #  namespace = kubernetes_namespace.monitoring.metadata[0].name
@@ -102,6 +115,10 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
 #   atomic = true
 # }
 
+# LOKI ALERT RULES DISABLED - Depend on Loki log queries
+# These alert on kernel events from systemd journal logs via Loki
+# Can be re-enabled when Loki is restored
+/*
 resource "kubernetes_config_map" "loki_alert_rules" {
   metadata {
     name      = "loki-alert-rules"
@@ -174,7 +191,11 @@ resource "kubernetes_config_map" "loki_alert_rules" {
     })
   }
 }
+*/
 
+# GRAFANA LOKI DATASOURCE DISABLED - Points to non-existent Loki service
+# Can be re-enabled when Loki is restored
+/*
 resource "kubernetes_config_map" "grafana_loki_datasource" {
   metadata {
     name      = "grafana-loki-datasource"
@@ -196,3 +217,4 @@ resource "kubernetes_config_map" "grafana_loki_datasource" {
     })
   }
 }
+*/
