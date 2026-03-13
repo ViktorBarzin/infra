@@ -128,10 +128,24 @@ resource "kubernetes_deployment" "frigate" {
             name       = "media"
             mount_path = "/media/frigate"
           }
-          # Restart pod if GPU becomes unavailable or Frigate hangs
+          # Restart pod if GPU becomes unavailable, Frigate hangs, or
+          # detector falls back to CPU (inference time spikes from ~20ms to 200ms+)
           liveness_probe {
             exec {
-              command = ["sh", "-c", "nvidia-smi > /dev/null 2>&1 && curl -sf http://localhost:5000/api/version > /dev/null"]
+              command = ["sh", "-c", <<-EOT
+                nvidia-smi > /dev/null 2>&1 || exit 1
+                STATS=$(curl -sf --max-time 5 http://localhost:5000/api/stats) || exit 1
+                echo "$STATS" | python3 -c "
+import sys, json
+stats = json.load(sys.stdin)
+for name, det in stats.get('detectors', {}).items():
+    speed = det.get('inference_speed', 0)
+    if speed > 100:
+        print(f'UNHEALTHY: detector {name} inference {speed}ms > 100ms threshold')
+        sys.exit(1)
+"
+              EOT
+              ]
             }
             initial_delay_seconds = 120
             period_seconds        = 60
