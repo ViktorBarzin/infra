@@ -354,12 +354,18 @@ serverFiles:
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} predicted to fill within 24h"
           - alert: NFSServerUnresponsive
-            expr: sum(rate(node_nfs_requests_total[5m])) == 0
+            expr: |
+              (
+                count by () (
+                  sum by (instance) (changes(node_nfs_requests_total[15m])) > 0
+                ) or on() vector(0)
+              ) < 2
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "All NFS operations across the cluster are zero for 10m — TrueNAS (10.0.10.15) may be down"
+              summary: "Fewer than 2 nodes have NFS activity for 10m — TrueNAS (10.0.10.15) may be down"
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
