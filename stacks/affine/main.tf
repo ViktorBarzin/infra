@@ -134,6 +134,15 @@ resource "kubernetes_deployment" "affine" {
             mount_path = "/root/.affine/config"
             sub_path   = "config"
           }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
         }
 
         container {
