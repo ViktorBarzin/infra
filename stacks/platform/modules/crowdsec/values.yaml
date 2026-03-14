@@ -56,6 +56,12 @@ lapi:
       memory: 128Mi
     limits:
       memory: 1Gi
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    failureThreshold: 30
+    periodSeconds: 10
   priorityClassName: "tier-1-cluster"
   replicas: 3
   topologySpreadConstraints:

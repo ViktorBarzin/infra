@@ -107,7 +107,7 @@ resource "helm_release" "crowdsec" {
   chart      = "crowdsec"
 
   values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host })]
-  timeout       = 600
+  timeout       = 900
   wait          = true
   wait_for_jobs = true
 }
