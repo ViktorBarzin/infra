@@ -26,11 +26,20 @@ nextcloud:
     #   value: "true"
     # - name: loglevel
     #   value: "0"
+  configs:
+    performance.config.php: |
+      <?php
+      $CONFIG = array(
+        'loglevel' => 2,
+        'mail_smtpdebug' => false,
+      );
   phpConfigs:
     zzz-custom.ini: |
       max_execution_time = 300
       max_input_time = 300
       default_socket_timeout = 300
+      opcache.enable_file_override = 1
+      apc.shm_size = 128M
   extraVolumes:
     - name: apache-tuning
       configMap:
