@@ -57,7 +57,6 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "150m"
               memory = "256Mi"
             }
           }

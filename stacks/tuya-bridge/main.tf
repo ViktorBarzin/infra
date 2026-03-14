@@ -1,17 +1,17 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tiny_tuya_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tiny_tuya_api_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tiny_tuya_service_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tiny_tuya_slack_url" { type = string }
@@ -84,7 +84,6 @@ resource "kubernetes_deployment" "tuya-bridge" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "150m"
               memory = "256Mi"
             }
           }

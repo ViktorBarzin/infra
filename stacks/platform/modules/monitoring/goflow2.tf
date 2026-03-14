@@ -43,7 +43,6 @@ resource "kubernetes_deployment" "goflow2" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "200m"
               memory = "256Mi"
             }
           }

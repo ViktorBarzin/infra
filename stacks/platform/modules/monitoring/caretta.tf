@@ -32,7 +32,6 @@ resource "helm_release" "caretta" {
         memory = "300Mi"
       }
       limits = {
-        cpu    = "200m"
         memory = "512Mi"
       }
     }

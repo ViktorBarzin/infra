@@ -10,7 +10,24 @@ resource "kubernetes_namespace" "osm-routing" {
     name = "osm-routing"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier                               = local.tiers.aux
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota_v1" "osm_routing" {
+  metadata {
+    name      = "tier-quota"
+    namespace = kubernetes_namespace.osm-routing.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "6Gi"
+      "limits.cpu"      = "16"
+      "limits.memory"   = "16Gi"
+      pods              = "20"
     }
   }
 }
@@ -77,7 +94,6 @@ resource "kubernetes_deployment" "osrm-foot" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "1Gi"
             }
           }
@@ -158,7 +174,6 @@ resource "kubernetes_deployment" "osrm-bicycle" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "1Gi"
             }
           }
@@ -235,16 +250,15 @@ resource "kubernetes_deployment" "otp" {
           }
           env {
             name  = "JAVA_TOOL_OPTIONS"
-            value = "-Xmx1536m"
+            value = "-Xmx3g"
           }
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              cpu    = "2"
-              memory = "2Gi"
+              memory = "4Gi"
             }
           }
         }

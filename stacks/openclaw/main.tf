@@ -1,33 +1,37 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "openclaw_ssh_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "openclaw_skill_secrets" {
-  type = map(string)
+  type      = map(string)
   sensitive = true
 }
 variable "llama_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "brave_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "openrouter_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nvidia_api_key" {
-  type = string
+  type      = string
+  sensitive = true
+}
+variable "anthropic_api_key" {
+  type      = string
   sensitive = true
 }
 variable "openclaw_telegram_bot_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "forgejo_api_token" {
@@ -121,10 +125,13 @@ resource "kubernetes_config_map" "openclaw_config" {
             mode = "off"
           }
           model = {
-            primary   = "nim/mistralai/mistral-large-3-675b-instruct-2512"
-            fallbacks = ["nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "modelrelay/auto-fastest"]
+            primary   = "anthropic/claude-sonnet-4-20250514"
+            fallbacks = ["nim/mistralai/mistral-large-3-675b-instruct-2512", "nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "modelrelay/auto-fastest"]
           }
           models = {
+            "anthropic/claude-sonnet-4-20250514"                     = {}
+            "anthropic/claude-opus-4-20250514"                       = {}
+            "anthropic/claude-haiku-4-20250506"                      = {}
             "modelrelay/auto-fastest"                                = {}
             "nim/deepseek-ai/deepseek-v3.2"                          = {}
             "nim/qwen/qwen3.5-397b-a17b"                             = {}
@@ -188,6 +195,16 @@ resource "kubernetes_config_map" "openclaw_config" {
             apiKey  = "modelrelay"
             models = [
               { id = "auto-fastest", name = "Auto (Fastest)", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+            ]
+          }
+          anthropic = {
+            baseUrl = "https://api.anthropic.com/v1"
+            api     = "anthropic-messages"
+            apiKey  = var.anthropic_api_key
+            models = [
+              { id = "claude-sonnet-4-20250514", name = "Claude Sonnet 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.003, output = 0.015, cacheRead = 0.0003, cacheWrite = 0.00375 } },
+              { id = "claude-opus-4-20250514", name = "Claude Opus 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.015, output = 0.075, cacheRead = 0.0015, cacheWrite = 0.01875 } },
+              { id = "claude-haiku-4-20250506", name = "Claude Haiku 4", reasoning = false, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.0008, output = 0.004, cacheRead = 0.00008, cacheWrite = 0.001 } },
             ]
           }
           nim = {
@@ -268,6 +285,14 @@ module "nfs_data" {
   namespace  = kubernetes_namespace.openclaw.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/openclaw/data"
+}
+
+module "nfs_cc_config" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "cc-config"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/cc-config"
 }
 
 resource "kubernetes_deployment" "openclaw" {
@@ -383,8 +408,42 @@ resource "kubernetes_deployment" "openclaw" {
             # Symlink Claude skills into OpenClaw skills directory
             ln -sfn /workspace/infra/.claude/skills /openclaw-home/skills
 
+            # Pull shared CC config from NFS bare repo
+            if [ ! -d /openclaw-home/cc-config/.git ]; then
+              git clone /cc-config/cc-config.git /openclaw-home/cc-config 2>/dev/null || true
+            else
+              (cd /openclaw-home/cc-config && git pull --ff-only) || true
+            fi
+
+            # Apply shared config to OpenClaw
+            if [ -d /openclaw-home/cc-config ]; then
+              # Copy shared CLAUDE.md (global knowledge)
+              [ -f /openclaw-home/cc-config/CLAUDE.md ] && \
+                cp /openclaw-home/cc-config/CLAUDE.md /openclaw-home/CLAUDE.md
+
+              # Copy shared skills (separate dir from infra skills)
+              if [ -d /openclaw-home/cc-config/skills ]; then
+                mkdir -p /openclaw-home/cc-skills
+                cp -r /openclaw-home/cc-config/skills/* /openclaw-home/cc-skills/ 2>/dev/null || true
+              fi
+
+              # Copy shared memory
+              if [ -d /openclaw-home/cc-config/memory ]; then
+                mkdir -p /openclaw-home/memory
+                cp -r /openclaw-home/cc-config/memory/* /openclaw-home/memory/ 2>/dev/null || true
+              fi
+
+              # Copy commands, hooks, agents
+              for d in commands hooks agents; do
+                if [ -d /openclaw-home/cc-config/$d ]; then
+                  mkdir -p /openclaw-home/$d
+                  cp -r /openclaw-home/cc-config/$d/* /openclaw-home/$d/ 2>/dev/null || true
+                fi
+              done
+            fi
+
             # Create required directories (owned by node user, UID 1000)
-            mkdir -p /openclaw-home/agents/main/sessions /openclaw-home/credentials /openclaw-home/canvas /openclaw-home/devices /openclaw-home/cron
+            mkdir -p /openclaw-home/agents/main/sessions /openclaw-home/credentials /openclaw-home/canvas /openclaw-home/devices /openclaw-home/cron /openclaw-home/cc-skills /openclaw-home/memory
             chown -R 1000:1000 /openclaw-home
             chmod 700 /openclaw-home
 
@@ -442,6 +501,10 @@ resource "kubernetes_deployment" "openclaw" {
           volume_mount {
             name       = "openclaw-config"
             mount_path = "/openclaw-config-src"
+          }
+          volume_mount {
+            name       = "cc-config"
+            mount_path = "/cc-config"
           }
         }
 
@@ -534,7 +597,6 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              cpu    = "2"
               memory = "2Gi"
             }
             requests = {
@@ -576,7 +638,6 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
             requests = {
@@ -615,6 +676,12 @@ resource "kubernetes_deployment" "openclaw" {
           secret {
             secret_name  = kubernetes_secret.ssh_key.metadata[0].name
             default_mode = "0600"
+          }
+        }
+        volume {
+          name = "cc-config"
+          persistent_volume_claim {
+            claim_name = module.nfs_cc_config.claim_name
           }
         }
         volume {
@@ -797,8 +864,8 @@ resource "kubernetes_deployment" "task_webhook" {
       spec {
         service_account_name = kubernetes_service_account.task_webhook.metadata[0].name
         container {
-          name  = "webhook"
-          image = "python:3-alpine"
+          name    = "webhook"
+          image   = "python:3-alpine"
           command = ["sh", "-c", "apk add --no-cache curl > /dev/null 2>&1 && curl -sfL https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && exec python3 -u /app/server.py"]
           port {
             container_port = 8080
@@ -813,7 +880,6 @@ resource "kubernetes_deployment" "task_webhook" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "64Mi"
             }
           }

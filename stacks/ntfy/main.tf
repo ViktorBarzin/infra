@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -96,11 +96,11 @@ resource "kubernetes_deployment" "ntfy" {
           }
           env {
             name  = "NTFY_BEHIND_PROXY"
-            value = true
+            value = "true"
           }
           env {
             name  = "NTFY_ENABLE_LOGIN"
-            value = true
+            value = "true"
           }
           env {
             name  = "NTFY_AUTH_FILE"
@@ -112,7 +112,7 @@ resource "kubernetes_deployment" "ntfy" {
           }
           env {
             name  = "NTFY_ENABLE_METRICS"
-            value = true
+            value = "true"
           }
           volume_mount {
             name       = "data"
@@ -124,7 +124,6 @@ resource "kubernetes_deployment" "ntfy" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

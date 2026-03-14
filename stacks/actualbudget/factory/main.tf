@@ -9,8 +9,8 @@ variable "sync_id" {
   default = null # If not passed, we won't run banksync
 }
 variable "budget_encryption_password" {
-  type    = string
-  default = null # If not passed, we won't run banksync ;known after initial installation
+  type      = string
+  default   = null # If not passed, we won't run banksync ;known after initial installation
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -102,11 +102,11 @@ resource "kubernetes_service" "actualbudget" {
 }
 
 module "ingress" {
-  source          = "../../../modules/kubernetes/ingress_factory"
-  namespace       = "actualbudget"
-  name            = "budget-${var.name}"
-  tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "3e6b6b68088a"
+  source            = "../../../modules/kubernetes/ingress_factory"
+  namespace         = "actualbudget"
+  name              = "budget-${var.name}"
+  tls_secret_name   = var.tls_secret_name
+  rybbit_site_id    = "3e6b6b68088a"
   extra_annotations = var.homepage_annotations
 }
 
@@ -152,7 +152,6 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

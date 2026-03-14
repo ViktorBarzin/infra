@@ -109,7 +109,6 @@ resource "kubernetes_deployment" "technitium_secondary" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

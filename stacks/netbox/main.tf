@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "netbox_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "netbox_superuser_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -146,7 +146,6 @@ resource "kubernetes_deployment" "netbox" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1Gi"
             }
           }

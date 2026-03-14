@@ -7,28 +7,28 @@ variable "idrac_username" {
   default = "root"
 }
 variable "idrac_password" {
-  default = "calvin"
+  default   = "calvin"
   sensitive = true
 }
 variable "alertmanager_slack_api_url" {}
 variable "tiny_tuya_service_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "haos_api_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "pve_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "grafana_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "grafana_admin_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tier" { type = string }
@@ -211,7 +211,6 @@ resource "kubernetes_resource_quota" "monitoring" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "64"
       "limits.memory"   = "64Gi"
       pods              = "100"
     }

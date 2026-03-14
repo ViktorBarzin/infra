@@ -82,7 +82,6 @@ resource "kubernetes_deployment" "headscale" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "200m"
               memory = "256Mi"
             }
           }
@@ -167,7 +166,6 @@ resource "kubernetes_deployment" "headscale" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

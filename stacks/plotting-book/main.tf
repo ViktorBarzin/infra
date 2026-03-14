@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "plotting_book_session_secret" {
@@ -124,7 +124,6 @@ resource "kubernetes_deployment" "plotting-book" {
             }
             limits = {
               memory = "256Mi"
-              cpu    = "100m"
             }
           }
         }

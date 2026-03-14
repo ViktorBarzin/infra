@@ -40,7 +40,6 @@ resource "helm_release" "cnpg" {
         memory = "128Mi"
       }
       limits = {
-        cpu    = "500m"
         memory = "256Mi"
       }
     }

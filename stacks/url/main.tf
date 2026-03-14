@@ -1,14 +1,14 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "url_shortener_geolite_license_key" { type = string }
 variable "url_shortener_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "url_shortener_mysql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "mysql_host" { type = string }
@@ -280,7 +280,6 @@ resource "kubernetes_deployment" "shlink-web" {
           }
           resources {
             limits = {
-              cpu    = "0.5"
               memory = "512Mi"
             }
             requests = {

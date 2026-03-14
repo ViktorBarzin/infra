@@ -72,7 +72,6 @@ singleBinary:
       cpu: 250m
       memory: 2Gi
     limits:
-      cpu: "1"
       memory: 4Gi
 
 # Zero out replica counts of other deployment modes

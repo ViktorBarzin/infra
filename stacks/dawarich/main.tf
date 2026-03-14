@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "dawarich_database_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "geoapify_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -155,7 +155,6 @@ resource "kubernetes_deployment" "dawarich" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "1Gi"
             }
           }

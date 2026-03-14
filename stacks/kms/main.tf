@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -61,7 +61,6 @@ resource "kubernetes_deployment" "kms-web-page" {
           image_pull_policy = "IfNotPresent"
           resources {
             limits = {
-              cpu    = "50m"
               memory = "64Mi"
             }
             requests = {
@@ -158,7 +157,6 @@ resource "kubernetes_deployment" "windows_kms" {
           name  = "windows-kms"
           resources {
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
             requests = {

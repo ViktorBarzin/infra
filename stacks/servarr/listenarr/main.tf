@@ -62,7 +62,6 @@ resource "kubernetes_deployment" "listenarr" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "1Gi"
             }
           }

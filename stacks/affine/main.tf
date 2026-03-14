@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "affine_postgresql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "mailserver_accounts" { type = map(any) }
@@ -170,7 +170,6 @@ resource "kubernetes_deployment" "affine" {
             }
             limits = {
               memory = "512Mi"
-              cpu    = "1"
             }
           }
 

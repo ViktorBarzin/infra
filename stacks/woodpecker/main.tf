@@ -1,29 +1,29 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "woodpecker_github_client_id" { type = string }
 variable "woodpecker_github_client_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "woodpecker_agent_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "woodpecker_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "dbaas_postgresql_root_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "woodpecker_forgejo_client_id" { type = string }
 variable "woodpecker_forgejo_client_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "woodpecker_forgejo_url" { type = string }
@@ -48,7 +48,6 @@ resource "kubernetes_resource_quota" "woodpecker" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "16"
       "limits.memory"   = "32Gi"
       pods              = "60"
     }

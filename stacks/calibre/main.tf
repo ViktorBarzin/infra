@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "homepage_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -200,7 +200,6 @@ resource "kubernetes_deployment" "calibre-web-automated" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "2"
               memory = "1536Mi"
             }
           }
@@ -319,7 +318,6 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
               memory = "192Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "384Mi"
             }
           }

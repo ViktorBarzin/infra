@@ -9,7 +9,6 @@ variable "k8s_users" {
     quota = optional(object({
       cpu_requests    = optional(string, "2")
       memory_requests = optional(string, "4Gi")
-      cpu_limits      = optional(string, "4")
       memory_limits   = optional(string, "8Gi")
       pods            = optional(string, "20")
     }), {})
@@ -225,7 +224,6 @@ resource "kubernetes_resource_quota" "user_namespace_quota" {
     hard = {
       "requests.cpu"    = each.value.quota.cpu_requests
       "requests.memory" = each.value.quota.memory_requests
-      "limits.cpu"      = each.value.quota.cpu_limits
       "limits.memory"   = each.value.quota.memory_limits
       "pods"            = each.value.quota.pods
     }

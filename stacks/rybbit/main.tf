@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "clickhouse_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "clickhouse_postgres_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -119,7 +119,6 @@ resource "kubernetes_deployment" "clickhouse" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "2Gi"
             }
           }
@@ -271,7 +270,7 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "DISABLE_SIGNUP"
-            value = true
+            value = "true"
           }
           env {
             name  = "BETTER_AUTH_SECRET"
@@ -279,7 +278,7 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "AUTH_ENABLED"
-            value = true
+            value = "true"
           }
           port {
             container_port = 3001
@@ -310,7 +309,6 @@ resource "kubernetes_deployment" "rybbit" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "512Mi"
             }
           }
@@ -373,7 +371,7 @@ resource "kubernetes_deployment" "rybbit-client" {
           }
           env {
             name  = "DISABLE_SIGNUP"
-            value = true
+            value = "true"
           }
           port {
             name           = "rybbit-client"
@@ -406,7 +404,6 @@ resource "kubernetes_deployment" "rybbit-client" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "150m"
               memory = "256Mi"
             }
           }

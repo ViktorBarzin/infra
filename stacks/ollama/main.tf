@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "ollama_api_credentials" {
-  type = map(string)
+  type      = map(string)
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -265,7 +265,6 @@ resource "kubernetes_deployment" "ollama-ui" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1536Mi"
             }
           }

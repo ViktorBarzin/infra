@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -89,7 +89,6 @@ resource "kubernetes_deployment" "frigate" {
               memory = "2Gi"
             }
             limits = {
-              cpu              = "4"
               memory           = "8Gi"
               "nvidia.com/gpu" = "1"
             }

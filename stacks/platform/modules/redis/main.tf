@@ -51,7 +51,6 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          cpu    = "200m"
           memory = "128Mi"
         }
       }
@@ -70,7 +69,6 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          cpu    = "500m"
           memory = "256Mi"
         }
       }
@@ -91,7 +89,6 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          cpu    = "500m"
           memory = "256Mi"
         }
       }
@@ -205,7 +202,6 @@ resource "kubernetes_deployment" "haproxy" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "32Mi"
             }
           }

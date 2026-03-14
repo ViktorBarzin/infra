@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "freedify_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 

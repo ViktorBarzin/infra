@@ -35,7 +35,6 @@ resource "kubernetes_resource_quota" "authentik" {
     hard = {
       "requests.cpu"    = "16"
       "requests.memory" = "16Gi"
-      "limits.cpu"      = "48"
       "limits.memory"   = "96Gi"
       pods              = "50"
     }

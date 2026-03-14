@@ -68,7 +68,6 @@ resource "kubernetes_deployment" "vaultwarden" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "256Mi"
             }
           }

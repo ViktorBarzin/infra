@@ -1,14 +1,14 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tandoor_database_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tandoor_email_password" {
-  type    = string
-  default = ""
+  type      = string
+  default   = ""
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -157,7 +157,6 @@ resource "kubernetes_deployment" "tandoor" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "1536Mi"
             }
           }

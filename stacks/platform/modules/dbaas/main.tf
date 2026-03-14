@@ -36,7 +36,6 @@ resource "kubernetes_resource_quota" "dbaas" {
     hard = {
       "requests.cpu"    = "8"
       "requests.memory" = "12Gi"
-      "limits.cpu"      = "32"
       "limits.memory"   = "64Gi"
       pods              = "30"
     }
@@ -82,7 +81,6 @@ resource "helm_release" "mysql_operator" {
         memory = "256Mi"
       }
       limits = {
-        cpu    = "500m"
         memory = "512Mi"
       }
     }
@@ -186,7 +184,6 @@ resource "helm_release" "mysql_cluster" {
         memory = "1Gi"
       }
       limits = {
-        cpu    = "2"
         memory = "4Gi"
       }
     }
@@ -224,7 +221,6 @@ resource "helm_release" "mysql_cluster" {
           }
           limits = {
             memory = "3Gi"
-            cpu    = "2"
           }
         }
       }]
@@ -233,21 +229,21 @@ resource "helm_release" "mysql_cluster" {
           name = "fixdatadir"
           resources = {
             requests = { memory = "64Mi", cpu = "25m" }
-            limits   = { memory = "256Mi", cpu = "500m" }
+            limits   = { memory = "256Mi" }
           }
         },
         {
           name = "initconf"
           resources = {
             requests = { memory = "256Mi", cpu = "50m" }
-            limits   = { memory = "1Gi", cpu = "1" }
+            limits   = { memory = "1Gi" }
           }
         },
         {
           name = "initmysql"
           resources = {
             requests = { memory = "512Mi", cpu = "250m" }
-            limits   = { memory = "2Gi", cpu = "2" }
+            limits   = { memory = "2Gi" }
           }
         }
       ]
@@ -553,7 +549,6 @@ resource "kubernetes_deployment" "phpmyadmin" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "256Mi"
             }
           }
@@ -848,7 +843,7 @@ resource "null_resource" "pg_cluster" {
     storage_size  = "20Gi"
     storage_class = "iscsi-truenas"
     memory_limit  = "4Gi"
-    cpu_limit     = "2"
+
   }
 
   provisioner "local-exec" {
@@ -875,7 +870,6 @@ resource "null_resource" "pg_cluster" {
             cpu: "250m"
             memory: "512Mi"
           limits:
-            cpu: "2"
             memory: "4Gi"
       EOF
     EOT
@@ -986,7 +980,6 @@ resource "kubernetes_deployment" "pgadmin" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

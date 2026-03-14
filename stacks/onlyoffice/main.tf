@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "onlyoffice_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "onlyoffice_jwt_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -36,7 +36,6 @@ resource "kubernetes_limit_range" "onlyoffice" {
     limit {
       type = "Container"
       default = {
-        cpu    = "250m"
         memory = "256Mi"
       }
       default_request = {
@@ -44,7 +43,6 @@ resource "kubernetes_limit_range" "onlyoffice" {
         memory = "64Mi"
       }
       max = {
-        cpu    = "8"
         memory = "8Gi"
       }
     }
@@ -60,7 +58,6 @@ resource "kubernetes_resource_quota" "onlyoffice" {
     hard = {
       "requests.cpu"    = "4"
       "requests.memory" = "4Gi"
-      "limits.cpu"      = "16"
       "limits.memory"   = "16Gi"
       pods              = "10"
     }
@@ -113,7 +110,6 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "2"
               memory = "4Gi"
             }
           }

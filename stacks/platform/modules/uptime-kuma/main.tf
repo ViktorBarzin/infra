@@ -71,7 +71,6 @@ resource "kubernetes_deployment" "uptime-kuma" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

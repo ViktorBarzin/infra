@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -61,7 +61,6 @@ resource "kubernetes_deployment" "cyberchef" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

@@ -38,7 +38,6 @@ resource "helm_release" "sealed_secrets" {
         memory = "64Mi"
       }
       limits = {
-        cpu    = "250m"
         memory = "256Mi"
       }
     }

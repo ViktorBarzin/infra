@@ -1,10 +1,10 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "resume_database_url" { type = string }
 variable "resume_auth_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "mailserver_accounts" { type = map(any) }
@@ -84,7 +84,6 @@ resource "kubernetes_deployment" "printer" {
             }
             limits = {
               memory = "1536Mi"
-              cpu    = "500m"
             }
           }
 
@@ -240,7 +239,6 @@ resource "kubernetes_deployment" "resume" {
             }
             limits = {
               memory = "384Mi"
-              cpu    = "250m"
             }
           }
 

@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -74,7 +74,6 @@ resource "kubernetes_deployment" "dashy" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1Gi"
             }
           }

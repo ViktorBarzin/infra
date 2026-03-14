@@ -365,7 +365,6 @@ resource "kubernetes_deployment" "mailserver" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }
@@ -395,7 +394,6 @@ resource "kubernetes_deployment" "mailserver" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "64Mi"
             }
           }

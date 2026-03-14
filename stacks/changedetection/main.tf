@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -79,7 +79,6 @@ resource "kubernetes_deployment" "changedetection" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }
@@ -119,7 +118,6 @@ resource "kubernetes_deployment" "changedetection" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "256Mi"
             }
           }

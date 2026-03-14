@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "owntracks_credentials" {
-  type = map(string)
+  type      = map(string)
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -114,7 +114,6 @@ resource "kubernetes_deployment" "owntracks" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "64Mi"
             }
           }
