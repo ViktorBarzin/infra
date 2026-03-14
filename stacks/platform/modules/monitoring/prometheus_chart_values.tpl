@@ -229,14 +229,14 @@ serverFiles:
             annotations:
               summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
           - alert: SSDHighWriteRate
-            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 # sdb is SSD; value in MB
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900 # sdb is SSD; value in MB
             for: 10m
             labels:
               severity: info
             annotations:
               summary: "SSD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 2 MB/s)"
           - alert: HDDHighWriteRate
-            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 # sdc is 11TB HDD; value in MB
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900 # sdc is 11TB HDD; value in MB
             for: 20m
             labels:
               severity: info
@@ -369,14 +369,14 @@ serverFiles:
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
-            expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
+            expr: increase(kube_pod_container_status_restarts_total[1h]) > 5 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             labels:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}: {{ $value | printf \"%.0f\" }} restarts in 1h"
           - alert: ContainerOOMKilled
-            expr: increase(container_oom_events_total{container!=""}[15m]) > 0
+            expr: increase(container_oom_events_total{container!=""}[15m]) > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             labels:
               severity: warning
@@ -416,7 +416,7 @@ serverFiles:
             annotations:
               summary: "Home Assistant down: {{ $labels.instance }}"
           - alert: CoreDNSErrors
-            expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1
+            expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
             labels:
               severity: warning
@@ -681,6 +681,7 @@ serverFiles:
                 * 100
               ) > 10
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service) > 0.1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
             labels:
               severity: warning
@@ -694,6 +695,7 @@ serverFiles:
                 * 100
               ) > 30
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service) > 0.1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             labels:
               severity: warning
@@ -704,6 +706,7 @@ serverFiles:
               histogram_quantile(0.99,
                 sum(rate(traefik_service_request_duration_seconds_bucket[5m])) by (service, le)
               ) > 10
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             labels:
               severity: warning
