@@ -100,6 +100,17 @@ parse_args() {
         esac
     done
     KUBECTL="kubectl --kubeconfig $KUBECONFIG_PATH"
+
+    # Auto-source UPTIME_KUMA_PASSWORD from terraform.tfvars if not set
+    if [[ -z "${UPTIME_KUMA_PASSWORD:-}" ]]; then
+        local script_dir tfvars_file
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        tfvars_file="${script_dir}/../terraform.tfvars"
+        if [[ -f "$tfvars_file" ]]; then
+            UPTIME_KUMA_PASSWORD=$(grep 'uptime_kuma_password' "$tfvars_file" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+            export UPTIME_KUMA_PASSWORD
+        fi
+    fi
 }
 
 # --- 1. Node Status ---
@@ -913,7 +924,7 @@ check_helm_releases() {
 
     local releases detail="" had_issue=false status="PASS"
 
-    releases=$(helm list -A --kubeconfig "$KUBECONFIG_PATH" --all -o json 2>/dev/null) || {
+    releases=$(helm list --all-namespaces --kubeconfig "$KUBECONFIG_PATH" -o json 2>/dev/null) || {
         [[ "$QUIET" == true ]] && section_always 18 "Helm Release Health"
         warn "Cannot list Helm releases"
         json_add "helm_releases" "WARN" "Cannot list"
@@ -1258,10 +1269,24 @@ check_cloudflare_tunnel() {
 # --- 25. Advanced CPU Monitoring (Prometheus) ---
 check_prometheus_cpu() {
     section 25 "Advanced CPU Monitoring"
-    local prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
     local cpu_query="100%20-%20(avg%20by%20(instance)%20(irate(node_cpu_seconds_total%7Bmode%3D%22idle%22%7D%5B5m%5D))%20*%20100)"
     local detail="" had_issue=false status="PASS"
-    
+
+    # Start port-forward to Prometheus if not using in-cluster DNS
+    local prom_url pf_pid=""
+    if curl -s --connect-timeout 2 "http://prometheus-server.monitoring.svc.cluster.local/api/v1/query?query=up" &>/dev/null; then
+        prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
+    else
+        local pf_port
+        pf_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+        $KUBECTL port-forward -n monitoring svc/prometheus-server "$pf_port:80" &>/dev/null &
+        pf_pid=$!
+        sleep 2
+        prom_url="http://127.0.0.1:${pf_port}/api/v1/query"
+    fi
+    # Cleanup port-forward on exit from this function
+    trap '[[ -n "$pf_pid" ]] && kill $pf_pid 2>/dev/null || true' RETURN
+
     # Try to query Prometheus for CPU metrics
     local cpu_data
     cpu_data=$(curl -s --connect-timeout 10 "${prom_url}?query=${cpu_query}" 2>/dev/null) || {
@@ -1335,9 +1360,22 @@ except Exception as e:
 # --- 26. Power Monitoring ---
 check_power_monitoring() {
     section 26 "Power Monitoring"
-    local prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
     local detail="" had_issue=false status="PASS"
-    
+
+    # Start port-forward to Prometheus if not using in-cluster DNS
+    local prom_url pf_pid=""
+    if curl -s --connect-timeout 2 "http://prometheus-server.monitoring.svc.cluster.local/api/v1/query?query=up" &>/dev/null; then
+        prom_url="http://prometheus-server.monitoring.svc.cluster.local/api/v1/query"
+    else
+        local pf_port
+        pf_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+        $KUBECTL port-forward -n monitoring svc/prometheus-server "$pf_port:80" &>/dev/null &
+        pf_pid=$!
+        sleep 2
+        prom_url="http://127.0.0.1:${pf_port}/api/v1/query"
+    fi
+    trap '[[ -n "$pf_pid" ]] && kill $pf_pid 2>/dev/null || true' RETURN
+
     # GPU Power monitoring
     local gpu_query="DCGM_FI_DEV_POWER_USAGE"
     local gpu_data
