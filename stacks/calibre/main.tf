@@ -200,7 +200,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
               memory = "256Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
