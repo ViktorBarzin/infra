@@ -2,11 +2,16 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
-}
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "calibre"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+}
 
 
 resource "kubernetes_namespace" "calibre" {
@@ -194,6 +199,24 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           port {
             container_port = 8083
           }
+          # Startup probe: allow up to 10 min for calibre binary install on first boot
+          startup_probe {
+            http_get {
+              path = "/"
+              port = 8083
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+            failure_threshold     = 54
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 8083
+            }
+            period_seconds    = 30
+            failure_threshold = 3
+          }
           resources {
             requests = {
               cpu    = "50m"
@@ -274,8 +297,8 @@ module "ingress" {
     "gethomepage.dev/name"            = "Calibre"
     "gethomepage.dev/widget.type"     = "calibreweb"
     "gethomepage.dev/widget.url"      = "http://calibre.calibre.svc.cluster.local"
-    "gethomepage.dev/widget.username" = var.homepage_credentials["calibre-web"]["username"]
-    "gethomepage.dev/widget.password" = var.homepage_credentials["calibre-web"]["password"]
+    "gethomepage.dev/widget.username" = local.homepage_credentials["calibre-web"]["username"]
+    "gethomepage.dev/widget.password" = local.homepage_credentials["calibre-web"]["password"]
     "gethomepage.dev/pod-selector"    = ""
     # gethomepage.dev/weight: 10 # optional
     # gethomepage.dev/instance: "public" # optional

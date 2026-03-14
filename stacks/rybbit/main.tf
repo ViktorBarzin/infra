@@ -2,17 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "clickhouse_password" {
-  type      = string
-  sensitive = true
-}
-variable "clickhouse_postgres_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "rybbit"
+}
 
 resource "kubernetes_namespace" "rybbit" {
   metadata {
@@ -82,7 +78,7 @@ resource "kubernetes_deployment" "clickhouse" {
           }
           env {
             name  = "CLICKHOUSE_PASSWORD"
-            value = var.clickhouse_password
+            value = data.vault_kv_secret_v2.secrets.data["clickhouse_password"]
           }
           port {
             name           = "clickhouse"
@@ -180,12 +176,12 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
               command = [
                 "sh", "-c",
                 join(" && ", [
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.metric_log'",
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.trace_log'",
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.text_log'",
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.asynchronous_metric_log'",
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.query_log'",
-                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${var.clickhouse_password}' -d 'TRUNCATE TABLE IF EXISTS system.part_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.metric_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.trace_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.text_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.asynchronous_metric_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.query_log'",
+                  "curl -s 'http://clickhouse.rybbit.svc.cluster.local:8123/?user=default&password=${data.vault_kv_secret_v2.secrets.data["clickhouse_password"]}' -d 'TRUNCATE TABLE IF EXISTS system.part_log'",
                   "echo 'System logs truncated'"
                 ])
               ]
@@ -242,7 +238,7 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "CLICKHOUSE_PASSWORD"
-            value = var.clickhouse_password
+            value = data.vault_kv_secret_v2.secrets.data["clickhouse_password"]
           }
           env {
             name  = "POSTGRES_HOST"
@@ -262,7 +258,7 @@ resource "kubernetes_deployment" "rybbit" {
           }
           env {
             name  = "POSTGRES_PASSWORD"
-            value = var.clickhouse_postgres_password
+            value = data.vault_kv_secret_v2.secrets.data["postgres_password"]
           }
           env {
             name  = "BASE_URL"

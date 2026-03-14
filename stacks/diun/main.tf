@@ -2,13 +2,12 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "diun_nfty_token" {
-  type      = string
-  sensitive = true
-}
-variable "diun_slack_url" { type = string }
 variable "nfs_server" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "diun"
+}
 
 resource "kubernetes_namespace" "diun" {
   metadata {
@@ -154,11 +153,11 @@ resource "kubernetes_deployment" "diun" {
           # }
           # env {
           #   name  = "DIUN_NOTIF_NTFY_TOKEN"
-          #   value = var.diun_nfty_token
+          #   value = data.vault_kv_secret_v2.secrets.data["nfty_token"]
           # }
           env {
             name  = "DIUN_NOTIF_SLACK_WEBHOOKURL"
-            value = var.diun_slack_url
+            value = data.vault_kv_secret_v2.secrets.data["slack_url"]
           }
           env {
             name = "LOG_LEVEL"

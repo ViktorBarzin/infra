@@ -1,8 +1,7 @@
-variable "shadowsocks_password" {
-  type      = string
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "shadowsocks"
 }
-
 
 variable "method" {
   default = "chacha20-ietf-poly1305"
@@ -57,7 +56,7 @@ resource "kubernetes_deployment" "shadowsocks" {
           }
           env {
             name  = "PASSWORD"
-            value = var.shadowsocks_password
+            value = data.vault_kv_secret_v2.secrets.data["password"]
           }
           port {
             container_port = 8388

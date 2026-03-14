@@ -2,12 +2,17 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "ollama_api_credentials" {
-  type      = map(string)
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "ollama_host" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "ollama"
+}
+
+locals {
+  api_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["api_credentials"])
+}
 
 
 resource "kubernetes_namespace" "ollama" {
@@ -167,11 +172,11 @@ module "ollama-ingress" {
 
 # Ollama API ingress for external access (basicAuth protected)
 locals {
-  ollama_api_htpasswd = join("\n", [for name, pass in var.ollama_api_credentials : "${name}:${bcrypt(pass, 10)}"])
+  ollama_api_htpasswd = join("\n", [for name, pass in local.api_credentials : "${name}:${bcrypt(pass, 10)}"])
 }
 
 resource "kubernetes_secret" "ollama_api_basic_auth" {
-  count = length(var.ollama_api_credentials) > 0 ? 1 : 0
+  count = length(local.api_credentials) > 0 ? 1 : 0
   metadata {
     name      = "ollama-api-basic-auth-secret"
     namespace = kubernetes_namespace.ollama.metadata[0].name
@@ -188,7 +193,7 @@ resource "kubernetes_secret" "ollama_api_basic_auth" {
 }
 
 resource "kubernetes_manifest" "ollama_api_basic_auth_middleware" {
-  count = length(var.ollama_api_credentials) > 0 ? 1 : 0
+  count = length(local.api_credentials) > 0 ? 1 : 0
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"

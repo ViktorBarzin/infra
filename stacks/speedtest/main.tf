@@ -2,13 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "speedtest_db_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "speedtest"
+}
 
 resource "kubernetes_namespace" "speedtest" {
   metadata {
@@ -109,7 +109,7 @@ resource "kubernetes_deployment" "speedtest" {
           }
           env {
             name  = "DB_PASSWORD"
-            value = var.speedtest_db_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "APP_TIMEZONE"

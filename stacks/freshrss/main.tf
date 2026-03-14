@@ -3,9 +3,13 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "freshrss"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -159,7 +163,7 @@ module "ingress" {
     "gethomepage.dev/pod-selector"    = ""
     "gethomepage.dev/widget.type"     = "freshrss"
     "gethomepage.dev/widget.url"      = "http://freshrss.freshrss.svc.cluster.local"
-    "gethomepage.dev/widget.username" = var.homepage_credentials["freshrss"]["username"]
-    "gethomepage.dev/widget.password" = var.homepage_credentials["freshrss"]["password"]
+    "gethomepage.dev/widget.username" = local.homepage_credentials["freshrss"]["username"]
+    "gethomepage.dev/widget.password" = local.homepage_credentials["freshrss"]["password"]
   }
 }

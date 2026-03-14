@@ -3,17 +3,14 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "postgresql_host" { type = string }
-variable "dbaas_postgresql_root_password" {
-  type      = string
-  sensitive = true
-}
 variable "claude_memory_db_password" {
   type      = string
   sensitive = true
 }
-variable "claude_memory_api_key" {
-  type      = string
-  sensitive = true
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "claude-memory"
 }
 
 resource "kubernetes_namespace" "claude-memory" {
@@ -48,11 +45,11 @@ resource "kubernetes_job" "db_init" {
             "sh", "-c",
             <<-EOT
               set -e
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='claude_memory'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE claude_memory WITH LOGIN PASSWORD '${var.claude_memory_db_password}'"
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE claude_memory OWNER claude_memory"
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='claude_memory'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE claude_memory WITH LOGIN PASSWORD '${var.claude_memory_db_password}'"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE claude_memory OWNER claude_memory"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
               echo "Database init complete"
             EOT
           ]
@@ -79,7 +76,7 @@ resource "kubernetes_deployment" "claude-memory" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 2
     selector {
       match_labels = {
         app = "claude-memory"
@@ -92,6 +89,18 @@ resource "kubernetes_deployment" "claude-memory" {
         }
       }
       spec {
+        affinity {
+          pod_anti_affinity {
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_labels = {
+                  app = "claude-memory"
+                }
+              }
+              topology_key = "kubernetes.io/hostname"
+            }
+          }
+        }
         container {
           name  = "claude-memory"
           image = "viktorbarzin/claude-memory-mcp:latest"
@@ -106,9 +115,17 @@ resource "kubernetes_deployment" "claude-memory" {
           }
           env {
             name  = "API_KEY"
-            value = var.claude_memory_api_key
+            value = data.vault_kv_secret_v2.secrets.data["api_key"]
           }
 
+          startup_probe {
+            http_get {
+              path = "/health"
+              port = 8000
+            }
+            failure_threshold = 30
+            period_seconds    = 2
+          }
           liveness_probe {
             http_get {
               path = "/health"
@@ -143,6 +160,21 @@ resource "kubernetes_deployment" "claude-memory" {
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image
     ]
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "claude-memory" {
+  metadata {
+    name      = "claude-memory"
+    namespace = kubernetes_namespace.claude-memory.metadata[0].name
+  }
+  spec {
+    min_available = "1"
+    selector {
+      match_labels = {
+        app = "claude-memory"
+      }
+    }
   }
 }
 

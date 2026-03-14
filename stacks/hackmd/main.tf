@@ -1,13 +1,13 @@
-variable "hackmd_db_password" {
-  type      = string
-  sensitive = true
-}
 variable "tls_secret_name" {
   type = string
 }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "hackmd"
+}
 
 resource "kubernetes_namespace" "hackmd" {
   metadata {
@@ -103,7 +103,7 @@ resource "kubernetes_deployment" "hackmd" {
           env {
             name = "CMD_DB_URL"
             # value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
-            value = format("%s%s%s", "mysql://codimd:", var.hackmd_db_password, "@${var.mysql_host}/codimd")
+            value = format("%s%s%s", "mysql://codimd:", data.vault_kv_secret_v2.secrets.data["db_password"], "@${var.mysql_host}/codimd")
           }
           env {
             name  = "CMD_USECDN"

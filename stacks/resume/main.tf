@@ -3,18 +3,18 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "resume_database_url" { type = string }
-variable "resume_auth_secret" {
-  type      = string
-  sensitive = true
-}
-variable "mailserver_accounts" { type = map(any) }
 variable "nfs_server" { type = string }
 variable "mail_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "resume"
+}
 
 locals {
-  namespace = "resume"
-  app_url   = "https://resume.viktorbarzin.me"
+  namespace          = "resume"
+  app_url            = "https://resume.viktorbarzin.me"
+  mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
 }
 
 resource "kubernetes_namespace" "resume" {
@@ -186,7 +186,7 @@ resource "kubernetes_deployment" "resume" {
           }
           env {
             name  = "AUTH_SECRET"
-            value = var.resume_auth_secret
+            value = data.vault_kv_secret_v2.secrets.data["auth_secret"]
           }
 
           # Server config
@@ -210,7 +210,7 @@ resource "kubernetes_deployment" "resume" {
           }
           env {
             name  = "SMTP_PASS"
-            value = var.mailserver_accounts["info@viktorbarzin.me"]
+            value = local.mailserver_accounts["info@viktorbarzin.me"]
           }
           env {
             name  = "SMTP_FROM"

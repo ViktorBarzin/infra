@@ -2,18 +2,14 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "onlyoffice_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "onlyoffice_jwt_token" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "onlyoffice"
+}
 
 resource "kubernetes_namespace" "onlyoffice" {
   metadata {
@@ -140,7 +136,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           }
           env {
             name  = "DB_PWD"
-            value = var.onlyoffice_db_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "REDIS_SERVER_HOST"
@@ -152,7 +148,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           }
           env {
             name  = "JWT_SECRET"
-            value = var.onlyoffice_jwt_token
+            value = data.vault_kv_secret_v2.secrets.data["jwt_token"]
           }
 
           volume_mount {

@@ -2,17 +2,12 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "url_shortener_geolite_license_key" { type = string }
-variable "url_shortener_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "url_shortener_mysql_password" {
-  type      = string
-  sensitive = true
-}
 variable "mysql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "url"
+}
 
 ## Setup
 ## Need to manually add
@@ -50,7 +45,7 @@ resource "kubernetes_secret" "mysql_config" {
   }
   data = {
     "DB_USER"     = "shlink"
-    "DB_PASSWORD" = var.url_shortener_mysql_password
+    "DB_PASSWORD" = data.vault_kv_secret_v2.secrets.data["db_password"]
   }
 }
 
@@ -120,7 +115,7 @@ resource "kubernetes_deployment" "shlink" {
           }
           env {
             name  = "GEOLITE_LICENSE_KEY"
-            value = var.url_shortener_geolite_license_key
+            value = data.vault_kv_secret_v2.secrets.data["geolite_license_key"]
           }
           # DB config
           env {
@@ -142,7 +137,7 @@ resource "kubernetes_deployment" "shlink" {
           }
           # env {
           #   name  = "DB_PASSWORD"
-          #   value = var.url_shortener_mysql_password
+          #   value = data.vault_kv_secret_v2.secrets.data["db_password"]
           # }
           resources {
             limits = {
@@ -218,7 +213,7 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "shlink"
     "gethomepage.dev/widget.url"   = "http://shlink.shlink.svc.cluster.local:8080"
-    "gethomepage.dev/widget.key"   = var.url_shortener_api_key
+    "gethomepage.dev/widget.key"   = data.vault_kv_secret_v2.secrets.data["api_key"]
   }
 }
 
@@ -239,7 +234,7 @@ resource "kubernetes_config_map" "shlink-web" {
     "servers.json" = jsonencode([{
       name   = "Main"
       url    = "https://url.viktorbarzin.me"
-      apiKey = var.url_shortener_api_key
+      apiKey = data.vault_kv_secret_v2.secrets.data["api_key"]
     }])
   }
 }

@@ -3,12 +3,11 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "forgejo_authentik_client_id" { type = string }
-variable "forgejo_authentik_client_secret" {
-  type      = string
-  sensitive = true
-}
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "forgejo"
+}
 
 resource "kubernetes_namespace" "forgejo" {
   metadata {

@@ -2,16 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "openrouter_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "slack_bot_token" {
-  type      = string
-  sensitive = true
-}
 variable "slack_channel" { type = string }
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "ytdlp"
+}
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
 
@@ -173,7 +170,7 @@ resource "kubernetes_secret" "openrouter" {
     namespace = kubernetes_namespace.ytdlp.metadata[0].name
   }
   data = {
-    "api-key" = var.openrouter_api_key
+    "api-key" = data.vault_kv_secret_v2.secrets.data["openrouter_api_key"]
   }
 }
 
@@ -183,7 +180,7 @@ resource "kubernetes_secret" "slack" {
     namespace = kubernetes_namespace.ytdlp.metadata[0].name
   }
   data = {
-    "bot-token" = var.slack_bot_token
+    "bot-token" = data.vault_kv_secret_v2.secrets.data["slack_bot_token"]
     "channel"   = var.slack_channel
   }
 }

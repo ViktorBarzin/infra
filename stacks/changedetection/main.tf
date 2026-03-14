@@ -3,9 +3,13 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "changedetection"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -171,6 +175,6 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "changedetectionio"
     "gethomepage.dev/widget.url"   = "http://changedetection.changedetection.svc.cluster.local"
-    "gethomepage.dev/widget.key"   = var.homepage_credentials["changedetection"]["api_key"]
+    "gethomepage.dev/widget.key"   = local.homepage_credentials["changedetection"]["api_key"]
   }
 }

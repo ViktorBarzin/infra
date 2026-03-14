@@ -2,12 +2,12 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "wealthfolio_password_hash" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "wealthfolio"
+}
 
 # To refresh transactions use finance db positions exporters:
 #
@@ -80,7 +80,7 @@ resource "kubernetes_deployment" "wealthfolio" {
           }
           env {
             name  = "WF_AUTH_PASSWORD_HASH"
-            value = var.wealthfolio_password_hash
+            value = data.vault_kv_secret_v2.secrets.data["password_hash"]
           }
           env {
             name  = "WF_DB_PATH"

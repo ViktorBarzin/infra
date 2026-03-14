@@ -2,47 +2,16 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "openclaw_ssh_key" {
-  type      = string
-  sensitive = true
-}
-variable "openclaw_skill_secrets" {
-  type      = map(string)
-  sensitive = true
-}
-variable "llama_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "brave_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "openrouter_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "nvidia_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "anthropic_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "openclaw_telegram_bot_token" {
-  type      = string
-  sensitive = true
-}
-variable "forgejo_api_token" {
-  type      = string
-  sensitive = true
-}
-variable "claude_memory_api_key" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "openclaw"
+}
+
+locals {
+  skill_secrets = jsondecode(data.vault_kv_secret_v2.secrets.data["skill_secrets"])
+}
 
 
 resource "kubernetes_namespace" "openclaw" {
@@ -89,7 +58,7 @@ resource "kubernetes_secret" "ssh_key" {
     namespace = kubernetes_namespace.openclaw.metadata[0].name
   }
   data = {
-    "id_rsa" = var.openclaw_ssh_key
+    "id_rsa" = data.vault_kv_secret_v2.secrets.data["ssh_key"]
   }
   type = "generic"
 }
@@ -166,7 +135,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           search = {
             enabled    = true
             provider   = "brave"
-            apiKey     = var.brave_api_key
+            apiKey     = data.vault_kv_secret_v2.secrets.data["brave_api_key"]
             maxResults = 5
           }
           fetch = {
@@ -192,7 +161,7 @@ resource "kubernetes_config_map" "openclaw_config" {
       channels = {
         telegram = {
           enabled     = true
-          botToken    = var.openclaw_telegram_bot_token
+          botToken    = data.vault_kv_secret_v2.secrets.data["telegram_bot_token"]
           dmPolicy    = "allowlist"
           allowFrom   = ["tg:8281953845"]
           groupPolicy = "allowlist"
@@ -213,7 +182,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           anthropic = {
             baseUrl = "https://api.anthropic.com/v1"
             api     = "anthropic-messages"
-            apiKey  = var.anthropic_api_key
+            apiKey  = data.vault_kv_secret_v2.secrets.data["anthropic_api_key"]
             models = [
               { id = "claude-sonnet-4-20250514", name = "Claude Sonnet 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.003, output = 0.015, cacheRead = 0.0003, cacheWrite = 0.00375 } },
               { id = "claude-opus-4-20250514", name = "Claude Opus 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.015, output = 0.075, cacheRead = 0.0015, cacheWrite = 0.01875 } },
@@ -223,7 +192,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           nim = {
             baseUrl = "https://integrate.api.nvidia.com/v1"
             api     = "openai-completions"
-            apiKey  = var.nvidia_api_key
+            apiKey  = data.vault_kv_secret_v2.secrets.data["nvidia_api_key"]
             models = [
               { id = "deepseek-ai/deepseek-v3.2", name = "DeepSeek V3.2", reasoning = false, input = ["text"], contextWindow = 164000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
               { id = "qwen/qwen3.5-397b-a17b", name = "Qwen 3.5", reasoning = true, input = ["text"], contextWindow = 262000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
@@ -236,7 +205,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           openrouter = {
             baseUrl = "https://openrouter.ai/api/v1"
             api     = "openai-completions"
-            apiKey  = var.openrouter_api_key
+            apiKey  = data.vault_kv_secret_v2.secrets.data["openrouter_api_key"]
             models = [
               { id = "stepfun/step-3.5-flash:free", name = "Step 3.5 Flash", reasoning = true, input = ["text"], contextWindow = 256000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
               { id = "arcee-ai/trinity-large-preview:free", name = "Trinity Large", reasoning = false, input = ["text"], contextWindow = 131000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
@@ -244,7 +213,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           }
           llama-as-openai = {
             baseUrl = "https://api.llama.com/compat/v1"
-            apiKey  = var.llama_api_key
+            apiKey  = data.vault_kv_secret_v2.secrets.data["llama_api_key"]
             api     = "openai-completions"
             models = [
               { id = "Llama-4-Maverick-17B-128E-Instruct-FP8", name = "Llama 4 Maverick", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
@@ -574,7 +543,7 @@ resource "kubernetes_deployment" "openclaw" {
           }
           env {
             name  = "HOME_ASSISTANT_TOKEN"
-            value = var.openclaw_skill_secrets["home_assistant_token"]
+            value = local.skill_secrets["home_assistant_token"]
           }
           env {
             name  = "HOME_ASSISTANT_SOFIA_URL"
@@ -582,17 +551,17 @@ resource "kubernetes_deployment" "openclaw" {
           }
           env {
             name  = "HOME_ASSISTANT_SOFIA_TOKEN"
-            value = var.openclaw_skill_secrets["home_assistant_sofia_token"]
+            value = local.skill_secrets["home_assistant_sofia_token"]
           }
           # Skill secrets - Uptime Kuma
           env {
             name  = "UPTIME_KUMA_PASSWORD"
-            value = var.openclaw_skill_secrets["uptime_kuma_password"]
+            value = local.skill_secrets["uptime_kuma_password"]
           }
           # Skill secrets - Slack
           env {
             name  = "SLACK_WEBHOOK_URL"
-            value = var.openclaw_skill_secrets["slack_webhook"]
+            value = local.skill_secrets["slack_webhook"]
           }
           # Memory API
           env {
@@ -601,7 +570,7 @@ resource "kubernetes_deployment" "openclaw" {
           }
           env {
             name  = "MEMORY_API_KEY"
-            value = var.claude_memory_api_key
+            value = data.vault_kv_secret_v2.secrets.data["claude_memory_api_key"]
           }
           # Python packages path for skills
           env {
@@ -659,11 +628,11 @@ resource "kubernetes_deployment" "openclaw" {
           }
           env {
             name  = "NVIDIA_API_KEY"
-            value = var.nvidia_api_key
+            value = data.vault_kv_secret_v2.secrets.data["nvidia_api_key"]
           }
           env {
             name  = "OPENROUTER_API_KEY"
-            value = var.openrouter_api_key
+            value = data.vault_kv_secret_v2.secrets.data["openrouter_api_key"]
           }
           volume_mount {
             name       = "tools"
@@ -1122,11 +1091,11 @@ resource "kubernetes_cron_job_v1" "task_processor" {
 
               env {
                 name  = "FORGEJO_TOKEN"
-                value = var.forgejo_api_token
+                value = data.vault_kv_secret_v2.secrets.data["forgejo_api_token"]
               }
               env {
                 name  = "OPENCLAW_TOKEN"
-                value = var.nvidia_api_key
+                value = data.vault_kv_secret_v2.secrets.data["nvidia_api_key"]
               }
 
               resources {

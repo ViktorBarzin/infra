@@ -2,10 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "tandoor_database_password" {
-  type      = string
-  sensitive = true
-}
 variable "tandoor_email_password" {
   type      = string
   default   = ""
@@ -15,6 +11,10 @@ variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "mail_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "tandoor"
+}
 
 resource "kubernetes_namespace" "tandoor" {
   metadata {
@@ -97,7 +97,7 @@ resource "kubernetes_deployment" "tandoor" {
           }
           env {
             name  = "POSTGRES_PASSWORD"
-            value = var.tandoor_database_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "TANDOOR_PORT"

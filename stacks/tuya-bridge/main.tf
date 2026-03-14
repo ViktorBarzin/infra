@@ -2,20 +2,11 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "tiny_tuya_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "tiny_tuya_api_secret" {
-  type      = string
-  sensitive = true
-}
-variable "tiny_tuya_service_secret" {
-  type      = string
-  sensitive = true
-}
-variable "tiny_tuya_slack_url" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "tuya-bridge"
+}
 
 resource "kubernetes_namespace" "tuya-bridge" {
   metadata {
@@ -64,19 +55,19 @@ resource "kubernetes_deployment" "tuya-bridge" {
           }
           env {
             name  = "TINYTUYA_API_KEY"
-            value = var.tiny_tuya_api_key
+            value = data.vault_kv_secret_v2.secrets.data["api_key"]
           }
           env {
             name  = "TINYTUYA_API_SECRET"
-            value = var.tiny_tuya_api_secret
+            value = data.vault_kv_secret_v2.secrets.data["api_secret"]
           }
           env {
             name  = "SERVICE_API_KEY" # used for auth the API endpoint
-            value = var.tiny_tuya_service_secret
+            value = data.vault_kv_secret_v2.secrets.data["service_secret"]
           }
           env {
             name  = "SLACK_URL"
-            value = var.tiny_tuya_slack_url
+            value = data.vault_kv_secret_v2.secrets.data["slack_url"]
           }
           resources {
             requests = {

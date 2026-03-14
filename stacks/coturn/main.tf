@@ -2,12 +2,12 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "coturn_turn_secret" {
-  type      = string
-  sensitive = true
-}
 variable "public_ip" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "coturn"
+}
 
 locals {
   turn_realm = "viktorbarzin.me"
@@ -45,7 +45,7 @@ resource "kubernetes_config_map" "coturn_config" {
       fingerprint
       lt-cred-mech
       use-auth-secret
-      static-auth-secret=${var.coturn_turn_secret}
+      static-auth-secret=${data.vault_kv_secret_v2.secrets.data["turn_secret"]}
       realm=${local.turn_realm}
       server-name=turn.${local.turn_realm}
 

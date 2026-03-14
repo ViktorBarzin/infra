@@ -2,11 +2,15 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "aiostreams_database_connection_string" { type = string }
 variable "nfs_server" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "servarr"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -37,7 +41,7 @@ module "prowlarr" {
   tls_secret_name      = var.tls_secret_name
   tier                 = local.tiers.aux
   nfs_server           = var.nfs_server
-  homepage_credentials = var.homepage_credentials
+  homepage_credentials = local.homepage_credentials
 }
 
 module "qbittorrent" {
@@ -45,7 +49,7 @@ module "qbittorrent" {
   tls_secret_name      = var.tls_secret_name
   tier                 = local.tiers.aux
   nfs_server           = var.nfs_server
-  homepage_credentials = var.homepage_credentials
+  homepage_credentials = local.homepage_credentials
 }
 
 module "flaresolverr" {
@@ -76,7 +80,7 @@ module "listenarr" {
 module "aiostreams" {
   source                                = "./aiostreams"
   tls_secret_name                       = var.tls_secret_name
-  aiostreams_database_connection_string = var.aiostreams_database_connection_string
+  aiostreams_database_connection_string = data.vault_kv_secret_v2.secrets.data["aiostreams_database_connection_string"]
   tier                                  = local.tiers.aux
   nfs_server                            = var.nfs_server
 }

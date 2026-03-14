@@ -3,13 +3,13 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "discord_user_token" {
-  type      = string
-  sensitive = true
-}
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "f1-stream"
+}
 
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
@@ -70,7 +70,7 @@ resource "kubernetes_deployment" "f1-stream" {
           }
           env {
             name  = "DISCORD_TOKEN"
-            value = var.discord_user_token
+            value = data.vault_kv_secret_v2.secrets.data["discord_user_token"]
           }
           env {
             name  = "DISCORD_CHANNELS"

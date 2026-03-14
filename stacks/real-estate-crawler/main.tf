@@ -2,14 +2,18 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "realestate_crawler_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "realestate_crawler_notification_settings" { type = map(string) }
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "real-estate-crawler"
+}
+
+locals {
+  notification_settings = jsondecode(data.vault_kv_secret_v2.secrets.data["notification_settings"])
+}
 
 
 resource "kubernetes_namespace" "realestate-crawler" {
@@ -150,7 +154,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
 
           }
           # env {
@@ -188,7 +192,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           }
           env {
             name  = "SLACK_WEBHOOK_URL"
-            value = var.realestate_crawler_notification_settings["slack"]
+            value = local.notification_settings["slack"]
           }
           env {
             name  = "WEBAUTHN_RP_ID"
@@ -339,7 +343,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"
@@ -351,7 +355,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
           env {
             name  = "SLACK_WEBHOOK_URL"
-            value = lookup(var.realestate_crawler_notification_settings, "slack", "")
+            value = lookup(local.notification_settings, "slack", "")
           }
           env {
             name  = "OSRM_FOOT_URL"
@@ -447,7 +451,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${var.realestate_crawler_db_password}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"
@@ -459,7 +463,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           }
           env {
             name  = "SCRAPE_SCHEDULES"
-            value = lookup(var.realestate_crawler_notification_settings, "scrape_schedules", "")
+            value = lookup(local.notification_settings, "scrape_schedules", "")
           }
           volume_mount {
             name       = "data"

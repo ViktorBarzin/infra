@@ -2,15 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "dawarich_database_password" {
-  type      = string
-  sensitive = true
-}
-variable "geoapify_api_key" {
-  type      = string
-  sensitive = true
-}
-
 
 variable "image_version" {
   type    = string
@@ -19,6 +10,11 @@ variable "image_version" {
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "dawarich"
+}
 
 resource "kubernetes_namespace" "dawarich" {
   metadata {
@@ -97,7 +93,7 @@ resource "kubernetes_deployment" "dawarich" {
           }
           env {
             name  = "DATABASE_PASSWORD"
-            value = var.dawarich_database_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "DATABASE_NAME"
@@ -178,7 +174,7 @@ resource "kubernetes_deployment" "dawarich" {
         #   }
         #   env {
         #     name  = "DATABASE_PASSWORD"
-        #     value = var.dawarich_database_password
+        #     value = data.vault_kv_secret_v2.secrets.data["db_password"]
         #   }
         #   env {
         #     name  = "DATABASE_NAME"
@@ -219,7 +215,7 @@ resource "kubernetes_deployment" "dawarich" {
         #   # }
         #   env {
         #     name  = "GEOAPIFY_API_KEY"
-        #     value = var.geoapify_api_key
+        #     value = data.vault_kv_secret_v2.secrets.data["geoapify_api_key"]
         #   }
         #   env {
         #     name  = "SELF_HOSTED"
