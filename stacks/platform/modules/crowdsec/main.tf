@@ -107,7 +107,9 @@ resource "helm_release" "crowdsec" {
   chart      = "crowdsec"
 
   values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host })]
-  timeout = 3600
+  timeout       = 600
+  wait          = true
+  wait_for_jobs = true
 }
 
 
@@ -365,7 +367,7 @@ resource "kubernetes_resource_quota" "crowdsec" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "1"
+      "requests.cpu"    = "4"
       "requests.memory" = "8Gi"
       "limits.memory"   = "16Gi"
       pods              = "30"
