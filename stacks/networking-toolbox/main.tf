@@ -30,7 +30,7 @@ resource "kubernetes_deployment" "networking-toolbox" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     selector {
       match_labels = {
         app = "networking-toolbox"

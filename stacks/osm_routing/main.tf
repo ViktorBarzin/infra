@@ -59,7 +59,8 @@ resource "kubernetes_deployment" "osrm-foot" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -139,7 +140,8 @@ resource "kubernetes_deployment" "osrm-bicycle" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -219,7 +221,8 @@ resource "kubernetes_deployment" "otp" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    replicas = 0
     strategy {
       type = "Recreate"
     }
