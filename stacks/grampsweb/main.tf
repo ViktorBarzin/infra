@@ -116,6 +116,8 @@ resource "kubernetes_deployment" "grampsweb" {
     }
   }
   spec {
+    # Disabled: grampsweb uses ~1.8GB actual memory with 3GB limit per replica.
+    # Not actively used — disabled to reduce cluster memory pressure (2026-03-14 node2 OOM incident).
     replicas = 0
     selector {
       match_labels = {

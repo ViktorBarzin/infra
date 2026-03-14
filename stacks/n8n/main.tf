@@ -163,10 +163,10 @@ resource "kubernetes_deployment" "n8n" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "512Mi"
             }
           }
         }

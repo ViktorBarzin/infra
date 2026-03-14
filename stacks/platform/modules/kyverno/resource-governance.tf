@@ -2,6 +2,10 @@
 # =============================================================================
 # Tier-Based Resource Governance
 # =============================================================================
+# default (limit) = defaultRequest (request) to give Guaranteed QoS and prevent
+# memory overcommit. Changed 2026-03-14 after node2 OOM crash caused by 250%
+# memory overcommit (61GB limits on 24GB node).
+#
 # Four layers of protection against noisy neighbor issues:
 # 1. PriorityClasses - critical services survive resource pressure
 # 2. LimitRange defaults (Kyverno generate) - auto-inject defaults for containers without resources
@@ -130,7 +134,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "512Mi"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "100m"
@@ -187,7 +191,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "512Mi"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "100m"
@@ -244,7 +248,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "2Gi"
+                      memory = "1Gi"
                     }
                     defaultRequest = {
                       cpu    = "200m"
@@ -301,7 +305,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "256Mi"
+                      memory = "128Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
@@ -358,7 +362,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "256Mi"
+                      memory = "128Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
@@ -374,6 +378,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
           }
         },
         # Fallback: namespaces without a tier label get aux-level defaults
+        # requests = limits to prevent memory overcommit (2026-03-14 node2 OOM incident)
         {
           name = "limitrange-no-tier-fallback"
           match = {
@@ -418,7 +423,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "256Mi"
+                      memory = "128Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"

@@ -36,7 +36,7 @@ resource "kubernetes_resource_quota" "dbaas" {
     hard = {
       "requests.cpu"    = "8"
       "requests.memory" = "12Gi"
-      "limits.memory"   = "64Gi"
+      "limits.memory"   = "12Gi"
       pods              = "30"
     }
   }
@@ -181,10 +181,10 @@ resource "helm_release" "mysql_cluster" {
     resources = {
       requests = {
         cpu    = "250m"
-        memory = "1Gi"
+        memory = "2Gi"
       }
       limits = {
-        memory = "4Gi"
+        memory = "2Gi"
       }
     }
 
@@ -216,11 +216,11 @@ resource "helm_release" "mysql_cluster" {
         name = "mysql"
         resources = {
           requests = {
-            memory = "1Gi"
+            memory = "2Gi"
             cpu    = "250m"
           }
           limits = {
-            memory = "3Gi"
+            memory = "2Gi"
           }
         }
       }]
@@ -229,21 +229,21 @@ resource "helm_release" "mysql_cluster" {
           name = "fixdatadir"
           resources = {
             requests = { memory = "64Mi", cpu = "25m" }
-            limits   = { memory = "256Mi" }
+            limits   = { memory = "64Mi" }
           }
         },
         {
           name = "initconf"
           resources = {
             requests = { memory = "256Mi", cpu = "50m" }
-            limits   = { memory = "1Gi" }
+            limits   = { memory = "256Mi" }
           }
         },
         {
           name = "initmysql"
           resources = {
             requests = { memory = "512Mi", cpu = "250m" }
-            limits   = { memory = "2Gi" }
+            limits   = { memory = "512Mi" }
           }
         }
       ]
@@ -842,7 +842,7 @@ resource "null_resource" "pg_cluster" {
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
     storage_class = "iscsi-truenas"
-    memory_limit  = "4Gi"
+    memory_limit  = "512Mi"
 
   }
 
@@ -870,7 +870,7 @@ resource "null_resource" "pg_cluster" {
             cpu: "50m"
             memory: "512Mi"
           limits:
-            memory: "4Gi"
+            memory: "512Mi"
       EOF
     EOT
   }

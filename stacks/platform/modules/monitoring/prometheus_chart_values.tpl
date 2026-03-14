@@ -141,9 +141,9 @@ server:
   resources:
     requests:
       cpu: 100m
-      memory: 1Gi
+      memory: 3Gi
     limits:
-      memory: 4Gi
+      memory: 3Gi
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
