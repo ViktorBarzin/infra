@@ -143,7 +143,7 @@ resource "kubernetes_deployment" "netbox" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "256Mi"
             }
           }
           port {

@@ -110,11 +110,11 @@ resource "kubernetes_deployment" "webhook_handler" {
           name  = "webhook-handler"
           resources {
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
           }
           port {

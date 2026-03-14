@@ -81,10 +81,10 @@ resource "kubernetes_deployment" "whisper" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "256Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "1536Mi"
+              memory = "1Gi"
             }
           }
         }
@@ -202,7 +202,7 @@ resource "kubernetes_deployment" "piper" {
               memory = "64Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "64Mi"
             }
           }
         }

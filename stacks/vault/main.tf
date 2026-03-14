@@ -130,8 +130,8 @@ resource "helm_release" "vault" {
           readOnly  = true
         }]
         resources = {
-          requests = { cpu = "10m", memory = "32Mi" }
-          limits   = { memory = "64Mi" }
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
         }
       }]
     }

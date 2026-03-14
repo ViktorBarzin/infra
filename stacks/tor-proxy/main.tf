@@ -83,7 +83,7 @@ resource "kubernetes_deployment" "tor-proxy" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
           #   volume_mount {
@@ -177,7 +177,7 @@ resource "kubernetes_deployment" "torrserver" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "256Mi"
             }
           }
           readiness_probe {

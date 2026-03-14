@@ -119,10 +119,10 @@ resource "kubernetes_deployment" "meshcentral" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "256Mi"
             }
           }
           volume_mount {

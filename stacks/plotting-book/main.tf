@@ -119,11 +119,11 @@ resource "kubernetes_deployment" "plotting-book" {
           }
           resources {
             requests = {
-              memory = "32Mi"
+              memory = "64Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }

@@ -81,7 +81,7 @@ resource "kubernetes_deployment" "ytdlp" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "512Mi"

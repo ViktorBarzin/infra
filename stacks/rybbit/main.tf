@@ -112,10 +112,10 @@ resource "kubernetes_deployment" "clickhouse" {
           resources {
             requests = {
               cpu    = "500m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "1Gi"
             }
           }
         }
@@ -302,10 +302,10 @@ resource "kubernetes_deployment" "rybbit" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
         }
@@ -397,10 +397,10 @@ resource "kubernetes_deployment" "rybbit-client" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "192Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "192Mi"
             }
           }
         }

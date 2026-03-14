@@ -205,9 +205,9 @@ resource "kubernetes_deployment" "calibre-web-automated" {
               path = "/"
               port = 8083
             }
-            initial_delay_seconds = 30
-            period_seconds        = 10
-            failure_threshold     = 54
+            initial_delay_seconds = 60
+            period_seconds        = 15
+            failure_threshold     = 56
           }
           liveness_probe {
             http_get {
@@ -220,7 +220,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "512Mi"
@@ -338,7 +338,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "192Mi"
+              memory = "384Mi"
             }
             limits = {
               memory = "384Mi"

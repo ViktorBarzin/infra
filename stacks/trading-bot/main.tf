@@ -145,7 +145,8 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    replicas = 0
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -176,10 +177,10 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -205,7 +206,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               memory = "128Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "128Mi"
             }
           }
         }
@@ -232,7 +233,8 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -270,7 +272,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -296,7 +298,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "512Mi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "512Mi"
             }
           }
         }
@@ -322,7 +324,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -348,7 +350,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -374,7 +376,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -400,7 +402,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }

@@ -96,7 +96,7 @@ resource "kubernetes_deployment" "cache_proxy" {
             container_port = 80
           }
           resources {
-            requests = { cpu = "10m", memory = "16Mi" }
+            requests = { cpu = "10m", memory = "64Mi" }
             limits   = { memory = "64Mi" }
           }
           volume_mount {

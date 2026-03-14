@@ -158,7 +158,7 @@ resource "kubernetes_deployment" "tandoor" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1536Mi"
+              memory = "256Mi"
             }
           }
         }

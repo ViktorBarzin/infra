@@ -213,7 +213,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               memory = "64Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "64Mi"
             }
           }
           volume_mount {
@@ -329,7 +329,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
               memory = "512Mi"
             }
             limits = {
-              memory = "3Gi"
+              memory = "512Mi"
             }
           }
           port {
@@ -439,7 +439,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "256Mi"

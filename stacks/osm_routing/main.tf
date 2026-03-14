@@ -94,7 +94,7 @@ resource "kubernetes_deployment" "osrm-foot" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "256Mi"
             }
           }
         }
@@ -174,7 +174,7 @@ resource "kubernetes_deployment" "osrm-bicycle" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "256Mi"
             }
           }
         }
@@ -258,7 +258,7 @@ resource "kubernetes_deployment" "otp" {
               memory = "2Gi"
             }
             limits = {
-              memory = "4Gi"
+              memory = "2Gi"
             }
           }
         }

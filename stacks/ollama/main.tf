@@ -271,7 +271,7 @@ resource "kubernetes_deployment" "ollama-ui" {
               memory = "256Mi"
             }
             limits = {
-              memory = "1536Mi"
+              memory = "256Mi"
             }
           }
         }

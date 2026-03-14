@@ -108,7 +108,7 @@ resource "kubernetes_deployment" "freshrss" {
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }
