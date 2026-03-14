@@ -1,7 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "smtp_password" {}
-variable "nfs_server" { type = string }
 variable "mail_host" { type = string }
 
 resource "kubernetes_namespace" "vaultwarden" {
@@ -20,12 +19,20 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "vaultwarden-data"
-  namespace  = kubernetes_namespace.vaultwarden.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/vaultwarden"
+resource "kubernetes_persistent_volume_claim" "vaultwarden_data" {
+  metadata {
+    name      = "vaultwarden-data-iscsi"
+    namespace = kubernetes_namespace.vaultwarden.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "iscsi-truenas"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
 }
 
 resource "kubernetes_deployment" "vaultwarden" {
@@ -136,7 +143,7 @@ resource "kubernetes_deployment" "vaultwarden" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.vaultwarden_data.metadata[0].name
           }
         }
         dns_config {
