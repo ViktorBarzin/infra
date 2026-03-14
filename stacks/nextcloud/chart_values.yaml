@@ -104,10 +104,16 @@ collabora:
 
 resources:
   limits:
-    memory: 1Gi
+    memory: 8Gi
   requests:
     cpu: 50m
     memory: 256Mi
 
 cronjob:
   enabled: true
+  resources:
+    limits:
+      memory: 384Mi
+    requests:
+      cpu: 25m
+      memory: 384Mi

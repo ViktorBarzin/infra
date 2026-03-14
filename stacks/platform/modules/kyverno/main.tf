@@ -30,7 +30,31 @@ resource "helm_release" "kyverno" {
     reportsController = {
       resources = {
         limits = {
-          memory = "512Mi"
+          memory = "128Mi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "128Mi"
+        }
+      }
+    }
+
+    backgroundController = {
+      resources = {
+        limits = {
+          memory = "384Mi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "384Mi"
+        }
+      }
+    }
+
+    cleanupController = {
+      resources = {
+        limits = {
+          memory = "128Mi"
         }
         requests = {
           cpu    = "100m"
@@ -45,11 +69,11 @@ resource "helm_release" "kyverno" {
       container = {
         resources = {
           limits = {
-            memory = "768Mi"
+            memory = "256Mi"
           }
           requests = {
             cpu    = "100m"
-            memory = "128Mi"
+            memory = "256Mi"
           }
         }
       }

@@ -33,7 +33,7 @@ variable "gemini_api_key" {
 }
 variable "memory_limit" {
   type    = string
-  default = "256Mi"
+  default = "128Mi"
 }
 variable "cpu_request" {
   type    = string
@@ -41,7 +41,7 @@ variable "cpu_request" {
 }
 variable "memory_request" {
   type    = string
-  default = "64Mi"
+  default = "128Mi"
 }
 variable "extra_annotations" {
   type    = map(string)

@@ -362,7 +362,7 @@ resource "kubernetes_deployment" "mailserver" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "512Mi"
@@ -391,10 +391,10 @@ resource "kubernetes_deployment" "mailserver" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "32Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "32Mi"
             }
           }
         }

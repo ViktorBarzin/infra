@@ -49,6 +49,16 @@ resource "kubernetes_deployment" "pve_exporter" {
             container_port = 9221
           }
 
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+
           # Mount the file into the container
           volume_mount {
             name       = "config-volume"

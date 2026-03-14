@@ -73,10 +73,10 @@ resource "kubernetes_deployment" "cloudflared" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }

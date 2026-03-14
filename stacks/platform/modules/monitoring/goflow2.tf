@@ -40,10 +40,10 @@ resource "kubernetes_deployment" "goflow2" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }

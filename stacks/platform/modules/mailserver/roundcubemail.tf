@@ -155,6 +155,15 @@ resource "kubernetes_deployment" "roundcubemail" {
             name       = "enigma"
             mount_path = "/var/roundcube/enigma"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "192Mi"
+            }
+            limits = {
+              memory = "192Mi"
+            }
+          }
         }
 
         # volume {

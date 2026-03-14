@@ -78,10 +78,10 @@ resource "helm_release" "mysql_operator" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "256Mi"
+        memory = "384Mi"
       }
       limits = {
-        memory = "512Mi"
+        memory = "384Mi"
       }
     }
   })]
@@ -181,10 +181,10 @@ resource "helm_release" "mysql_cluster" {
     resources = {
       requests = {
         cpu    = "250m"
-        memory = "2Gi"
+        memory = "4Gi"
       }
       limits = {
-        memory = "2Gi"
+        memory = "4Gi"
       }
     }
 
@@ -216,11 +216,11 @@ resource "helm_release" "mysql_cluster" {
         name = "mysql"
         resources = {
           requests = {
-            memory = "2Gi"
+            memory = "4Gi"
             cpu    = "250m"
           }
           limits = {
-            memory = "2Gi"
+            memory = "4Gi"
           }
         }
       }]
@@ -546,10 +546,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }
@@ -977,7 +977,7 @@ resource "kubernetes_deployment" "pgadmin" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "512Mi"

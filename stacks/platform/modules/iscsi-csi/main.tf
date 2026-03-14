@@ -38,8 +38,8 @@ resource "helm_release" "democratic_csi" {
       replicas = 2
       driver = {
         resources = {
-          requests = { cpu = "25m", memory = "64Mi" }
-          limits   = { memory = "256Mi" }
+          requests = { cpu = "25m", memory = "192Mi" }
+          limits   = { memory = "192Mi" }
         }
       }
     }
@@ -47,8 +47,8 @@ resource "helm_release" "democratic_csi" {
     node = {
       driver = {
         resources = {
-          requests = { cpu = "25m", memory = "64Mi" }
-          limits   = { memory = "256Mi" }
+          requests = { cpu = "25m", memory = "192Mi" }
+          limits   = { memory = "192Mi" }
         }
       }
 

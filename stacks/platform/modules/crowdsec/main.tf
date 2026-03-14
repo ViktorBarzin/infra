@@ -170,10 +170,10 @@ resource "kubernetes_deployment" "crowdsec-web" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }
