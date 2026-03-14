@@ -121,7 +121,7 @@ resource "kubernetes_deployment" "speedtest" {
               memory = "128Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "128Mi"
             }
           }
           volume_mount {

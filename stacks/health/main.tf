@@ -96,11 +96,11 @@ resource "kubernetes_deployment" "health" {
 
           resources {
             requests = {
-              memory = "64Mi"
+              memory = "128Mi"
               cpu    = "15m"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }

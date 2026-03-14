@@ -144,7 +144,7 @@ resource "kubernetes_deployment" "affine" {
               memory = "256Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -182,7 +182,7 @@ resource "kubernetes_deployment" "affine" {
               cpu    = "50m"
             }
             limits = {
-              memory = "512Mi"
+              memory = "256Mi"
             }
           }
 

@@ -89,7 +89,7 @@ resource "kubernetes_deployment" "frigate" {
               memory = "2Gi"
             }
             limits = {
-              memory           = "8Gi"
+              memory = "8Gi"
               "nvidia.com/gpu" = "1"
             }
           }

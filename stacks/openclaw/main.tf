@@ -603,7 +603,7 @@ resource "kubernetes_deployment" "openclaw" {
             }
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "1536Mi"
             }
           }
         }
@@ -640,11 +640,11 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "512Mi"
+              memory = "256Mi"
             }
             requests = {
               cpu    = "25m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -879,7 +879,7 @@ resource "kubernetes_deployment" "task_webhook" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
               memory = "64Mi"
@@ -1023,7 +1023,7 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
                   memory = "64Mi"
                 }
                 limits = {
-                  memory = "128Mi"
+                  memory = "64Mi"
                 }
               }
             }
@@ -1104,7 +1104,7 @@ resource "kubernetes_cron_job_v1" "task_processor" {
                   memory = "64Mi"
                 }
                 limits = {
-                  memory = "128Mi"
+                  memory = "64Mi"
                 }
               }
             }

@@ -73,7 +73,7 @@ resource "kubernetes_deployment" "novelapp" {
           }
         }
         container {
-          image             = "viktorbarzin/novelapp:1"
+          image             = "mghee/novelapp:latest"
           name              = "novelapp"
           image_pull_policy = "Always"
           env {

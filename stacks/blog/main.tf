@@ -48,11 +48,11 @@ resource "kubernetes_deployment" "blog" {
           name  = "blog"
           resources {
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
           }
           port {

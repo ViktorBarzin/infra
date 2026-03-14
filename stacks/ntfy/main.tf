@@ -121,10 +121,10 @@ resource "kubernetes_deployment" "ntfy" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }

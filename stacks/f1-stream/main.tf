@@ -62,7 +62,7 @@ resource "kubernetes_deployment" "f1-stream" {
             }
             requests = {
               cpu    = "25m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
           port {

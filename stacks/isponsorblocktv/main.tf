@@ -54,10 +54,10 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "64Mi"
             }
           }
         }

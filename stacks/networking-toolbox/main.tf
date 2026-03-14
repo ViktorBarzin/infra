@@ -52,7 +52,7 @@ resource "kubernetes_deployment" "networking-toolbox" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
             limits = {
               memory = "128Mi"

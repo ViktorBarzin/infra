@@ -145,11 +145,11 @@ resource "kubernetes_deployment" "claude-memory" {
 
           resources {
             requests = {
-              memory = "32Mi"
+              memory = "64Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }

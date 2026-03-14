@@ -69,7 +69,7 @@ resource "kubernetes_deployment" "shadowsocks" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "64Mi"
             }
             limits = {
               memory = "64Mi"

@@ -513,10 +513,10 @@ resource "kubernetes_deployment" "immich-machine-learning" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              memory           = "4Gi"
+              memory = "2Gi"
               "nvidia.com/gpu" = "1"
             }
           }

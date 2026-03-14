@@ -71,7 +71,7 @@ resource "kubernetes_deployment" "dashy" {
           resources {
             requests = {
               cpu    = "250m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
             limits = {
               memory = "1Gi"

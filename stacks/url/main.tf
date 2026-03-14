@@ -145,7 +145,7 @@ resource "kubernetes_deployment" "shlink" {
             }
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
           }
           port {
@@ -275,11 +275,11 @@ resource "kubernetes_deployment" "shlink-web" {
           }
           resources {
             limits = {
-              memory = "512Mi"
+              memory = "64Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "50Mi"
+              memory = "64Mi"
             }
           }
           port {

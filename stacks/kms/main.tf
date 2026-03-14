@@ -65,7 +65,7 @@ resource "kubernetes_deployment" "kms-web-page" {
             }
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "64Mi"
             }
           }
           port {
@@ -157,11 +157,11 @@ resource "kubernetes_deployment" "windows_kms" {
           name  = "windows-kms"
           resources {
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
           }
           port {

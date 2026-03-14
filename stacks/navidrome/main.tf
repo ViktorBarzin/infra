@@ -107,7 +107,7 @@ resource "kubernetes_deployment" "navidrome" {
               memory = "64Mi"
             }
             limits = {
-              memory = "384Mi"
+              memory = "64Mi"
             }
           }
         }

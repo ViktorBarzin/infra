@@ -139,7 +139,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
               memory = "64Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "64Mi"
             }
           }
         }
