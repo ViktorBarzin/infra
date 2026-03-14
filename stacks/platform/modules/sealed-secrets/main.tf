@@ -35,10 +35,10 @@ resource "helm_release" "sealed_secrets" {
     resources = {
       requests = {
         cpu    = "50m"
-        memory = "64Mi"
+        memory = "192Mi"
       }
       limits = {
-        memory = "256Mi"
+        memory = "192Mi"
       }
     }
   })]

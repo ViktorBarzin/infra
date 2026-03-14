@@ -105,7 +105,7 @@ resource "kubernetes_deployment" "novelapp" {
               cpu    = "10m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }

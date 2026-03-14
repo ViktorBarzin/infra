@@ -54,6 +54,17 @@ resource "kubernetes_deployment" "snmp-exporter" {
           image = "prom/snmp-exporter"
           name  = "snmp-exporter"
           # command = ["/usr/local/bin/redfish_exporter", "--config.file", "/app/config.yml"]
+
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+
           port {
             container_port = 9116
           }

@@ -144,10 +144,10 @@ resource "kubernetes_deployment" "wireguard" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -174,10 +174,10 @@ resource "kubernetes_deployment" "wireguard" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "32Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "32Mi"
             }
           }
         }

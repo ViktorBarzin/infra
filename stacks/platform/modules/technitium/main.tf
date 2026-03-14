@@ -166,7 +166,7 @@ resource "kubernetes_deployment" "technitium" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               memory = "512Mi"

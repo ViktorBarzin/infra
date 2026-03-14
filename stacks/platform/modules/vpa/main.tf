@@ -34,12 +34,39 @@ resource "helm_release" "vpa" {
   values = [yamlencode({
     recommender = {
       enabled = true
+      resources = {
+        requests = {
+          cpu    = "50m"
+          memory = "200Mi"
+        }
+        limits = {
+          memory = "200Mi"
+        }
+      }
     }
     updater = {
       enabled = true
+      resources = {
+        requests = {
+          cpu    = "50m"
+          memory = "200Mi"
+        }
+        limits = {
+          memory = "200Mi"
+        }
+      }
     }
     admissionController = {
       enabled = true
+      resources = {
+        requests = {
+          cpu    = "50m"
+          memory = "200Mi"
+        }
+        limits = {
+          memory = "200Mi"
+        }
+      }
     }
   })]
 }

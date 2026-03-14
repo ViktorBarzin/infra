@@ -617,7 +617,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
               memory = "128Mi"
             }
             limits = {
-              memory           = "256Mi"
+              memory           = "128Mi"
               "nvidia.com/gpu" = "1"
             }
           }

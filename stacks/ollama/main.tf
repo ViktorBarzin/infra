@@ -119,6 +119,7 @@ resource "kubernetes_deployment" "ollama" {
               memory = "256Mi"
             }
             limits = {
+              memory           = "256Mi"
               "nvidia.com/gpu" = "1"
             }
           }

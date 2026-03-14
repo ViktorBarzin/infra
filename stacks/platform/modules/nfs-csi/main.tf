@@ -24,14 +24,42 @@ resource "helm_release" "nfs_csi_driver" {
     controller = {
       replicas = 2
       resources = {
-        requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { memory = "128Mi" }
+        csiProvisioner = {
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
+        }
+        csiResizer = {
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
+        }
+        csiSnapshotter = {
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
+        }
+        nfs = {
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
+        }
+        livenessProbe = {
+          requests = { cpu = "10m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
       }
     }
     node = {
       resources = {
-        requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { memory = "128Mi" }
+        nfs = {
+          requests = { cpu = "10m", memory = "128Mi" }
+          limits   = { memory = "128Mi" }
+        }
+        livenessProbe = {
+          requests = { cpu = "10m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
+        nodeDriverRegistrar = {
+          requests = { cpu = "10m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
       }
     }
     storageClass = {

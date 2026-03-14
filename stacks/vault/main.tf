@@ -44,8 +44,8 @@ resource "helm_release" "vault" {
       enabled = true
 
       resources = {
-        requests = { memory = "128Mi", cpu = "100m" }
-        limits   = { memory = "512Mi" }
+        requests = { memory = "384Mi", cpu = "100m" }
+        limits   = { memory = "384Mi" }
       }
 
       # Allow scheduling on GPU node (node1)

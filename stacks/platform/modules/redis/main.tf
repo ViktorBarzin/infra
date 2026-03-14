@@ -51,7 +51,7 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          memory = "128Mi"
+          memory = "64Mi"
         }
       }
     }
@@ -69,7 +69,7 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          memory = "256Mi"
+          memory = "64Mi"
         }
       }
     }
@@ -89,7 +89,7 @@ resource "helm_release" "redis" {
           memory = "64Mi"
         }
         limits = {
-          memory = "256Mi"
+          memory = "64Mi"
         }
       }
     }
@@ -202,7 +202,7 @@ resource "kubernetes_deployment" "haproxy" {
               memory = "16Mi"
             }
             limits = {
-              memory = "32Mi"
+              memory = "16Mi"
             }
           }
           liveness_probe {

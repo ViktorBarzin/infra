@@ -79,10 +79,10 @@ resource "kubernetes_deployment" "headscale" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
 
@@ -163,7 +163,7 @@ resource "kubernetes_deployment" "headscale" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "32Mi"
+              memory = "128Mi"
             }
             limits = {
               memory = "128Mi"

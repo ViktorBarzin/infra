@@ -34,10 +34,10 @@ resource "kubernetes_deployment" "flaresolverr" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "150Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "384Mi"
+              memory = "512Mi"
             }
           }
           port {

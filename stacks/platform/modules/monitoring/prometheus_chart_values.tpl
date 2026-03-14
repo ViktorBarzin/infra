@@ -123,8 +123,20 @@ alertmanager:
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 256Mi
+    limits:
+      memory: 256Mi
 prometheus-node-exporter:
   enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 100Mi
+    limits:
+      memory: 100Mi
 server:
   # Enable me to delete metrics
   extraFlags:

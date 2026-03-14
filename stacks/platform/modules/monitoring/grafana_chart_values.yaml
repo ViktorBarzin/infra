@@ -5,7 +5,7 @@ adminPassword: "${grafana_admin_password}"
 resources:
   requests:
     cpu: 50m
-    memory: 128Mi
+    memory: 512Mi
   limits:
     memory: 512Mi
 topologySpreadConstraints:

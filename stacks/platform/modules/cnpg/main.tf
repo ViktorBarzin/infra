@@ -37,7 +37,7 @@ resource "helm_release" "cnpg" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "128Mi"
+        memory = "256Mi"
       }
       limits = {
         memory = "256Mi"

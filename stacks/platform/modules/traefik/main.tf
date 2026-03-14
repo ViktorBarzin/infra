@@ -201,7 +201,10 @@ resource "helm_release" "traefik" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "128Mi"
+        memory = "384Mi"
+      }
+      limits = {
+        memory = "384Mi"
       }
     }
 
@@ -391,10 +394,10 @@ resource "kubernetes_deployment" "bot_block_proxy" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }
@@ -579,10 +582,10 @@ resource "kubernetes_deployment" "auth_proxy" {
           resources {
             requests = {
               cpu    = "5m"
-              memory = "32Mi"
+              memory = "64Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "64Mi"
             }
           }
         }
