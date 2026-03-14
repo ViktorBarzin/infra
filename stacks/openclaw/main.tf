@@ -599,11 +599,11 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "1536Mi"
+              memory = "768Mi"
             }
             requests = {
               cpu    = "100m"
-              memory = "1536Mi"
+              memory = "768Mi"
             }
           }
         }
