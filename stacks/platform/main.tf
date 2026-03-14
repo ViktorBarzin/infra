@@ -38,21 +38,21 @@ variable "prod" {
 
 # --- dbaas ---
 variable "dbaas_root_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "dbaas_postgresql_root_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "dbaas_pgadmin_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 # --- traefik ---
 variable "ingress_crowdsec_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "auth_fallback_htpasswd" {
@@ -63,11 +63,11 @@ variable "auth_fallback_htpasswd" {
 
 # --- technitium ---
 variable "technitium_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "homepage_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 
@@ -81,11 +81,11 @@ variable "k8s_ca_cert" {
 
 # --- authentik / rbac / k8s-portal ---
 variable "authentik_secret_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "authentik_postgres_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "k8s_users" {
@@ -101,23 +101,23 @@ variable "ssh_private_key" {
 # --- crowdsec ---
 variable "crowdsec_enroll_key" { type = string }
 variable "crowdsec_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "crowdsec_dash_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "crowdsec_dash_machine_id" { type = string }
 variable "crowdsec_dash_machine_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "alertmanager_slack_api_url" { type = string }
 
 # --- cloudflared ---
 variable "cloudflare_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "cloudflare_email" { type = string }
@@ -128,44 +128,44 @@ variable "public_ip" { type = string }
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 variable "cloudflare_tunnel_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 # --- monitoring ---
 variable "alertmanager_account_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "monitoring_idrac_username" { type = string }
 variable "monitoring_idrac_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tiny_tuya_service_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "haos_api_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "pve_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "grafana_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "grafana_admin_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 # --- vaultwarden ---
 variable "vaultwarden_smtp_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -177,7 +177,7 @@ variable "wireguard_firewall_sh" { type = string }
 # --- xray ---
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "xray_reality_short_ids" { type = list(string) }
@@ -188,19 +188,19 @@ variable "mailserver_aliases" {}
 variable "mailserver_opendkim_key" {}
 variable "mailserver_sasl_passwd" {}
 variable "mailserver_roundcubemail_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 # --- infra-maintenance ---
 variable "webhook_handler_git_user" { type = string }
 variable "webhook_handler_git_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "technitium_username" { type = string }
 variable "technitium_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -417,10 +417,10 @@ module "nfs-csi" {
 # iSCSI CSI — democratic-csi for TrueNAS iSCSI (database storage)
 # -----------------------------------------------------------------------------
 module "iscsi-csi" {
-  source                 = "./modules/iscsi-csi"
-  tier                   = local.tiers.cluster
-  truenas_host           = var.nfs_server # Same TrueNAS host
-  truenas_api_key        = var.truenas_api_key
+  source                  = "./modules/iscsi-csi"
+  tier                    = local.tiers.cluster
+  truenas_host            = var.nfs_server # Same TrueNAS host
+  truenas_api_key         = var.truenas_api_key
   truenas_ssh_private_key = var.truenas_ssh_private_key
 }
 

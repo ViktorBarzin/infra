@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "realestate_crawler_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "realestate_crawler_notification_settings" { type = map(string) }
@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier                               = local.tiers.aux
+      tier = local.tiers.aux
     }
   }
 }
@@ -209,7 +209,6 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "512Mi"
             }
           }
@@ -326,7 +325,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "3Gi"
             }
           }
@@ -440,7 +438,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "256Mi"
             }
           }

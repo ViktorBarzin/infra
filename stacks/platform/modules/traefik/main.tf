@@ -1,6 +1,6 @@
 variable "tier" { type = string }
 variable "crowdsec_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "redis_host" { type = string }
@@ -394,7 +394,6 @@ resource "kubernetes_deployment" "bot_block_proxy" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "50m"
               memory = "128Mi"
             }
           }
@@ -583,7 +582,6 @@ resource "kubernetes_deployment" "auth_proxy" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "50m"
               memory = "128Mi"
             }
           }

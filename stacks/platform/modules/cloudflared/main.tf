@@ -76,7 +76,6 @@ resource "kubernetes_deployment" "cloudflared" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "200m"
               memory = "256Mi"
             }
           }

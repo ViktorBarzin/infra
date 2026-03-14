@@ -75,7 +75,6 @@ resource "kubernetes_deployment" "k8s_portal" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }
@@ -131,14 +130,14 @@ module "ingress" {
   }
 }
 
-# Unprotected ingress for the setup script (needs to be curl-able without auth)
+# Unprotected ingress for the setup script and agent endpoint (needs to be curl-able without auth)
 module "ingress_setup_script" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
   name            = "k8s-portal-setup"
   host            = "k8s-portal"
   service_name    = "k8s-portal"
-  ingress_path    = ["/setup/script"]
+  ingress_path    = ["/setup/script", "/agent"]
   tls_secret_name = var.tls_secret_name
   protected       = false
 }

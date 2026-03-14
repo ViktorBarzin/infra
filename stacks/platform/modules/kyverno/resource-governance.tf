@@ -130,7 +130,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "500m"
                       memory = "512Mi"
                     }
                     defaultRequest = {
@@ -138,7 +137,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     max = {
-                      cpu    = "4"
                       memory = "8Gi"
                     }
                   }
@@ -189,7 +187,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "500m"
                       memory = "512Mi"
                     }
                     defaultRequest = {
@@ -197,7 +194,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     max = {
-                      cpu    = "2"
                       memory = "4Gi"
                     }
                   }
@@ -248,7 +244,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "1"
                       memory = "2Gi"
                     }
                     defaultRequest = {
@@ -256,7 +251,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "1Gi"
                     }
                     max = {
-                      cpu    = "8"
                       memory = "16Gi"
                     }
                   }
@@ -307,7 +301,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "250m"
                       memory = "256Mi"
                     }
                     defaultRequest = {
@@ -315,7 +308,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "128Mi"
                     }
                     max = {
-                      cpu    = "2"
                       memory = "4Gi"
                     }
                   }
@@ -366,7 +358,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "250m"
                       memory = "256Mi"
                     }
                     defaultRequest = {
@@ -374,7 +365,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "128Mi"
                     }
                     max = {
-                      cpu    = "2"
                       memory = "4Gi"
                     }
                   }
@@ -428,7 +418,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      cpu    = "250m"
                       memory = "256Mi"
                     }
                     defaultRequest = {
@@ -436,7 +425,6 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "128Mi"
                     }
                     max = {
-                      cpu    = "1"
                       memory = "2Gi"
                     }
                   }
@@ -517,7 +505,6 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
                 hard = {
                   "requests.cpu"    = "8"
                   "requests.memory" = "8Gi"
-                  "limits.cpu"      = "32"
                   "limits.memory"   = "64Gi"
                   pods              = "100"
                 }
@@ -566,7 +553,6 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
                 hard = {
                   "requests.cpu"    = "4"
                   "requests.memory" = "4Gi"
-                  "limits.cpu"      = "16"
                   "limits.memory"   = "32Gi"
                   pods              = "30"
                 }
@@ -615,7 +601,6 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
                 hard = {
                   "requests.cpu"    = "8"
                   "requests.memory" = "8Gi"
-                  "limits.cpu"      = "16"
                   "limits.memory"   = "32Gi"
                   pods              = "40"
                 }
@@ -664,7 +649,6 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
                 hard = {
                   "requests.cpu"    = "4"
                   "requests.memory" = "4Gi"
-                  "limits.cpu"      = "16"
                   "limits.memory"   = "32Gi"
                   pods              = "30"
                 }
@@ -713,7 +697,6 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
                 hard = {
                   "requests.cpu"    = "2"
                   "requests.memory" = "2Gi"
-                  "limits.cpu"      = "8"
                   "limits.memory"   = "16Gi"
                   pods              = "20"
                 }
@@ -916,6 +899,94 @@ resource "kubernetes_manifest" "mutate_ndots" {
             }
           }
         }
+      ]
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Layer 5: GPU Node Toleration for Critical Services (Kyverno Mutate)
+# -----------------------------------------------------------------------------
+# Adds nvidia.com/gpu toleration to pods in tier-0 and tier-1 namespaces.
+# This allows critical infrastructure to overflow onto the GPU node (k8s-node1)
+# during N-1 scenarios, giving the scheduler ~14 GiB extra capacity.
+# GPU workloads won't be preempted — this just makes the node eligible.
+
+resource "kubernetes_manifest" "mutate_gpu_toleration_critical" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "gpu-toleration-critical-tiers"
+      annotations = {
+        "policies.kyverno.io/title"       = "GPU Toleration for Critical Tiers"
+        "policies.kyverno.io/description" = "Adds nvidia.com/gpu toleration to pods in tier-0-core and tier-1-cluster namespaces so they can overflow onto the GPU node during N-1 failures."
+      }
+    }
+    spec = {
+      rules = [
+        {
+          name = "add-gpu-toleration-tier-0"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds      = ["Pod"]
+                  operations = ["CREATE"]
+                  namespaceSelector = {
+                    matchLabels = {
+                      tier = "0-core"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          mutate = {
+            patchStrategicMerge = {
+              spec = {
+                tolerations = [
+                  {
+                    key      = "nvidia.com/gpu"
+                    operator = "Exists"
+                    effect   = "NoSchedule"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          name = "add-gpu-toleration-tier-1"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds      = ["Pod"]
+                  operations = ["CREATE"]
+                  namespaceSelector = {
+                    matchLabels = {
+                      tier = "1-cluster"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          mutate = {
+            patchStrategicMerge = {
+              spec = {
+                tolerations = [
+                  {
+                    key      = "nvidia.com/gpu"
+                    operator = "Exists"
+                    effect   = "NoSchedule"
+                  }
+                ]
+              }
+            }
+          }
+        },
       ]
     }
   }

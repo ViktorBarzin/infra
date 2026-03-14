@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "health_postgresql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "health_secret_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -105,7 +105,6 @@ resource "kubernetes_deployment" "health" {
             }
             limits = {
               memory = "256Mi"
-              cpu    = "250m"
             }
           }
         }

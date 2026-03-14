@@ -160,15 +160,15 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   protected       = true
   extra_annotations = {
-    "gethomepage.dev/enabled"          = "true"
-    "gethomepage.dev/name"             = "qBittorrent"
-    "gethomepage.dev/description"      = "BitTorrent client"
-    "gethomepage.dev/icon"             = "qbittorrent.png"
-    "gethomepage.dev/group"            = "Media & Entertainment"
-    "gethomepage.dev/pod-selector"     = ""
-    "gethomepage.dev/widget.type"      = "qbittorrent"
-    "gethomepage.dev/widget.url"       = "http://qbittorrent.servarr.svc.cluster.local"
-    "gethomepage.dev/widget.username"  = var.homepage_credentials["qbittorrent"]["username"]
-    "gethomepage.dev/widget.password"  = var.homepage_credentials["qbittorrent"]["password"]
+    "gethomepage.dev/enabled"         = "true"
+    "gethomepage.dev/name"            = "qBittorrent"
+    "gethomepage.dev/description"     = "BitTorrent client"
+    "gethomepage.dev/icon"            = "qbittorrent.png"
+    "gethomepage.dev/group"           = "Media & Entertainment"
+    "gethomepage.dev/pod-selector"    = ""
+    "gethomepage.dev/widget.type"     = "qbittorrent"
+    "gethomepage.dev/widget.url"      = "http://qbittorrent.servarr.svc.cluster.local"
+    "gethomepage.dev/widget.username" = var.homepage_credentials["qbittorrent"]["username"]
+    "gethomepage.dev/widget.password" = var.homepage_credentials["qbittorrent"]["password"]
   }
 }

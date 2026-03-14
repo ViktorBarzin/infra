@@ -147,7 +147,6 @@ resource "kubernetes_deployment" "wireguard" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }
@@ -178,7 +177,6 @@ resource "kubernetes_deployment" "wireguard" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "50m"
               memory = "64Mi"
             }
           }

@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "n8n_postgresql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -166,7 +166,6 @@ resource "kubernetes_deployment" "n8n" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1Gi"
             }
           }

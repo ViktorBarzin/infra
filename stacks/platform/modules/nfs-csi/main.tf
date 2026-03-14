@@ -22,16 +22,16 @@ resource "helm_release" "nfs_csi_driver" {
 
   values = [yamlencode({
     controller = {
-      replicas = 1
+      replicas = 2
       resources = {
         requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { cpu = "100m", memory = "128Mi" }
+        limits   = { memory = "128Mi" }
       }
     }
     node = {
       resources = {
         requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { cpu = "100m", memory = "128Mi" }
+        limits   = { memory = "128Mi" }
       }
     }
     storageClass = {

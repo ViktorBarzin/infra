@@ -9,13 +9,13 @@ variable "protected" {
   default = false
 }
 variable "listenbrainz_token" {
-  type    = string
-  default = null
+  type      = string
+  default   = null
   sensitive = true
 }
 variable "genius_token" {
-  type    = string
-  default = null
+  type      = string
+  default   = null
   sensitive = true
 }
 variable "dab_visitor_id" {
@@ -27,13 +27,9 @@ variable "dab_session" {
   default = null
 }
 variable "gemini_api_key" {
-  type    = string
-  default = null
+  type      = string
+  default   = null
   sensitive = true
-}
-variable "cpu_limit" {
-  type    = string
-  default = "250m"
 }
 variable "memory_limit" {
   type    = string
@@ -112,7 +108,6 @@ resource "kubernetes_deployment" "freedify" {
           }
           resources {
             limits = {
-              cpu    = var.cpu_limit
               memory = var.memory_limit
             }
             requests = {

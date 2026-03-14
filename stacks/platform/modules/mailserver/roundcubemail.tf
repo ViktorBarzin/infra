@@ -1,5 +1,5 @@
 variable "roundcube_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "mysql_host" { type = string }

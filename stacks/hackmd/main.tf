@@ -1,5 +1,5 @@
 variable "hackmd_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tls_secret_name" {
@@ -125,7 +125,6 @@ resource "kubernetes_deployment" "hackmd" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "512Mi"
             }
           }

@@ -42,7 +42,6 @@ resource "kubernetes_resource_quota" "nextcloud" {
     hard = {
       "requests.cpu"    = "4"
       "requests.memory" = "8Gi"
-      "limits.cpu"      = "32"
       "limits.memory"   = "16Gi"
       pods              = "10"
     }
@@ -58,7 +57,6 @@ resource "kubernetes_limit_range" "nextcloud" {
     limit {
       type = "Container"
       default = {
-        cpu    = "250m"
         memory = "256Mi"
       }
       default_request = {
@@ -66,7 +64,6 @@ resource "kubernetes_limit_range" "nextcloud" {
         memory = "64Mi"
       }
       max = {
-        cpu    = "16"
         memory = "8Gi"
       }
     }

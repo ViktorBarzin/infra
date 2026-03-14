@@ -75,7 +75,6 @@ resource "kubernetes_deployment" "aiostreams" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1Gi"
             }
           }

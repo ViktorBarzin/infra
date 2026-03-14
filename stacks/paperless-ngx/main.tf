@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "paperless_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "homepage_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -133,7 +133,6 @@ resource "kubernetes_deployment" "paperless-ngx" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "2Gi"
             }
           }

@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "diun_nfty_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "diun_slack_url" { type = string }
@@ -183,7 +183,6 @@ resource "kubernetes_deployment" "diun" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

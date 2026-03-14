@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -48,7 +48,6 @@ resource "kubernetes_deployment" "blog" {
           name  = "blog"
           resources {
             limits = {
-              cpu    = "100m"
               memory = "256Mi"
             }
             requests = {

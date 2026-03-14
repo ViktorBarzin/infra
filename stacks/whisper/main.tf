@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -84,7 +84,6 @@ resource "kubernetes_deployment" "whisper" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1536Mi"
             }
           }
@@ -203,7 +202,6 @@ resource "kubernetes_deployment" "piper" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "512Mi"
             }
           }

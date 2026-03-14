@@ -10,8 +10,8 @@
 variable "proxmox_host" { type = string }
 
 variable "ssh_private_key" {
-  type    = string
-  default = ""
+  type      = string
+  default   = ""
   sensitive = true
 }
 
@@ -21,7 +21,7 @@ variable "ssh_public_key" {
 }
 
 variable "vm_wizard_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 

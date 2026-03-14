@@ -1,10 +1,10 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
 variable "discord_user_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "discord_f1_guild_id" { type = string }
@@ -58,7 +58,6 @@ resource "kubernetes_deployment" "f1-stream" {
           name              = "f1-stream"
           resources {
             limits = {
-              cpu    = "250m"
               memory = "256Mi"
             }
             requests = {

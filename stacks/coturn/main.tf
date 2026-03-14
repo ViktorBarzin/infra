@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "coturn_turn_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "public_ip" { type = string }
@@ -138,7 +138,6 @@ resource "kubernetes_deployment" "coturn" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

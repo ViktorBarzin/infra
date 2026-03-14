@@ -6,7 +6,7 @@ variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 variable "technitium_username" { type = string }
 variable "technitium_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -169,7 +169,6 @@ resource "kubernetes_deployment" "technitium" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

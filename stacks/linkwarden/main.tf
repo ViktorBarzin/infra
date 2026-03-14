@@ -1,14 +1,14 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "linkwarden_postgresql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "linkwarden_authentik_client_id" { type = string }
 variable "linkwarden_authentik_client_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "postgresql_host" { type = string }
@@ -110,7 +110,6 @@ resource "kubernetes_deployment" "linkwarden" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "1536Mi"
             }
           }

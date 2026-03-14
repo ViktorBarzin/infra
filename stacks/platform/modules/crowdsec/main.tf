@@ -4,12 +4,12 @@ variable "homepage_password" {}
 variable "db_password" {}
 variable "enroll_key" {}
 variable "crowdsec_dash_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
-variable "crowdsec_dash_machine_id" { type = string }       # used for web dash
+variable "crowdsec_dash_machine_id" { type = string } # used for web dash
 variable "crowdsec_dash_machine_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "tier" { type = string }
@@ -171,7 +171,6 @@ resource "kubernetes_deployment" "crowdsec-web" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "250m"
               memory = "256Mi"
             }
           }
@@ -368,7 +367,6 @@ resource "kubernetes_resource_quota" "crowdsec" {
     hard = {
       "requests.cpu"    = "8"
       "requests.memory" = "8Gi"
-      "limits.cpu"      = "16"
       "limits.memory"   = "16Gi"
       pods              = "30"
     }

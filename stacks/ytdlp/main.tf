@@ -1,13 +1,13 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "openrouter_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "slack_bot_token" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "slack_channel" { type = string }
@@ -87,7 +87,6 @@ resource "kubernetes_deployment" "ytdlp" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "512Mi"
             }
           }

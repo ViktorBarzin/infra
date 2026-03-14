@@ -2,7 +2,7 @@ variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "xray_reality_clients" { type = list(map(string)) }
 variable "xray_reality_private_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "xray_reality_short_ids" { type = list(string) }
@@ -123,7 +123,6 @@ resource "kubernetes_deployment" "xray" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "128Mi"
             }
           }

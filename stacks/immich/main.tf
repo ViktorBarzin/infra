@@ -1,17 +1,17 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "immich_postgresql_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "immich_frame_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "homepage_credentials" {
-  type = map(any)
+  type      = map(any)
   sensitive = true
 }
 
@@ -249,7 +249,6 @@ resource "kubernetes_deployment" "immich_server" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "2"
               memory = "2Gi"
             }
           }
@@ -382,7 +381,6 @@ resource "kubernetes_deployment" "immich-postgres" {
               memory = "256Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "1Gi"
             }
           }
@@ -522,7 +520,6 @@ resource "kubernetes_deployment" "immich-machine-learning" {
               memory = "1Gi"
             }
             limits = {
-              cpu              = "2"
               memory           = "4Gi"
               "nvidia.com/gpu" = "1"
             }
@@ -589,16 +586,16 @@ module "ingress-immich" {
   skip_default_rate_limit = true
   extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/description"  = "Photos library"
-    "gethomepage.dev/icon"         = "immich.png"
-    "gethomepage.dev/name"         = "Immich"
-    "gethomepage.dev/group"        = "Media & Entertainment"
-    "gethomepage.dev/widget.type"  = "immich"
-    "gethomepage.dev/widget.url"   = "http://immich-server.immich.svc.cluster.local:2283"
+    "gethomepage.dev/enabled"        = "true"
+    "gethomepage.dev/description"    = "Photos library"
+    "gethomepage.dev/icon"           = "immich.png"
+    "gethomepage.dev/name"           = "Immich"
+    "gethomepage.dev/group"          = "Media & Entertainment"
+    "gethomepage.dev/widget.type"    = "immich"
+    "gethomepage.dev/widget.url"     = "http://immich-server.immich.svc.cluster.local:2283"
     "gethomepage.dev/widget.version" = "2"
-    "gethomepage.dev/pod-selector" = ""
-    "gethomepage.dev/widget.key"   = var.homepage_credentials["immich"]["token"]
+    "gethomepage.dev/pod-selector"   = ""
+    "gethomepage.dev/widget.key"     = var.homepage_credentials["immich"]["token"]
   }
 }
 

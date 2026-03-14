@@ -73,16 +73,16 @@ module "nas" {
 
 # https://files.viktorbarzin.me/
 module "nas-files" {
-  source           = "./factory"
-  name             = "files"
-  external_name    = "nas.viktorbarzin.lan"
-  port             = 5001
-  tls_secret_name  = var.tls_secret_name
-  backend_protocol = "HTTPS"
-  protected        = false # allow anyone to download files
-  ingress_path     = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
-  max_body_size    = "0m"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "files"
+  external_name     = "nas.viktorbarzin.lan"
+  port              = 5001
+  tls_secret_name   = var.tls_secret_name
+  backend_protocol  = "HTTPS"
+  protected         = false # allow anyone to download files
+  ingress_path      = ["/sharing", "/scripts", "/webman", "/wfmlogindialog.js", "/fsdownload"]
+  max_body_size     = "0m"
+  depends_on        = [kubernetes_namespace.reverse-proxy]
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
@@ -103,7 +103,7 @@ module "idrac" {
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
   }
-  depends_on         = [kubernetes_namespace.reverse-proxy]
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # Can either listen on https or http; can't do both :/
@@ -197,24 +197,24 @@ module "docker-registry-ui" {
   extra_annotations = {
     # Override middleware chain to remove rate-limit; the UI fires many API calls to list repos/tags
     "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Docker Registry"
-    "gethomepage.dev/description"  = "Container registry"
-    "gethomepage.dev/icon"         = "docker.png"
-    "gethomepage.dev/group"        = "Infrastructure"
-    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/enabled"                          = "true"
+    "gethomepage.dev/name"                             = "Docker Registry"
+    "gethomepage.dev/description"                      = "Container registry"
+    "gethomepage.dev/icon"                             = "docker.png"
+    "gethomepage.dev/group"                            = "Infrastructure"
+    "gethomepage.dev/pod-selector"                     = ""
   }
 }
 
 # https://valchedrym.viktorbarzin.me/
 module "valchedrym" {
-  source           = "./factory"
-  name             = "valchedrym"
-  external_name    = "valchedrym.viktorbarzin.lan"
-  tls_secret_name  = var.tls_secret_name
-  port             = 80
-  backend_protocol = "HTTP"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "valchedrym"
+  external_name     = "valchedrym.viktorbarzin.lan"
+  tls_secret_name   = var.tls_secret_name
+  port              = 80
+  backend_protocol  = "HTTP"
+  depends_on        = [kubernetes_namespace.reverse-proxy]
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
@@ -235,12 +235,12 @@ module "valchedrym" {
 
 # https://mladost3.viktorbarzin.me/
 module "mladost3" {
-  source          = "./factory"
-  name            = "mladost3"
-  external_name   = "mladost3.ddns.net"
-  port            = 8080
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "mladost3"
+  external_name     = "mladost3.ddns.net"
+  port              = 8080
+  tls_secret_name   = var.tls_secret_name
+  depends_on        = [kubernetes_namespace.reverse-proxy]
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
@@ -318,13 +318,13 @@ module "london" {
   }
 }
 module "pi-lights" {
-  source          = "./factory"
-  name            = "pi"
-  external_name   = "ha-london.viktorbarzin.lan"
-  port            = 5000
-  tls_secret_name = var.tls_secret_name
-  protected       = true
-  depends_on      = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "pi"
+  external_name     = "ha-london.viktorbarzin.lan"
+  port              = 5000
+  tls_secret_name   = var.tls_secret_name
+  protected         = true
+  depends_on        = [kubernetes_namespace.reverse-proxy]
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
@@ -345,12 +345,12 @@ module "pi-lights" {
 # }
 
 module "mbp14" {
-  source          = "./factory"
-  name            = "mbp14"
-  external_name   = "mbp14.viktorbarzin.lan"
-  port            = 4020
-  tls_secret_name = var.tls_secret_name
-  protected       = true
-  depends_on      = [kubernetes_namespace.reverse-proxy]
+  source            = "./factory"
+  name              = "mbp14"
+  external_name     = "mbp14.viktorbarzin.lan"
+  port              = 4020
+  tls_secret_name   = var.tls_secret_name
+  protected         = true
+  depends_on        = [kubernetes_namespace.reverse-proxy]
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }

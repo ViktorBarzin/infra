@@ -1,5 +1,5 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -7,36 +7,36 @@ variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
 variable "dbaas_postgresql_root_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_alpaca_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_alpaca_secret_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_jwt_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_reddit_client_id" { type = string }
 variable "trading_bot_reddit_client_secret" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_alpha_vantage_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "trading_bot_fmp_api_key" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -74,7 +74,7 @@ resource "kubernetes_namespace" "trading-bot" {
   metadata {
     name = "trading-bot"
     labels = {
-      tier                               = local.tiers.edge
+      tier = local.tiers.edge
     }
   }
 }
@@ -208,7 +208,6 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               memory = "32Mi"
             }
             limits = {
-              cpu    = "200m"
               memory = "128Mi"
             }
           }
@@ -235,7 +234,6 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "1000m"
               memory = "512Mi"
             }
           }
@@ -301,7 +299,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "256Mi"
             }
           }
@@ -328,7 +325,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "512Mi"
             }
             limits = {
-              cpu    = "2000m"
               memory = "2Gi"
             }
           }
@@ -355,7 +351,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "256Mi"
             }
           }
@@ -382,7 +377,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "256Mi"
             }
           }
@@ -409,7 +403,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "256Mi"
             }
           }
@@ -436,7 +429,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               memory = "64Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "256Mi"
             }
           }

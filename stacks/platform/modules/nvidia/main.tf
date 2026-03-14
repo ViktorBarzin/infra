@@ -25,7 +25,6 @@ resource "kubernetes_resource_quota" "nvidia_quota" {
   }
   spec {
     hard = {
-      "limits.cpu"      = "32"
       "limits.memory"   = "48Gi"
       "requests.cpu"    = "8"
       "requests.memory" = "8Gi"
@@ -618,7 +617,6 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
               memory = "128Mi"
             }
             limits = {
-              cpu              = "200m"
               memory           = "256Mi"
               "nvidia.com/gpu" = "1"
             }

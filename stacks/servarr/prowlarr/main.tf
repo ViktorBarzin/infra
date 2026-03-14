@@ -59,7 +59,6 @@ resource "kubernetes_deployment" "prowlarr" {
               memory = "192Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "384Mi"
             }
           }

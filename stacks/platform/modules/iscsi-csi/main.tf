@@ -35,10 +35,11 @@ resource "helm_release" "democratic_csi" {
     }]
 
     controller = {
+      replicas = 2
       driver = {
         resources = {
           requests = { cpu = "25m", memory = "64Mi" }
-          limits   = { cpu = "250m", memory = "256Mi" }
+          limits   = { memory = "256Mi" }
         }
       }
     }
@@ -47,7 +48,7 @@ resource "helm_release" "democratic_csi" {
       driver = {
         resources = {
           requests = { cpu = "25m", memory = "64Mi" }
-          limits   = { cpu = "250m", memory = "256Mi" }
+          limits   = { memory = "256Mi" }
         }
       }
 

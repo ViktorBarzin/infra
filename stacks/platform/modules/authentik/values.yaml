@@ -22,7 +22,6 @@ server:
       cpu: 100m
       memory: 512Mi
     limits:
-      cpu: "2"
       memory: 1Gi
   topologySpreadConstraints:
     - maxSkew: 1
@@ -51,7 +50,6 @@ worker:
       cpu: 50m
       memory: 384Mi
     limits:
-      cpu: "1"
       memory: 1Gi
   topologySpreadConstraints:
     - maxSkew: 1

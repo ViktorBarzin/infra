@@ -1,5 +1,5 @@
 variable "shadowsocks_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
@@ -73,7 +73,6 @@ resource "kubernetes_deployment" "shadowsocks" {
               memory = "16Mi"
             }
             limits = {
-              cpu    = "100m"
               memory = "64Mi"
             }
           }

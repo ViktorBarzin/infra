@@ -37,7 +37,6 @@ resource "kubernetes_deployment" "flaresolverr" {
               memory = "150Mi"
             }
             limits = {
-              cpu    = "500m"
               memory = "384Mi"
             }
           }

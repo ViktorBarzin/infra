@@ -1,9 +1,9 @@
 variable "tls_secret_name" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "speedtest_db_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 variable "nfs_server" { type = string }
@@ -121,7 +121,6 @@ resource "kubernetes_deployment" "speedtest" {
               memory = "128Mi"
             }
             limits = {
-              cpu    = "1"
               memory = "512Mi"
             }
           }
