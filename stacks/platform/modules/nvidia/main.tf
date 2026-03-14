@@ -613,7 +613,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
 
           resources {
             requests = {
-              cpu    = "50m"
+              cpu    = "10m"
               memory = "128Mi"
             }
             limits = {

@@ -321,7 +321,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
           resources {
             requests = {
-              cpu    = "50m"
+              cpu    = "15m"
               memory = "512Mi"
             }
             limits = {

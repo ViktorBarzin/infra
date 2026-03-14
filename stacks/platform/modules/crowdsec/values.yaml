@@ -2,6 +2,12 @@
 container_runtime: containerd
 
 agent:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
   priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
@@ -44,6 +50,12 @@ agent:
       configMap:
         name: crowdsec-whitelist
 lapi:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 1Gi
   priorityClassName: "tier-1-cluster"
   replicas: 3
   topologySpreadConstraints:

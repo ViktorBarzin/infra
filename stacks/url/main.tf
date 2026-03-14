@@ -283,7 +283,7 @@ resource "kubernetes_deployment" "shlink-web" {
               memory = "512Mi"
             }
             requests = {
-              cpu    = "250m"
+              cpu    = "10m"
               memory = "50Mi"
             }
           }

@@ -115,7 +115,7 @@ resource "kubernetes_deployment" "clickhouse" {
           }
           resources {
             requests = {
-              cpu    = "100m"
+              cpu    = "500m"
               memory = "512Mi"
             }
             limits = {

@@ -145,10 +145,9 @@ server:
   retention: "52w"
   resources:
     requests:
-      cpu: 200m
+      cpu: 100m
       memory: 1Gi
     limits:
-      cpu: "2"
       memory: 4Gi
   strategy:
     type: Recreate
