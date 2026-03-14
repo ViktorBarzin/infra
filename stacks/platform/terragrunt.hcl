@@ -8,7 +8,5 @@ dependency "infra" {
   skip_outputs = true
 }
 
-dependency "vault" {
-  config_path  = "../vault"
-  skip_outputs = true
-}
+# NOTE: platform cannot depend on vault (vault depends on platform → cycle).
+# Vault KV must be populated before platform apply. Use: vault first, then platform.

@@ -299,130 +299,488 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
 # --- Variable Declarations (secrets consumed by other stacks) ---
 
 # Simple string secrets
-variable "speedtest_db_password" { type = string; sensitive = true }
-variable "hackmd_db_password" { type = string; sensitive = true }
-variable "n8n_postgresql_password" { type = string; sensitive = true }
-variable "tandoor_database_password" { type = string; sensitive = true }
-variable "shadowsocks_password" { type = string; sensitive = true }
-variable "coturn_turn_secret" { type = string; sensitive = true }
-variable "wealthfolio_password_hash" { type = string; sensitive = true }
-variable "plotting_book_session_secret" { type = string; sensitive = true }
-variable "discord_user_token" { type = string; sensitive = true }
-variable "health_postgresql_password" { type = string; sensitive = true }
-variable "health_secret_key" { type = string; sensitive = true }
-variable "onlyoffice_db_password" { type = string; sensitive = true }
-variable "onlyoffice_jwt_token" { type = string; sensitive = true }
-variable "netbox_db_password" { type = string; sensitive = true }
-variable "netbox_superuser_password" { type = string; sensitive = true }
-variable "clickhouse_password" { type = string; sensitive = true }
-variable "clickhouse_postgres_password" { type = string; sensitive = true }
-variable "diun_nfty_token" { type = string; sensitive = true }
-variable "diun_slack_url" { type = string; sensitive = true }
-variable "forgejo_authentik_client_id" { type = string; sensitive = true }
-variable "forgejo_authentik_client_secret" { type = string; sensitive = true }
-variable "dawarich_database_password" { type = string; sensitive = true }
-variable "geoapify_api_key" { type = string; sensitive = true }
-variable "resume_auth_secret" { type = string; sensitive = true }
-variable "url_shortener_api_key" { type = string; sensitive = true }
-variable "url_shortener_geolite_license_key" { type = string; sensitive = true }
-variable "url_shortener_mysql_password" { type = string; sensitive = true }
-variable "linkwarden_authentik_client_id" { type = string; sensitive = true }
-variable "linkwarden_authentik_client_secret" { type = string; sensitive = true }
-variable "linkwarden_postgresql_password" { type = string; sensitive = true }
-variable "tiny_tuya_api_key" { type = string; sensitive = true }
-variable "tiny_tuya_api_secret" { type = string; sensitive = true }
-variable "tiny_tuya_service_secret" { type = string; sensitive = true }
-variable "tiny_tuya_slack_url" { type = string; sensitive = true }
-variable "claude_memory_api_key" { type = string; sensitive = true }
-variable "dbaas_postgresql_root_password" { type = string; sensitive = true }
-variable "openrouter_api_key" { type = string; sensitive = true }
-variable "slack_bot_token" { type = string; sensitive = true }
-variable "woodpecker_agent_secret" { type = string; sensitive = true }
-variable "woodpecker_db_password" { type = string; sensitive = true }
-variable "woodpecker_forgejo_client_id" { type = string; sensitive = true }
-variable "woodpecker_forgejo_client_secret" { type = string; sensitive = true }
-variable "woodpecker_github_client_id" { type = string; sensitive = true }
-variable "woodpecker_github_client_secret" { type = string; sensitive = true }
-variable "webhook_handler_secret" { type = string; sensitive = true }
-variable "webhook_handler_fb_verify_token" { type = string; sensitive = true }
-variable "webhook_handler_fb_page_token" { type = string; sensitive = true }
-variable "webhook_handler_fb_app_secret" { type = string; sensitive = true }
-variable "webhook_handler_git_user" { type = string; sensitive = true }
-variable "webhook_handler_git_token" { type = string; sensitive = true }
-variable "webhook_handler_ssh_key" { type = string; sensitive = true }
-variable "trading_bot_db_password" { type = string; sensitive = true }
-variable "trading_bot_alpaca_api_key" { type = string; sensitive = true }
-variable "trading_bot_alpaca_secret_key" { type = string; sensitive = true }
-variable "trading_bot_jwt_secret" { type = string; sensitive = true }
-variable "trading_bot_reddit_client_id" { type = string; sensitive = true }
-variable "trading_bot_reddit_client_secret" { type = string; sensitive = true }
-variable "trading_bot_alpha_vantage_api_key" { type = string; sensitive = true }
-variable "trading_bot_fmp_api_key" { type = string; sensitive = true }
-variable "openclaw_ssh_key" { type = string; sensitive = true }
-variable "llama_api_key" { type = string; sensitive = true }
-variable "brave_api_key" { type = string; sensitive = true }
-variable "nvidia_api_key" { type = string; sensitive = true }
-variable "anthropic_api_key" { type = string; sensitive = true }
-variable "openclaw_telegram_bot_token" { type = string; sensitive = true }
-variable "forgejo_api_token" { type = string; sensitive = true }
-variable "affine_postgresql_password" { type = string; sensitive = true }
-variable "immich_postgresql_password" { type = string; sensitive = true }
-variable "immich_frame_api_key" { type = string; sensitive = true }
-variable "nextcloud_db_password" { type = string; sensitive = true }
-variable "paperless_db_password" { type = string; sensitive = true }
-variable "realestate_crawler_db_password" { type = string; sensitive = true }
-variable "aiostreams_database_connection_string" { type = string; sensitive = true }
+variable "speedtest_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "hackmd_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "n8n_postgresql_password" {
+  type      = string
+  sensitive = true
+}
+variable "tandoor_database_password" {
+  type      = string
+  sensitive = true
+}
+variable "shadowsocks_password" {
+  type      = string
+  sensitive = true
+}
+variable "coturn_turn_secret" {
+  type      = string
+  sensitive = true
+}
+variable "wealthfolio_password_hash" {
+  type      = string
+  sensitive = true
+}
+variable "plotting_book_session_secret" {
+  type      = string
+  sensitive = true
+}
+variable "discord_user_token" {
+  type      = string
+  sensitive = true
+}
+variable "health_postgresql_password" {
+  type      = string
+  sensitive = true
+}
+variable "health_secret_key" {
+  type      = string
+  sensitive = true
+}
+variable "onlyoffice_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "onlyoffice_jwt_token" {
+  type      = string
+  sensitive = true
+}
+variable "netbox_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "netbox_superuser_password" {
+  type      = string
+  sensitive = true
+}
+variable "clickhouse_password" {
+  type      = string
+  sensitive = true
+}
+variable "clickhouse_postgres_password" {
+  type      = string
+  sensitive = true
+}
+variable "diun_nfty_token" {
+  type      = string
+  sensitive = true
+}
+variable "diun_slack_url" {
+  type      = string
+  sensitive = true
+}
+variable "forgejo_authentik_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "forgejo_authentik_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "dawarich_database_password" {
+  type      = string
+  sensitive = true
+}
+variable "geoapify_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "resume_auth_secret" {
+  type      = string
+  sensitive = true
+}
+variable "url_shortener_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "url_shortener_geolite_license_key" {
+  type      = string
+  sensitive = true
+}
+variable "url_shortener_mysql_password" {
+  type      = string
+  sensitive = true
+}
+variable "linkwarden_authentik_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "linkwarden_authentik_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "linkwarden_postgresql_password" {
+  type      = string
+  sensitive = true
+}
+variable "tiny_tuya_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "tiny_tuya_api_secret" {
+  type      = string
+  sensitive = true
+}
+variable "tiny_tuya_service_secret" {
+  type      = string
+  sensitive = true
+}
+variable "tiny_tuya_slack_url" {
+  type      = string
+  sensitive = true
+}
+variable "claude_memory_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "dbaas_postgresql_root_password" {
+  type      = string
+  sensitive = true
+}
+variable "openrouter_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "slack_bot_token" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_agent_secret" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_forgejo_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_forgejo_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_github_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "woodpecker_github_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_secret" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_fb_verify_token" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_fb_page_token" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_fb_app_secret" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_git_user" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_git_token" {
+  type      = string
+  sensitive = true
+}
+variable "webhook_handler_ssh_key" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_alpaca_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_alpaca_secret_key" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_jwt_secret" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_reddit_client_id" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_reddit_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_alpha_vantage_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "trading_bot_fmp_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "openclaw_ssh_key" {
+  type      = string
+  sensitive = true
+}
+variable "llama_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "brave_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "nvidia_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "anthropic_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "openclaw_telegram_bot_token" {
+  type      = string
+  sensitive = true
+}
+variable "forgejo_api_token" {
+  type      = string
+  sensitive = true
+}
+variable "affine_postgresql_password" {
+  type      = string
+  sensitive = true
+}
+variable "immich_postgresql_password" {
+  type      = string
+  sensitive = true
+}
+variable "immich_frame_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "nextcloud_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "paperless_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "realestate_crawler_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "aiostreams_database_connection_string" {
+  type      = string
+  sensitive = true
+}
 
 # Platform-specific secrets
-variable "dbaas_root_password" { type = string; sensitive = true }
-variable "dbaas_pgadmin_password" { type = string; sensitive = true }
-variable "ingress_crowdsec_api_key" { type = string; sensitive = true }
-variable "auth_fallback_htpasswd" { type = string; sensitive = true; default = "" }
-variable "technitium_db_password" { type = string; sensitive = true }
-variable "authentik_secret_key" { type = string; sensitive = true }
-variable "authentik_postgres_password" { type = string; sensitive = true }
-variable "crowdsec_enroll_key" { type = string; sensitive = true }
-variable "crowdsec_db_password" { type = string; sensitive = true }
-variable "crowdsec_dash_api_key" { type = string; sensitive = true }
-variable "crowdsec_dash_machine_id" { type = string; sensitive = true }
-variable "crowdsec_dash_machine_password" { type = string; sensitive = true }
-variable "alertmanager_slack_api_url" { type = string; sensitive = true }
-variable "cloudflare_api_key" { type = string; sensitive = true }
-variable "cloudflare_tunnel_token" { type = string; sensitive = true }
-variable "alertmanager_account_password" { type = string; sensitive = true }
-variable "monitoring_idrac_password" { type = string; sensitive = true }
-variable "haos_api_token" { type = string; sensitive = true }
-variable "pve_password" { type = string; sensitive = true }
-variable "grafana_db_password" { type = string; sensitive = true }
-variable "grafana_admin_password" { type = string; sensitive = true }
-variable "vaultwarden_smtp_password" { type = string; sensitive = true }
-variable "technitium_username" { type = string; sensitive = true }
-variable "technitium_password" { type = string; sensitive = true }
-variable "truenas_api_key" { type = string; sensitive = true }
-variable "truenas_ssh_private_key" { type = string; sensitive = true }
-variable "xray_reality_private_key" { type = string; sensitive = true }
-variable "mailserver_roundcubemail_db_password" { type = string; sensitive = true }
-variable "headscale_config" { type = string; sensitive = true }
-variable "headscale_acl" { type = string; sensitive = true }
-variable "wireguard_wg_0_conf" { type = string; sensitive = true }
-variable "wireguard_wg_0_key" { type = string; sensitive = true }
-variable "wireguard_firewall_sh" { type = string; sensitive = true }
+variable "dbaas_root_password" {
+  type      = string
+  sensitive = true
+}
+variable "dbaas_pgadmin_password" {
+  type      = string
+  sensitive = true
+}
+variable "ingress_crowdsec_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "auth_fallback_htpasswd" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "technitium_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "authentik_secret_key" {
+  type      = string
+  sensitive = true
+}
+variable "authentik_postgres_password" {
+  type      = string
+  sensitive = true
+}
+variable "crowdsec_enroll_key" {
+  type      = string
+  sensitive = true
+}
+variable "crowdsec_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "crowdsec_dash_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "crowdsec_dash_machine_id" {
+  type      = string
+  sensitive = true
+}
+variable "crowdsec_dash_machine_password" {
+  type      = string
+  sensitive = true
+}
+variable "alertmanager_slack_api_url" {
+  type      = string
+  sensitive = true
+}
+variable "cloudflare_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "cloudflare_tunnel_token" {
+  type      = string
+  sensitive = true
+}
+variable "alertmanager_account_password" {
+  type      = string
+  sensitive = true
+}
+variable "monitoring_idrac_password" {
+  type      = string
+  sensitive = true
+}
+variable "haos_api_token" {
+  type      = string
+  sensitive = true
+}
+variable "pve_password" {
+  type      = string
+  sensitive = true
+}
+variable "grafana_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "grafana_admin_password" {
+  type      = string
+  sensitive = true
+}
+variable "vaultwarden_smtp_password" {
+  type      = string
+  sensitive = true
+}
+variable "technitium_username" {
+  type      = string
+  sensitive = true
+}
+variable "technitium_password" {
+  type      = string
+  sensitive = true
+}
+variable "truenas_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "truenas_ssh_private_key" {
+  type      = string
+  sensitive = true
+}
+variable "xray_reality_private_key" {
+  type      = string
+  sensitive = true
+}
+variable "mailserver_roundcubemail_db_password" {
+  type      = string
+  sensitive = true
+}
+variable "headscale_config" {
+  type      = string
+  sensitive = true
+}
+variable "headscale_acl" {
+  type      = string
+  sensitive = true
+}
+variable "wireguard_wg_0_conf" {
+  type      = string
+  sensitive = true
+}
+variable "wireguard_wg_0_key" {
+  type      = string
+  sensitive = true
+}
+variable "wireguard_firewall_sh" {
+  type      = string
+  sensitive = true
+}
 
 # Complex type secrets
-variable "homepage_credentials" { type = map(any); sensitive = true }
-variable "mailserver_accounts" { sensitive = true }
-variable "mailserver_aliases" { sensitive = true }
-variable "mailserver_opendkim_key" { sensitive = true }
-variable "mailserver_sasl_passwd" { sensitive = true }
-variable "actualbudget_credentials" { type = map(any); sensitive = true }
-variable "freedify_credentials" { type = map(any); sensitive = true }
-variable "ollama_api_credentials" { type = map(string); sensitive = true }
-variable "owntracks_credentials" { type = map(string); sensitive = true }
-variable "realestate_crawler_notification_settings" { type = map(string); sensitive = true }
-variable "openclaw_skill_secrets" { type = map(string); sensitive = true }
-variable "k8s_users" { type = map(any); sensitive = true; default = {} }
-variable "xray_reality_clients" { type = list(map(string)); sensitive = true }
-variable "xray_reality_short_ids" { type = list(string); sensitive = true }
+variable "homepage_credentials" {
+  type      = map(any)
+  sensitive = true
+}
+variable "mailserver_accounts" {
+  sensitive = true
+}
+variable "mailserver_aliases" {
+  sensitive = true
+}
+variable "mailserver_opendkim_key" {
+  sensitive = true
+}
+variable "mailserver_sasl_passwd" {
+  sensitive = true
+}
+variable "actualbudget_credentials" {
+  type      = map(any)
+  sensitive = true
+}
+variable "freedify_credentials" {
+  type      = map(any)
+  sensitive = true
+}
+variable "ollama_api_credentials" {
+  type      = map(string)
+  sensitive = true
+}
+variable "owntracks_credentials" {
+  type      = map(string)
+  sensitive = true
+}
+variable "realestate_crawler_notification_settings" {
+  type      = map(string)
+  sensitive = true
+}
+variable "openclaw_skill_secrets" {
+  type      = map(string)
+  sensitive = true
+}
+variable "k8s_users" {
+  type      = map(any)
+  sensitive = true
+  default   = {}
+}
+variable "xray_reality_clients" {
+  type      = list(map(string))
+  sensitive = true
+}
+variable "xray_reality_short_ids" {
+  type      = list(string)
+  sensitive = true
+}
 
 # =============================================================================
 # KV Secret Resources — one per consuming stack
