@@ -2,9 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "freedify_credentials" {
-  type      = map(any)
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "freedify"
+}
+
+locals {
+  credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["credentials"])
 }
 
 
@@ -40,11 +44,11 @@ module "viktor" {
   depends_on         = [kubernetes_namespace.freedify]
   tier               = local.tiers.aux
   protected          = true
-  listenbrainz_token = lookup(var.freedify_credentials["viktor"], "listenbrainz_token", null)
-  genius_token       = lookup(var.freedify_credentials["viktor"], "genius_token", null)
-  dab_session        = lookup(var.freedify_credentials["viktor"], "dab_session", null)
-  dab_visitor_id     = lookup(var.freedify_credentials["viktor"], "dab_visitor_id", null)
-  gemini_api_key     = lookup(var.freedify_credentials["viktor"], "gemini_api_key", null)
+  listenbrainz_token = lookup(local.credentials["viktor"], "listenbrainz_token", null)
+  genius_token       = lookup(local.credentials["viktor"], "genius_token", null)
+  dab_session        = lookup(local.credentials["viktor"], "dab_session", null)
+  dab_visitor_id     = lookup(local.credentials["viktor"], "dab_visitor_id", null)
+  gemini_api_key     = lookup(local.credentials["viktor"], "gemini_api_key", null)
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Freedify (Viktor)"
@@ -64,8 +68,8 @@ module "emo" {
   depends_on      = [kubernetes_namespace.freedify]
   tier            = local.tiers.aux
   protected       = true
-  genius_token    = lookup(var.freedify_credentials["emo"], "genius_token", null)
-  gemini_api_key  = lookup(var.freedify_credentials["emo"], "gemini_api_key", null)
+  genius_token    = lookup(local.credentials["emo"], "genius_token", null)
+  gemini_api_key  = lookup(local.credentials["emo"], "gemini_api_key", null)
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Freedify (Emo)"

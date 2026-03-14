@@ -2,30 +2,9 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "webhook_handler_secret" {
-  type      = string
-  sensitive = true
-}
-variable "webhook_handler_fb_verify_token" {
-  type      = string
-  sensitive = true
-}
-variable "webhook_handler_fb_page_token" {
-  type      = string
-  sensitive = true
-}
-variable "webhook_handler_fb_app_secret" {
-  type      = string
-  sensitive = true
-}
-variable "webhook_handler_git_user" { type = string }
-variable "webhook_handler_git_token" {
-  type      = string
-  sensitive = true
-}
-variable "webhook_handler_ssh_key" {
-  type      = string
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "webhook-handler"
 }
 
 
@@ -85,7 +64,7 @@ resource "kubernetes_secret" "ssh-key" {
     }
   }
   data = {
-    "id_rsa" = var.webhook_handler_ssh_key
+    "id_rsa" = data.vault_kv_secret_v2.secrets.data["ssh_key"]
   }
   type = "generic"
 }
@@ -148,19 +127,19 @@ resource "kubernetes_deployment" "webhook_handler" {
           }
           env {
             name  = "WEBHOOKSECRET"
-            value = var.webhook_handler_secret
+            value = data.vault_kv_secret_v2.secrets.data["secret"]
           }
           env {
             name  = "FB_APP_SECRET"
-            value = var.webhook_handler_fb_app_secret
+            value = data.vault_kv_secret_v2.secrets.data["fb_app_secret"]
           }
           env {
             name  = "FB_VERIFY_TOKEN"
-            value = var.webhook_handler_fb_verify_token
+            value = data.vault_kv_secret_v2.secrets.data["fb_verify_token"]
           }
           env {
             name  = "FB_PAGE_TOKEN"
-            value = var.webhook_handler_fb_page_token
+            value = data.vault_kv_secret_v2.secrets.data["fb_page_token"]
           }
           env {
             name  = "CONFIG"
@@ -168,11 +147,11 @@ resource "kubernetes_deployment" "webhook_handler" {
           }
           env {
             name  = "GIT_USER"
-            value = var.webhook_handler_git_user
+            value = data.vault_kv_secret_v2.secrets.data["git_user"]
           }
           env {
             name  = "GIT_TOKEN"
-            value = var.webhook_handler_git_token
+            value = data.vault_kv_secret_v2.secrets.data["git_token"]
           }
           env {
             name  = "SSH_KEY"

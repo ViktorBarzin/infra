@@ -2,19 +2,15 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "linkwarden_postgresql_password" {
-  type      = string
-  sensitive = true
-}
-variable "linkwarden_authentik_client_id" { type = string }
-variable "linkwarden_authentik_client_secret" {
-  type      = string
-  sensitive = true
-}
 variable "postgresql_host" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "linkwarden"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -78,7 +74,7 @@ resource "kubernetes_deployment" "linkwarden" {
           }
           env {
             name  = "DATABASE_URL"
-            value = "postgresql://linkwarden:${var.linkwarden_postgresql_password}@${var.postgresql_host}:5432/linkwarden"
+            value = "postgresql://linkwarden:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/linkwarden"
           }
           env {
             name  = "NEXT_PUBLIC_AUTHENTIK_ENABLED"
@@ -98,11 +94,11 @@ resource "kubernetes_deployment" "linkwarden" {
           }
           env {
             name  = "AUTHENTIK_CLIENT_ID"
-            value = var.linkwarden_authentik_client_id
+            value = data.vault_kv_secret_v2.secrets.data["authentik_client_id"]
           }
           env {
             name  = "AUTHENTIK_CLIENT_SECRET"
-            value = var.linkwarden_authentik_client_secret
+            value = data.vault_kv_secret_v2.secrets.data["authentik_client_secret"]
           }
           resources {
             requests = {
@@ -153,6 +149,6 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "linkwarden"
     "gethomepage.dev/widget.url"   = "http://linkwarden.linkwarden.svc.cluster.local"
-    "gethomepage.dev/widget.key"   = var.homepage_credentials["linkwarden"]["api_key"]
+    "gethomepage.dev/widget.key"   = local.homepage_credentials["linkwarden"]["api_key"]
   }
 }

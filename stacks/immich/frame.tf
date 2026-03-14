@@ -23,7 +23,7 @@ resource "kubernetes_config_map" "mailserver_config" {
         ShowProgressBar: false
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
-          ApiKey: ${var.immich_frame_api_key}
+          ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key"]}
           Albums: 
             - 1aa98849-bbd5-452b-aac0-310b210a8597 # china
     EOF

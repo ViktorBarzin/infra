@@ -48,9 +48,24 @@ generate "k8s_providers" {
   path      = "providers.tf"
   if_exists = "overwrite_terragrunt"
   contents  = <<EOF
+terraform {
+  required_providers {
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
+    }
+  }
+}
+
 variable "kube_config_path" {
   type    = string
   default = "~/.kube/config"
+}
+
+variable "vault_root_token" {
+  type      = string
+  sensitive = true
+  default   = ""
 }
 
 provider "kubernetes" {
@@ -61,6 +76,12 @@ provider "helm" {
   kubernetes = {
     config_path = var.kube_config_path
   }
+}
+
+provider "vault" {
+  address          = "https://vault.viktorbarzin.me"
+  token            = var.vault_root_token
+  skip_child_token = true
 }
 EOF
 }

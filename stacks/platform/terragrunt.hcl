@@ -7,3 +7,8 @@ dependency "infra" {
   config_path  = "../infra"
   skip_outputs = true
 }
+
+dependency "vault" {
+  config_path  = "../vault"
+  skip_outputs = true
+}

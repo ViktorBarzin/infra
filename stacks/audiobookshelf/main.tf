@@ -3,9 +3,13 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "audiobookshelf"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -205,6 +209,6 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "audiobookshelf"
     "gethomepage.dev/widget.url"   = "http://audiobookshelf.audiobookshelf.svc.cluster.local"
-    "gethomepage.dev/widget.key"   = var.homepage_credentials["audiobookshelf"]["token"]
+    "gethomepage.dev/widget.key"   = local.homepage_credentials["audiobookshelf"]["token"]
   }
 }

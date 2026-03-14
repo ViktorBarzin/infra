@@ -2,13 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "n8n_postgresql_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "n8n"
+}
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
@@ -125,7 +125,7 @@ resource "kubernetes_deployment" "n8n" {
           }
           env {
             name  = "DB_POSTGRESDB_PASSWORD"
-            value = var.n8n_postgresql_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "GENERIC_TIMEZONE"

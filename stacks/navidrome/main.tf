@@ -3,9 +3,13 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "navidrome"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -164,8 +168,8 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
     "gethomepage.dev/widget.type"  = "navidrome"
     "gethomepage.dev/widget.url"   = "http://navidrome.navidrome.svc.cluster.local"
-    "gethomepage.dev/widget.user"  = var.homepage_credentials["navidrome"]["user"]
-    "gethomepage.dev/widget.token" = var.homepage_credentials["navidrome"]["token"]
-    "gethomepage.dev/widget.salt"  = var.homepage_credentials["navidrome"]["salt"]
+    "gethomepage.dev/widget.user"  = local.homepage_credentials["navidrome"]["user"]
+    "gethomepage.dev/widget.token" = local.homepage_credentials["navidrome"]["token"]
+    "gethomepage.dev/widget.salt"  = local.homepage_credentials["navidrome"]["salt"]
   }
 }

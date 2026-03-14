@@ -21,7 +21,7 @@
 # Variable Declarations
 # =============================================================================
 
-# --- Core ---
+# --- Core (non-secret, from config.tfvars) ---
 variable "tls_secret_name" {
   type = string
 }
@@ -35,89 +35,13 @@ variable "prod" {
   type    = bool
   default = false
 }
-
-# --- dbaas ---
-variable "dbaas_root_password" {
-  type      = string
-  sensitive = true
-}
-variable "dbaas_postgresql_root_password" {
-  type      = string
-  sensitive = true
-}
-variable "dbaas_pgadmin_password" {
-  type      = string
-  sensitive = true
-}
-
-# --- traefik ---
-variable "ingress_crowdsec_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "auth_fallback_htpasswd" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
-# --- technitium ---
-variable "technitium_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
-}
-
-# --- headscale ---
-variable "headscale_config" { type = string }
-variable "headscale_acl" { type = string }
 variable "k8s_ca_cert" {
   type    = string
   default = ""
 }
-
-# --- authentik / rbac / k8s-portal ---
-variable "authentik_secret_key" {
-  type      = string
-  sensitive = true
-}
-variable "authentik_postgres_password" {
-  type      = string
-  sensitive = true
-}
-variable "k8s_users" {
-  type    = map(any)
-  default = {}
-}
 variable "ssh_private_key" {
   type      = string
   default   = ""
-  sensitive = true
-}
-
-# --- crowdsec ---
-variable "crowdsec_enroll_key" { type = string }
-variable "crowdsec_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "crowdsec_dash_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "crowdsec_dash_machine_id" { type = string }
-variable "crowdsec_dash_machine_password" {
-  type      = string
-  sensitive = true
-}
-variable "alertmanager_slack_api_url" { type = string }
-
-# --- cloudflared ---
-variable "cloudflare_api_key" {
-  type      = string
   sensitive = true
 }
 variable "cloudflare_email" { type = string }
@@ -127,91 +51,23 @@ variable "cloudflare_tunnel_id" { type = string }
 variable "public_ip" { type = string }
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
-variable "cloudflare_tunnel_token" {
-  type      = string
-  sensitive = true
-}
-
-# --- monitoring ---
-variable "alertmanager_account_password" {
-  type      = string
-  sensitive = true
-}
 variable "monitoring_idrac_username" { type = string }
-variable "monitoring_idrac_password" {
-  type      = string
-  sensitive = true
-}
-variable "tiny_tuya_service_secret" {
-  type      = string
-  sensitive = true
-}
-variable "haos_api_token" {
-  type      = string
-  sensitive = true
-}
-variable "pve_password" {
-  type      = string
-  sensitive = true
-}
-variable "grafana_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "grafana_admin_password" {
-  type      = string
-  sensitive = true
+
+# --- Vault KV secrets ---
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "platform"
 }
 
-# --- vaultwarden ---
-variable "vaultwarden_smtp_password" {
-  type      = string
-  sensitive = true
-}
-
-# --- wireguard ---
-variable "wireguard_wg_0_conf" { type = string }
-variable "wireguard_wg_0_key" { type = string }
-variable "wireguard_firewall_sh" { type = string }
-
-# --- xray ---
-variable "xray_reality_clients" { type = list(map(string)) }
-variable "xray_reality_private_key" {
-  type      = string
-  sensitive = true
-}
-variable "xray_reality_short_ids" { type = list(string) }
-
-# --- mailserver ---
-variable "mailserver_accounts" {}
-variable "mailserver_aliases" {}
-variable "mailserver_opendkim_key" {}
-variable "mailserver_sasl_passwd" {}
-variable "mailserver_roundcubemail_db_password" {
-  type      = string
-  sensitive = true
-}
-
-# --- infra-maintenance ---
-variable "webhook_handler_git_user" { type = string }
-variable "webhook_handler_git_token" {
-  type      = string
-  sensitive = true
-}
-variable "technitium_username" { type = string }
-variable "technitium_password" {
-  type      = string
-  sensitive = true
-}
-
-# --- iscsi-csi ---
-variable "truenas_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "truenas_ssh_private_key" {
-  type      = string
-  sensitive = true
+locals {
+  homepage_credentials   = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+  k8s_users              = jsondecode(data.vault_kv_secret_v2.secrets.data["k8s_users"])
+  xray_reality_clients   = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_clients"])
+  xray_reality_short_ids = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_short_ids"])
+  mailserver_accounts    = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+  mailserver_aliases     = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_aliases"])
+  mailserver_opendkim_key = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_opendkim_key"])
+  mailserver_sasl_passwd  = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_sasl_passwd"])
 }
 
 # =============================================================================
@@ -234,9 +90,9 @@ module "dbaas" {
   prod                     = var.prod
   tls_secret_name          = var.tls_secret_name
   nfs_server               = var.nfs_server
-  dbaas_root_password      = var.dbaas_root_password
-  postgresql_root_password = var.dbaas_postgresql_root_password
-  pgadmin_password         = var.dbaas_pgadmin_password
+  dbaas_root_password      = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
+  postgresql_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_postgresql_root_password"]
+  pgadmin_password         = data.vault_kv_secret_v2.secrets.data["dbaas_pgadmin_password"]
   kube_config_path         = var.kube_config_path
   tier                     = local.tiers.cluster
 }
@@ -257,10 +113,10 @@ module "redis" {
 module "traefik" {
   source                 = "./modules/traefik"
   tier                   = local.tiers.core
-  crowdsec_api_key       = var.ingress_crowdsec_api_key
+  crowdsec_api_key       = data.vault_kv_secret_v2.secrets.data["ingress_crowdsec_api_key"]
   redis_host             = var.redis_host
   tls_secret_name        = var.tls_secret_name
-  auth_fallback_htpasswd = var.auth_fallback_htpasswd
+  auth_fallback_htpasswd = data.vault_kv_secret_v2.secrets.data["auth_fallback_htpasswd"]
 }
 
 # -----------------------------------------------------------------------------
@@ -271,10 +127,10 @@ module "technitium" {
   tls_secret_name        = var.tls_secret_name
   nfs_server             = var.nfs_server
   mysql_host             = var.mysql_host
-  homepage_token         = var.homepage_credentials["technitium"]["token"]
-  technitium_db_password = var.technitium_db_password
-  technitium_username    = var.technitium_username
-  technitium_password    = var.technitium_password
+  homepage_token         = local.homepage_credentials["technitium"]["token"]
+  technitium_db_password = data.vault_kv_secret_v2.secrets.data["technitium_db_password"]
+  technitium_username    = data.vault_kv_secret_v2.secrets.data["technitium_username"]
+  technitium_password    = data.vault_kv_secret_v2.secrets.data["technitium_password"]
   tier                   = local.tiers.core
 }
 
@@ -285,9 +141,9 @@ module "headscale" {
   source           = "./modules/headscale"
   tls_secret_name  = var.tls_secret_name
   nfs_server       = var.nfs_server
-  headscale_config = var.headscale_config
-  headscale_acl    = var.headscale_acl
-  homepage_token   = try(var.homepage_credentials["headscale"]["api_key"], "")
+  headscale_config = data.vault_kv_secret_v2.secrets.data["headscale_config"]
+  headscale_acl    = data.vault_kv_secret_v2.secrets.data["headscale_acl"]
+  homepage_token   = try(local.homepage_credentials["headscale"]["api_key"], "")
   tier             = local.tiers.core
 }
 
@@ -298,10 +154,10 @@ module "authentik" {
   source            = "./modules/authentik"
   tier              = local.tiers.cluster
   tls_secret_name   = var.tls_secret_name
-  secret_key        = var.authentik_secret_key
-  postgres_password = var.authentik_postgres_password
+  secret_key        = data.vault_kv_secret_v2.secrets.data["authentik_secret_key"]
+  postgres_password = data.vault_kv_secret_v2.secrets.data["authentik_postgres_password"]
   redis_host        = var.redis_host
-  homepage_token    = try(var.homepage_credentials["authentik"]["token"], "")
+  homepage_token    = try(local.homepage_credentials["authentik"]["token"], "")
 }
 
 # -----------------------------------------------------------------------------
@@ -311,7 +167,7 @@ module "rbac" {
   source          = "./modules/rbac"
   tier            = local.tiers.cluster
   tls_secret_name = var.tls_secret_name
-  k8s_users       = var.k8s_users
+  k8s_users       = local.k8s_users
   ssh_private_key = var.ssh_private_key
 }
 
@@ -333,14 +189,14 @@ module "crowdsec" {
   tier                           = local.tiers.cluster
   tls_secret_name                = var.tls_secret_name
   mysql_host                     = var.mysql_host
-  homepage_username              = var.homepage_credentials["crowdsec"]["username"]
-  homepage_password              = var.homepage_credentials["crowdsec"]["password"]
-  enroll_key                     = var.crowdsec_enroll_key
-  db_password                    = var.crowdsec_db_password
-  crowdsec_dash_api_key          = var.crowdsec_dash_api_key
-  crowdsec_dash_machine_id       = var.crowdsec_dash_machine_id
-  crowdsec_dash_machine_password = var.crowdsec_dash_machine_password
-  slack_webhook_url              = var.alertmanager_slack_api_url
+  homepage_username              = local.homepage_credentials["crowdsec"]["username"]
+  homepage_password              = local.homepage_credentials["crowdsec"]["password"]
+  enroll_key                     = data.vault_kv_secret_v2.secrets.data["crowdsec_enroll_key"]
+  db_password                    = data.vault_kv_secret_v2.secrets.data["crowdsec_db_password"]
+  crowdsec_dash_api_key          = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_api_key"]
+  crowdsec_dash_machine_id       = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_id"]
+  crowdsec_dash_machine_password = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_password"]
+  slack_webhook_url              = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
 }
 
 # -----------------------------------------------------------------------------
@@ -351,15 +207,15 @@ module "monitoring" {
   tls_secret_name               = var.tls_secret_name
   nfs_server                    = var.nfs_server
   mysql_host                    = var.mysql_host
-  alertmanager_account_password = var.alertmanager_account_password
+  alertmanager_account_password = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
   idrac_username                = var.monitoring_idrac_username
-  idrac_password                = var.monitoring_idrac_password
-  alertmanager_slack_api_url    = var.alertmanager_slack_api_url
-  tiny_tuya_service_secret      = var.tiny_tuya_service_secret
-  haos_api_token                = var.haos_api_token
-  pve_password                  = var.pve_password
-  grafana_db_password           = var.grafana_db_password
-  grafana_admin_password        = var.grafana_admin_password
+  idrac_password                = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
+  alertmanager_slack_api_url    = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
+  tiny_tuya_service_secret      = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
+  haos_api_token                = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
+  pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
+  grafana_db_password           = data.vault_kv_secret_v2.secrets.data["grafana_db_password"]
+  grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
   tier                          = local.tiers.cluster
 }
 
@@ -371,7 +227,7 @@ module "vaultwarden" {
   tls_secret_name = var.tls_secret_name
   nfs_server      = var.nfs_server
   mail_host       = var.mail_host
-  smtp_password   = var.vaultwarden_smtp_password
+  smtp_password   = data.vault_kv_secret_v2.secrets.data["vaultwarden_smtp_password"]
   tier            = local.tiers.edge
 }
 
@@ -381,9 +237,9 @@ module "vaultwarden" {
 module "reverse-proxy" {
   source                 = "./modules/reverse_proxy"
   tls_secret_name        = var.tls_secret_name
-  truenas_homepage_token = var.homepage_credentials["reverse_proxy"]["truenas_token"]
-  pfsense_homepage_token = var.homepage_credentials["reverse_proxy"]["pfsense_token"]
-  haos_homepage_token    = try(var.homepage_credentials["home_assistant"]["token"], "")
+  truenas_homepage_token = local.homepage_credentials["reverse_proxy"]["truenas_token"]
+  pfsense_homepage_token = local.homepage_credentials["reverse_proxy"]["pfsense_token"]
+  haos_homepage_token    = try(local.homepage_credentials["home_assistant"]["token"], "")
 }
 
 # -----------------------------------------------------------------------------
@@ -420,8 +276,8 @@ module "iscsi-csi" {
   source                  = "./modules/iscsi-csi"
   tier                    = local.tiers.cluster
   truenas_host            = var.nfs_server # Same TrueNAS host
-  truenas_api_key         = var.truenas_api_key
-  truenas_ssh_private_key = var.truenas_ssh_private_key
+  truenas_api_key         = data.vault_kv_secret_v2.secrets.data["truenas_api_key"]
+  truenas_ssh_private_key = data.vault_kv_secret_v2.secrets.data["truenas_ssh_private_key"]
 }
 
 # -----------------------------------------------------------------------------
@@ -472,9 +328,9 @@ module "uptime-kuma" {
 module "wireguard" {
   source          = "./modules/wireguard"
   tls_secret_name = var.tls_secret_name
-  wg_0_conf       = var.wireguard_wg_0_conf
-  wg_0_key        = var.wireguard_wg_0_key
-  firewall_sh     = var.wireguard_firewall_sh
+  wg_0_conf       = data.vault_kv_secret_v2.secrets.data["wireguard_wg_0_conf"]
+  wg_0_key        = data.vault_kv_secret_v2.secrets.data["wireguard_wg_0_key"]
+  firewall_sh     = data.vault_kv_secret_v2.secrets.data["wireguard_firewall_sh"]
   tier            = local.tiers.core
 }
 
@@ -486,9 +342,9 @@ module "xray" {
   tls_secret_name = var.tls_secret_name
   tier            = local.tiers.core
 
-  xray_reality_clients     = var.xray_reality_clients
-  xray_reality_private_key = var.xray_reality_private_key
-  xray_reality_short_ids   = var.xray_reality_short_ids
+  xray_reality_clients     = local.xray_reality_clients
+  xray_reality_private_key = data.vault_kv_secret_v2.secrets.data["xray_reality_private_key"]
+  xray_reality_short_ids   = local.xray_reality_short_ids
 }
 
 # -----------------------------------------------------------------------------
@@ -499,11 +355,11 @@ module "mailserver" {
   tls_secret_name         = var.tls_secret_name
   nfs_server              = var.nfs_server
   mysql_host              = var.mysql_host
-  mailserver_accounts     = var.mailserver_accounts
-  postfix_account_aliases = var.mailserver_aliases
-  opendkim_key            = var.mailserver_opendkim_key
-  sasl_passwd             = var.mailserver_sasl_passwd
-  roundcube_db_password   = var.mailserver_roundcubemail_db_password
+  mailserver_accounts     = local.mailserver_accounts
+  postfix_account_aliases = local.mailserver_aliases
+  opendkim_key            = local.mailserver_opendkim_key
+  sasl_passwd             = local.mailserver_sasl_passwd
+  roundcube_db_password   = data.vault_kv_secret_v2.secrets.data["mailserver_roundcubemail_db_password"]
   tier                    = local.tiers.edge
 }
 
@@ -515,7 +371,7 @@ module "cloudflared" {
   tier            = local.tiers.core
   tls_secret_name = var.tls_secret_name
 
-  cloudflare_api_key           = var.cloudflare_api_key
+  cloudflare_api_key           = data.vault_kv_secret_v2.secrets.data["cloudflare_api_key"]
   cloudflare_email             = var.cloudflare_email
   cloudflare_account_id        = var.cloudflare_account_id
   cloudflare_zone_id           = var.cloudflare_zone_id
@@ -523,7 +379,7 @@ module "cloudflared" {
   public_ip                    = var.public_ip
   cloudflare_proxied_names     = var.cloudflare_proxied_names
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
-  cloudflare_tunnel_token      = var.cloudflare_tunnel_token
+  cloudflare_tunnel_token      = data.vault_kv_secret_v2.secrets.data["cloudflare_tunnel_token"]
 }
 
 # -----------------------------------------------------------------------------
@@ -532,10 +388,10 @@ module "cloudflared" {
 module "infra-maintenance" {
   source              = "./modules/infra-maintenance"
   nfs_server          = var.nfs_server
-  git_user            = var.webhook_handler_git_user
-  git_token           = var.webhook_handler_git_token
-  technitium_username = var.technitium_username
-  technitium_password = var.technitium_password
+  git_user            = data.vault_kv_secret_v2.secrets.data["webhook_handler_git_user"]
+  git_token           = data.vault_kv_secret_v2.secrets.data["webhook_handler_git_token"]
+  technitium_username = data.vault_kv_secret_v2.secrets.data["technitium_username"]
+  technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
 }
 
 # =============================================================================

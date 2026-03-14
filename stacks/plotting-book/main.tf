@@ -2,10 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "plotting_book_session_secret" {
-  type      = string
-  sensitive = true
-}
 variable "plotting_book_google_client_id" {
   type      = string
   sensitive = true
@@ -15,6 +11,10 @@ variable "plotting_book_google_client_secret" {
   sensitive = true
 }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "plotting-book"
+}
 
 resource "kubernetes_namespace" "plotting-book" {
   metadata {
@@ -92,7 +92,7 @@ resource "kubernetes_deployment" "plotting-book" {
           image_pull_policy = "Always"
           env {
             name  = "SESSION_SECRET"
-            value = var.plotting_book_session_secret
+            value = data.vault_kv_secret_v2.secrets.data["session_secret"]
           }
           env {
             name  = "GOOGLE_CLIENT_ID"

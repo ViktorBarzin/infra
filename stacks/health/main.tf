@@ -2,17 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "health_postgresql_password" {
-  type      = string
-  sensitive = true
-}
-variable "health_secret_key" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "health"
+}
 
 resource "kubernetes_namespace" "health" {
   metadata {
@@ -70,11 +66,11 @@ resource "kubernetes_deployment" "health" {
 
           env {
             name  = "DATABASE_URL"
-            value = "postgresql+asyncpg://health:${var.health_postgresql_password}@${var.postgresql_host}:5432/health"
+            value = "postgresql+asyncpg://health:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/health"
           }
           env {
             name  = "SECRET_KEY"
-            value = var.health_secret_key
+            value = data.vault_kv_secret_v2.secrets.data["secret_key"]
           }
           env {
             name  = "UPLOAD_DIR"

@@ -6,52 +6,23 @@ variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
-variable "dbaas_postgresql_root_password" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_alpaca_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_alpaca_secret_key" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_jwt_secret" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_reddit_client_id" { type = string }
-variable "trading_bot_reddit_client_secret" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_alpha_vantage_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "trading_bot_fmp_api_key" {
-  type      = string
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "trading-bot"
 }
 
 locals {
   common_env = {
-    TRADING_DATABASE_URL                 = "postgresql+asyncpg://trading:${var.trading_bot_db_password}@${var.postgresql_host}:5432/trading"
+    TRADING_DATABASE_URL                 = "postgresql+asyncpg://trading:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/trading"
     TRADING_REDIS_URL                    = "redis://${var.redis_host}:6379/4"
     TRADING_LOG_LEVEL                    = "INFO"
-    TRADING_ALPACA_API_KEY               = var.trading_bot_alpaca_api_key
-    TRADING_ALPACA_SECRET_KEY            = var.trading_bot_alpaca_secret_key
+    TRADING_ALPACA_API_KEY               = data.vault_kv_secret_v2.secrets.data["alpaca_api_key"]
+    TRADING_ALPACA_SECRET_KEY            = data.vault_kv_secret_v2.secrets.data["alpaca_secret_key"]
     TRADING_ALPACA_BASE_URL              = "https://paper-api.alpaca.markets"
     TRADING_PAPER_TRADING                = "true"
-    TRADING_JWT_SECRET_KEY               = var.trading_bot_jwt_secret
-    TRADING_REDDIT_CLIENT_ID             = var.trading_bot_reddit_client_id
-    TRADING_REDDIT_CLIENT_SECRET         = var.trading_bot_reddit_client_secret
+    TRADING_JWT_SECRET_KEY               = data.vault_kv_secret_v2.secrets.data["jwt_secret"]
+    TRADING_REDDIT_CLIENT_ID             = data.vault_kv_secret_v2.secrets.data["reddit_client_id"]
+    TRADING_REDDIT_CLIENT_SECRET         = data.vault_kv_secret_v2.secrets.data["reddit_client_secret"]
     TRADING_REDDIT_USER_AGENT            = "trading-bot/0.1"
     TRADING_OLLAMA_HOST                  = "http://${var.ollama_host}:11434"
     TRADING_OLLAMA_MODEL                 = "gemma3"
@@ -60,8 +31,8 @@ locals {
     TRADING_POLL_INTERVAL_SECONDS        = "60"
     TRADING_HISTORICAL_BARS              = "100"
     TRADING_SNAPSHOT_INTERVAL_SECONDS    = "60"
-    TRADING_ALPHA_VANTAGE_API_KEY        = var.trading_bot_alpha_vantage_api_key
-    TRADING_FMP_API_KEY                  = var.trading_bot_fmp_api_key
+    TRADING_ALPHA_VANTAGE_API_KEY        = data.vault_kv_secret_v2.secrets.data["alpha_vantage_api_key"]
+    TRADING_FMP_API_KEY                  = data.vault_kv_secret_v2.secrets.data["fmp_api_key"]
     TRADING_FUNDAMENTALS_CACHE_TTL_HOURS = "24"
     TRADING_RP_ID                        = "trading.viktorbarzin.me"
     TRADING_RP_NAME                      = "Trading Bot"
@@ -103,15 +74,15 @@ resource "kubernetes_job" "db_init" {
             <<-EOT
               set -e
               # Create role if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE trading WITH LOGIN PASSWORD '${var.trading_bot_db_password}'"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE trading WITH LOGIN PASSWORD '${data.vault_kv_secret_v2.secrets.data["db_password"]}'"
               # Create database if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE trading OWNER trading"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE trading OWNER trading"
               # Grant privileges
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
               # Try to enable timescaledb (allow failure)
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -d trading -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE" || true
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d trading -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE" || true
               echo "Database init complete"
             EOT
           ]
@@ -144,7 +115,7 @@ resource "kubernetes_job" "migrations" {
           command           = ["python", "-m", "alembic", "upgrade", "head"]
           env {
             name  = "TRADING_DATABASE_URL"
-            value = "postgresql+asyncpg://trading:${var.trading_bot_db_password}@${var.postgresql_host}:5432/trading"
+            value = "postgresql+asyncpg://trading:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/trading"
           }
           env {
             name  = "TRADING_REDIS_URL"

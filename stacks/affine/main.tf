@@ -2,12 +2,16 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "affine_postgresql_password" {
-  type      = string
-  sensitive = true
-}
-variable "mailserver_accounts" { type = map(any) }
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "affine"
+}
+
+locals {
+  mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+}
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
 variable "mail_host" { type = string }
@@ -32,7 +36,7 @@ locals {
   common_env = [
     {
       name  = "DATABASE_URL"
-      value = "postgresql://affine:${var.affine_postgresql_password}@${var.postgresql_host}:5432/affine"
+      value = "postgresql://affine:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/affine"
     },
     {
       name  = "REDIS_SERVER_HOST"
@@ -70,7 +74,7 @@ locals {
     },
     {
       name  = "MAILER_PASSWORD"
-      value = var.mailserver_accounts["info@viktorbarzin.me"]
+      value = local.mailserver_accounts["info@viktorbarzin.me"]
     },
     {
       name  = "MAILER_SENDER"

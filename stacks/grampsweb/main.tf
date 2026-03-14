@@ -2,8 +2,16 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "mailserver_accounts" { type = map(any) }
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "grampsweb"
+}
+
+locals {
+  mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+}
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
 variable "mail_host" { type = string }
@@ -81,7 +89,7 @@ locals {
     },
     {
       name  = "GRAMPSWEB_EMAIL_HOST_PASSWORD"
-      value = var.mailserver_accounts["info@viktorbarzin.me"]
+      value = local.mailserver_accounts["info@viktorbarzin.me"]
     },
     {
       name  = "GRAMPSWEB_EMAIL_USE_SSL"

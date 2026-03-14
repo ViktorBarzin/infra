@@ -2,17 +2,13 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "immich_postgresql_password" {
-  type      = string
-  sensitive = true
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "immich"
 }
-variable "immich_frame_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -168,7 +164,7 @@ resource "kubernetes_deployment" "immich_server" {
           }
           env {
             name  = "DB_PASSWORD"
-            value = var.immich_postgresql_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "IMMICH_MACHINE_LEARNING_URL"
@@ -357,7 +353,7 @@ resource "kubernetes_deployment" "immich-postgres" {
           }
           env {
             name  = "POSTGRES_PASSWORD"
-            value = var.immich_postgresql_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "POSTGRES_USER"
@@ -428,7 +424,7 @@ resource "kubernetes_service" "immich-postgresql" {
 #   version    = "0.9.3"
 #   timeout    = 6000
 
-#   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.immich_postgresql_password, version = var.immich_version })]
+#   values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = data.vault_kv_secret_v2.secrets.data["db_password"], version = var.immich_version })]
 # }
 
 # The helm one cannot be customized to use affinity settings to use the gpu node
@@ -595,7 +591,7 @@ module "ingress-immich" {
     "gethomepage.dev/widget.url"     = "http://immich-server.immich.svc.cluster.local:2283"
     "gethomepage.dev/widget.version" = "2"
     "gethomepage.dev/pod-selector"   = ""
-    "gethomepage.dev/widget.key"     = var.homepage_credentials["immich"]["token"]
+    "gethomepage.dev/widget.key"     = local.homepage_credentials["immich"]["token"]
   }
 }
 
@@ -625,7 +621,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               image = "postgres:16.4-bullseye"
               command = ["/bin/sh", "-c", <<-EOT
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=${var.immich_postgresql_password} pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
+                PGPASSWORD=${data.vault_kv_secret_v2.secrets.data["db_password"]} pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
@@ -710,7 +706,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 #           }
 #           env {
 #             name  = "DB_PASSWORD"
-#             value = var.immich_postgresql_password
+#             value = data.vault_kv_secret_v2.secrets.data["db_password"]
 #           }
 #           env {
 #             name = "DB_HOST"

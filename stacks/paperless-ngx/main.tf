@@ -2,17 +2,18 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "paperless_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "paperless-ngx"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+}
 
 
 resource "kubernetes_namespace" "paperless-ngx" {
@@ -104,7 +105,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
           }
           env {
             name  = "PAPERLESS_DBPASS"
-            value = var.paperless_db_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "PAPERLESS_CSRF_TRUSTED_ORIGINS"
@@ -191,8 +192,8 @@ module "ingress" {
     "gethomepage.dev/widget.type" = "paperlessngx"
     "gethomepage.dev/widget.url"  = "http://paperless-ngx.paperless-ngx.svc.cluster.local"
     # "gethomepage.dev/widget.token"    = var.homepage_token
-    "gethomepage.dev/widget.username" = var.homepage_credentials["paperless-ngx"]["username"]
-    "gethomepage.dev/widget.password" = var.homepage_credentials["paperless-ngx"]["password"]
+    "gethomepage.dev/widget.username" = local.homepage_credentials["paperless-ngx"]["username"]
+    "gethomepage.dev/widget.password" = local.homepage_credentials["paperless-ngx"]["password"]
     "gethomepage.dev/widget.fields"   = "[\"total\"]"
     "gethomepage.dev/pod-selector"    = ""
     # gethomepage.dev/weight: 10 # optional

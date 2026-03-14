@@ -2,18 +2,14 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "netbox_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "netbox_superuser_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "netbox"
+}
 
 resource "kubernetes_namespace" "netbox" {
   metadata {
@@ -81,7 +77,7 @@ resource "kubernetes_deployment" "netbox" {
           }
           env {
             name  = "DB_PASSWORD"
-            value = var.netbox_db_password
+            value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
             name  = "DB_HOST"
@@ -117,7 +113,7 @@ resource "kubernetes_deployment" "netbox" {
           }
           env {
             name  = "SUPERUSER_PASSWORD"
-            value = var.netbox_superuser_password
+            value = data.vault_kv_secret_v2.secrets.data["superuser_password"]
           }
           env {
             name  = "REMOTE_AUTH_ENABLED"

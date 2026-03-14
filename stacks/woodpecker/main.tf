@@ -2,31 +2,14 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "woodpecker_github_client_id" { type = string }
-variable "woodpecker_github_client_secret" {
-  type      = string
-  sensitive = true
-}
-variable "woodpecker_agent_secret" {
-  type      = string
-  sensitive = true
-}
-variable "woodpecker_db_password" {
-  type      = string
-  sensitive = true
-}
-variable "dbaas_postgresql_root_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
-variable "woodpecker_forgejo_client_id" { type = string }
-variable "woodpecker_forgejo_client_secret" {
-  type      = string
-  sensitive = true
-}
 variable "woodpecker_forgejo_url" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "woodpecker"
+}
 
 
 resource "kubernetes_namespace" "woodpecker" {
@@ -89,11 +72,11 @@ resource "kubernetes_job" "db_init" {
             <<-EOT
               set -e
               # Create user if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE woodpecker WITH LOGIN PASSWORD '${var.woodpecker_db_password}'"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='woodpecker'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE woodpecker WITH LOGIN PASSWORD '${data.vault_kv_secret_v2.secrets.data["db_password"]}'"
               # Create database if not exists
-              PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${var.dbaas_postgresql_root_password}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE woodpecker OWNER woodpecker"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='woodpecker'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE woodpecker OWNER woodpecker"
               echo "Database init complete"
             EOT
           ]
@@ -149,13 +132,13 @@ resource "helm_release" "woodpecker" {
 
   values = [
     templatefile("${path.module}/values.yaml", {
-      github_client_id      = var.woodpecker_github_client_id
-      github_client_secret  = var.woodpecker_github_client_secret
-      agent_secret          = var.woodpecker_agent_secret
-      db_password           = var.woodpecker_db_password
+      github_client_id      = data.vault_kv_secret_v2.secrets.data["github_client_id"]
+      github_client_secret  = data.vault_kv_secret_v2.secrets.data["github_client_secret"]
+      agent_secret          = data.vault_kv_secret_v2.secrets.data["agent_secret"]
+      db_password           = data.vault_kv_secret_v2.secrets.data["db_password"]
       postgresql_host       = var.postgresql_host
-      forgejo_client_id     = var.woodpecker_forgejo_client_id
-      forgejo_client_secret = var.woodpecker_forgejo_client_secret
+      forgejo_client_id     = data.vault_kv_secret_v2.secrets.data["forgejo_client_id"]
+      forgejo_client_secret = data.vault_kv_secret_v2.secrets.data["forgejo_client_secret"]
       forgejo_url           = var.woodpecker_forgejo_url
     })
   ]

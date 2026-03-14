@@ -2,16 +2,17 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "nextcloud_db_password" {
-  type      = string
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
-variable "homepage_credentials" {
-  type      = map(any)
-  sensitive = true
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "nextcloud"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
 }
 
 
@@ -79,7 +80,7 @@ resource "helm_release" "nextcloud" {
   atomic     = true
   version    = "8.8.1"
 
-  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = var.nextcloud_db_password, redis_host = var.redis_host, mysql_host = var.mysql_host })]
+  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = data.vault_kv_secret_v2.secrets.data["db_password"], redis_host = var.redis_host, mysql_host = var.mysql_host })]
   timeout = 6000
 }
 
@@ -182,7 +183,7 @@ resource "kubernetes_deployment" "whiteboard" {
           }
           env {
             name  = "JWT_SECRET_KEY"
-            value = var.nextcloud_db_password # anything secret is fine
+            value = data.vault_kv_secret_v2.secrets.data["db_password"] # anything secret is fine
           }
         }
       }
@@ -227,8 +228,8 @@ module "ingress" {
     "gethomepage.dev/pod-selector"    = ""
     "gethomepage.dev/widget.type"     = "nextcloud"
     "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
-    "gethomepage.dev/widget.username" = var.homepage_credentials["nextcloud"]["username"]
-    "gethomepage.dev/widget.password" = var.homepage_credentials["nextcloud"]["password"]
+    "gethomepage.dev/widget.username" = local.homepage_credentials["nextcloud"]["username"]
+    "gethomepage.dev/widget.password" = local.homepage_credentials["nextcloud"]["password"]
   }
 }
 

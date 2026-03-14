@@ -2,11 +2,16 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "owntracks_credentials" {
-  type      = map(string)
-  sensitive = true
-}
 variable "nfs_server" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "owntracks"
+}
+
+locals {
+  credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["credentials"])
+}
 
 
 resource "kubernetes_namespace" "owntracks" {
@@ -27,7 +32,7 @@ module "tls_secret" {
 
 locals {
   username = "owntracks"
-  htpasswd = join("\n", [for name, pass in var.owntracks_credentials : "${name}:${bcrypt(pass, 10)}"])
+  htpasswd = join("\n", [for name, pass in local.credentials : "${name}:${bcrypt(pass, 10)}"])
 }
 
 resource "kubernetes_secret" "basic_auth" {
