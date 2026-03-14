@@ -1,6 +1,6 @@
 deploymentStrategy:
   type: RollingUpdate
-replicas: 3
+replicas: 2
 adminPassword: "${grafana_admin_password}"
 resources:
   requests:

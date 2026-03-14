@@ -38,6 +38,10 @@ variable "forgejo_api_token" {
   type      = string
   sensitive = true
 }
+variable "claude_memory_api_key" {
+  type      = string
+  sensitive = true
+}
 variable "nfs_server" { type = string }
 
 
@@ -170,6 +174,15 @@ resource "kubernetes_config_map" "openclaw_config" {
             maxChars       = 50000
             timeoutSeconds = 30
           }
+        }
+      }
+      plugins = {
+        allow = ["memory-api"]
+        slots = {
+          memory = "memory-api"
+        }
+        load = {
+          paths = ["/home/node/.openclaw/extensions"]
         }
       }
       commands = {
@@ -442,6 +455,17 @@ resource "kubernetes_deployment" "openclaw" {
               done
             fi
 
+            # Install memory-api plugin from GitHub (always pull latest)
+            if [ -d /openclaw-home/extensions/memory-api/.git ]; then
+              (cd /openclaw-home/extensions/memory-api && git pull --ff-only) || true
+            else
+              rm -rf /openclaw-home/extensions/memory-api
+              git clone --depth 1 git@github.com:ViktorBarzin/claude-memory-mcp.git /tmp/claude-memory-mcp
+              mkdir -p /openclaw-home/extensions/memory-api
+              cp -r /tmp/claude-memory-mcp/openclaw-plugin/* /openclaw-home/extensions/memory-api/
+              rm -rf /tmp/claude-memory-mcp
+            fi
+
             # Create required directories (owned by node user, UID 1000)
             mkdir -p /openclaw-home/agents/main/sessions /openclaw-home/credentials /openclaw-home/canvas /openclaw-home/devices /openclaw-home/cron /openclaw-home/cc-skills /openclaw-home/memory
             chown -R 1000:1000 /openclaw-home
@@ -570,6 +594,15 @@ resource "kubernetes_deployment" "openclaw" {
             name  = "SLACK_WEBHOOK_URL"
             value = var.openclaw_skill_secrets["slack_webhook"]
           }
+          # Memory API
+          env {
+            name  = "MEMORY_API_URL"
+            value = "http://claude-memory.claude-memory.svc.cluster.local"
+          }
+          env {
+            name  = "MEMORY_API_KEY"
+            value = var.claude_memory_api_key
+          }
           # Python packages path for skills
           env {
             name  = "PYTHONPATH"
@@ -597,11 +630,11 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "2Gi"
+              memory = "768Mi"
             }
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "768Mi"
             }
           }
         }
