@@ -98,7 +98,7 @@ resource "vault_jwt_auth_backend" "oidc" {
   oidc_client_secret = var.vault_authentik_client_secret
   default_role       = "default"
   tune {
-    listing_visibility = "unauth"
+    listing_visibility = "hidden"
   }
   depends_on = [helm_release.vault]
 }
