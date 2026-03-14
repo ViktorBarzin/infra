@@ -366,7 +366,7 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
             volume {
               name = "nextcloud-data"
               persistent_volume_claim {
-                claim_name = module.nfs_nextcloud_data.claim_name
+                claim_name = kubernetes_persistent_volume_claim.nextcloud_data_iscsi.metadata[0].name
               }
             }
 
