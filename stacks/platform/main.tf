@@ -225,7 +225,6 @@ module "monitoring" {
 module "vaultwarden" {
   source          = "./modules/vaultwarden"
   tls_secret_name = var.tls_secret_name
-  nfs_server      = var.nfs_server
   mail_host       = var.mail_host
   smtp_password   = data.vault_kv_secret_v2.secrets.data["vaultwarden_smtp_password"]
   tier            = local.tiers.edge
