@@ -59,15 +59,4 @@ resource "kubernetes_service" "caretta_metrics" {
   }
 }
 
-resource "kubernetes_config_map" "caretta_grafana_dashboard" {
-  metadata {
-    name      = "caretta-grafana-dashboard"
-    namespace = kubernetes_namespace.monitoring.metadata[0].name
-    labels = {
-      grafana_dashboard = "1"
-    }
-  }
-  data = {
-    "caretta-dashboard.json" = file("${path.module}/dashboards/caretta-dashboard.json")
-  }
-}
+# Caretta dashboard is now loaded via the grafana_dashboards for_each in grafana.tf
