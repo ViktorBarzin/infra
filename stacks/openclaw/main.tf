@@ -18,7 +18,9 @@ resource "kubernetes_namespace" "openclaw" {
   metadata {
     name = "openclaw"
     labels = {
-      tier = local.tiers.aux
+      tier                                        = local.tiers.aux
+      "resource-governance/custom-limitrange"      = "true"
+      "resource-governance/custom-quota"           = "true"
     }
   }
 }
@@ -146,10 +148,8 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = ["memory-api"]
-        slots = {
-          memory = "memory-api"
-        }
+        allow = []
+        slots = {}
         load = {
           paths = ["/home/node/.openclaw/extensions"]
         }
@@ -305,199 +305,18 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
-        # Init container: Download tools + clone repo (parallelized, cached on NFS)
+        # Init: copy openclaw.json from ConfigMap into writable NFS home
         init_container {
-          name  = "setup"
-          image = "alpine:3.20"
-          command = ["sh", "-c", <<-EOF
-            set -e
-            apk add --no-cache curl unzip git-crypt openssh-client git bash
-
-            # Install Python packages (skip if already cached)
-            if [ ! -f /tools/python-libs/.installed ]; then
-              python3 -m ensurepip 2>/dev/null || apk add --no-cache py3-pip
-              pip3 install --break-system-packages --target=/tools/python-libs requests caldav icalendar uptime-kuma-api
-              touch /tools/python-libs/.installed
-            else
-              echo "Python packages already cached, skipping pip install"
-            fi
-
-            # Copy OpenClaw config to writable home dir
-            cp /openclaw-config-src/openclaw.json /openclaw-home/openclaw.json
-
-            # Setup SSH key
-            mkdir -p /root/.ssh
-            cp /ssh/id_rsa /root/.ssh/id_rsa
-            chmod 600 /root/.ssh/id_rsa
-            ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null
-
-            # --- Download tools only if missing or version changed ---
-            # kubectl
-            if [ ! -x /tools/kubectl ]; then
-              (curl -sL --retry 3 --retry-delay 5 "https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl" -o /tools/kubectl && chmod +x /tools/kubectl) &
-              PID_KUBECTL=$!
-            else
-              echo "kubectl already cached" & PID_KUBECTL=$!
-            fi
-
-            # terraform
-            if [ ! -x /tools/terraform ]; then
-              (curl -sL --retry 3 --retry-delay 5 "https://releases.hashicorp.com/terraform/1.14.5/terraform_1.14.5_linux_amd64.zip" -o /tmp/tf.zip && unzip -q /tmp/tf.zip -d /tools && chmod +x /tools/terraform && rm /tmp/tf.zip) &
-              PID_TF=$!
-            else
-              echo "terraform already cached" & PID_TF=$!
-            fi
-
-            # terragrunt
-            if [ ! -x /tools/terragrunt ]; then
-              (curl -sL --retry 3 --retry-delay 5 "https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64" -o /tools/terragrunt && chmod +x /tools/terragrunt) &
-              PID_TG=$!
-            else
-              echo "terragrunt already cached" & PID_TG=$!
-            fi
-
-            # git-crypt
-            if [ ! -x /tools/git-crypt ]; then
-              cp /usr/bin/git-crypt /tools/git-crypt
-            fi
-
-            # Clone/pull repo
-            if [ ! -d /workspace/infra/.git ]; then
-              git clone git@github.com:ViktorBarzin/infra.git /workspace/infra &
-              PID_GIT=$!
-            else
-              (cd /workspace/infra && git pull --ff-only || true) &
-              PID_GIT=$!
-            fi
-
-            # Wait for all parallel tasks
-            wait $PID_KUBECTL || { echo "kubectl download failed"; exit 1; }
-            wait $PID_TF || { echo "terraform download failed"; exit 1; }
-            wait $PID_TG || { echo "terragrunt download failed"; exit 1; }
-            wait $PID_GIT || { echo "git clone/pull failed"; exit 1; }
-
-            # Unlock git-crypt (needs clone done)
-            cd /workspace/infra
-            echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
-            git-crypt unlock /tmp/git-crypt-key || true
-            rm /tmp/git-crypt-key
-
-            # Mark repo as safe for the node user (different UID from init container)
-            git config --global --add safe.directory /workspace/infra
-            cp /root/.gitconfig /openclaw-home/.gitconfig 2>/dev/null || true
-            chown -R 1000:1000 /workspace/infra
-
-            # Symlink Claude skills into OpenClaw skills directory
-            ln -sfn /workspace/infra/.claude/skills /openclaw-home/skills
-
-            # Pull shared CC config from NFS bare repo
-            if [ ! -d /openclaw-home/cc-config/.git ]; then
-              git clone /cc-config/cc-config.git /openclaw-home/cc-config 2>/dev/null || true
-            else
-              (cd /openclaw-home/cc-config && git pull --ff-only) || true
-            fi
-
-            # Apply shared config to OpenClaw
-            if [ -d /openclaw-home/cc-config ]; then
-              # Copy shared CLAUDE.md (global knowledge)
-              [ -f /openclaw-home/cc-config/CLAUDE.md ] && \
-                cp /openclaw-home/cc-config/CLAUDE.md /openclaw-home/CLAUDE.md
-
-              # Copy shared skills (separate dir from infra skills)
-              if [ -d /openclaw-home/cc-config/skills ]; then
-                mkdir -p /openclaw-home/cc-skills
-                cp -r /openclaw-home/cc-config/skills/* /openclaw-home/cc-skills/ 2>/dev/null || true
-              fi
-
-              # Copy shared memory
-              if [ -d /openclaw-home/cc-config/memory ]; then
-                mkdir -p /openclaw-home/memory
-                cp -r /openclaw-home/cc-config/memory/* /openclaw-home/memory/ 2>/dev/null || true
-              fi
-
-              # Copy commands, hooks, agents
-              for d in commands hooks agents; do
-                if [ -d /openclaw-home/cc-config/$d ]; then
-                  mkdir -p /openclaw-home/$d
-                  cp -r /openclaw-home/cc-config/$d/* /openclaw-home/$d/ 2>/dev/null || true
-                fi
-              done
-            fi
-
-            # Install memory-api plugin from GitHub (always pull latest)
-            if [ -d /openclaw-home/extensions/memory-api/.git ]; then
-              (cd /openclaw-home/extensions/memory-api && git pull --ff-only) || true
-            else
-              rm -rf /openclaw-home/extensions/memory-api
-              git clone --depth 1 git@github.com:ViktorBarzin/claude-memory-mcp.git /tmp/claude-memory-mcp
-              mkdir -p /openclaw-home/extensions/memory-api
-              cp -r /tmp/claude-memory-mcp/openclaw-plugin/* /openclaw-home/extensions/memory-api/
-              rm -rf /tmp/claude-memory-mcp
-            fi
-
-            # Create required directories (owned by node user, UID 1000)
-            mkdir -p /openclaw-home/agents/main/sessions /openclaw-home/credentials /openclaw-home/canvas /openclaw-home/devices /openclaw-home/cron /openclaw-home/cc-skills /openclaw-home/memory
-            chown -R 1000:1000 /openclaw-home
-            chmod 700 /openclaw-home
-
-            # Generate kubeconfig from in-cluster ServiceAccount credentials
-            SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-            SA_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-            cat > /openclaw-home/kubeconfig <<-KUBEEOF
-            apiVersion: v1
-            kind: Config
-            clusters:
-            - cluster:
-                certificate-authority-data: $(base64 < "$SA_CA" | tr -d '\n')
-                server: https://kubernetes.default.svc
-              name: in-cluster
-            contexts:
-            - context:
-                cluster: in-cluster
-                user: openclaw
-              name: in-cluster
-            current-context: in-cluster
-            users:
-            - name: openclaw
-              user:
-                token: $SA_TOKEN
-            KUBEEOF
-
-            echo "Setup complete: kubectl, terraform, terragrunt, git-crypt installed"
-          EOF
-          ]
-          env {
-            name = "GIT_CRYPT_KEY"
-            value_from {
-              config_map_key_ref {
-                name = kubernetes_config_map.git_crypt_key.metadata[0].name
-                key  = "key"
-              }
-            }
-          }
+          name    = "copy-config"
+          image   = "busybox:1.37"
+          command = ["sh", "-c", "cp /config/openclaw.json /home/node/.openclaw/openclaw.json && chown 1000:1000 /home/node/.openclaw/openclaw.json"]
           volume_mount {
-            name       = "tools"
-            mount_path = "/tools"
-          }
-          volume_mount {
-            name       = "workspace"
-            mount_path = "/workspace"
-          }
-          volume_mount {
-            name       = "ssh-key"
-            mount_path = "/ssh"
+            name       = "openclaw-config"
+            mount_path = "/config"
           }
           volume_mount {
             name       = "openclaw-home"
-            mount_path = "/openclaw-home"
-          }
-          volume_mount {
-            name       = "openclaw-config"
-            mount_path = "/openclaw-config-src"
-          }
-          volume_mount {
-            name       = "cc-config"
-            mount_path = "/cc-config"
+            mount_path = "/home/node/.openclaw"
           }
         }
 
@@ -515,6 +334,10 @@ resource "kubernetes_deployment" "openclaw" {
             }
             initial_delay_seconds = 30
             period_seconds        = 10
+          }
+          env {
+            name  = "NODE_OPTIONS"
+            value = "--max-old-space-size=1536"
           }
           env {
             name  = "OPENCLAW_GATEWAY_TOKEN"
@@ -599,11 +422,11 @@ resource "kubernetes_deployment" "openclaw" {
           }
           resources {
             limits = {
-              memory = "768Mi"
+              memory = "2Gi"
             }
             requests = {
               cpu    = "100m"
-              memory = "768Mi"
+              memory = "2Gi"
             }
           }
         }

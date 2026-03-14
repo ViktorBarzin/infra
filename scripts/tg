@@ -19,4 +19,27 @@ if [ -f "$SOPS_FILE" ]; then
   fi
 fi
 
-exec terragrunt "$@"
+# If running apply with --non-interactive, add -auto-approve for Terraform
+args=("$@")
+has_apply=false
+has_non_interactive=false
+for arg in "${args[@]}"; do
+  case "$arg" in
+    apply) has_apply=true ;;
+    --non-interactive) has_non_interactive=true ;;
+  esac
+done
+
+if $has_apply && $has_non_interactive; then
+  # Rebuild args: insert -auto-approve after apply
+  new_args=()
+  for arg in "${args[@]}"; do
+    new_args+=("$arg")
+    if [ "$arg" = "apply" ]; then
+      new_args+=("-auto-approve")
+    fi
+  done
+  exec terragrunt "${new_args[@]}"
+else
+  exec terragrunt "$@"
+fi
