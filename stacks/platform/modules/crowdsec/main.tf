@@ -365,7 +365,7 @@ resource "kubernetes_resource_quota" "crowdsec" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "8"
+      "requests.cpu"    = "1"
       "requests.memory" = "8Gi"
       "limits.memory"   = "16Gi"
       pods              = "30"

@@ -867,7 +867,7 @@ resource "null_resource" "pg_cluster" {
           storageClass: iscsi-truenas
         resources:
           requests:
-            cpu: "250m"
+            cpu: "50m"
             memory: "512Mi"
           limits:
             memory: "4Gi"

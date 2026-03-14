@@ -85,7 +85,7 @@ resource "kubernetes_deployment" "frigate" {
 
           resources {
             requests = {
-              cpu    = "500m"
+              cpu    = "1500m"
               memory = "2Gi"
             }
             limits = {

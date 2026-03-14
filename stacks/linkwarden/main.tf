@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "linkwarden" {
           }
           resources {
             requests = {
-              cpu    = "25m"
+              cpu    = "50m"
               memory = "256Mi"
             }
             limits = {

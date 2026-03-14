@@ -254,7 +254,7 @@ resource "kubernetes_deployment" "otp" {
           }
           resources {
             requests = {
-              cpu    = "100m"
+              cpu    = "300m"
               memory = "2Gi"
             }
             limits = {
