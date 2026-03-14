@@ -67,6 +67,21 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 #   }
 # }
 
+resource "kubernetes_config_map" "grafana_dashboards" {
+  for_each = fileset("${path.module}/dashboards", "*.json")
+
+  metadata {
+    name      = "grafana-dashboard-${replace(trimsuffix(each.value, ".json"), "_", "-")}"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels = {
+      grafana_dashboard = "1"
+    }
+  }
+  data = {
+    (each.value) = file("${path.module}/dashboards/${each.value}")
+  }
+}
+
 resource "helm_release" "grafana" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true

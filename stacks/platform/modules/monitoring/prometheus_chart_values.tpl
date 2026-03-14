@@ -68,26 +68,16 @@ alertmanager:
             - severity = info
           continue: false
     inhibit_rules:
-      # Node down makes node-condition alerts redundant
+      # Node down suppresses workload and service alerts (cascade protection)
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad"
-      # Node down suppresses workload alerts (cascade protection)
-      - source_matchers:
-          - alertname = NodeDown
-        target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory"
-      # Node down suppresses service-specific alerts
-      - source_matchers:
-          - alertname = NodeDown
-        target_matchers:
-          - alertname =~ "PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown"
-      # NFS down causes mass pod failures
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown"
+      # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|MySQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|HomeAssistantDown"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -103,6 +93,11 @@ alertmanager:
           - alertname = PowerOutage
         target_matchers:
           - alertname = OnBattery
+      # Power outage suppresses everything downstream
+      - source_matchers:
+          - alertname = PowerOutage
+        target_matchers:
+          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -292,12 +287,12 @@ serverFiles:
             annotations:
               summary: "GPU util: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: HighMemoryUsage
-            expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 12
-            for: 5m
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 14
+            for: 15m
             labels:
               severity: info
             annotations:
-              summary: "VRAM used: {{ $value | printf \"%.1f\" }} GB (threshold: 12 GB)"
+              summary: "VRAM used: {{ $value | printf \"%.1f\" }} GB (threshold: 14 GB)"
       - name: Power
         rules:
           - alert: OnBattery
@@ -316,6 +311,7 @@ serverFiles:
               summary: "UPS battery low: {{ $value | printf \"%.0f\" }} min remaining (threshold: 25 min)"
           - alert: PowerOutage
             expr: ups_upsInputVoltage < 150
+            for: 1m
             labels:
               severity: critical
             annotations:
@@ -428,12 +424,12 @@ serverFiles:
             annotations:
               summary: "Scrape target down: {{ $labels.job }}/{{ $labels.instance }}"
           - alert: PrometheusStorageFull
-            expr: (prometheus_tsdb_storage_blocks_bytes / (1024*1024*1024)) > 50
+            expr: (prometheus_tsdb_storage_blocks_bytes / (1024*1024*1024)) > 150
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Prometheus TSDB: {{ $value | printf \"%.0f\" }} GiB (threshold: 50 GiB)"
+              summary: "Prometheus TSDB: {{ $value | printf \"%.0f\" }} GiB (threshold: 150 GiB)"
           - alert: PrometheusNotificationsFailing
             expr: rate(prometheus_notifications_errors_total[5m]) > 0
             for: 10m
@@ -455,6 +451,41 @@ serverFiles:
               severity: critical
             annotations:
               summary: "etcd backup CronJob has never completed successfully"
+          - alert: New Tailscale client
+            expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
+            for: 5m
+            labels:
+              severity: info
+            annotations:
+              summary: "New Tailscale client registered"
+          - alert: CrowdSecDown
+            expr: up{job="crowdsec"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CrowdSec LAPI down — WAF/IDS degraded (Traefik plugin fails open)"
+          - alert: KyvernoDown
+            expr: (kube_deployment_status_replicas_available{namespace="kyverno", deployment="kyverno-admission-controller"} or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kyverno admission controller down — policy enforcement disabled"
+          - alert: SealedSecretsDown
+            expr: (kube_deployment_status_replicas_available{namespace="sealed-secrets", deployment="sealed-secrets"} or on() vector(0)) < 1
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Sealed Secrets controller down — new secrets can't be decrypted"
+          - alert: WoodpeckerDown
+            expr: (kube_statefulset_status_replicas_ready{namespace="woodpecker", statefulset="woodpecker-server"} or on() vector(0)) < 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Woodpecker CI server down — CI/CD pipelines not running"
       - name: Critical Services
         rules:
           - alert: PostgreSQLDown
@@ -494,11 +525,32 @@ serverFiles:
               summary: "Authentik auth server has no available replicas"
           - alert: PoisonFountainDown
             expr: (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
-            for: 2m
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Poison Fountain is down - AI bot blocking degraded to fail-open"
+          - alert: PgBouncerDown
+            expr: (kube_deployment_status_replicas_available{namespace="authentik", deployment="pgbouncer"} or on() vector(0)) < 1
+            for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Poison Fountain is down - AI bot blocking degraded to fail-open"
+              summary: "PgBouncer down — Authentik cannot reach PostgreSQL"
+          - alert: CNPGOperatorDown
+            expr: (kube_deployment_status_replicas_available{namespace="cnpg-system", deployment="cnpg-cloudnative-pg"} or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CNPG operator down — PostgreSQL failover/management degraded"
+          - alert: MySQLOperatorDown
+            expr: (kube_deployment_status_replicas_available{namespace="mysql-operator", deployment="mysql-operator"} or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "MySQL operator down — InnoDB Cluster management degraded"
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -523,12 +575,12 @@ serverFiles:
             annotations:
               summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 25%)"
           - alert: NodeHighCPUUsage
-            expr: pve_cpu_usage_ratio * 100 > 30
+            expr: pve_cpu_usage_ratio * 100 > 60
             for: 6h
             labels:
               severity: info
             annotations:
-              summary: "CPU usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 30%)"
+              summary: "CPU usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 60%)"
           - alert: NodeLowFreeMemory
             expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) or on() vector(1)) * 100 > 95
             for: 10m
@@ -587,7 +639,7 @@ serverFiles:
               summary: "Memory usage on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 85%)"
           - alert: NodeExporterDown
             expr: up{job="prometheus-prometheus-node-exporter"} == 0
-            for: 2m
+            for: 5m
             labels:
               severity: critical
             annotations:
@@ -600,7 +652,7 @@ serverFiles:
             annotations:
               summary: "IOWait on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 30%)"
           - alert: NoNodeLoadData
-            expr: (node_load1 OR on() vector(0)) == 0
+            expr: absent(node_load1)
             for: 10m
             labels:
               severity: info
@@ -681,6 +733,74 @@ serverFiles:
           #     severity: page
           #   annotations:
           #     summary: OpenWRT high memory usage. Can cause services getting stuck.
+          # MailServerDown, HackmdDown, PrivatebinDown moved to "Application Health" group
+          # New Tailscale client moved to "Infrastructure Health" group
+      - name: "Networking & Access"
+        rules:
+          - alert: CloudflaredDown
+            expr: (kube_deployment_status_replicas_available{namespace="cloudflared", deployment="cloudflared"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Cloudflared tunnel down — external access via Cloudflare broken"
+          - alert: CloudflaredDegraded
+            expr: |
+              (
+                kube_deployment_spec_replicas{namespace="cloudflared", deployment="cloudflared"}
+                - on(namespace, deployment) kube_deployment_status_replicas_available{namespace="cloudflared", deployment="cloudflared"}
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloudflared: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
+          - alert: MetalLBSpeakerDown
+            expr: |
+              (
+                kube_daemonset_status_desired_number_scheduled{namespace="metallb-system", daemonset="metallb-speaker"}
+                - on(namespace, daemonset) kube_daemonset_status_number_ready{namespace="metallb-system", daemonset="metallb-speaker"}
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MetalLB speaker: {{ $value | printf \"%.0f\" }} pod(s) missing"
+          - alert: MetalLBControllerDown
+            expr: (kube_deployment_status_replicas_available{namespace="metallb-system", deployment="controller"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MetalLB controller down — no LoadBalancer IP management"
+          - alert: TechnitiumDNSDown
+            expr: |
+              (kube_deployment_status_replicas_available{namespace="technitium", deployment="technitium"} or on() vector(0))
+              + (kube_deployment_status_replicas_available{namespace="technitium", deployment="technitium-secondary"} or on() vector(0))
+              < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Both Technitium DNS instances down — internal DNS broken"
+      - name: "Storage Drivers"
+        rules:
+          - alert: NFSCSIControllerDown
+            expr: (kube_deployment_status_replicas_available{namespace="nfs-csi", deployment="csi-nfs-controller"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NFS CSI controller down — new NFS volume provisioning broken"
+          - alert: ISCSICSIControllerDown
+            expr: (kube_deployment_status_replicas_available{namespace="iscsi-csi", deployment="democratic-csi-iscsi-controller"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iSCSI CSI controller down — new iSCSI volume provisioning broken"
+      - name: "Application Health"
+        rules:
           - alert: MailServerDown
             expr: (kube_deployment_status_replicas_available{namespace="mailserver", deployment="mailserver"} or on() vector(0)) < 1
             for: 5m
@@ -702,42 +822,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Privatebin has no available replicas"
-          # - name: London OpenWRT Down
-          #   rules:
-          #     - alert: OpenWRT client unreachable
-          #       expr: (openwrt_node_openwrt_info or on() vector(0)) == 0
-          #       for: 10m
-          #       labels:
-          #         severity: page
-          #       annotations:
-          #         summary: London OpenWRT router unreachable through VPN
-          # - alert: OpenWRT high system load
-          #   expr: openwrt_node_load1 > 0.9
-          #   for: 15m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: High system load on OpenWRT
-          # - alert: Finance app webhook exceptions
-          #   expr: changes(webhook_failure_total[5m]) >= 1
-          #   for: 1m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: Finance app webhook exceptions
-          # - alert: Finance app unhandled exceptions
-          #   expr: changes(flask_http_request_exceptions_total[5m]) >= 1
-          #   for: 1m
-          #   labels:
-          #     severity: page
-          #   annotations:
-          #     summary: Finance app unhandled exceptions
-          - alert: New Tailscale client
-            expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
-            labels:
-              severity: info
-            annotations:
-              summary: "New Tailscale client registered"
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'
