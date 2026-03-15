@@ -35,8 +35,8 @@ resource "kubernetes_resource_quota" "dbaas" {
   spec {
     hard = {
       "requests.cpu"    = "8"
-      "requests.memory" = "12Gi"
-      "limits.memory"   = "12Gi"
+      "requests.memory" = "16Gi"
+      "limits.memory"   = "16Gi"
       pods              = "30"
     }
   }

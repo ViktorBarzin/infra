@@ -101,11 +101,11 @@ resource "kubernetes_deployment" "novelapp" {
           }
           resources {
             requests = {
-              memory = "64Mi"
+              memory = "128Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }

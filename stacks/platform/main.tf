@@ -60,12 +60,12 @@ data "vault_kv_secret_v2" "secrets" {
 }
 
 locals {
-  homepage_credentials   = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
-  k8s_users              = jsondecode(data.vault_kv_secret_v2.secrets.data["k8s_users"])
-  xray_reality_clients   = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_clients"])
-  xray_reality_short_ids = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_short_ids"])
-  mailserver_accounts    = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
-  mailserver_aliases     = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_aliases"])
+  homepage_credentials    = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+  k8s_users               = jsondecode(data.vault_kv_secret_v2.secrets.data["k8s_users"])
+  xray_reality_clients    = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_clients"])
+  xray_reality_short_ids  = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_short_ids"])
+  mailserver_accounts     = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+  mailserver_aliases      = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_aliases"])
   mailserver_opendkim_key = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_opendkim_key"])
   mailserver_sasl_passwd  = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_sasl_passwd"])
 }
@@ -228,6 +228,7 @@ module "vaultwarden" {
   mail_host       = var.mail_host
   smtp_password   = data.vault_kv_secret_v2.secrets.data["vaultwarden_smtp_password"]
   tier            = local.tiers.edge
+  nfs_server      = var.nfs_server
 }
 
 # -----------------------------------------------------------------------------

@@ -2,7 +2,8 @@ resource "kubernetes_namespace" "iscsi_csi" {
   metadata {
     name = "iscsi-csi"
     labels = {
-      tier = var.tier
+      tier                                  = var.tier
+      "resource-governance/custom-quota"     = "true"
     }
   }
 }

@@ -20,7 +20,7 @@ variable "k8s_users" {
 # Binds to built-in cluster-admin ClusterRole
 
 resource "kubernetes_cluster_role_binding" "admin_users" {
-  for_each = { for name, user in var.k8s_users : name => user if user.role == "admin" }
+  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "admin" })
 
   metadata {
     name = "oidc-admin-${each.key}"
@@ -109,7 +109,7 @@ resource "kubernetes_cluster_role" "power_user" {
 }
 
 resource "kubernetes_cluster_role_binding" "power_users" {
-  for_each = { for name, user in var.k8s_users : name => user if user.role == "power-user" }
+  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "power-user" })
 
   metadata {
     name = "oidc-power-user-${each.key}"
@@ -146,7 +146,7 @@ locals {
 }
 
 resource "kubernetes_role_binding" "namespace_owner" {
-  for_each = { for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair }
+  for_each = nonsensitive({ for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair })
 
   metadata {
     name      = "namespace-owner-${each.value.user_key}"
@@ -192,7 +192,7 @@ resource "kubernetes_cluster_role" "namespace_owner_readonly" {
 }
 
 resource "kubernetes_cluster_role_binding" "namespace_owner_readonly" {
-  for_each = { for name, user in var.k8s_users : name => user if user.role == "namespace-owner" }
+  for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "namespace-owner" })
 
   metadata {
     name = "oidc-ns-owner-readonly-${each.key}"
@@ -213,7 +213,7 @@ resource "kubernetes_cluster_role_binding" "namespace_owner_readonly" {
 
 # Resource quotas per user namespace
 resource "kubernetes_resource_quota" "user_namespace_quota" {
-  for_each = { for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair }
+  for_each = nonsensitive({ for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair })
 
   metadata {
     name      = "user-quota"
