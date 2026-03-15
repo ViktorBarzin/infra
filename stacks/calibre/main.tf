@@ -138,7 +138,7 @@ module "nfs_stacks_config" {
 # }
 
 resource "kubernetes_deployment" "calibre-web-automated" {
-  wait_for_rollout = false # DOCKER_MODS install takes 10+ min on every container start
+  wait_for_rollout = true
   metadata {
     name      = "calibre-web-automated"
     namespace = kubernetes_namespace.calibre.metadata[0].name
@@ -173,7 +173,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
       }
       spec {
         container {
-          image = "crocodilestick/calibre-web-automated:latest"
+          image = "viktorbarzin/calibre-web-automated:latest"
           name  = "calibre-web-automated"
           env {
             name  = "PUID"
@@ -184,8 +184,8 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             value = 1000
           }
           env {
-            name  = "DOCKER_MODS"
-            value = "linuxserver/mods:universal-calibre"
+            name  = "NO_CHOWN"
+            value = "true"
           }
           env {
             # If your library is on a network share (e.g., NFS/SMB), disable WAL to reduce locking issues
@@ -200,16 +200,15 @@ resource "kubernetes_deployment" "calibre-web-automated" {
           port {
             container_port = 8083
           }
-          # Startup probe: allow up to 10 min for calibre binary install on first boot
           startup_probe {
             http_get {
               path = "/"
               port = 8083
             }
-            initial_delay_seconds = 120
+            initial_delay_seconds = 10
             timeout_seconds       = 5
-            period_seconds        = 15
-            failure_threshold     = 56
+            period_seconds        = 5
+            failure_threshold     = 24
           }
           liveness_probe {
             http_get {
