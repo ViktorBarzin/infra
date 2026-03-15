@@ -25,7 +25,7 @@ Run the cluster healthcheck script and interpret the results. If issues are foun
    - **Problematic pods**: `kubectl describe pod`, `kubectl logs --previous`
    - **Failed deployments**: check rollout status, events
    - **StatefulSet issues**: check pod readiness, GR status for MySQL
-   - **Prometheus alerts**: query via port-forward to prometheus-server
+   - **Prometheus alerts**: query via kubectl exec into prometheus-server
 4. Apply safe auto-fixes:
    - Delete evicted/failed pods: `kubectl delete pods -A --field-selector=status.phase=Failed`
    - Delete stale failed jobs: `kubectl delete jobs -n <ns> --field-selector=status.successful=0`
