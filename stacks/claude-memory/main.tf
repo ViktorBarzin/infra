@@ -111,7 +111,7 @@ resource "kubernetes_deployment" "claude-memory" {
 
           env {
             name  = "DATABASE_URL"
-            value = "postgresql://claude_memory:${var.claude_memory_db_password}@${var.postgresql_host}:5432/claude_memory"
+            value = "postgresql://claude_memory:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/claude_memory"
           }
           env {
             name  = "API_KEY"
