@@ -30,7 +30,7 @@ resource "helm_release" "kyverno" {
     reportsController = {
       resources = {
         limits = {
-          memory = "128Mi"
+          memory = "256Mi"
         }
         requests = {
           cpu    = "100m"

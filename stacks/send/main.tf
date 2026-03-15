@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "send" {
               memory = "64Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }

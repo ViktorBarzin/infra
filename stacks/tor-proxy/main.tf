@@ -83,7 +83,7 @@ resource "kubernetes_deployment" "tor-proxy" {
               memory = "64Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "128Mi"
             }
           }
           #   volume_mount {
