@@ -66,7 +66,14 @@ resource "kubernetes_deployment" "k8s_portal" {
 
           volume_mount {
             name       = "config"
-            mount_path = "/config"
+            mount_path = "/config/ca.crt"
+            sub_path   = "ca.crt"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "user-roles"
+            mount_path = "/config/users.json"
+            sub_path   = "users.json"
             read_only  = true
           }
           resources {
@@ -86,6 +93,12 @@ resource "kubernetes_deployment" "k8s_portal" {
             name = kubernetes_config_map.k8s_portal_config.metadata[0].name
           }
         }
+        volume {
+          name = "user-roles"
+          config_map {
+            name = "k8s-user-roles"
+          }
+        }
         dns_config {
           option {
             name  = "ndots"
@@ -94,6 +107,12 @@ resource "kubernetes_deployment" "k8s_portal" {
         }
       }
     }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # CI updates image tag
+    ]
   }
 }
 

@@ -68,6 +68,12 @@ locals {
   mailserver_aliases      = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_aliases"])
   mailserver_opendkim_key = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_opendkim_key"])
   mailserver_sasl_passwd  = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_sasl_passwd"])
+
+  # User domains from namespace-owners for DNS/Cloudflare
+  user_domains = flatten([
+    for name, user in local.k8s_users : user.domains
+    if user.role == "namespace-owner"
+  ])
 }
 
 # =============================================================================
@@ -377,7 +383,7 @@ module "cloudflared" {
   cloudflare_zone_id           = var.cloudflare_zone_id
   cloudflare_tunnel_id         = var.cloudflare_tunnel_id
   public_ip                    = var.public_ip
-  cloudflare_proxied_names     = var.cloudflare_proxied_names
+  cloudflare_proxied_names     = concat(var.cloudflare_proxied_names, local.user_domains)
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
   cloudflare_tunnel_token      = data.vault_kv_secret_v2.secrets.data["cloudflare_tunnel_token"]
 }

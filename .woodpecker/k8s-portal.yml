@@ -24,23 +24,23 @@ steps:
       context: stacks/platform/modules/k8s-portal/files
       platforms:
         - linux/amd64
-      auto_tag: true
+      tag: ["${CI_PIPELINE_NUMBER}", "latest"]
       cache_from: "viktorbarzin/k8s-portal:latest"
       cache_to: "type=inline"
 
   - name: deploy
     image: bitnami/kubectl:latest
     commands:
-      - "kubectl rollout restart deployment/k8s-portal -n k8s-portal"
+      - "kubectl set image deployment/k8s-portal portal=viktorbarzin/k8s-portal:${CI_PIPELINE_NUMBER} -n k8s-portal"
       - "kubectl rollout status deployment/k8s-portal -n k8s-portal --timeout=120s"
-      - "echo 'k8s-portal deployed successfully'"
+      - "echo 'k8s-portal deployed successfully (build ${CI_PIPELINE_NUMBER})'"
 
   - name: slack
     image: curlimages/curl
     commands:
       - |
         curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"K8s Portal: build + deploy ${CI_PIPELINE_STATUS}\"}" \
+          --data "{\"text\":\"K8s Portal: build #${CI_PIPELINE_NUMBER} ${CI_PIPELINE_STATUS}\"}" \
           "$SLACK_WEBHOOK" || true
     environment:
       SLACK_WEBHOOK:

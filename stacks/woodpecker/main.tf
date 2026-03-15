@@ -11,6 +11,20 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "woodpecker"
 }
 
+data "vault_kv_secret_v2" "platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
+locals {
+  k8s_users = jsondecode(data.vault_kv_secret_v2.platform.data["k8s_users"])
+
+  # Build admin list: existing admin + all namespace-owner usernames
+  woodpecker_admins = join(",", concat(
+    ["ViktorBarzin"],
+    [for name, user in local.k8s_users : name if user.role == "namespace-owner"]
+  ))
+}
 
 resource "kubernetes_namespace" "woodpecker" {
   metadata {
@@ -206,6 +220,7 @@ resource "helm_release" "woodpecker" {
       forgejo_client_id     = data.vault_kv_secret_v2.secrets.data["forgejo_client_id"]
       forgejo_client_secret = data.vault_kv_secret_v2.secrets.data["forgejo_client_secret"]
       forgejo_url           = var.woodpecker_forgejo_url
+      woodpecker_admins     = local.woodpecker_admins
     })
   ]
 

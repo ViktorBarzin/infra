@@ -6,6 +6,7 @@ variable "k8s_users" {
     role       = string                     # "admin", "power-user", "namespace-owner"
     email      = string                     # OIDC email claim
     namespaces = optional(list(string), []) # for namespace-owners
+    domains    = optional(list(string), []) # subdomains for user apps
     quota = optional(object({
       cpu_requests    = optional(string, "2")
       memory_requests = optional(string, "4Gi")
@@ -247,4 +248,16 @@ resource "kubernetes_config_map" "user_roles" {
       }
     })
   }
+}
+
+# TLS secret in each user namespace (so they can create HTTPS ingresses)
+module "user_namespace_tls" {
+  for_each = nonsensitive(toset(flatten([
+    for name, user in var.k8s_users : user.namespaces
+    if user.role == "namespace-owner"
+  ])))
+
+  source          = "../../../../modules/kubernetes/setup_tls_secret"
+  namespace       = each.value
+  tls_secret_name = var.tls_secret_name
 }

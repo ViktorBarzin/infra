@@ -105,6 +105,44 @@ else
     echo "[OK] kubeseal installed"
 fi
 
+# Install Vault CLI
+if command -v vault &>/dev/null; then
+    echo "[OK] vault already installed"
+else
+    echo "[..] Installing Vault CLI..."
+    VAULT_VERSION="1.18.1"
+    curl -fsSLO "https://releases.hashicorp.com/vault/\${VAULT_VERSION}/vault_\${VAULT_VERSION}_linux_amd64.zip"
+    unzip -o "vault_\${VAULT_VERSION}_linux_amd64.zip" vault -d /tmp
+    \$SUDO mv /tmp/vault "\$INSTALL_DIR/"
+    rm -f "vault_\${VAULT_VERSION}_linux_amd64.zip"
+    echo "[OK] vault installed"
+fi
+
+# Install Terragrunt
+if command -v terragrunt &>/dev/null; then
+    echo "[OK] terragrunt already installed"
+else
+    echo "[..] Installing terragrunt..."
+    TG_VERSION=\$(curl -fsSL -o /dev/null -w "%{url_effective}" https://github.com/gruntwork-io/terragrunt/releases/latest | grep -o '[^/]*\$')
+    curl -fsSLO "https://github.com/gruntwork-io/terragrunt/releases/download/\${TG_VERSION}/terragrunt_linux_amd64"
+    chmod +x terragrunt_linux_amd64
+    \$SUDO mv terragrunt_linux_amd64 "\$INSTALL_DIR/terragrunt"
+    echo "[OK] terragrunt installed"
+fi
+
+# Install Terraform
+if command -v terraform &>/dev/null; then
+    echo "[OK] terraform already installed"
+else
+    echo "[..] Installing terraform..."
+    TF_VERSION="1.9.8"
+    curl -fsSLO "https://releases.hashicorp.com/terraform/\${TF_VERSION}/terraform_\${TF_VERSION}_linux_amd64.zip"
+    unzip -o "terraform_\${TF_VERSION}_linux_amd64.zip" terraform -d /tmp
+    \$SUDO mv /tmp/terraform "\$INSTALL_DIR/"
+    rm -f "terraform_\${TF_VERSION}_linux_amd64.zip"
+    echo "[OK] terraform installed"
+fi
+
 # Write kubeconfig
 mkdir -p ~/.kube
 cat > ~/.kube/config-home << 'KUBECONFIG_EOF'
@@ -166,6 +204,34 @@ else
     echo "[..] Installing kubeseal..."
     brew install kubeseal
     echo "[OK] kubeseal installed"
+fi
+
+# Install Vault CLI
+if command -v vault &>/dev/null; then
+    echo "[OK] vault already installed"
+else
+    echo "[..] Installing Vault CLI..."
+    brew tap hashicorp/tap
+    brew install hashicorp/tap/vault
+    echo "[OK] vault installed"
+fi
+
+# Install Terragrunt
+if command -v terragrunt &>/dev/null; then
+    echo "[OK] terragrunt already installed"
+else
+    echo "[..] Installing terragrunt..."
+    brew install terragrunt
+    echo "[OK] terragrunt installed"
+fi
+
+# Install Terraform
+if command -v terraform &>/dev/null; then
+    echo "[OK] terraform already installed"
+else
+    echo "[..] Installing terraform..."
+    brew install hashicorp/tap/terraform
+    echo "[OK] terraform installed"
 fi
 
 # Write kubeconfig

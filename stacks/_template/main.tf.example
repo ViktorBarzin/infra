@@ -1,0 +1,90 @@
+# =============================================================================
+# Stack Template — Copy this directory to stacks/<your-app>/ and customize.
+# Then submit a PR to the infra repo.
+# =============================================================================
+#
+# Prerequisites:
+#   1. You are a namespace-owner in k8s_users (Vault KV secret/platform)
+#   2. Your namespace already exists (created by vault stack)
+#   3. You have Vault CLI access: vault login -method=oidc
+#
+# Steps:
+#   1. cp -r stacks/_template stacks/myapp
+#   2. mv stacks/myapp/main.tf.example stacks/myapp/main.tf
+#   3. Search-replace <placeholders> below
+#   4. Store secrets: vault kv put secret/<your-username>/myapp KEY=value
+#   5. git checkout -b feat/myapp && git push
+#   6. Open PR, get reviewed, merge
+#   7. Admin runs: cd stacks/myapp && terragrunt apply
+# =============================================================================
+
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+
+# NOTE: Your namespace is auto-created by the vault stack from k8s_users.
+# Only add a kubernetes_namespace resource if you need a SEPARATE namespace
+# for this specific app (not your user namespace).
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = "<your-namespace>"  # e.g., "anca"
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_deployment" "app" {
+  metadata {
+    name      = "<app-name>"
+    namespace = "<your-namespace>"
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = { app = "<app-name>" }
+    }
+    template {
+      metadata {
+        labels = { app = "<app-name>" }
+      }
+      spec {
+        container {
+          name  = "<app-name>"
+          image = "<dockerhub-user>/<app-name>:<tag>"
+          port {
+            container_port = 8080  # Change to your app's port
+          }
+          resources {
+            requests = { cpu = "10m", memory = "128Mi" }
+            limits   = { memory = "128Mi" }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_service" "app" {
+  metadata {
+    name      = "<app-name>"
+    namespace = "<your-namespace>"
+  }
+  spec {
+    selector = { app = "<app-name>" }
+    port {
+      port        = 80
+      target_port = 8080  # Match container_port above
+    }
+  }
+}
+
+module "ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = "<your-namespace>"
+  name            = "<app-name>"
+  tls_secret_name = var.tls_secret_name
+  protected       = false  # Set true to require Authentik login
+}
