@@ -29,10 +29,15 @@
 
 ## Resource Management Patterns
 - **CPU**: All CPU limits removed cluster-wide (CFS throttling). Only set CPU requests based on actual usage.
-- **Memory**: Set explicit `requests=limits` based on Prometheus 7-day max. Overcommit ratio ~2x max.
+- **Memory**: Set explicit `requests=limits` based on VPA upperBound. Target: upperBound x 1.2 for stable services, x 1.3 for GPU/volatile workloads.
 - **VPA (Goldilocks)**: Must be `Initial` mode (not `Auto`) — Auto conflicts with Terraform's declarative resource management.
-- **LimitRange**: Tier-based defaults silently apply to pods with `resources: {}`. Always set explicit resources on containers needing more than 256Mi (edge/aux default).
+- **LimitRange**: Tier-based defaults silently apply to pods with `resources: {}`. Always set explicit resources on containers needing more than defaults. Tier 3-edge and 4-aux now use Burstable QoS (request < limit) to reduce scheduler pressure.
+- **Democratic-CSI sidecars**: Must set explicit resources (32-80Mi) in Helm values — 17 sidecars default to 256Mi each via LimitRange. `csiProxy` is a TOP-LEVEL chart key, not nested under controller/node.
+- **ResourceQuota blocks rolling updates**: When quota is tight, scale to 0 then back to 1 instead of RollingUpdate. Or use Recreate strategy.
+- **Kyverno ndots drift**: Kyverno injects dns_config on all pods. Add `lifecycle { ignore_changes = [spec[0].template[0].spec[0].dns_config] }` to kubernetes_deployment resources to prevent perpetual TF plan drift.
+- **NVIDIA GPU operator resources**: dcgm-exporter and cuda-validator resources configurable via `dcgmExporter.resources` and `validator.resources` in nvidia values.yaml.
 - **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
+- **Quarterly right-sizing**: Check Goldilocks dashboard. Compare VPA upperBound to current request. Also check for under-provisioned (VPA upper > request x 0.8).
 
 ## Networking & Resilience
 - **Critical path services scaled to 3**: Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared.
@@ -58,7 +63,7 @@
 - Alert cascade inhibitions: if node is down, suppress pod alerts on that node.
 - Exclude completed CronJob pods from "pod not ready" alerts.
 - Every new service gets Prometheus scrape config + Uptime Kuma monitor.
-- Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness.
+- Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable.
 
 ## Known Issues
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
