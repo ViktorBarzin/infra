@@ -48,6 +48,59 @@
 		<p>Comment on your PR: "I need a database password for my-service." Viktor will add it to the encrypted secrets file and push to your branch.</p>
 		<p>Then reference it in your Terraform: <code>var.my_service_db_password</code></p>
 	</section>
+
+	<section>
+		<h2>Namespace Owner Workflow</h2>
+		<p>If you are a namespace owner, you can deploy your own apps:</p>
+		<ol>
+			<li>Clone the infra repo: <code>git clone https://github.com/ViktorBarzin/infra.git</code></li>
+			<li>Copy the template: <code>cp -r stacks/_template stacks/your-app</code></li>
+			<li>Rename: <code>mv stacks/your-app/main.tf.example stacks/your-app/main.tf</code></li>
+			<li>Edit <code>main.tf</code> — replace all <code>&lt;placeholders&gt;</code></li>
+			<li>Store secrets in Vault: <code>vault kv put secret/your-username/your-app KEY=value</code></li>
+			<li>Add your app domain to your <code>domains</code> list in Vault KV</li>
+			<li>Submit a PR, get it reviewed</li>
+			<li>After merge, admin runs <code>terragrunt apply</code></li>
+		</ol>
+	</section>
+
+	<section>
+		<h2>CI Pipeline Template</h2>
+		<p>Create a <code>.woodpecker.yml</code> in your app's Forgejo repo:</p>
+		<pre>{`steps:
+  - name: build
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: your-dockerhub-user/myapp
+      tag: ["\${CI_PIPELINE_NUMBER}", "latest"]
+      username:
+        from_secret: dockerhub-username
+      password:
+        from_secret: dockerhub-token
+      platforms: linux/amd64
+
+  - name: deploy
+    image: hashicorp/vault:1.18.1
+    commands:
+      - export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+      - export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login
+          role=ci jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token))
+      - KUBE_TOKEN=$(vault write -field=service_account_token
+          kubernetes/creds/YOUR_NAMESPACE-deployer
+          kubernetes_namespace=YOUR_NAMESPACE)
+      - kubectl --server=https://kubernetes.default.svc
+          --token=$KUBE_TOKEN
+          --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          -n YOUR_NAMESPACE set image deployment/myapp
+          myapp=your-dockerhub-user/myapp:\${CI_PIPELINE_NUMBER}`}</pre>
+	</section>
+
+	<section>
+		<h2>Need a secret for your app?</h2>
+		<p>As a namespace owner, you manage your own secrets in Vault:</p>
+		<pre>vault kv put secret/your-username/your-app DB_PASSWORD=mysecret API_KEY=abc123</pre>
+		<p>Then reference them in your Terraform using a <code>data "vault_kv_secret_v2"</code> block.</p>
+	</section>
 </main>
 
 <style>

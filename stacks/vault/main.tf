@@ -317,6 +317,10 @@ resource "vault_policy" "ci" {
     path "secret/metadata/*" {
       capabilities = ["list"]
     }
+    # Allow CI to get dynamic K8s deploy tokens for user namespaces
+    path "kubernetes/creds/*-deployer" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
@@ -653,4 +657,134 @@ resource "vault_kubernetes_secret_backend_role" "local_admin" {
   token_max_ttl                 = 86400
   kubernetes_role_type          = "ClusterRole"
   kubernetes_role_name          = "cluster-admin"
+}
+
+# =============================================================================
+# Multi-User Namespace Onboarding
+# =============================================================================
+# All resources below are auto-generated from the k8s_users map in Vault KV.
+# Adding a new user requires only a JSON entry in secret/platform → k8s_users.
+
+data "vault_kv_secret_v2" "platform" {
+  mount      = "secret"
+  name       = "platform"
+  depends_on = [helm_release.vault]
+}
+
+locals {
+  k8s_users = jsondecode(data.vault_kv_secret_v2.platform.data["k8s_users"])
+
+  # Flatten user -> namespace pairs for namespace-owners
+  namespace_owner_namespaces = flatten([
+    for name, user in local.k8s_users : [
+      for ns in user.namespaces : {
+        user_key  = name
+        namespace = ns
+        email     = user.email
+      }
+    ] if user.role == "namespace-owner"
+  ])
+
+  # Unique namespaces across all namespace-owners
+  user_namespaces = toset(flatten([
+    for name, user in local.k8s_users : user.namespaces
+    if user.role == "namespace-owner"
+  ]))
+}
+
+resource "kubernetes_namespace" "user_namespace" {
+  for_each = local.user_namespaces
+
+  metadata {
+    name = each.value
+    labels = {
+      tier                              = "4-aux"
+      "resource-governance/custom-quota" = "true"
+      "managed-by"                      = "vault-user-onboarding"
+    }
+  }
+}
+
+resource "vault_policy" "namespace_owner" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name = "namespace-owner-${each.key}"
+  policy = <<-EOT
+    # Read/write own secrets
+    path "secret/data/${each.key}" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "secret/data/${each.key}/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "secret/metadata/${each.key}" {
+      capabilities = ["list", "read", "delete"]
+    }
+    path "secret/metadata/${each.key}/*" {
+      capabilities = ["list", "read", "delete"]
+    }
+    %{for ns in each.value.namespaces}
+    # Dynamic K8s credentials for ${ns} namespace
+    path "kubernetes/creds/${ns}-deployer" {
+      capabilities = ["read"]
+    }
+    %{endfor}
+  EOT
+}
+
+resource "vault_identity_entity" "namespace_owner" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name     = each.key
+  policies = [vault_policy.namespace_owner[each.key].name]
+}
+
+resource "vault_identity_entity_alias" "namespace_owner" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name           = each.value.email
+  mount_accessor = vault_jwt_auth_backend.oidc.accessor
+  canonical_id   = vault_identity_entity.namespace_owner[each.key].id
+}
+
+resource "kubernetes_role" "user_deployer" {
+  for_each = local.user_namespaces
+
+  metadata {
+    name      = "${each.value}-deployer"
+    namespace = each.value
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments"]
+    verbs      = ["get", "list", "patch", "update"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+
+  depends_on = [kubernetes_namespace.user_namespace]
+}
+
+resource "vault_kubernetes_secret_backend_role" "user_deployer" {
+  for_each = local.user_namespaces
+
+  backend                       = vault_kubernetes_secret_backend.k8s.path
+  name                          = "${each.value}-deployer"
+  allowed_kubernetes_namespaces = [each.value]
+  token_default_ttl             = 1800
+  token_max_ttl                 = 3600
+  kubernetes_role_type          = "Role"
+  kubernetes_role_name          = kubernetes_role.user_deployer[each.key].metadata[0].name
 }

@@ -10,8 +10,8 @@ server:
     tag: "v3.13.0"
   env:
     WOODPECKER_HOST: "https://ci.viktorbarzin.me"
-    WOODPECKER_ADMIN: "ViktorBarzin"
-    WOODPECKER_OPEN: "false"
+    WOODPECKER_ADMIN: "${woodpecker_admins}"
+    WOODPECKER_OPEN: "true"
     WOODPECKER_GITHUB: "true"
     WOODPECKER_GITHUB_URL: "https://github.com"
     WOODPECKER_GITHUB_CLIENT: "${github_client_id}"
