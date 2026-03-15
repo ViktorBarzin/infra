@@ -13,6 +13,12 @@ variable "kube_config_path" {
   default = "~/.kube/config"
 }
 
+variable "vault_root_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
 provider "kubernetes" {
   config_path = var.kube_config_path
 }
@@ -25,5 +31,6 @@ provider "helm" {
 
 provider "vault" {
   address          = "https://vault.viktorbarzin.me"
+  token            = var.vault_root_token
   skip_child_token = true
 }
