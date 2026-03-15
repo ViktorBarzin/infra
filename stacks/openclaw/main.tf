@@ -18,9 +18,9 @@ resource "kubernetes_namespace" "openclaw" {
   metadata {
     name = "openclaw"
     labels = {
-      tier                                        = local.tiers.aux
-      "resource-governance/custom-limitrange"      = "true"
-      "resource-governance/custom-quota"           = "true"
+      tier                                    = local.tiers.aux
+      "resource-governance/custom-limitrange" = "true"
+      "resource-governance/custom-quota"      = "true"
     }
   }
 }
@@ -269,13 +269,8 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/openclaw/data"
 }
 
-module "nfs_cc_config" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "cc-config"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/cc-config"
-}
+## cc-config NFS volume removed — replaced by dotfiles repo clone in init container
+## See init_container "install-dotfiles" in the deployment
 
 resource "kubernetes_deployment" "openclaw" {
   metadata {
@@ -305,7 +300,7 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
-        # Init: copy openclaw.json from ConfigMap into writable NFS home
+        # Init 1: copy openclaw.json from ConfigMap into writable NFS home
         init_container {
           name    = "copy-config"
           image   = "busybox:1.37"
@@ -314,6 +309,41 @@ resource "kubernetes_deployment" "openclaw" {
             name       = "openclaw-config"
             mount_path = "/config"
           }
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
+        }
+
+        # Init 2: install skills/agents/hooks from dotfiles repo
+        init_container {
+          name  = "install-dotfiles"
+          image = "docker.io/library/alpine/git:2.47.2"
+          command = ["sh", "-c", <<-EOF
+            apk add --no-cache rsync >/dev/null 2>&1
+            export OPENCLAW_HOME=/home/node/.openclaw
+            export DOTFILES_DIR=$OPENCLAW_HOME/dotfiles
+            export DOTFILES_REPO=https://github.com/ViktorBarzin/dot_files.git
+            SRC=$DOTFILES_DIR/dot_claude
+            # Clone or pull
+            if [ -d "$DOTFILES_DIR/.git" ]; then
+              git -C "$DOTFILES_DIR" pull --ff-only 2>/dev/null || git -C "$DOTFILES_DIR" pull --rebase || true
+            else
+              git clone --depth 1 "$DOTFILES_REPO" "$DOTFILES_DIR"
+            fi
+            # Run install script if present, otherwise inline install
+            if [ -f "$SRC/executable_openclaw-install.sh" ]; then
+              sh "$SRC/executable_openclaw-install.sh"
+            else
+              # Fallback: direct copy
+              for d in skills agents hooks commands; do
+                [ -d "$SRC/$d" ] && mkdir -p "$OPENCLAW_HOME/$d" && rsync -a --delete "$SRC/$d/" "$OPENCLAW_HOME/$d/"
+              done
+              [ -f "$SRC/CLAUDE.md" ] && cp "$SRC/CLAUDE.md" "$OPENCLAW_HOME/CLAUDE.md"
+            fi
+            chown -R 1000:1000 "$OPENCLAW_HOME" 2>/dev/null || true
+          EOF
+          ]
           volume_mount {
             name       = "openclaw-home"
             mount_path = "/home/node/.openclaw"
@@ -501,12 +531,6 @@ resource "kubernetes_deployment" "openclaw" {
           secret {
             secret_name  = kubernetes_secret.ssh_key.metadata[0].name
             default_mode = "0600"
-          }
-        }
-        volume {
-          name = "cc-config"
-          persistent_volume_claim {
-            claim_name = module.nfs_cc_config.claim_name
           }
         }
         volume {
