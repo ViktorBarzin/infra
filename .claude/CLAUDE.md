@@ -27,6 +27,39 @@
 - **Complex types** (maps/lists like `homepage_credentials`, `k8s_users`) stored as JSON strings in KV, decoded with `jsondecode()` in consuming stack `locals` blocks.
 - **New stacks**: Add a `vault_kv_secret_v2` resource in vault/main.tf, then use `data "vault_kv_secret_v2" "secrets"` + `dependency "vault"` in the new stack.
 
+## Resource Management Patterns
+- **CPU**: All CPU limits removed cluster-wide (CFS throttling). Only set CPU requests based on actual usage.
+- **Memory**: Set explicit `requests=limits` based on Prometheus 7-day max. Overcommit ratio ~2x max.
+- **VPA (Goldilocks)**: Must be `Initial` mode (not `Auto`) — Auto conflicts with Terraform's declarative resource management.
+- **LimitRange**: Tier-based defaults silently apply to pods with `resources: {}`. Always set explicit resources on containers needing more than 256Mi (edge/aux default).
+- **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
+
+## Networking & Resilience
+- **Critical path services scaled to 3**: Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared.
+- **PDBs**: minAvailable=2 on Traefik and Authentik.
+- **Fallback proxies**: basicAuth when Authentik is down, fail-open when poison-fountain is down.
+- **CrowdSec bouncer**: graceful degradation mode (fail-open on error).
+- **Rate limiting**: Return 429 (not 503). Per-service tuning: Immich/Nextcloud need higher limits.
+- **Retry middleware**: 2 attempts, 100ms — in default ingress chain.
+- **HTTP/3 (QUIC)**: Enabled cluster-wide via Traefik.
+
+## Service-Specific Notes
+| Service | Key Operational Knowledge |
+|---------|--------------------------|
+| Nextcloud | MaxRequestWorkers=150, needs 4Gi memory, very generous startup probe |
+| Immich | ML on SSD, disable ModSecurity (breaks streaming), CUDA for ML, frequent upgrades |
+| CrowdSec | Pin version, disable Metabase when not needed (CPU hog), LAPI scaled to 3 |
+| Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
+| Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
+| Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
+| MySQL InnoDB | Enable auto-recovery, anti-affinity excludes node2 (SIGBUS), 4.4Gi req but ~1Gi used |
+
+## Monitoring & Alerting
+- Alert cascade inhibitions: if node is down, suppress pod alerts on that node.
+- Exclude completed CronJob pods from "pod not ready" alerts.
+- Every new service gets Prometheus scrape config + Uptime Kuma monitor.
+- Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness.
+
 ## Known Issues
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
 - **OpenClaw config is writable**: OpenClaw writes to `openclaw.json` at runtime (doctor --fix, plugin auto-enable). Never use subPath ConfigMap mounts for it — use an init container to copy into a writable volume. Needs 2Gi memory + `NODE_OPTIONS=--max-old-space-size=1536`.
