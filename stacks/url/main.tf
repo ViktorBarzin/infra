@@ -56,6 +56,46 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.shlink]
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+# NOTE: The kubernetes_secret "mysql_config" still uses plan-time db_password
+# from KV. This ExternalSecret provides runtime-refreshed credentials. Once
+# the deployment is migrated to use env_from with this secret, the plan-time
+# kubernetes_secret can be removed.
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "url-db-creds"
+      namespace = "url"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "url-db-creds"
+        template = {
+          data = {
+            DB_USER     = "shlink"
+            DB_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-shlink"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.shlink]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
@@ -167,7 +207,7 @@ resource "kubernetes_deployment" "shlink" {
           # }
           env_from {
             secret_ref {
-              name = "mysql-config"
+              name = "url-db-creds"
             }
           }
           # env {

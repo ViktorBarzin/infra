@@ -70,6 +70,45 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.woodpecker]
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+# NOTE: Woodpecker Helm values use plan-time db_password from KV — the Helm
+# release will use the KV snapshot until the next terragrunt apply. This
+# ExternalSecret provides runtime-refreshed credentials for any future
+# migration to envFrom-based secret injection.
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "woodpecker-db-creds"
+      namespace = "woodpecker"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "woodpecker-db-creds"
+        template = {
+          data = {
+            DB_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-woodpecker"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.woodpecker]
+}
+
 resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"

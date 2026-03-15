@@ -61,21 +61,18 @@ resource "kubernetes_manifest" "external_secret" {
         name = "trading-bot-secrets"
         template = {
           data = {
-            TRADING_DATABASE_URL         = "postgresql+asyncpg://trading:{{ .db_password }}@${var.postgresql_host}:5432/trading"
-            TRADING_ALPACA_API_KEY       = "{{ .alpaca_api_key }}"
-            TRADING_ALPACA_SECRET_KEY    = "{{ .alpaca_secret_key }}"
-            TRADING_JWT_SECRET_KEY       = "{{ .jwt_secret }}"
-            TRADING_REDDIT_CLIENT_ID     = "{{ .reddit_client_id }}"
-            TRADING_REDDIT_CLIENT_SECRET = "{{ .reddit_client_secret }}"
+            TRADING_ALPACA_API_KEY        = "{{ .alpaca_api_key }}"
+            TRADING_ALPACA_SECRET_KEY     = "{{ .alpaca_secret_key }}"
+            TRADING_JWT_SECRET_KEY        = "{{ .jwt_secret }}"
+            TRADING_REDDIT_CLIENT_ID      = "{{ .reddit_client_id }}"
+            TRADING_REDDIT_CLIENT_SECRET  = "{{ .reddit_client_secret }}"
             TRADING_ALPHA_VANTAGE_API_KEY = "{{ .alpha_vantage_api_key }}"
-            TRADING_FMP_API_KEY          = "{{ .fmp_api_key }}"
-            DBAAS_ROOT_PASSWORD          = "{{ .dbaas_root_password }}"
-            DB_PASSWORD                  = "{{ .db_password }}"
+            TRADING_FMP_API_KEY           = "{{ .fmp_api_key }}"
+            DBAAS_ROOT_PASSWORD           = "{{ .dbaas_root_password }}"
           }
         }
       }
       data = [
-        { secretKey = "db_password", remoteRef = { key = "trading-bot", property = "db_password" } },
         { secretKey = "alpaca_api_key", remoteRef = { key = "trading-bot", property = "alpaca_api_key" } },
         { secretKey = "alpaca_secret_key", remoteRef = { key = "trading-bot", property = "alpaca_secret_key" } },
         { secretKey = "jwt_secret", remoteRef = { key = "trading-bot", property = "jwt_secret" } },
@@ -85,6 +82,42 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "fmp_api_key", remoteRef = { key = "trading-bot", property = "fmp_api_key" } },
         { secretKey = "dbaas_root_password", remoteRef = { key = "trading-bot", property = "dbaas_root_password" } },
       ]
+    }
+  }
+  depends_on = [kubernetes_namespace.trading-bot]
+}
+
+# DB credentials from Vault database engine (rotated every 24h)
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "trading-bot-db-creds"
+      namespace = "trading-bot"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "trading-bot-db-creds"
+        template = {
+          data = {
+            TRADING_DATABASE_URL = "postgresql+asyncpg://trading:{{ .password }}@${var.postgresql_host}:5432/trading"
+            DB_PASSWORD          = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-trading"
+          property = "password"
+        }
+      }]
     }
   }
   depends_on = [kubernetes_namespace.trading-bot]
@@ -125,6 +158,11 @@ resource "kubernetes_job" "db_init" {
               name = "trading-bot-secrets"
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
         }
         restart_policy = "Never"
       }
@@ -159,6 +197,11 @@ resource "kubernetes_job" "migrations" {
           env_from {
             secret_ref {
               name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
             }
           }
         }
@@ -251,6 +294,11 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               name = "trading-bot-secrets"
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
           resources {
             requests = {
               cpu    = "50m"
@@ -328,6 +376,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name = "trading-bot-secrets"
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -357,6 +410,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env_from {
             secret_ref {
               name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
             }
           }
           resources {
@@ -390,6 +448,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name = "trading-bot-secrets"
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -419,6 +482,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env_from {
             secret_ref {
               name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
             }
           }
           resources {
@@ -452,6 +520,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
               name = "trading-bot-secrets"
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -481,6 +554,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env_from {
             secret_ref {
               name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
             }
           }
           resources {

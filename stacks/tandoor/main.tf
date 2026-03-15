@@ -2,11 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "tandoor_email_password" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "mail_host" { type = string }
@@ -158,8 +153,14 @@ resource "kubernetes_deployment" "tandoor" {
             value = "info@viktorbarzin.me"
           }
           env {
-            name  = "EMAIL_HOST_PASSWORD"
-            value = var.tandoor_email_password
+            name = "EMAIL_HOST_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name     = "tandoor-secrets"
+                key      = "email_password"
+                optional = true
+              }
+            }
           }
           env {
             name  = "EMAIL_USE_TLS"

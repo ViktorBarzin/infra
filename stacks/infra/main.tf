@@ -9,25 +9,17 @@
 
 variable "proxmox_host" { type = string }
 
-variable "ssh_private_key" {
-  type      = string
-  default   = ""
-  sensitive = true
-}
-
 variable "ssh_public_key" {
   type    = string
   default = ""
 }
 
-variable "vm_wizard_password" {
-  type      = string
-  sensitive = true
-}
-
 variable "k8s_join_command" { type = string }
 
-variable "dockerhub_registry_password" {}
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "infra"
+}
 
 # ---------------------------------------------------------------------------
 # Locals
@@ -54,14 +46,14 @@ module "k8s-node-template" {
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
 
-  ssh_private_key = var.ssh_private_key
+  ssh_private_key = data.vault_kv_secret_v2.secrets.data["ssh_private_key"]
   ssh_public_key  = var.ssh_public_key
 
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.k8s_cloud_init_image_path
   template_id     = 2000
   template_name   = local.k8s_vm_template
-  user_passwd     = var.vm_wizard_password
+  user_passwd     = data.vault_kv_secret_v2.secrets.data["vm_wizard_password"]
 
   is_k8s_template = true # provision cloud init file with k8s deps
   snippet_name    = local.k8s_cloud_init_snippet_name
@@ -146,14 +138,14 @@ module "non-k8s-node-template" {
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
 
-  ssh_private_key = var.ssh_private_key
+  ssh_private_key = data.vault_kv_secret_v2.secrets.data["ssh_private_key"]
   ssh_public_key  = var.ssh_public_key
 
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.non_k8s_cloud_init_image_path
   template_id     = 1000
   template_name   = local.non_k8s_vm_template
-  user_passwd     = var.vm_wizard_password
+  user_passwd     = data.vault_kv_secret_v2.secrets.data["vm_wizard_password"]
 
   is_k8s_template = false # provision cloud init file without k8s deps
   snippet_name    = local.non_k8s_cloud_init_snippet_name
@@ -169,7 +161,7 @@ module "docker-registry-template" {
   proxmox_host = var.proxmox_host
   proxmox_user = "root" # SSH user on Proxmox host
 
-  ssh_private_key = var.ssh_private_key
+  ssh_private_key = data.vault_kv_secret_v2.secrets.data["ssh_private_key"]
   ssh_public_key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDHLhYDfyx237eJgOGVoJRECpUS95+7rEBS9vacsIxtx devvm"
 
   cloud_image_url = local.cloud_init_image_url
@@ -177,7 +169,7 @@ module "docker-registry-template" {
   template_id     = 1001
   template_name   = "docker-registry-template"
 
-  user_passwd = var.vm_wizard_password
+  user_passwd = data.vault_kv_secret_v2.secrets.data["vm_wizard_password"]
 
   is_k8s_template = false # provision cloud init file without k8s deps
   snippet_name    = "docker-registry.yaml"
@@ -212,7 +204,7 @@ module "docker-registry-template" {
     format("echo %s | base64 -d > /opt/registry/config-dockerhub.yml",
       base64encode(
         templatefile("../../modules/docker-registry/config.yaml", {
-          password = var.dockerhub_registry_password
+          password = data.vault_kv_secret_v2.secrets.data["dockerhub_registry_password"]
         })
       )
     ),

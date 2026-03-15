@@ -61,6 +61,45 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.nextcloud]
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+# NOTE: Nextcloud Helm values use plan-time db_password from KV — the Helm
+# release will use the KV snapshot until the next terragrunt apply. This
+# ExternalSecret provides runtime-refreshed credentials for any future
+# migration to envFrom-based secret injection.
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "nextcloud-db-creds"
+      namespace = "nextcloud"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "nextcloud-db-creds"
+        template = {
+          data = {
+            DB_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-nextcloud"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.nextcloud]
+}
+
 resource "kubernetes_resource_quota" "nextcloud" {
   metadata {
     name      = "nextcloud-quota"

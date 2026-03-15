@@ -193,7 +193,7 @@ resource "kubernetes_manifest" "external_secret" {
     spec = {
       refreshInterval = "15m"
       secretStoreRef = {
-        name = "vault-kv"
+        name = "vault-database"
         kind = "ClusterSecretStore"
       }
       target = {
@@ -206,7 +206,10 @@ resource "kubernetes_manifest" "external_secret" {
       }
       data = [{
         secretKey = "db_password"
-        remoteRef = { key = "hackmd", property = "db_password" }
+        remoteRef = {
+          key      = "static-creds/mysql-codimd"
+          property = "password"
+        }
       }]
     }
   }
