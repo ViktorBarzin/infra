@@ -178,7 +178,7 @@ resource "kubernetes_cron_job_v1" "defrag-etcd" {
               name    = "defrag-etcd"
               image   = "registry.k8s.io/etcd:3.5.21-0"
               command = ["etcdctl"]
-              args    = ["--endpoints=https://127.0.0.1:2379", "--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt", "--key=/etc/kubernetes/pki/etcd/healthcheck-client.key", "defrag"]
+              args    = ["--endpoints=https://127.0.0.1:2379", "--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt", "--key=/etc/kubernetes/pki/etcd/healthcheck-client.key", "--command-timeout=60s", "defrag"]
               env {
                 name  = "ETCDCTL_API"
                 value = "3"
