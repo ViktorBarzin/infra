@@ -52,6 +52,7 @@ steps:
       - "git add stacks/ state/ .woodpecker/ || true"
       - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
       - "git commit -m 'Woodpecker CI deploy commit [CI SKIP]' || echo 'No changes'"
+      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master || true"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
     when:
       status: [success, failure]
