@@ -29,10 +29,10 @@ resource "helm_release" "caretta" {
     resources = {
       requests = {
         cpu    = "10m"
-        memory = "768Mi"
+        memory = "600Mi"
       }
       limits = {
-        memory = "768Mi"
+        memory = "600Mi"
       }
     }
   })]

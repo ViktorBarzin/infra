@@ -263,7 +263,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
             }
           }
         },
-        # Tier 3-edge
+        # Tier 3-edge — Burstable QoS: request < limit to reduce scheduler pressure
         {
           name = "limitrange-tier-3-edge"
           match = {
@@ -305,11 +305,11 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "128Mi"
+                      memory = "192Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
-                      memory = "128Mi"
+                      memory = "96Mi"
                     }
                     max = {
                       memory = "4Gi"
@@ -320,7 +320,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
             }
           }
         },
-        # Tier 4-aux
+        # Tier 4-aux — Burstable QoS: request < limit to reduce scheduler pressure
         {
           name = "limitrange-tier-4-aux"
           match = {
@@ -362,11 +362,11 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "128Mi"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
-                      memory = "128Mi"
+                      memory = "64Mi"
                     }
                     max = {
                       memory = "4Gi"

@@ -86,10 +86,10 @@ resource "kubernetes_deployment" "frigate" {
           resources {
             requests = {
               cpu    = "1500m"
-              memory = "2Gi"
+              memory = "5Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory           = "10Gi"
               "nvidia.com/gpu" = "1"
             }
           }
