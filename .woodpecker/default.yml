@@ -28,6 +28,13 @@ steps:
 
   - name: terragrunt-apply
     image: alpine
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            memory: 1Gi
+          limits:
+            memory: 2Gi
     commands:
       - "apk update && apk add curl unzip git openssh-client"
       # Install Terraform
