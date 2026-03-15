@@ -103,7 +103,7 @@ resource "kubernetes_deployment" "claude-memory" {
         }
         container {
           name  = "claude-memory"
-          image = "viktorbarzin/claude-memory-mcp:latest"
+          image = "viktorbarzin/claude-memory-mcp:17"
 
           port {
             container_port = 8000
