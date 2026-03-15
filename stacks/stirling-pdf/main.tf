@@ -61,10 +61,10 @@ resource "kubernetes_deployment" "stirling-pdf" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "1200Mi"
+              memory = "1536Mi"
             }
             limits = {
-              memory = "1200Mi"
+              memory = "1536Mi"
             }
           }
 

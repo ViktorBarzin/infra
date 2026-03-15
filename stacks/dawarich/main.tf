@@ -176,10 +176,10 @@ resource "kubernetes_deployment" "dawarich" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "512Mi"
+              memory = "768Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "768Mi"
             }
           }
         }

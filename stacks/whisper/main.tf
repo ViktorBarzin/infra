@@ -38,7 +38,7 @@ resource "kubernetes_deployment" "whisper" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down - GPU node memory pressure
     strategy {
       type = "Recreate"
     }
@@ -156,7 +156,7 @@ resource "kubernetes_deployment" "piper" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down - GPU node memory pressure
     strategy {
       type = "Recreate"
     }

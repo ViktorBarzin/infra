@@ -59,10 +59,10 @@ resource "kubernetes_deployment" "listenarr" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "768Mi"
+              memory = "896Mi"
             }
             limits = {
-              memory = "768Mi"
+              memory = "896Mi"
             }
           }
         }
