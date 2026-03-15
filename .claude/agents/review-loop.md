@@ -1,4 +1,7 @@
 ---
+name: review-loop
+description: Produce high-quality artifacts through a convergent plan-review-fix loop. Implements, spawns parallel reviewers, fixes CRITICAL/IMPORTANT feedback, re-reviews until clean (max 3 rounds).
+tools: Read, Write, Edit, Bash, Grep, Glob
 model: opus
 ---
 
