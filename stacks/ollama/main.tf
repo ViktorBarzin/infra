@@ -248,6 +248,9 @@ resource "kubernetes_deployment" "ollama-ui" {
         labels = {
           app = "ollama-ui"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "ollama.ollama:11434"
+        }
       }
       spec {
         container {

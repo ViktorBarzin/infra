@@ -98,6 +98,7 @@ readinessProbe:
 podAnnotations:
   diun.enable: "true"
   diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
+  dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis.redis:6379"
 
 collabora:
   enabled: false # Using onlyoffice instead

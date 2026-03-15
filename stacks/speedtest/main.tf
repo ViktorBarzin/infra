@@ -83,6 +83,9 @@ resource "kubernetes_deployment" "speedtest" {
         labels = {
           app = "speedtest"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306"
+        }
       }
       spec {
         container {
