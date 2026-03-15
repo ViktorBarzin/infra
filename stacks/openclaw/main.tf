@@ -426,7 +426,7 @@ resource "kubernetes_deployment" "openclaw" {
             }
             requests = {
               cpu    = "100m"
-              memory = "2Gi"
+              memory = "1536Mi"
             }
           }
         }
@@ -434,7 +434,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Sidecar: modelrelay — auto-routes to fastest healthy free model
         container {
           name  = "modelrelay"
-          image = "node:22-alpine"
+          image = "docker.io/library/node:22-alpine"
           command = ["sh", "-c", <<-EOF
             if [ ! -f /tools/modelrelay/node_modules/.package-lock.json ]; then
               mkdir -p /tools/modelrelay

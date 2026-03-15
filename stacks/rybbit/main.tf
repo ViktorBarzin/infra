@@ -302,10 +302,10 @@ resource "kubernetes_deployment" "rybbit" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "1Gi"
+              memory = "768Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "768Mi"
             }
           }
         }
