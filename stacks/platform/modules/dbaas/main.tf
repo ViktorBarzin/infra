@@ -181,7 +181,7 @@ resource "helm_release" "mysql_cluster" {
     resources = {
       requests = {
         cpu    = "250m"
-        memory = "4Gi"
+        memory = "2Gi"
       }
       limits = {
         memory = "4Gi"
@@ -216,7 +216,7 @@ resource "helm_release" "mysql_cluster" {
         name = "mysql"
         resources = {
           requests = {
-            memory = "4Gi"
+            memory = "2Gi"
             cpu    = "250m"
           }
           limits = {
