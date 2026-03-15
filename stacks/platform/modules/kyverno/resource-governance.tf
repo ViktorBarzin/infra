@@ -927,17 +927,19 @@ resource "kubernetes_manifest" "mutate_gpu_priority" {
           mutate = {
             patchesJson6902 = yamlencode([
               {
-                op   = "remove"
-                path = "/spec/priority"
-              },
-              {
-                op   = "remove"
-                path = "/spec/preemptionPolicy"
-              },
-              {
-                op    = "add"
+                op    = "replace"
                 path  = "/spec/priorityClassName"
                 value = "gpu-workload"
+              },
+              {
+                op    = "replace"
+                path  = "/spec/priority"
+                value = 1200000
+              },
+              {
+                op    = "replace"
+                path  = "/spec/preemptionPolicy"
+                value = "PreemptLowerPriority"
               }
             ])
           }
