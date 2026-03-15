@@ -23,14 +23,15 @@
 - **Vault is the sole source of truth** for secrets. SOPS pipeline has been removed entirely.
 - **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
 - **Vault stack self-reads**: `data "vault_kv_secret_v2" "vault"` reads its own OIDC creds from `secret/vault`.
-- **ESO (External Secrets Operator)**: `stacks/external-secrets/` — 26 ExternalSecrets sync Vault KV → K8s Secrets. API version `v1beta1`. Two ClusterSecretStores: `vault-kv` and `vault-database`.
-- **Plan-time vs runtime**: Stacks using secrets in TF expressions (jsondecode, locals, module inputs, Helm templatefile) keep `data "vault_kv_secret_v2"`. Only direct `env { value = ... }` can migrate to `value_from { secret_key_ref }`. 15 fully migrated, 11 partial, 17 unchanged.
+- **ESO (External Secrets Operator)**: `stacks/external-secrets/` — 43 ExternalSecrets + 9 DB-creds ExternalSecrets. API version `v1beta1`. Two ClusterSecretStores: `vault-kv` and `vault-database`.
+- **Plan-time pattern**: Former plan-time stacks use `data "kubernetes_secret"` to read ESO-created K8s Secrets at plan time (no Vault dependency). First-apply gotcha: must `terragrunt apply -target=kubernetes_manifest.external_secret` first, then full apply. `count` on resources using secret values fails — remove conditional counts.
+- **14 hybrid stacks** still keep `data "vault_kv_secret_v2"` for plan-time needs (job commands, Helm templatefile, module inputs). Platform has 48 plan-time refs — no migration possible without restructuring modules.
 - **Database rotation**: Vault DB engine rotates passwords every 24h. MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana. PostgreSQL: trading, health, linkwarden, affine, woodpecker, claude_memory. Excluded: authentik (PgBouncer), technitium/crowdsec (Helm-baked), root users.
 - **K8s credentials**: Vault K8s secrets engine. Roles: `dashboard-admin`, `ci-deployer`, `openclaw`, `local-admin`. Use `vault write kubernetes/creds/ROLE kubernetes_namespace=NS`. Helper: `scripts/vault-kubeconfig`.
 - **CI/CD (Woodpecker)**: Authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
 - **Platform cannot depend on vault** (circular). Apply order: vault first, then platform. Platform has 48 vault refs, all in module inputs — no ESO migration possible.
 - **Complex types** (maps/lists like `homepage_credentials`, `k8s_users`) stored as JSON strings in KV, decoded with `jsondecode()` in consuming stack `locals` blocks.
-- **New stacks**: Add secret in Vault UI/CLI at `secret/<stack-name>`, add ExternalSecret for runtime delivery, use `data "vault_kv_secret_v2"` only if needed at plan time.
+- **New stacks**: Add secret in Vault UI/CLI at `secret/<stack-name>`, add ExternalSecret + `data "kubernetes_secret"` for plan-time, `secret_key_ref` for env vars. Use `data "vault_kv_secret_v2"` only if `data "kubernetes_secret"` won't work (e.g., first-apply bootstrap).
 - **Backup CronJob**: `vault-raft-backup` uses manually-created `vault-root-token` K8s Secret (independent of automation).
 - **Bootstrap (fresh cluster)**: Comment out data source + OIDC → apply Helm → init+unseal → populate `secret/vault` → uncomment → re-apply.
 
