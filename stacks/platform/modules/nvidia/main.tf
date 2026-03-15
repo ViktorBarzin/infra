@@ -37,7 +37,7 @@ resource "kubernetes_resource_quota" "nvidia_quota" {
 resource "null_resource" "gpu_node_config" {
   provisioner "local-exec" {
     command = <<-EOT
-      kubectl taint nodes k8s-node1 nvidia.com/gpu=true:NoSchedule --overwrite
+      kubectl taint nodes k8s-node1 nvidia.com/gpu=true:PreferNoSchedule --overwrite
       kubectl label nodes k8s-node1 gpu=true --overwrite
     EOT
   }

@@ -210,10 +210,10 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
           volume_mount {
