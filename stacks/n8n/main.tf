@@ -166,7 +166,7 @@ resource "kubernetes_deployment" "n8n" {
               memory = "512Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "768Mi"
             }
           }
         }

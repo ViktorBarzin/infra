@@ -122,10 +122,10 @@ resource "kubernetes_deployment" "hackmd" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }

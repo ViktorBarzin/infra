@@ -122,10 +122,10 @@ resource "kubernetes_deployment" "speedtest" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "256Mi"
             }
           }
           volume_mount {
