@@ -62,6 +62,9 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **NFS** (`nfs-truenas` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
 - **iSCSI** (`iscsi-truenas` StorageClass): For databases (PostgreSQL, MySQL). democratic-csi driver.
 - **TrueNAS**: 10.0.10.15. NFS exports managed via `secrets/nfs_exports.sh`.
+- **SQLite on NFS is unreliable** (fsync issues) — always use iSCSI or local disk for databases.
+- **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
+- **NFS export directory must exist** on TrueNAS before Terraform can create the PV.
 
 ## Shared Variables (never hardcode)
 `var.nfs_server` (10.0.10.15), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
