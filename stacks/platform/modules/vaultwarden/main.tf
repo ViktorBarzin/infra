@@ -50,6 +50,9 @@ resource "kubernetes_deployment" "vaultwarden" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "vaultwarden"
@@ -67,7 +70,7 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.35.2"
+          image = "vaultwarden/server:1.35.4"
           name  = "vaultwarden"
 
           resources {
