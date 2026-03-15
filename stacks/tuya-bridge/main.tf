@@ -3,11 +3,6 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "tuya-bridge"
-}
-
 resource "kubernetes_namespace" "tuya-bridge" {
   metadata {
     name = "tuya-bridge"
@@ -16,6 +11,33 @@ resource "kubernetes_namespace" "tuya-bridge" {
       tier = local.tiers.cluster
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "tuya-bridge-secrets"
+      namespace = "tuya-bridge"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "tuya-bridge-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "tuya-bridge"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.tuya-bridge]
 }
 
 module "tls_secret" {
@@ -31,6 +53,9 @@ resource "kubernetes_deployment" "tuya-bridge" {
     labels = {
       app  = "tuya-bridge"
       tier = local.tiers.cluster
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -54,20 +79,40 @@ resource "kubernetes_deployment" "tuya-bridge" {
             container_port = 8080
           }
           env {
-            name  = "TINYTUYA_API_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["api_key"]
+            name = "TINYTUYA_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "api_key"
+              }
+            }
           }
           env {
-            name  = "TINYTUYA_API_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["api_secret"]
+            name = "TINYTUYA_API_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "api_secret"
+              }
+            }
           }
           env {
-            name  = "SERVICE_API_KEY" # used for auth the API endpoint
-            value = data.vault_kv_secret_v2.secrets.data["service_secret"]
+            name = "SERVICE_API_KEY" # used for auth the API endpoint
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "service_secret"
+              }
+            }
           }
           env {
-            name  = "SLACK_URL"
-            value = data.vault_kv_secret_v2.secrets.data["slack_url"]
+            name = "SLACK_URL"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "slack_url"
+              }
+            }
           }
           resources {
             requests = {

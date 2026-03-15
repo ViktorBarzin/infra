@@ -27,6 +27,33 @@ resource "kubernetes_namespace" "paperless-ngx" {
     # }
   }
 }
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "paperless-ngx-secrets"
+      namespace = "paperless-ngx"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "paperless-ngx-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "paperless-ngx"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.paperless-ngx]
+}
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
@@ -104,8 +131,13 @@ resource "kubernetes_deployment" "paperless-ngx" {
             value = "paperless-ngx"
           }
           env {
-            name  = "PAPERLESS_DBPASS"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "PAPERLESS_DBPASS"
+            value_from {
+              secret_key_ref {
+                name = "paperless-ngx-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "PAPERLESS_CSRF_TRUSTED_ORIGINS"

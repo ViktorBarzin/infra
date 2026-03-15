@@ -6,11 +6,6 @@ variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "netbox"
-}
-
 resource "kubernetes_namespace" "netbox" {
   metadata {
     name = "netbox"
@@ -18,6 +13,33 @@ resource "kubernetes_namespace" "netbox" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "netbox-secrets"
+      namespace = "netbox"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "netbox-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "netbox"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.netbox]
 }
 
 module "tls_secret" {
@@ -76,8 +98,13 @@ resource "kubernetes_deployment" "netbox" {
             value = "netbox"
           }
           env {
-            name  = "DB_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "netbox-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "DB_HOST"
@@ -112,8 +139,13 @@ resource "kubernetes_deployment" "netbox" {
             value = "me@viktorbarzin.me"
           }
           env {
-            name  = "SUPERUSER_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["superuser_password"]
+            name = "SUPERUSER_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "netbox-secrets"
+                key  = "superuser_password"
+              }
+            }
           }
           env {
             name  = "REMOTE_AUTH_ENABLED"

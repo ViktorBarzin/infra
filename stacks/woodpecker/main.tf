@@ -43,6 +43,33 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "woodpecker-secrets"
+      namespace = "woodpecker"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "woodpecker-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "woodpecker"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.woodpecker]
+}
+
 resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"

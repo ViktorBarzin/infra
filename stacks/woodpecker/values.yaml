@@ -1,5 +1,7 @@
 server:
   enabled: true
+  podAnnotations:
+    reloader.stakater.com/search: "true"
   statefulSet:
     replicaCount: 1
   image:
@@ -36,6 +38,8 @@ server:
 
 agent:
   enabled: true
+  podAnnotations:
+    reloader.stakater.com/search: "true"
   replicaCount: 2
   image:
     registry: docker.io

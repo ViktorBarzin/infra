@@ -11,11 +11,6 @@ variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "dawarich"
-}
-
 resource "kubernetes_namespace" "dawarich" {
   metadata {
     name = "dawarich"
@@ -24,6 +19,33 @@ resource "kubernetes_namespace" "dawarich" {
       tier = local.tiers.edge
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "dawarich-secrets"
+      namespace = "dawarich"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "dawarich-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "dawarich"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.dawarich]
 }
 
 module "tls_secret" {
@@ -92,8 +114,13 @@ resource "kubernetes_deployment" "dawarich" {
             value = "dawarich"
           }
           env {
-            name  = "DATABASE_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DATABASE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "DATABASE_NAME"

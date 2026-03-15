@@ -12,8 +12,8 @@ data "vault_kv_secret_v2" "secrets" {
 }
 
 locals {
-  namespace          = "resume"
-  app_url            = "https://resume.viktorbarzin.me"
+  namespace           = "resume"
+  app_url             = "https://resume.viktorbarzin.me"
   mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
 }
 
@@ -30,6 +30,33 @@ module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.resume.metadata[0].name
   tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "resume-secrets"
+      namespace = "resume"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "resume-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "resume"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.resume]
 }
 
 # Printer service (browserless chromium for PDF generation)
@@ -157,6 +184,9 @@ resource "kubernetes_deployment" "resume" {
         labels = {
           app = "resume"
         }
+        annotations = {
+          "reloader.stakater.com/search" = "true"
+        }
       }
       spec {
         container {
@@ -185,8 +215,13 @@ resource "kubernetes_deployment" "resume" {
             value = "http://resume.${local.namespace}.svc.cluster.local"
           }
           env {
-            name  = "AUTH_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["auth_secret"]
+            name = "AUTH_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "resume-secrets"
+                key  = "auth_secret"
+              }
+            }
           }
 
           # Server config

@@ -131,16 +131,8 @@ resource "kubernetes_cluster_role_binding" "kubernetes-dashboard" {
   # depends_on = [module.dashboard]
 }
 
-resource "kubernetes_secret" "kubernetes-dashboard-admin-token" {
-  metadata {
-    name      = "kubernetes-dashboard-admin"
-    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
-    annotations = {
-      "kubernetes.io/service-account.name" : "kubernetes-dashboard"
-    }
-  }
-  type = "kubernetes.io/service-account-token"
-}
+# Admin token: use `vault write kubernetes/creds/dashboard-admin kubernetes_namespace=kubernetes-dashboard`
+# instead of a static never-expiring token.
 
 ## Readonly RBAC
 resource "kubernetes_cluster_role" "kubernetes-dashboard-viewonly" {

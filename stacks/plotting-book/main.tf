@@ -11,11 +11,6 @@ variable "plotting_book_google_client_secret" {
   sensitive = true
 }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "plotting-book"
-}
-
 resource "kubernetes_namespace" "plotting-book" {
   metadata {
     name = "plotting-book"
@@ -24,6 +19,33 @@ resource "kubernetes_namespace" "plotting-book" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "plotting-book-secrets"
+      namespace = "plotting-book"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "plotting-book-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "plotting-book"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.plotting-book]
 }
 
 module "tls_secret" {
@@ -55,6 +77,9 @@ resource "kubernetes_deployment" "plotting-book" {
     labels = {
       app  = "plotting-book"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   lifecycle {
@@ -91,8 +116,13 @@ resource "kubernetes_deployment" "plotting-book" {
           name              = "plotting-book"
           image_pull_policy = "Always"
           env {
-            name  = "SESSION_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["session_secret"]
+            name = "SESSION_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "plotting-book-secrets"
+                key  = "session_secret"
+              }
+            }
           }
           env {
             name  = "GOOGLE_CLIENT_ID"

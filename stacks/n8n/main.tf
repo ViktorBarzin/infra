@@ -5,11 +5,6 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "n8n"
-}
-
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.n8n.metadata[0].name
@@ -23,6 +18,33 @@ resource "kubernetes_namespace" "n8n" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "n8n-secrets"
+      namespace = "n8n"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "n8n-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "n8n"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.n8n]
 }
 
 module "nfs_data" {
@@ -84,6 +106,9 @@ resource "kubernetes_deployment" "n8n" {
       app  = "n8n"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -124,8 +149,13 @@ resource "kubernetes_deployment" "n8n" {
             value = "n8n"
           }
           env {
-            name  = "DB_POSTGRESDB_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DB_POSTGRESDB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "n8n-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "GENERIC_TIMEZONE"

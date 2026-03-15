@@ -29,6 +29,33 @@ resource "kubernetes_namespace" "shlink" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "url-secrets"
+      namespace = "url"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "url-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "url"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.shlink]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
@@ -87,6 +114,9 @@ resource "kubernetes_deployment" "shlink" {
       run  = "shlink"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -114,8 +144,13 @@ resource "kubernetes_deployment" "shlink" {
             value = "https"
           }
           env {
-            name  = "GEOLITE_LICENSE_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["geolite_license_key"]
+            name = "GEOLITE_LICENSE_KEY"
+            value_from {
+              secret_key_ref {
+                name = "url-secrets"
+                key  = "geolite_license_key"
+              }
+            }
           }
           # DB config
           env {

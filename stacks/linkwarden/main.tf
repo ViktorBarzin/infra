@@ -23,6 +23,33 @@ resource "kubernetes_namespace" "linkwarden" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "linkwarden-secrets"
+      namespace = "linkwarden"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "linkwarden-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "linkwarden"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.linkwarden]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.linkwarden.metadata[0].name
@@ -93,12 +120,22 @@ resource "kubernetes_deployment" "linkwarden" {
             value = "https://authentik.viktorbarzin.me/application/o/linkwarden"
           }
           env {
-            name  = "AUTHENTIK_CLIENT_ID"
-            value = data.vault_kv_secret_v2.secrets.data["authentik_client_id"]
+            name = "AUTHENTIK_CLIENT_ID"
+            value_from {
+              secret_key_ref {
+                name = "linkwarden-secrets"
+                key  = "authentik_client_id"
+              }
+            }
           }
           env {
-            name  = "AUTHENTIK_CLIENT_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["authentik_client_secret"]
+            name = "AUTHENTIK_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "linkwarden-secrets"
+                key  = "authentik_client_secret"
+              }
+            }
           }
           resources {
             requests = {

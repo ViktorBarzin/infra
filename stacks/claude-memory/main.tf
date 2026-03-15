@@ -22,6 +22,33 @@ resource "kubernetes_namespace" "claude-memory" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "claude-memory-secrets"
+      namespace = "claude-memory"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "claude-memory-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "claude-memory"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.claude-memory]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.claude-memory.metadata[0].name
@@ -74,6 +101,9 @@ resource "kubernetes_deployment" "claude-memory" {
       app  = "claude-memory"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 2
@@ -114,8 +144,13 @@ resource "kubernetes_deployment" "claude-memory" {
             value = "postgresql://claude_memory:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/claude_memory"
           }
           env {
-            name  = "API_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["api_key"]
+            name = "API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "claude-memory-secrets"
+                key  = "api_key"
+              }
+            }
           }
 
           startup_probe {

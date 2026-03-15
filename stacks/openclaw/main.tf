@@ -31,6 +31,33 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "openclaw-secrets"
+      namespace = "openclaw"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "openclaw-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "openclaw"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.openclaw]
+}
+
 resource "kubernetes_service_account" "openclaw" {
   metadata {
     name      = "openclaw"
@@ -296,6 +323,9 @@ resource "kubernetes_deployment" "openclaw" {
         labels = {
           app = "openclaw"
         }
+        annotations = {
+          "reloader.stakater.com/search" = "true"
+        }
       }
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
@@ -398,8 +428,13 @@ resource "kubernetes_deployment" "openclaw" {
             value = "http://claude-memory.claude-memory.svc.cluster.local"
           }
           env {
-            name  = "MEMORY_API_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["claude_memory_api_key"]
+            name = "MEMORY_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "openclaw-secrets"
+                key  = "claude_memory_api_key"
+              }
+            }
           }
           # Python packages path for skills
           env {
@@ -456,12 +491,22 @@ resource "kubernetes_deployment" "openclaw" {
             container_port = 7352
           }
           env {
-            name  = "NVIDIA_API_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["nvidia_api_key"]
+            name = "NVIDIA_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "openclaw-secrets"
+                key  = "nvidia_api_key"
+              }
+            }
           }
           env {
-            name  = "OPENROUTER_API_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["openrouter_api_key"]
+            name = "OPENROUTER_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "openclaw-secrets"
+                key  = "openrouter_api_key"
+              }
+            }
           }
           volume_mount {
             name       = "tools"
@@ -913,12 +958,22 @@ resource "kubernetes_cron_job_v1" "task_processor" {
               ]
 
               env {
-                name  = "FORGEJO_TOKEN"
-                value = data.vault_kv_secret_v2.secrets.data["forgejo_api_token"]
+                name = "FORGEJO_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "openclaw-secrets"
+                    key  = "forgejo_api_token"
+                  }
+                }
               }
               env {
-                name  = "OPENCLAW_TOKEN"
-                value = data.vault_kv_secret_v2.secrets.data["nvidia_api_key"]
+                name = "OPENCLAW_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "openclaw-secrets"
+                    key  = "nvidia_api_key"
+                  }
+                }
               }
 
               resources {

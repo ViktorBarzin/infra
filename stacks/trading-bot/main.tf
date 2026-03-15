@@ -6,23 +6,12 @@ variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "trading-bot"
-}
-
 locals {
   common_env = {
-    TRADING_DATABASE_URL                 = "postgresql+asyncpg://trading:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/trading"
     TRADING_REDIS_URL                    = "redis://${var.redis_host}:6379/4"
     TRADING_LOG_LEVEL                    = "INFO"
-    TRADING_ALPACA_API_KEY               = data.vault_kv_secret_v2.secrets.data["alpaca_api_key"]
-    TRADING_ALPACA_SECRET_KEY            = data.vault_kv_secret_v2.secrets.data["alpaca_secret_key"]
     TRADING_ALPACA_BASE_URL              = "https://paper-api.alpaca.markets"
     TRADING_PAPER_TRADING                = "true"
-    TRADING_JWT_SECRET_KEY               = data.vault_kv_secret_v2.secrets.data["jwt_secret"]
-    TRADING_REDDIT_CLIENT_ID             = data.vault_kv_secret_v2.secrets.data["reddit_client_id"]
-    TRADING_REDDIT_CLIENT_SECRET         = data.vault_kv_secret_v2.secrets.data["reddit_client_secret"]
     TRADING_REDDIT_USER_AGENT            = "trading-bot/0.1"
     TRADING_OLLAMA_HOST                  = "http://${var.ollama_host}:11434"
     TRADING_OLLAMA_MODEL                 = "gemma3"
@@ -31,8 +20,6 @@ locals {
     TRADING_POLL_INTERVAL_SECONDS        = "60"
     TRADING_HISTORICAL_BARS              = "100"
     TRADING_SNAPSHOT_INTERVAL_SECONDS    = "60"
-    TRADING_ALPHA_VANTAGE_API_KEY        = data.vault_kv_secret_v2.secrets.data["alpha_vantage_api_key"]
-    TRADING_FMP_API_KEY                  = data.vault_kv_secret_v2.secrets.data["fmp_api_key"]
     TRADING_FUNDAMENTALS_CACHE_TTL_HOURS = "24"
     TRADING_RP_ID                        = "trading.viktorbarzin.me"
     TRADING_RP_NAME                      = "Trading Bot"
@@ -56,6 +43,53 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "trading-bot-secrets"
+      namespace = "trading-bot"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "trading-bot-secrets"
+        template = {
+          data = {
+            TRADING_DATABASE_URL         = "postgresql+asyncpg://trading:{{ .db_password }}@${var.postgresql_host}:5432/trading"
+            TRADING_ALPACA_API_KEY       = "{{ .alpaca_api_key }}"
+            TRADING_ALPACA_SECRET_KEY    = "{{ .alpaca_secret_key }}"
+            TRADING_JWT_SECRET_KEY       = "{{ .jwt_secret }}"
+            TRADING_REDDIT_CLIENT_ID     = "{{ .reddit_client_id }}"
+            TRADING_REDDIT_CLIENT_SECRET = "{{ .reddit_client_secret }}"
+            TRADING_ALPHA_VANTAGE_API_KEY = "{{ .alpha_vantage_api_key }}"
+            TRADING_FMP_API_KEY          = "{{ .fmp_api_key }}"
+            DBAAS_ROOT_PASSWORD          = "{{ .dbaas_root_password }}"
+            DB_PASSWORD                  = "{{ .db_password }}"
+          }
+        }
+      }
+      data = [
+        { secretKey = "db_password", remoteRef = { key = "trading-bot", property = "db_password" } },
+        { secretKey = "alpaca_api_key", remoteRef = { key = "trading-bot", property = "alpaca_api_key" } },
+        { secretKey = "alpaca_secret_key", remoteRef = { key = "trading-bot", property = "alpaca_secret_key" } },
+        { secretKey = "jwt_secret", remoteRef = { key = "trading-bot", property = "jwt_secret" } },
+        { secretKey = "reddit_client_id", remoteRef = { key = "trading-bot", property = "reddit_client_id" } },
+        { secretKey = "reddit_client_secret", remoteRef = { key = "trading-bot", property = "reddit_client_secret" } },
+        { secretKey = "alpha_vantage_api_key", remoteRef = { key = "trading-bot", property = "alpha_vantage_api_key" } },
+        { secretKey = "fmp_api_key", remoteRef = { key = "trading-bot", property = "fmp_api_key" } },
+        { secretKey = "dbaas_root_password", remoteRef = { key = "trading-bot", property = "dbaas_root_password" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.trading-bot]
+}
+
 # Database init job - creates the trading database and user in PostgreSQL
 resource "kubernetes_job" "db_init" {
   metadata {
@@ -74,18 +108,23 @@ resource "kubernetes_job" "db_init" {
             <<-EOT
               set -e
               # Create role if not exists
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE trading WITH LOGIN PASSWORD '${data.vault_kv_secret_v2.secrets.data["db_password"]}'"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
+                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "CREATE ROLE trading WITH LOGIN PASSWORD '$DB_PASSWORD'"
               # Create database if not exists
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE trading OWNER trading"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
+                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE trading OWNER trading"
               # Grant privileges
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
               # Try to enable timescaledb (allow failure)
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d trading -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE" || true
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d trading -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE" || true
               echo "Database init complete"
             EOT
           ]
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
         }
         restart_policy = "Never"
       }
@@ -114,12 +153,13 @@ resource "kubernetes_job" "migrations" {
           image_pull_policy = "Always"
           command           = ["python", "-m", "alembic", "upgrade", "head"]
           env {
-            name  = "TRADING_DATABASE_URL"
-            value = "postgresql+asyncpg://trading:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/trading"
-          }
-          env {
             name  = "TRADING_REDIS_URL"
             value = "redis://${var.redis_host}:6379/4"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
           }
         }
         restart_policy = "Never"
@@ -142,6 +182,9 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
     labels = {
       app  = "trading-bot-frontend"
       tier = local.tiers.edge
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -200,6 +243,11 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
               value = env.value
             }
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
           resources {
             requests = {
               cpu    = "50m"
@@ -230,6 +278,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     labels = {
       app  = "trading-bot-workers"
       tier = local.tiers.edge
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -266,6 +317,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9091"
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -291,6 +347,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9092"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
           }
           resources {
             requests = {
@@ -318,6 +379,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9093"
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -343,6 +409,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9094"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
           }
           resources {
             requests = {
@@ -370,6 +441,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9095"
           }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -395,6 +471,11 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9096"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
           }
           resources {
             requests = {

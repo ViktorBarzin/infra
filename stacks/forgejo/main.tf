@@ -4,11 +4,6 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "forgejo"
-}
-
 resource "kubernetes_namespace" "forgejo" {
   metadata {
     name = "forgejo"

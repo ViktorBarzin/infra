@@ -6,11 +6,6 @@ variable "nfs_server" { type = string }
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "f1-stream"
-}
-
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
     name = "f1-stream"
@@ -19,6 +14,33 @@ resource "kubernetes_namespace" "f1-stream" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "f1-stream-secrets"
+      namespace = "f1-stream"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "f1-stream-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "f1-stream"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.f1-stream]
 }
 
 module "nfs_data" {
@@ -36,6 +58,9 @@ resource "kubernetes_deployment" "f1-stream" {
     labels = {
       app  = "f1-stream"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -69,8 +94,13 @@ resource "kubernetes_deployment" "f1-stream" {
             container_port = 8000
           }
           env {
-            name  = "DISCORD_TOKEN"
-            value = data.vault_kv_secret_v2.secrets.data["discord_user_token"]
+            name = "DISCORD_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "f1-stream-secrets"
+                key  = "discord_user_token"
+              }
+            }
           }
           env {
             name  = "DISCORD_CHANNELS"

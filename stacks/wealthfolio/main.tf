@@ -4,11 +4,6 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "wealthfolio"
-}
-
 # To refresh transactions use finance db positions exporters:
 #
 # workon finace-app && cd ~/code/finance && python main.py fetch position --imap-user=$IMAP_USER --imap-password=$IMAP_PASSWORD --trading212-api-keys=$TRADING212_API_KEYS --output-file positions.csv && mv positions.csv /home/wizard/code/infra/modules/kubernetes/wealthfolio/updated_trades.csv
@@ -24,6 +19,33 @@ resource "kubernetes_namespace" "wealthfolio" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "wealthfolio-secrets"
+      namespace = "wealthfolio"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "wealthfolio-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "wealthfolio"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.wealthfolio]
 }
 
 module "tls_secret" {
@@ -53,6 +75,9 @@ resource "kubernetes_deployment" "wealthfolio" {
       app  = "wealthfolio"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -79,8 +104,13 @@ resource "kubernetes_deployment" "wealthfolio" {
             value = "0.0.0.0:8080"
           }
           env {
-            name  = "WF_AUTH_PASSWORD_HASH"
-            value = data.vault_kv_secret_v2.secrets.data["password_hash"]
+            name = "WF_AUTH_PASSWORD_HASH"
+            value_from {
+              secret_key_ref {
+                name = "wealthfolio-secrets"
+                key  = "password_hash"
+              }
+            }
           }
           env {
             name  = "WF_DB_PATH"
