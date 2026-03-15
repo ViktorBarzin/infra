@@ -18,13 +18,13 @@ driver:
     config:
       name: time-slicing-config
 
-# DCGM Exporter - increased from 768Mi to 2560Mi based on VPA upper bound of 2091Mi
+# DCGM Exporter - reduced from 2560Mi to 1536Mi based on VPA upper bound of 1459Mi (1.05x margin)
 dcgmExporter:
   resources:
     requests:
-      memory: "2560Mi"
+      memory: "1536Mi"
     limits:
-      memory: "2560Mi"
+      memory: "1536Mi"
 
 # CUDA Validator - reduced from 1024Mi to 256Mi (one-shot job)
 validator:

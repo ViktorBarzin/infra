@@ -353,10 +353,10 @@ resource "kubernetes_deployment" "rybbit" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "768Mi"
+              memory = "384Mi"
             }
             limits = {
-              memory = "768Mi"
+              memory = "384Mi"
             }
           }
         }

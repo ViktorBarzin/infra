@@ -35,8 +35,8 @@ resource "kubernetes_resource_quota" "dbaas" {
   spec {
     hard = {
       "requests.cpu"    = "8"
-      "requests.memory" = "16Gi"
-      "limits.memory"   = "16Gi"
+      "requests.memory" = "20Gi"
+      "limits.memory"   = "20Gi"
       pods              = "30"
     }
   }
@@ -78,10 +78,10 @@ resource "helm_release" "mysql_operator" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "384Mi"
+        memory = "512Mi"
       }
       limits = {
-        memory = "384Mi"
+        memory = "512Mi"
       }
     }
   })]

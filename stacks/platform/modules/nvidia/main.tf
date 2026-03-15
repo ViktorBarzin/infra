@@ -132,7 +132,11 @@ resource "kubernetes_deployment" "nvidia-exporter" {
             }
           }
           resources {
+            requests = {
+              memory = "192Mi"
+            }
             limits = {
+              memory           = "192Mi"
               "nvidia.com/gpu" = "1"
             }
           }

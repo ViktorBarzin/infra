@@ -70,10 +70,10 @@ resource "kubernetes_deployment" "privatebin" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "128Mi"
             }
           }
         }

@@ -326,7 +326,7 @@ resource "kubernetes_deployment" "audiblez-web" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down - GPU node memory pressure
     strategy {
       type = "Recreate"
     }

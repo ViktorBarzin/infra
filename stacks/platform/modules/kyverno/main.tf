@@ -57,11 +57,11 @@ resource "helm_release" "kyverno" {
     cleanupController = {
       resources = {
         limits = {
-          memory = "128Mi"
+          memory = "192Mi"
         }
         requests = {
           cpu    = "100m"
-          memory = "128Mi"
+          memory = "192Mi"
         }
       }
     }
