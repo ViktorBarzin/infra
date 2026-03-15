@@ -426,7 +426,7 @@ resource "kubernetes_deployment" "openclaw" {
             }
             requests = {
               cpu    = "100m"
-              memory = "1280Mi"
+              memory = "2Gi"
             }
           }
         }

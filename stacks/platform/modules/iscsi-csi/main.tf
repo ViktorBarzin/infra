@@ -43,6 +43,38 @@ resource "helm_release" "democratic_csi" {
           limits   = { memory = "192Mi" }
         }
       }
+      externalProvisioner = {
+        resources = {
+          requests = { cpu = "5m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
+      }
+      externalAttacher = {
+        resources = {
+          requests = { cpu = "5m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
+      }
+      externalResizer = {
+        resources = {
+          requests = { cpu = "5m", memory = "64Mi" }
+          limits   = { memory = "64Mi" }
+        }
+      }
+      externalSnapshotter = {
+        resources = {
+          requests = { cpu = "5m", memory = "80Mi" }
+          limits   = { memory = "80Mi" }
+        }
+      }
+    }
+
+    # csiProxy is a top-level chart key, NOT nested under controller/node
+    csiProxy = {
+      resources = {
+        requests = { cpu = "5m", memory = "32Mi" }
+        limits   = { memory = "32Mi" }
+      }
     }
 
     node = {
@@ -50,6 +82,18 @@ resource "helm_release" "democratic_csi" {
         resources = {
           requests = { cpu = "25m", memory = "192Mi" }
           limits   = { memory = "192Mi" }
+        }
+      }
+      driverRegistrar = {
+        resources = {
+          requests = { cpu = "5m", memory = "32Mi" }
+          limits   = { memory = "32Mi" }
+        }
+      }
+      cleanup = {
+        resources = {
+          requests = { cpu = "5m", memory = "32Mi" }
+          limits   = { memory = "32Mi" }
         }
       }
 

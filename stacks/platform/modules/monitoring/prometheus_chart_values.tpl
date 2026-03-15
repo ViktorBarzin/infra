@@ -396,6 +396,27 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: OOM killed"
+          - alert: ClusterMemoryRequestsHigh
+            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) > 0.85
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster memory requests above 85% of allocatable"
+          - alert: ContainerNearOOM
+            expr: (container_memory_working_set_bytes / container_spec_memory_limit_bytes > 0.85) and container_spec_memory_limit_bytes > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} using >85% of memory limit"
+          - alert: PodUnschedulable
+            expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} unschedulable"
           - alert: NodeNotReady
             expr: kube_node_status_condition{condition="Ready",status="true"} == 0
             for: 5m
