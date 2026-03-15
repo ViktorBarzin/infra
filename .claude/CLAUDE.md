@@ -9,7 +9,7 @@
 - **GitHub API**: `curl` with tokens from tfvars (`gh` CLI blocked by sandbox)
 
 ## Instructions
-- **"remember X"**: Update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`
+- **"remember X"**: Use `memory-tool store "content" --category facts --tags "tag1,tag2"` (via exec) for persistent cross-session memory. Also update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`. To recall: `memory-tool recall "query"`. To list: `memory-tool list`. To delete: `memory-tool delete <id>`. Do NOT use MCP tools like `memory_store` — they don't exist. Use the CLI.
 - **Apply with SOPS**: Use `scripts/tg` wrapper instead of raw `terragrunt` — auto-decrypts secrets
 - **New services need CI/CD** (Woodpecker) and **monitoring** (Prometheus/Uptime Kuma)
 - **New service**: Use `setup-project` skill for full workflow
