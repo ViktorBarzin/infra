@@ -27,7 +27,7 @@ resource "kubernetes_resource_quota" "nvidia_quota" {
     hard = {
       "limits.memory"   = "48Gi"
       "requests.cpu"    = "8"
-      "requests.memory" = "8Gi"
+      "requests.memory" = "12Gi"
       pods              = "40"
     }
   }

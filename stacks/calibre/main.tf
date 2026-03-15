@@ -138,6 +138,7 @@ module "nfs_stacks_config" {
 # }
 
 resource "kubernetes_deployment" "calibre-web-automated" {
+  wait_for_rollout = false # DOCKER_MODS install takes 10+ min on every container start
   metadata {
     name      = "calibre-web-automated"
     namespace = kubernetes_namespace.calibre.metadata[0].name
@@ -205,7 +206,8 @@ resource "kubernetes_deployment" "calibre-web-automated" {
               path = "/"
               port = 8083
             }
-            initial_delay_seconds = 60
+            initial_delay_seconds = 120
+            timeout_seconds       = 5
             period_seconds        = 15
             failure_threshold     = 56
           }
