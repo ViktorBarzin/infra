@@ -7,7 +7,7 @@ dependency "platform" {
   skip_outputs = true
 }
 
-dependency "vault" {
-  config_path  = "../vault"
+dependency "external-secrets" {
+  config_path  = "../external-secrets"
   skip_outputs = true
 }

@@ -4,11 +4,6 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "hackmd"
-}
-
 resource "kubernetes_namespace" "hackmd" {
   metadata {
     name = "hackmd"
@@ -41,6 +36,9 @@ resource "kubernetes_deployment" "hackmd" {
       app                             = "hackmd"
       "kubernetes.io/cluster-service" = "true"
       tier                            = local.tiers.edge
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -102,8 +100,12 @@ resource "kubernetes_deployment" "hackmd" {
           image = "hackmdio/hackmd"
           env {
             name = "CMD_DB_URL"
-            # value = format("%s%s%s", "postgres://codimd:", var.hackmd_db_password, "@localhost/codimd")
-            value = format("%s%s%s", "mysql://codimd:", data.vault_kv_secret_v2.secrets.data["db_password"], "@${var.mysql_host}/codimd")
+            value_from {
+              secret_key_ref {
+                name = "hackmd-secrets"
+                key  = "CMD_DB_URL"
+              }
+            }
           }
           env {
             name  = "CMD_USECDN"
@@ -175,4 +177,35 @@ module "ingress" {
     "gethomepage.dev/group"        = "Development & CI"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "hackmd-secrets"
+      namespace = "hackmd"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "hackmd-secrets"
+        template = {
+          data = {
+            CMD_DB_URL = "mysql://codimd:{{ .db_password }}@mysql.dbaas.svc.cluster.local/codimd"
+          }
+        }
+      }
+      data = [{
+        secretKey = "db_password"
+        remoteRef = { key = "hackmd", property = "db_password" }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.hackmd]
 }

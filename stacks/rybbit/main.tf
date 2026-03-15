@@ -19,6 +19,33 @@ resource "kubernetes_namespace" "rybbit" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "rybbit-secrets"
+      namespace = "rybbit"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "rybbit-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "rybbit"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.rybbit]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
@@ -51,6 +78,9 @@ resource "kubernetes_deployment" "clickhouse" {
       app  = "clickhouse"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -77,8 +107,13 @@ resource "kubernetes_deployment" "clickhouse" {
             value = local.clickhouse_db
           }
           env {
-            name  = "CLICKHOUSE_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["clickhouse_password"]
+            name = "CLICKHOUSE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "rybbit-secrets"
+                key  = "clickhouse_password"
+              }
+            }
           }
           port {
             name           = "clickhouse"
@@ -201,6 +236,9 @@ resource "kubernetes_deployment" "rybbit" {
       app  = "rybbit"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -237,8 +275,13 @@ resource "kubernetes_deployment" "rybbit" {
             value = "default"
           }
           env {
-            name  = "CLICKHOUSE_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["clickhouse_password"]
+            name = "CLICKHOUSE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "rybbit-secrets"
+                key  = "clickhouse_password"
+              }
+            }
           }
           env {
             name  = "POSTGRES_HOST"
@@ -257,8 +300,13 @@ resource "kubernetes_deployment" "rybbit" {
             value = "rybbit"
           }
           env {
-            name  = "POSTGRES_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["postgres_password"]
+            name = "POSTGRES_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "rybbit-secrets"
+                key  = "postgres_password"
+              }
+            }
           }
           env {
             name  = "BASE_URL"

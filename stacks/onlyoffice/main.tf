@@ -6,11 +6,6 @@ variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "onlyoffice"
-}
-
 resource "kubernetes_namespace" "onlyoffice" {
   metadata {
     name = "onlyoffice"
@@ -21,6 +16,33 @@ resource "kubernetes_namespace" "onlyoffice" {
       "resource-governance/custom-quota"      = "true"
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "onlyoffice-secrets"
+      namespace = "onlyoffice"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "onlyoffice-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "onlyoffice"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.onlyoffice]
 }
 
 resource "kubernetes_limit_range" "onlyoffice" {
@@ -82,6 +104,9 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
       app  = "onlyoffice-document-server"
       tier = local.tiers.edge
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -138,8 +163,13 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
             value = "onlyoffice"
           }
           env {
-            name  = "DB_PWD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DB_PWD"
+            value_from {
+              secret_key_ref {
+                name = "onlyoffice-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "REDIS_SERVER_HOST"
@@ -150,8 +180,13 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
             value = 6379
           }
           env {
-            name  = "JWT_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["jwt_token"]
+            name = "JWT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "onlyoffice-secrets"
+                key  = "jwt_token"
+              }
+            }
           }
 
           volume_mount {

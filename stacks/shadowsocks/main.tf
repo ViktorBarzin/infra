@@ -1,8 +1,3 @@
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "shadowsocks"
-}
-
 variable "method" {
   default = "chacha20-ietf-poly1305"
 }
@@ -20,6 +15,33 @@ resource "kubernetes_namespace" "shadowsocks" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "shadowsocks-secrets"
+      namespace = "shadowsocks"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "shadowsocks-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "shadowsocks"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.shadowsocks]
+}
+
 resource "kubernetes_deployment" "shadowsocks" {
   metadata {
     name      = "shadowsocks"
@@ -29,7 +51,7 @@ resource "kubernetes_deployment" "shadowsocks" {
       tier  = local.tiers.edge
     }
     annotations = {
-      "reloader.stakater.com/search" = "true"
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -55,8 +77,13 @@ resource "kubernetes_deployment" "shadowsocks" {
             value = var.method
           }
           env {
-            name  = "PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["password"]
+            name = "PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "shadowsocks-secrets"
+                key  = "password"
+              }
+            }
           }
           port {
             container_port = 8388

@@ -4,11 +4,6 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "diun"
-}
-
 resource "kubernetes_namespace" "diun" {
   metadata {
     name = "diun"
@@ -17,6 +12,33 @@ resource "kubernetes_namespace" "diun" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "diun-secrets"
+      namespace = "diun"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "diun-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "diun"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.diun]
 }
 
 module "tls_secret" {
@@ -156,8 +178,13 @@ resource "kubernetes_deployment" "diun" {
           #   value = data.vault_kv_secret_v2.secrets.data["nfty_token"]
           # }
           env {
-            name  = "DIUN_NOTIF_SLACK_WEBHOOKURL"
-            value = data.vault_kv_secret_v2.secrets.data["slack_url"]
+            name = "DIUN_NOTIF_SLACK_WEBHOOKURL"
+            value_from {
+              secret_key_ref {
+                name = "diun-secrets"
+                key  = "slack_url"
+              }
+            }
           }
           env {
             name = "LOG_LEVEL"

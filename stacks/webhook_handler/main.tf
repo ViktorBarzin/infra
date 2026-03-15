@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "webhook_handler" {
       tier = local.tiers.aux
     }
     annotations = {
-      "reloader.stakater.com/search" = "true"
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -126,32 +126,62 @@ resource "kubernetes_deployment" "webhook_handler" {
             sub_path   = "id_rsa"
           }
           env {
-            name  = "WEBHOOKSECRET"
-            value = data.vault_kv_secret_v2.secrets.data["secret"]
+            name = "WEBHOOKSECRET"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "secret"
+              }
+            }
           }
           env {
-            name  = "FB_APP_SECRET"
-            value = data.vault_kv_secret_v2.secrets.data["fb_app_secret"]
+            name = "FB_APP_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "fb_app_secret"
+              }
+            }
           }
           env {
-            name  = "FB_VERIFY_TOKEN"
-            value = data.vault_kv_secret_v2.secrets.data["fb_verify_token"]
+            name = "FB_VERIFY_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "fb_verify_token"
+              }
+            }
           }
           env {
-            name  = "FB_PAGE_TOKEN"
-            value = data.vault_kv_secret_v2.secrets.data["fb_page_token"]
+            name = "FB_PAGE_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "fb_page_token"
+              }
+            }
           }
           env {
             name  = "CONFIG"
             value = "./chatbot/config/viktorwebservices.yaml"
           }
           env {
-            name  = "GIT_USER"
-            value = data.vault_kv_secret_v2.secrets.data["git_user"]
+            name = "GIT_USER"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "git_user"
+              }
+            }
           }
           env {
-            name  = "GIT_TOKEN"
-            value = data.vault_kv_secret_v2.secrets.data["git_token"]
+            name = "GIT_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "git_token"
+              }
+            }
           }
           env {
             name  = "SSH_KEY"
@@ -204,4 +234,31 @@ module "ingress" {
     "gethomepage.dev/group"        = "Automation"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "webhook-handler-secrets"
+      namespace = "webhook-handler"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "webhook-handler-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "webhook-handler"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.webhook-handler]
 }

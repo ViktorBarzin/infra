@@ -5,11 +5,6 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "speedtest"
-}
-
 resource "kubernetes_namespace" "speedtest" {
   metadata {
     name = "speedtest"
@@ -17,6 +12,33 @@ resource "kubernetes_namespace" "speedtest" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "speedtest-secrets"
+      namespace = "speedtest"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "speedtest-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "speedtest"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.speedtest]
 }
 
 module "tls_secret" {
@@ -44,6 +66,9 @@ resource "kubernetes_deployment" "speedtest" {
     labels = {
       app  = "speedtest"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -108,8 +133,13 @@ resource "kubernetes_deployment" "speedtest" {
             value = "speedtest"
           }
           env {
-            name  = "DB_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "speedtest-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "DB_PORT"

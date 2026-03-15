@@ -11,11 +11,6 @@ variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "mail_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "tandoor"
-}
-
 resource "kubernetes_namespace" "tandoor" {
   metadata {
     name = "tandoor"
@@ -25,6 +20,34 @@ resource "kubernetes_namespace" "tandoor" {
     }
   }
 }
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "tandoor-secrets"
+      namespace = "tandoor"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "tandoor-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "tandoor"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.tandoor]
+}
+
 resource "random_password" "secret_key" {
   length  = 128
   special = false
@@ -51,6 +74,9 @@ resource "kubernetes_deployment" "tandoor" {
     labels = {
       app  = "tandoor"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -96,8 +122,13 @@ resource "kubernetes_deployment" "tandoor" {
             value = "tandoor"
           }
           env {
-            name  = "POSTGRES_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "POSTGRES_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "tandoor-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "TANDOOR_PORT"

@@ -103,6 +103,33 @@ resource "kubernetes_namespace" "immich" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "immich-secrets"
+      namespace = "immich"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "immich-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "immich"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.immich]
+}
+
 resource "kubernetes_deployment" "immich_server" {
   metadata {
     name      = "immich-server"
@@ -111,6 +138,9 @@ resource "kubernetes_deployment" "immich_server" {
     labels = {
       app  = "immich-server"
       tier = local.tiers.gpu
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
     }
   }
 
@@ -140,8 +170,9 @@ resource "kubernetes_deployment" "immich_server" {
           app = "immich-server"
         }
         annotations = {
-          "diun.enable"       = "true"
-          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+          "diun.enable"                = "true"
+          "diun.include_tags"          = "^\\d+\\.\\d+\\.\\d+$"
+          "reloader.stakater.com/auto" = "true"
         }
       }
 
@@ -169,8 +200,13 @@ resource "kubernetes_deployment" "immich_server" {
             value = "immich"
           }
           env {
-            name  = "DB_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "immich-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "IMMICH_MACHINE_LEARNING_URL"
@@ -331,6 +367,9 @@ resource "kubernetes_deployment" "immich-postgres" {
     labels = {
       tier = local.tiers.gpu
     }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
 
   lifecycle {
@@ -365,8 +404,13 @@ resource "kubernetes_deployment" "immich-postgres" {
             name           = "postgresql"
           }
           env {
-            name  = "POSTGRES_PASSWORD"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"]
+            name = "POSTGRES_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "immich-secrets"
+                key  = "db_password"
+              }
+            }
           }
           env {
             name  = "POSTGRES_USER"
@@ -641,13 +685,22 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               image = "postgres:16.4-bullseye"
               command = ["/bin/sh", "-c", <<-EOT
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=${data.vault_kv_secret_v2.secrets.data["db_password"]} pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
+                pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
                 find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
               EOT
               ]
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "immich-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
               volume_mount {
                 name       = "postgresql-backup"
                 mount_path = "/backup"

@@ -52,6 +52,16 @@ resource "kubernetes_priority_class" "tier_2_gpu" {
   description       = "GPU workloads: Immich, Ollama, Frigate"
 }
 
+resource "kubernetes_priority_class" "gpu_workload" {
+  metadata {
+    name = "gpu-workload"
+  }
+  value             = 1200000
+  global_default    = false
+  preemption_policy = "PreemptLowerPriority"
+  description       = "GPU-pinned workloads. Higher than all user tiers. Auto-injected by Kyverno on pods requesting nvidia.com/gpu."
+}
+
 resource "kubernetes_priority_class" "tier_3_edge" {
   metadata {
     name = "tier-3-edge"
@@ -858,3 +868,81 @@ resource "kubernetes_manifest" "mutate_ndots" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# Layer 5: GPU Workload Priority Override (Kyverno Mutate)
+# -----------------------------------------------------------------------------
+# Overrides the tier-based priorityClassName with gpu-workload for pods that
+# actually request nvidia.com/gpu resources. This ensures GPU pods can preempt
+# non-GPU pods on the GPU node, regardless of namespace tier.
+# Runs after Layer 4 (tier injection), so it overrides the tier-based priority.
+
+resource "kubernetes_manifest" "mutate_gpu_priority" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "inject-gpu-workload-priority"
+      annotations = {
+        "policies.kyverno.io/title"       = "Inject GPU Workload Priority"
+        "policies.kyverno.io/description" = "Overrides priorityClassName to gpu-workload for pods requesting nvidia.com/gpu resources. Runs after tier-based injection."
+      }
+    }
+    spec = {
+      rules = [
+        {
+          name = "gpu-priority-override"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds      = ["Pod"]
+                  operations = ["CREATE"]
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  namespaces = local.excluded_namespaces
+                }
+              }
+            ]
+          }
+          preconditions = {
+            any = [
+              {
+                key      = "{{ request.object.spec.containers[].resources.requests.\"nvidia.com/gpu\" || '' }}"
+                operator = "NotEquals"
+                value    = ""
+              },
+              {
+                key      = "{{ request.object.spec.containers[].resources.limits.\"nvidia.com/gpu\" || '' }}"
+                operator = "NotEquals"
+                value    = ""
+              }
+            ]
+          }
+          mutate = {
+            patchesJson6902 = yamlencode([
+              {
+                op   = "remove"
+                path = "/spec/priority"
+              },
+              {
+                op   = "remove"
+                path = "/spec/preemptionPolicy"
+              },
+              {
+                op    = "add"
+                path  = "/spec/priorityClassName"
+                value = "gpu-workload"
+              }
+            ])
+          }
+        }
+      ]
+    }
+  }
+}

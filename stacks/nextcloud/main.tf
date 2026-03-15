@@ -34,6 +34,33 @@ resource "kubernetes_namespace" "nextcloud" {
   }
 }
 
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "nextcloud-secrets"
+      namespace = "nextcloud"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "nextcloud-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "nextcloud"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.nextcloud]
+}
+
 resource "kubernetes_resource_quota" "nextcloud" {
   metadata {
     name      = "nextcloud-quota"
@@ -182,8 +209,13 @@ resource "kubernetes_deployment" "whiteboard" {
             value = "http://nextcloud:8080"
           }
           env {
-            name  = "JWT_SECRET_KEY"
-            value = data.vault_kv_secret_v2.secrets.data["db_password"] # anything secret is fine
+            name = "JWT_SECRET_KEY"
+            value_from {
+              secret_key_ref {
+                name = "nextcloud-secrets"
+                key  = "db_password"
+              }
+            }
           }
         }
       }
