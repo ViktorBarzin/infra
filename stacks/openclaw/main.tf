@@ -148,10 +148,10 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = []
-        slots = {}
+        allow = ["memory-core"]
+        slots = { memory = "memory-core" }
         load = {
-          paths = ["/home/node/.openclaw/extensions"]
+          paths = ["/home/node/.openclaw/extensions", "/app/extensions"]
         }
       }
       commands = {
