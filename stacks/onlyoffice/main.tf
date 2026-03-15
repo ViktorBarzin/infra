@@ -85,6 +85,9 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "onlyoffice-document-server"

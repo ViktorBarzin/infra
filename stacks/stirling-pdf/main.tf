@@ -40,6 +40,9 @@ resource "kubernetes_deployment" "stirling-pdf" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "stirling-pdf"

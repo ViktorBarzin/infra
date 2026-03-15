@@ -1,5 +1,8 @@
 deploymentStrategy:
   type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
 replicas: 2
 adminPassword: "${grafana_admin_password}"
 resources:

@@ -130,6 +130,8 @@ evictionSoftGracePeriod:
   memory.available: "30s"
   nodefs.available: "60s"  # Grace period for disk space warnings
   imagefs.available: "30s"  # Shorter grace for critical containerd space
+memorySwap:
+  swapBehavior: "LimitedSwap"
 KUBELET_PATCH
   EOF
   k8s_join_command                 = var.k8s_join_command

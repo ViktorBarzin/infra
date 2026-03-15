@@ -25,6 +25,9 @@ resource "helm_release" "kyverno" {
       forceFailurePolicyIgnore = {
         enabled = true
       }
+      policyReports = {
+        enabled = false
+      }
     }
 
     reportsController = {
@@ -65,6 +68,14 @@ resource "helm_release" "kyverno" {
 
     admissionController = {
       replicas = 2
+
+      updateStrategy = {
+        type = "RollingUpdate"
+        rollingUpdate = {
+          maxSurge       = 0
+          maxUnavailable = 1
+        }
+      }
 
       container = {
         resources = {

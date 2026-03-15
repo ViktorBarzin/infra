@@ -150,6 +150,60 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
   }
 }
 
+# Weekly etcd defragmentation — prevents fragmentation buildup that causes slow requests
+resource "kubernetes_cron_job_v1" "defrag-etcd" {
+  metadata {
+    name      = "defrag-etcd"
+    namespace = "default"
+  }
+  spec {
+    schedule                      = "0 3 * * 0"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {
+        name = "defrag-etcd"
+      }
+      spec {
+        template {
+          metadata {
+            name = "defrag-etcd"
+          }
+          spec {
+            node_name           = "k8s-master"
+            priority_class_name = "system-cluster-critical"
+            host_network        = true
+            container {
+              name    = "defrag-etcd"
+              image   = "registry.k8s.io/etcd:3.5.21-0"
+              command = ["etcdctl"]
+              args    = ["--endpoints=https://127.0.0.1:2379", "--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt", "--key=/etc/kubernetes/pki/etcd/healthcheck-client.key", "defrag"]
+              env {
+                name  = "ETCDCTL_API"
+                value = "3"
+              }
+              volume_mount {
+                mount_path = "/etc/kubernetes/pki/etcd"
+                name       = "etcd-certs"
+                read_only  = true
+              }
+            }
+            volume {
+              name = "etcd-certs"
+              host_path {
+                path = "/etc/kubernetes/pki/etcd"
+                type = "DirectoryOrCreate"
+              }
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+}
+
 # Clean up evicted/failed pods cluster-wide daily
 resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
   metadata {

@@ -56,6 +56,10 @@ apt:
       filename: docker.list
 
 runcmd:
+  # Enable persistent journald logging for crash forensics
+  - mkdir -p /var/log/journal
+  - sed -i 's/#Storage=auto/Storage=persistent/' /etc/systemd/journald.conf
+  - systemctl restart systemd-journald
   %{if is_k8s_template}
   - apt-mark hold kubelet kubeadm kubectl
   - systemctl stop kubelet
@@ -63,6 +67,14 @@ runcmd:
   - ${containerd_config_update_command}
   - systemctl restart containerd
   - systemctl enable --now iscsid
+  # Create 4Gi swap file for worker node memory pressure relief (NOT for master — etcd is latency-critical)
+  - fallocate -l 4G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl -w vm.swappiness=10
+  - echo 'vm.swappiness=10' >> /etc/sysctl.d/99-swap.conf
   - ${k8s_join_command}
   - systemctl enable kubelet
   - systemctl start kubelet

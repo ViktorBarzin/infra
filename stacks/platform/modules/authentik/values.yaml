@@ -17,6 +17,11 @@ authentik:
 
 server:
   replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   resources:
     requests:
       cpu: 100m
@@ -45,6 +50,11 @@ global:
 
 worker:
   replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   resources:
     requests:
       cpu: 100m

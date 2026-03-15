@@ -64,8 +64,8 @@ resource "helm_release" "traefik" {
     updateStrategy = {
       type = "RollingUpdate"
       rollingUpdate = {
-        maxUnavailable = 1
-        maxSurge       = 2
+        maxUnavailable = 0
+        maxSurge       = 1
       }
     }
 
