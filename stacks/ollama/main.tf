@@ -5,13 +5,43 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "ollama_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "ollama"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "ollama-secrets"
+      namespace = "ollama"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "ollama-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "ollama"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.ollama]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "ollama-secrets"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  api_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["api_credentials"])
+  api_credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["api_credentials"])
 }
 
 

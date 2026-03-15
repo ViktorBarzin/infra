@@ -4,16 +4,6 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "calibre"
-}
-
-locals {
-  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
-}
-
-
 resource "kubernetes_namespace" "calibre" {
   metadata {
     name = "calibre"
@@ -24,6 +14,45 @@ resource "kubernetes_namespace" "calibre" {
     #   "istio-injection" : "enabled"
     # }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "calibre-secrets"
+      namespace = "calibre"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "calibre-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "calibre"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.calibre]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "calibre-secrets"
+    namespace = kubernetes_namespace.calibre.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
+locals {
+  homepage_credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["homepage_credentials"])
 }
 
 module "tls_secret" {

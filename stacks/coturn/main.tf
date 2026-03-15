@@ -4,9 +4,39 @@ variable "tls_secret_name" {
 }
 variable "public_ip" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "coturn"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "coturn-secrets"
+      namespace = "coturn"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "coturn-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "coturn"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.coturn]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "coturn-secrets"
+    namespace = kubernetes_namespace.coturn.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
@@ -45,7 +75,7 @@ resource "kubernetes_config_map" "coturn_config" {
       fingerprint
       lt-cred-mech
       use-auth-secret
-      static-auth-secret=${data.vault_kv_secret_v2.secrets.data["turn_secret"]}
+      static-auth-secret=${data.kubernetes_secret.eso_secrets.data["turn_secret"]}
       realm=${local.turn_realm}
       server-name=turn.${local.turn_realm}
 
@@ -83,6 +113,9 @@ resource "kubernetes_deployment" "coturn" {
     labels = {
       app  = "coturn"
       tier = local.tiers.edge
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
 

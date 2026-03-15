@@ -3,16 +3,6 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "audiobookshelf"
-}
-
-locals {
-  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
-}
-
-
 resource "kubernetes_namespace" "audiobookshelf" {
   metadata {
     name = "audiobookshelf"
@@ -21,6 +11,45 @@ resource "kubernetes_namespace" "audiobookshelf" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "audiobookshelf-secrets"
+      namespace = "audiobookshelf"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "audiobookshelf-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "audiobookshelf"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.audiobookshelf]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "audiobookshelf-secrets"
+    namespace = kubernetes_namespace.audiobookshelf.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
+locals {
+  homepage_credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["homepage_credentials"])
 }
 
 module "tls_secret" {

@@ -6,13 +6,43 @@ variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "real-estate-crawler"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "real-estate-crawler-secrets"
+      namespace = "realestate-crawler"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "real-estate-crawler-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "real-estate-crawler"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.realestate-crawler]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "real-estate-crawler-secrets"
+    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  notification_settings = jsondecode(data.vault_kv_secret_v2.secrets.data["notification_settings"])
+  notification_settings = jsondecode(data.kubernetes_secret.eso_secrets.data["notification_settings"])
 }
 
 
@@ -121,6 +151,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
       app  = "realestate-crawler-api"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 2
@@ -157,7 +190,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
 
           }
           # env {
@@ -299,6 +332,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
       app  = "realestate-crawler-celery"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -349,7 +385,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"
@@ -420,6 +456,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
       app  = "realestate-crawler-celery-beat"
       tier = local.tiers.aux
     }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
   }
   spec {
     replicas = 1
@@ -460,7 +499,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           }
           env {
             name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
+            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
           }
           env {
             name  = "CELERY_BROKER_URL"

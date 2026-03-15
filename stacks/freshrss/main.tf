@@ -3,22 +3,6 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "freshrss"
-}
-
-locals {
-  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
-}
-
-
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = "freshrss"
-  tls_secret_name = var.tls_secret_name
-}
-
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "freshrss"
@@ -26,6 +10,51 @@ resource "kubernetes_namespace" "immich" {
       tier = local.tiers.aux
     }
   }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "freshrss-secrets"
+      namespace = "freshrss"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "freshrss-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "freshrss"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.immich]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "freshrss-secrets"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
+locals {
+  homepage_credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["homepage_credentials"])
+}
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = "freshrss"
+  tls_secret_name = var.tls_secret_name
 }
 
 module "nfs_data" {

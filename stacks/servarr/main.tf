@@ -4,13 +4,43 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "servarr"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "servarr-secrets"
+      namespace = "servarr"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "servarr-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "servarr"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.servarr]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "servarr-secrets"
+    namespace = kubernetes_namespace.servarr.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+  homepage_credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["homepage_credentials"])
 }
 
 
@@ -80,7 +110,7 @@ module "listenarr" {
 module "aiostreams" {
   source                                = "./aiostreams"
   tls_secret_name                       = var.tls_secret_name
-  aiostreams_database_connection_string = data.vault_kv_secret_v2.secrets.data["aiostreams_database_connection_string"]
+  aiostreams_database_connection_string = data.kubernetes_secret.eso_secrets.data["aiostreams_database_connection_string"]
   tier                                  = local.tiers.aux
   nfs_server                            = var.nfs_server
 }
