@@ -13,9 +13,8 @@ remote_state {
   }
 }
 
-# Load config.tfvars (plaintext) + secrets.auto.tfvars.json (SOPS-decrypted).
-# Run `scripts/tg` instead of raw `terragrunt` — it decrypts secrets first.
-# Falls back to terraform.tfvars if it exists (migration compatibility).
+# Load config.tfvars (plaintext) + terraform.tfvars (git-crypt encrypted, migration).
+# Secrets come from Vault KV — authenticate via `vault login -method=oidc`.
 terraform {
   extra_arguments "common_vars" {
     commands = get_terraform_commands_that_need_vars()
@@ -23,8 +22,7 @@ terraform {
       "${get_repo_root()}/config.tfvars"
     ]
     optional_var_files = [
-      "${get_repo_root()}/terraform.tfvars",
-      "${get_repo_root()}/secrets.auto.tfvars.json"
+      "${get_repo_root()}/terraform.tfvars"
     ]
   }
 
@@ -33,12 +31,6 @@ terraform {
     arguments = [
       "-var", "kube_config_path=${get_repo_root()}/config"
     ]
-  }
-
-  # Safety: fail if neither secrets source exists
-  before_hook "check_secrets" {
-    commands = ["apply", "plan", "destroy"]
-    execute  = ["sh", "-c", "test -f ${get_repo_root()}/secrets.auto.tfvars.json || test -f ${get_repo_root()}/terraform.tfvars || (echo 'ERROR: No secrets file found. Run scripts/tg instead of terragrunt directly.' && exit 1)"]
   }
 }
 
@@ -62,12 +54,6 @@ variable "kube_config_path" {
   default = "~/.kube/config"
 }
 
-variable "vault_root_token" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
 provider "kubernetes" {
   config_path = var.kube_config_path
 }
@@ -80,7 +66,6 @@ provider "helm" {
 
 provider "vault" {
   address          = "https://vault.viktorbarzin.me"
-  token            = var.vault_root_token
   skip_child_token = true
 }
 EOF

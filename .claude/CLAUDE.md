@@ -10,7 +10,7 @@
 
 ## Instructions
 - **"remember X"**: Use `memory-tool store "content" --category facts --tags "tag1,tag2"` (via exec) for persistent cross-session memory. Also update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`. To recall: `memory-tool recall "query"`. To list: `memory-tool list`. To delete: `memory-tool delete <id>`. The native `memory_search` and `memory_get` tools are also available for searching indexed memory files. For **storing** new memories, always use the `memory-tool` CLI via exec.
-- **Apply with SOPS**: Use `scripts/tg` wrapper instead of raw `terragrunt` — auto-decrypts secrets
+- **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies.
 - **New services need CI/CD** (Woodpecker) and **monitoring** (Prometheus/Uptime Kuma)
 - **New service**: Use `setup-project` skill for full workflow
 - **Ingress**: `ingress_factory` module. Auth: `protected = true`. Anti-AI: on by default.
@@ -19,13 +19,20 @@
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
 
-## Secrets Management — Vault KV
-- **All secrets migrated from SOPS to Vault KV v2** (2026-03-15). 43 stacks read from `data "vault_kv_secret_v2" "secrets"` at `secret/<stack-name>`.
-- **Vault stack** (`stacks/vault/main.tf`) is the bridge: reads secrets from SOPS `-var-file`, writes them to Vault KV via 43 `vault_kv_secret_v2` resources.
-- **Bootstrap secrets stay in SOPS permanently**: `vault_root_token`, `vault_authentik_client_id`, `vault_authentik_client_secret`.
-- **Platform cannot depend on vault** (circular — vault depends on platform). Apply order: vault first, then platform.
+## Secrets Management — Vault KV (SOPS removed)
+- **Vault is the sole source of truth** for secrets. SOPS pipeline has been removed entirely.
+- **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
+- **Vault stack self-reads**: `data "vault_kv_secret_v2" "vault"` reads its own OIDC creds from `secret/vault`.
+- **Consuming stacks** read from `data "vault_kv_secret_v2" "secrets"` at `secret/<stack-name>`.
+- **External Secrets Operator (ESO)**: `stacks/external-secrets/` syncs Vault KV → K8s Secrets via `ClusterSecretStore`.
+- **Database rotation**: Vault database secrets engine rotates app DB passwords every 24h (MySQL + PostgreSQL static roles).
+- **K8s credentials**: Vault K8s secrets engine issues short-lived tokens for dashboard, CI, OpenClaw, local admin.
+- **CI/CD (Woodpecker)**: Authenticates via K8s service account JWT → Vault K8s auth method.
+- **Platform cannot depend on vault** (circular). Apply order: vault first, then platform.
 - **Complex types** (maps/lists like `homepage_credentials`, `k8s_users`) stored as JSON strings in KV, decoded with `jsondecode()` in consuming stack `locals` blocks.
-- **New stacks**: Add a `vault_kv_secret_v2` resource in vault/main.tf, then use `data "vault_kv_secret_v2" "secrets"` + `dependency "vault"` in the new stack.
+- **New stacks**: Add secret in Vault UI/CLI at `secret/<stack-name>`, then use `data "vault_kv_secret_v2" "secrets"` in the stack.
+- **Backup CronJob**: `vault-raft-backup` uses manually-created `vault-root-token` K8s Secret (independent of automation).
+- **Bootstrap (fresh cluster)**: See vault/main.tf comments — comment out data source + OIDC, deploy Helm, init+unseal, populate `secret/vault`, uncomment, re-apply.
 
 ## Resource Management Patterns
 - **CPU**: All CPU limits removed cluster-wide (CFS throttling). Only set CPU requests based on actual usage.
