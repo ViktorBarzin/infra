@@ -195,7 +195,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           }
           env {
             name  = "SLACK_WEBHOOK_URL"
-            value = local.notification_settings["slack"]
+            value = local.notification_settings["slack"]["webhook_url"]
           }
           env {
             name  = "WEBAUTHN_RP_ID"
@@ -361,7 +361,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           }
           env {
             name  = "SLACK_WEBHOOK_URL"
-            value = lookup(local.notification_settings, "slack", "")
+            value = try(local.notification_settings["slack"]["webhook_url"], "")
           }
           env {
             name  = "OSRM_FOOT_URL"
@@ -472,7 +472,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           }
           env {
             name  = "SCRAPE_SCHEDULES"
-            value = lookup(local.notification_settings, "scrape_schedules", "")
+            value = try(tostring(local.notification_settings["scrape_schedules"]), "")
           }
           volume_mount {
             name       = "data"
