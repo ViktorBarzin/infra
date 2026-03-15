@@ -26,5 +26,8 @@ steps:
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
-      cache_from: "registry.viktorbarzin.me:5050/infra:latest"
-      cache_to: "type=inline"
+      # cache_from/cache_to removed: registry cache corruption causes
+      # "short read: expected 32 bytes" BuildKit errors. Inline cache
+      # will be re-populated once a clean image is pushed.
+      # cache_from: "registry.viktorbarzin.me:5050/infra:latest"
+      # cache_to: "type=inline"
