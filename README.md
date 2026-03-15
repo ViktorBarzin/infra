@@ -195,3 +195,4 @@ To decrypt the secrets, you need to setup [git-crypt](https://github.com/AGWA/gi
 3. `git-crypt unlock`
 
 This will unlock the secrets and will lock them on commit
+
