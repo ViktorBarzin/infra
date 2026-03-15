@@ -3,6 +3,11 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "novelapp"
+}
+
 resource "kubernetes_namespace" "novelapp" {
   metadata {
     name = "novelapp"
@@ -17,6 +22,16 @@ module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_secret" "novelapp_auth" {
+  metadata {
+    name      = "novelapp-auth"
+    namespace = kubernetes_namespace.novelapp.metadata[0].name
+  }
+  data = {
+    "auth-secret" = data.vault_kv_secret_v2.secrets.data["auth_secret"]
+  }
 }
 
 resource "kubernetes_persistent_volume_claim" "novelapp-data" {
@@ -91,6 +106,19 @@ resource "kubernetes_deployment" "novelapp" {
           env {
             name  = "PORT"
             value = "3000"
+          }
+          env {
+            name = "AUTH_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.novelapp_auth.metadata[0].name
+                key  = "auth-secret"
+              }
+            }
+          }
+          env {
+            name  = "ALLOWED_ORIGIN"
+            value = "https://novelapp.viktorbarzin.me"
           }
           volume_mount {
             name       = "data"
