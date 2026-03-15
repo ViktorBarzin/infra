@@ -2,15 +2,6 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "plotting_book_google_client_id" {
-  type      = string
-  sensitive = true
-}
-variable "plotting_book_google_client_secret" {
-  type      = string
-  sensitive = true
-}
-
 resource "kubernetes_namespace" "plotting-book" {
   metadata {
     name = "plotting-book"
@@ -125,12 +116,22 @@ resource "kubernetes_deployment" "plotting-book" {
             }
           }
           env {
-            name  = "GOOGLE_CLIENT_ID"
-            value = var.plotting_book_google_client_id
+            name = "GOOGLE_CLIENT_ID"
+            value_from {
+              secret_key_ref {
+                name = "plotting-book-secrets"
+                key  = "google_client_id"
+              }
+            }
           }
           env {
-            name  = "GOOGLE_CLIENT_SECRET"
-            value = var.plotting_book_google_client_secret
+            name = "GOOGLE_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "plotting-book-secrets"
+                key  = "google_client_secret"
+              }
+            }
           }
           env {
             name  = "GOOGLE_CALLBACK_URL"

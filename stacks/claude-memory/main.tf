@@ -49,6 +49,42 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.claude-memory]
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "claude-memory-db-creds"
+      namespace = "claude-memory"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "claude-memory-db-creds"
+        template = {
+          data = {
+            DATABASE_URL = "postgresql://claude_memory:{{ .password }}@${var.postgresql_host}:5432/claude_memory"
+            DB_PASSWORD  = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-claude-memory"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.claude-memory]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.claude-memory.metadata[0].name
@@ -143,8 +179,13 @@ resource "kubernetes_deployment" "claude-memory" {
           }
 
           env {
-            name  = "DATABASE_URL"
-            value = "postgresql://claude_memory:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/claude_memory"
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "claude-memory-db-creds"
+                key  = "DATABASE_URL"
+              }
+            }
           }
           env {
             name = "API_KEY"

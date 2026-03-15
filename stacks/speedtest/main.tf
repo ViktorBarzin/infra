@@ -25,15 +25,17 @@ resource "kubernetes_manifest" "external_secret" {
     spec = {
       refreshInterval = "15m"
       secretStoreRef = {
-        name = "vault-kv"
+        name = "vault-database"
         kind = "ClusterSecretStore"
       }
       target = {
         name = "speedtest-secrets"
       }
-      dataFrom = [{
-        extract = {
-          key = "speedtest"
+      data = [{
+        secretKey = "db_password"
+        remoteRef = {
+          key      = "static-creds/mysql-speedtest"
+          property = "password"
         }
       }]
     }

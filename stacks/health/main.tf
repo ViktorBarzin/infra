@@ -69,7 +69,7 @@ resource "kubernetes_deployment" "health" {
             name = "DATABASE_URL"
             value_from {
               secret_key_ref {
-                name = "health-secrets"
+                name = "health-db-secrets"
                 key  = "DATABASE_URL"
               }
             }
@@ -78,7 +78,7 @@ resource "kubernetes_deployment" "health" {
             name = "SECRET_KEY"
             value_from {
               secret_key_ref {
-                name = "health-secrets"
+                name = "health-kv-secrets"
                 key  = "secret_key"
               }
             }
@@ -163,12 +163,46 @@ module "ingress" {
   }
 }
 
-resource "kubernetes_manifest" "external_secret" {
+resource "kubernetes_manifest" "external_secret_db" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "health-secrets"
+      name      = "health-db-secrets"
+      namespace = "health"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "health-db-secrets"
+        template = {
+          data = {
+            DATABASE_URL = "postgresql+asyncpg://health:{{ .db_password }}@postgresql.dbaas.svc.cluster.local:5432/health"
+          }
+        }
+      }
+      data = [{
+        secretKey = "db_password"
+        remoteRef = {
+          key      = "static-creds/postgresql-health"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.health]
+}
+
+resource "kubernetes_manifest" "external_secret_kv" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "health-kv-secrets"
       namespace = "health"
     }
     spec = {
@@ -178,24 +212,15 @@ resource "kubernetes_manifest" "external_secret" {
         kind = "ClusterSecretStore"
       }
       target = {
-        name = "health-secrets"
-        template = {
-          data = {
-            DATABASE_URL = "postgresql+asyncpg://health:{{ .db_password }}@postgresql.dbaas.svc.cluster.local:5432/health"
-            secret_key   = "{{ .secret_key }}"
-          }
-        }
+        name = "health-kv-secrets"
       }
-      data = [
-        {
-          secretKey = "db_password"
-          remoteRef = { key = "health", property = "db_password" }
-        },
-        {
-          secretKey = "secret_key"
-          remoteRef = { key = "health", property = "secret_key" }
+      data = [{
+        secretKey = "secret_key"
+        remoteRef = {
+          key      = "health"
+          property = "secret_key"
         }
-      ]
+      }]
     }
   }
   depends_on = [kubernetes_namespace.health]

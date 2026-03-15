@@ -50,6 +50,42 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.linkwarden]
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "linkwarden-db-creds"
+      namespace = "linkwarden"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "linkwarden-db-creds"
+        template = {
+          data = {
+            DATABASE_URL = "postgresql://linkwarden:{{ .password }}@${var.postgresql_host}:5432/linkwarden"
+            DB_PASSWORD  = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-linkwarden"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.linkwarden]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.linkwarden.metadata[0].name
@@ -87,9 +123,9 @@ resource "kubernetes_deployment" "linkwarden" {
           app = "linkwarden"
         }
         annotations = {
-          "diun.enable"                      = "false"
-          "diun.include_tags"                = "latest"
-          "dependency.kyverno.io/wait-for"   = "postgresql.dbaas:5432"
+          "diun.enable"                    = "false"
+          "diun.include_tags"              = "latest"
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
         }
       }
       spec {
@@ -101,8 +137,13 @@ resource "kubernetes_deployment" "linkwarden" {
             container_port = 3000
           }
           env {
-            name  = "DATABASE_URL"
-            value = "postgresql://linkwarden:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/linkwarden"
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "linkwarden-db-creds"
+                key  = "DATABASE_URL"
+              }
+            }
           }
           env {
             name  = "NEXT_PUBLIC_AUTHENTIK_ENABLED"
