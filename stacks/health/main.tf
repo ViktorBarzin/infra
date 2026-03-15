@@ -188,7 +188,7 @@ resource "kubernetes_manifest" "external_secret_db" {
       data = [{
         secretKey = "db_password"
         remoteRef = {
-          key      = "static-creds/postgresql-health"
+          key      = "static-creds/pg-health"
           property = "password"
         }
       }]
