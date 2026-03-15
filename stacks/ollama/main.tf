@@ -207,7 +207,6 @@ locals {
 }
 
 resource "kubernetes_secret" "ollama_api_basic_auth" {
-  count = length(local.api_credentials) > 0 ? 1 : 0
   metadata {
     name      = "ollama-api-basic-auth-secret"
     namespace = kubernetes_namespace.ollama.metadata[0].name
@@ -224,7 +223,6 @@ resource "kubernetes_secret" "ollama_api_basic_auth" {
 }
 
 resource "kubernetes_manifest" "ollama_api_basic_auth_middleware" {
-  count = length(local.api_credentials) > 0 ? 1 : 0
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"
@@ -234,7 +232,7 @@ resource "kubernetes_manifest" "ollama_api_basic_auth_middleware" {
     }
     spec = {
       basicAuth = {
-        secret = kubernetes_secret.ollama_api_basic_auth[0].metadata[0].name
+        secret = kubernetes_secret.ollama_api_basic_auth.metadata[0].name
       }
     }
   }
