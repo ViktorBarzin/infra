@@ -426,7 +426,7 @@ resource "kubernetes_deployment" "openclaw" {
             }
             requests = {
               cpu    = "100m"
-              memory = "1536Mi"
+              memory = "1280Mi"
             }
           }
         }
@@ -467,7 +467,7 @@ resource "kubernetes_deployment" "openclaw" {
             }
             requests = {
               cpu    = "25m"
-              memory = "256Mi"
+              memory = "128Mi"
             }
           }
         }
