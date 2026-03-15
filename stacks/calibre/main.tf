@@ -215,6 +215,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
               path = "/"
               port = 8083
             }
+            timeout_seconds   = 5
             period_seconds    = 30
             failure_threshold = 3
           }

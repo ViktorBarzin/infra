@@ -112,6 +112,10 @@ resource "kubernetes_deployment" "speedtest" {
             value = data.vault_kv_secret_v2.secrets.data["db_password"]
           }
           env {
+            name  = "DB_PORT"
+            value = "3306"
+          }
+          env {
             name  = "APP_TIMEZONE"
             value = "Europe/Sofia"
           }
