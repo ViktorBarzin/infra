@@ -5,10 +5,33 @@ variable "tls_secret_name" {
 variable "slack_channel" { type = string }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "ytdlp"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "ytdlp-secrets"
+      namespace = "ytdlp"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "ytdlp-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "ytdlp"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.ytdlp]
 }
+
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
 
@@ -164,26 +187,6 @@ module "ingress" {
 # yt-highlights service
 # ----------------------
 
-resource "kubernetes_secret" "openrouter" {
-  metadata {
-    name      = "openrouter-credentials"
-    namespace = kubernetes_namespace.ytdlp.metadata[0].name
-  }
-  data = {
-    "api-key" = data.vault_kv_secret_v2.secrets.data["openrouter_api_key"]
-  }
-}
-
-resource "kubernetes_secret" "slack" {
-  metadata {
-    name      = "slack-credentials"
-    namespace = kubernetes_namespace.ytdlp.metadata[0].name
-  }
-  data = {
-    "bot-token" = data.vault_kv_secret_v2.secrets.data["slack_bot_token"]
-    "channel"   = var.slack_channel
-  }
-}
 
 resource "kubernetes_deployment" "yt_highlights" {
   metadata {
@@ -194,7 +197,8 @@ resource "kubernetes_deployment" "yt_highlights" {
       tier = local.tiers.aux
     }
     annotations = {
-      "diun.enable" = "true"
+      "diun.enable"                = "true"
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -245,8 +249,8 @@ resource "kubernetes_deployment" "yt_highlights" {
             name = "OPENROUTER_API_KEY"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret.openrouter.metadata[0].name
-                key  = "api-key"
+                name = "ytdlp-secrets"
+                key  = "openrouter_api_key"
               }
             }
           }
@@ -258,19 +262,14 @@ resource "kubernetes_deployment" "yt_highlights" {
             name = "SLACK_BOT_TOKEN"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret.slack.metadata[0].name
-                key  = "bot-token"
+                name = "ytdlp-secrets"
+                key  = "slack_bot_token"
               }
             }
           }
           env {
-            name = "SLACK_CHANNEL"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.slack.metadata[0].name
-                key  = "channel"
-              }
-            }
+            name  = "SLACK_CHANNEL"
+            value = var.slack_channel
           }
           env {
             name  = "REDIS_URL"

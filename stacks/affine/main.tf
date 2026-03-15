@@ -4,13 +4,43 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "affine"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "affine-secrets"
+      namespace = "affine"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "affine-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "affine"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.affine]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "affine-secrets"
+    namespace = kubernetes_namespace.affine.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+  mailserver_accounts = jsondecode(data.kubernetes_secret.eso_secrets.data["mailserver_accounts"])
 }
 variable "redis_host" { type = string }
 variable "postgresql_host" { type = string }
@@ -36,7 +66,7 @@ locals {
   common_env = [
     {
       name  = "DATABASE_URL"
-      value = "postgresql://affine:${data.vault_kv_secret_v2.secrets.data["db_password"]}@${var.postgresql_host}:5432/affine"
+      value = "postgresql://affine:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.postgresql_host}:5432/affine"
     },
     {
       name  = "REDIS_SERVER_HOST"
@@ -98,6 +128,9 @@ resource "kubernetes_deployment" "affine" {
     labels = {
       app  = "affine"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {

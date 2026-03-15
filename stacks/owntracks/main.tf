@@ -4,13 +4,43 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "owntracks"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "owntracks-secrets"
+      namespace = "owntracks"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "owntracks-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "owntracks"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.owntracks]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "owntracks-secrets"
+    namespace = kubernetes_namespace.owntracks.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["credentials"])
+  credentials = jsondecode(data.kubernetes_secret.eso_secrets.data["credentials"])
 }
 
 

@@ -3,9 +3,31 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "novelapp"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "novelapp-secrets"
+      namespace = "novelapp"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "novelapp-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "novelapp"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.novelapp]
 }
 
 resource "kubernetes_namespace" "novelapp" {
@@ -22,16 +44,6 @@ module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   tls_secret_name = var.tls_secret_name
-}
-
-resource "kubernetes_secret" "novelapp_auth" {
-  metadata {
-    name      = "novelapp-auth"
-    namespace = kubernetes_namespace.novelapp.metadata[0].name
-  }
-  data = {
-    "auth-secret" = data.vault_kv_secret_v2.secrets.data["auth_secret"]
-  }
 }
 
 resource "kubernetes_persistent_volume_claim" "novelapp-data" {
@@ -57,6 +69,9 @@ resource "kubernetes_deployment" "novelapp" {
     labels = {
       app  = "novelapp"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   lifecycle {
@@ -111,8 +126,8 @@ resource "kubernetes_deployment" "novelapp" {
             name = "AUTH_SECRET"
             value_from {
               secret_key_ref {
-                name = kubernetes_secret.novelapp_auth.metadata[0].name
-                key  = "auth-secret"
+                name = "novelapp-secrets"
+                key  = "auth_secret"
               }
             }
           }

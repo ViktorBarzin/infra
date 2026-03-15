@@ -4,13 +4,43 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "grampsweb"
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grampsweb-secrets"
+      namespace = "grampsweb"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grampsweb-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "grampsweb"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.grampsweb]
+}
+
+data "kubernetes_secret" "eso_secrets" {
+  metadata {
+    name      = "grampsweb-secrets"
+    namespace = kubernetes_namespace.grampsweb.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 locals {
-  mailserver_accounts = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
+  mailserver_accounts = jsondecode(data.kubernetes_secret.eso_secrets.data["mailserver_accounts"])
 }
 variable "redis_host" { type = string }
 variable "ollama_host" { type = string }
