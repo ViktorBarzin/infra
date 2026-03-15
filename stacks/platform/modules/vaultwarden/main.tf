@@ -240,7 +240,7 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
             }
             container {
               name  = "vaultwarden-backup"
-              image = "alpine"
+              image = "docker.io/library/alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
                 apk add --no-cache sqlite
