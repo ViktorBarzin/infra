@@ -18,6 +18,22 @@ driver:
     config:
       name: time-slicing-config
 
+# DCGM Exporter - increased from 768Mi to 2560Mi based on VPA upper bound of 2091Mi
+dcgmExporter:
+  resources:
+    requests:
+      memory: "2560Mi"
+    limits:
+      memory: "2560Mi"
+
+# CUDA Validator - reduced from 1024Mi to 256Mi (one-shot job)
+validator:
+  resources:
+    requests:
+      memory: "256Mi"
+    limits:
+      memory: "256Mi"
+
 # Tolerate GPU node taint for all GPU operator components
 daemonsets:
   tolerations:
