@@ -10,7 +10,7 @@ import os
 import sys
 import uuid
 from datetime import datetime, timedelta
-from urllib.parse import urljoin
+from urllib.parse import urljoin, unquote
 
 try:
     import caldav
@@ -19,6 +19,14 @@ except ImportError:
     print("ERROR: Required packages not installed. Run:")
     print("  pip install caldav icalendar")
     sys.exit(1)
+
+
+def cal_name(cal):
+    """Get calendar display name, handling deprecation."""
+    try:
+        return unquote(cal.get_display_name() or str(cal.url).rstrip("/").split("/")[-1])
+    except Exception:
+        return unquote(str(cal.url).rstrip("/").split("/")[-1])
 
 # Configuration from environment variables
 NEXTCLOUD_URL = os.environ.get("NEXTCLOUD_URL", "https://nextcloud.viktorbarzin.me")
@@ -50,7 +58,7 @@ def list_calendars():
     result = []
     for cal in calendars:
         result.append({
-            "name": cal.name,
+            "name": cal_name(cal),
             "url": str(cal.url)
         })
     return result
@@ -70,11 +78,11 @@ def get_events(calendar_name=None, start_date=None, end_date=None, days=7):
     all_events = []
 
     for cal in calendars:
-        if calendar_name and cal.name.lower() != calendar_name.lower():
+        if calendar_name and cal_name(cal).lower() != calendar_name.lower():
             continue
 
         try:
-            events = cal.search(start=start_date, end=end_date, expand=True)
+            events = cal.search(start=start_date, end=end_date, event=True, expand=True)
 
             for event in events:
                 try:
@@ -82,7 +90,7 @@ def get_events(calendar_name=None, start_date=None, end_date=None, days=7):
                     for component in ical.walk():
                         if component.name == "VEVENT":
                             event_data = {
-                                "calendar": cal.name,
+                                "calendar": cal_name(cal),
                                 "summary": str(component.get("summary", "No title")),
                                 "start": None,
                                 "end": None,
@@ -114,7 +122,7 @@ def get_events(calendar_name=None, start_date=None, end_date=None, days=7):
                     pass  # Skip malformed events
 
         except Exception as e:
-            print(f"Warning: Could not fetch from {cal.name}: {e}", file=sys.stderr)
+            print(f"Warning: Could not fetch from {cal_name(cal)}: {e}", file=sys.stderr)
 
     # Sort by start date
     all_events.sort(key=lambda x: x["start"] or "")
@@ -131,19 +139,19 @@ def create_event(summary, start_time, end_time=None, calendar_name="Personal",
     # Find the target calendar
     target_cal = None
     for cal in calendars:
-        if cal.name.lower() == calendar_name.lower():
+        if cal_name(cal).lower() == calendar_name.lower():
             target_cal = cal
             break
 
     if not target_cal:
         # Try partial match
         for cal in calendars:
-            if calendar_name.lower() in cal.name.lower():
+            if calendar_name.lower() in cal_name(cal).lower():
                 target_cal = cal
                 break
 
     if not target_cal:
-        raise ValueError(f"Calendar '{calendar_name}' not found. Available: {[c.name for c in calendars]}")
+        raise ValueError(f"Calendar '{calendar_name}' not found. Available: {[cal_name(c) for c in calendars]}")
 
     # Create the event
     cal = Calendar()
@@ -182,7 +190,7 @@ def create_event(summary, start_time, end_time=None, calendar_name="Personal",
     return {
         "status": "created",
         "summary": summary,
-        "calendar": target_cal.name,
+        "calendar": cal_name(target_cal),
         "start": start_time.strftime("%Y-%m-%d %H:%M") if not all_day else start_time.strftime("%Y-%m-%d"),
         "end": end_time.strftime("%Y-%m-%d %H:%M") if end_time and not all_day else None
     }
@@ -303,7 +311,7 @@ def main():
     parser = argparse.ArgumentParser(description="Query and manage Nextcloud Calendar")
     parser.add_argument("command", choices=["list", "events", "today", "tomorrow", "week", "month", "create"],
                         help="Command to run")
-    parser.add_argument("--calendar", "-c", default="Personal", help="Calendar name (default: Personal)")
+    parser.add_argument("--calendar", "-c", default=None, help="Calendar name filter (default: all calendars)")
     parser.add_argument("--days", "-d", type=int, default=7, help="Number of days to fetch")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--date", help="Specific date (YYYY-MM-DD) or relative (today, tomorrow, week, month)")
