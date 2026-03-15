@@ -19,6 +19,14 @@
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
 
+## Secrets Management — Vault KV
+- **All secrets migrated from SOPS to Vault KV v2** (2026-03-15). 43 stacks read from `data "vault_kv_secret_v2" "secrets"` at `secret/<stack-name>`.
+- **Vault stack** (`stacks/vault/main.tf`) is the bridge: reads secrets from SOPS `-var-file`, writes them to Vault KV via 43 `vault_kv_secret_v2` resources.
+- **Bootstrap secrets stay in SOPS permanently**: `vault_root_token`, `vault_authentik_client_id`, `vault_authentik_client_secret`.
+- **Platform cannot depend on vault** (circular — vault depends on platform). Apply order: vault first, then platform.
+- **Complex types** (maps/lists like `homepage_credentials`, `k8s_users`) stored as JSON strings in KV, decoded with `jsondecode()` in consuming stack `locals` blocks.
+- **New stacks**: Add a `vault_kv_secret_v2` resource in vault/main.tf, then use `data "vault_kv_secret_v2" "secrets"` + `dependency "vault"` in the new stack.
+
 ## Known Issues
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
 - **OpenClaw config is writable**: OpenClaw writes to `openclaw.json` at runtime (doctor --fix, plugin auto-enable). Never use subPath ConfigMap mounts for it — use an init container to copy into a writable volume. Needs 2Gi memory + `NODE_OPTIONS=--max-old-space-size=1536`.
