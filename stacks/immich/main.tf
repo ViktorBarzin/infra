@@ -114,6 +114,12 @@ resource "kubernetes_deployment" "immich_server" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
+
   spec {
     replicas                  = 1
     progress_deadline_seconds = 600
@@ -326,6 +332,13 @@ resource "kubernetes_deployment" "immich-postgres" {
       tier = local.tiers.gpu
     }
   }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
+
   spec {
     replicas = 1
     selector {
@@ -436,6 +449,13 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       tier = local.tiers.gpu
     }
   }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
+
   spec {
     replicas = 1
     selector {
