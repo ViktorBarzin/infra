@@ -208,6 +208,118 @@ resource "kubernetes_cluster_role_binding" "woodpecker_default" {
   }
 }
 
+# --- Vault → Woodpecker Secret Sync ---
+# Syncs secrets from Vault KV (secret/ci/global) to Woodpecker global secrets via API.
+# Runs every 6 hours. Secrets are created/updated via Woodpecker REST API.
+
+resource "kubernetes_config_map" "vault_woodpecker_sync" {
+  metadata {
+    name      = "vault-woodpecker-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+
+  data = {
+    "sync.sh" = <<-'SCRIPT'
+      #!/bin/sh
+      set -e
+      VAULT_ADDR="http://vault-active.vault.svc.cluster.local:8200"
+      WP_API="http://woodpecker-server.woodpecker.svc.cluster.local:8000/api"
+
+      # Authenticate to Vault via K8s SA
+      SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+      VAULT_TOKEN=$(curl -sf -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+        -d "{\"role\":\"woodpecker-sync\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+
+      if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+        echo "ERROR: Failed to authenticate to Vault"
+        exit 1
+      fi
+
+      # Get Woodpecker API token from Vault
+      WP_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data.woodpecker_api_token // empty')
+
+      if [ -z "$WP_TOKEN" ]; then
+        echo "ERROR: No woodpecker_api_token in secret/ci/global"
+        exit 1
+      fi
+
+      # Sync global secrets
+      SECRETS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data | to_entries[] | select(.key != "woodpecker_api_token") | @base64')
+
+      synced=0
+      for entry in $SECRETS; do
+        NAME=$(echo "$entry" | base64 -d | jq -r .key)
+        VALUE=$(echo "$entry" | base64 -d | jq -r .value)
+
+        # Try PATCH first (update), fall back to POST (create)
+        STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X PATCH "$WP_API/secrets/$NAME" \
+          -H "Authorization: Bearer $WP_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"push\",\"tag\",\"deployment\"]}" 2>/dev/null || echo "000")
+
+        if [ "$STATUS" != "200" ]; then
+          curl -sf -X POST "$WP_API/secrets" \
+            -H "Authorization: Bearer $WP_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"push\",\"tag\",\"deployment\"]}" > /dev/null
+        fi
+        synced=$((synced + 1))
+      done
+      echo "Synced $synced global secrets from Vault to Woodpecker"
+    SCRIPT
+  }
+}
+
+resource "kubernetes_cron_job_v1" "vault_secret_sync" {
+  metadata {
+    name      = "vault-woodpecker-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 */6 * * *"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name    = "sync"
+              image   = "curlimages/curl"
+              command = ["/bin/sh", "/scripts/sync.sh"]
+              volume_mount {
+                name       = "sync-script"
+                mount_path = "/scripts"
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            volume {
+              name = "sync-script"
+              config_map {
+                name = kubernetes_config_map.vault_woodpecker_sync.metadata[0].name
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+}
+
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.woodpecker.metadata[0].name
