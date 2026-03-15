@@ -57,6 +57,9 @@ resource "kubernetes_deployment" "hackmd" {
           app                             = "hackmd"
           "kubernetes.io/cluster-service" = "true"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306"
+        }
       }
       spec {
         # container {

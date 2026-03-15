@@ -95,6 +95,9 @@ resource "kubernetes_deployment" "tandoor" {
         labels = {
           app = "tandoor"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+        }
       }
       spec {
         container {

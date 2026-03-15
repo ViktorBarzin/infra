@@ -87,8 +87,9 @@ resource "kubernetes_deployment" "linkwarden" {
           app = "linkwarden"
         }
         annotations = {
-          "diun.enable"       = "false"
-          "diun.include_tags" = "latest"
+          "diun.enable"                      = "false"
+          "diun.include_tags"                = "latest"
+          "dependency.kyverno.io/wait-for"   = "postgresql.dbaas:5432"
         }
       }
       spec {

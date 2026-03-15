@@ -123,6 +123,9 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
         labels = {
           app = "onlyoffice-document-server"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+        }
       }
       spec {
         container {

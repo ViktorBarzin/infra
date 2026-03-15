@@ -117,6 +117,9 @@ resource "kubernetes_deployment" "claude-memory" {
         labels = {
           app = "claude-memory"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+        }
       }
       spec {
         affinity {

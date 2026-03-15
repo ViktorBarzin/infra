@@ -122,6 +122,9 @@ resource "kubernetes_deployment" "n8n" {
         labels = {
           app = "n8n"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+        }
       }
       spec {
         service_account_name = kubernetes_service_account.n8n.metadata[0].name

@@ -58,6 +58,9 @@ resource "kubernetes_deployment" "immich-frame" {
         labels = {
           app = "immich-frame"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "immich-server.immich:2283"
+        }
       }
       spec {
         container {

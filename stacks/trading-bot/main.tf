@@ -207,6 +207,9 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
         labels = {
           app = "trading-bot-frontend"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
+        }
       }
       spec {
         container {
@@ -298,6 +301,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       metadata {
         labels = {
           app = "trading-bot-workers"
+        }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
         }
       }
       spec {

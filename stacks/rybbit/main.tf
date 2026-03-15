@@ -252,6 +252,9 @@ resource "kubernetes_deployment" "rybbit" {
         labels = {
           app = "rybbit"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,clickhouse.rybbit:8123"
+        }
       }
       spec {
         container {
@@ -403,6 +406,9 @@ resource "kubernetes_deployment" "rybbit-client" {
       metadata {
         labels = {
           app = "rybbit-client"
+        }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "rybbit.rybbit:3001"
         }
       }
       spec {

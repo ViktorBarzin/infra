@@ -137,6 +137,9 @@ resource "kubernetes_deployment" "grampsweb" {
         labels = {
           app = "grampsweb"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "redis.redis:6379"
+        }
       }
       spec {
         container {

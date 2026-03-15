@@ -84,6 +84,7 @@ resource "kubernetes_deployment" "dawarich" {
         annotations = {
           # "diun.enable"          = "true"
           # "diun.include_tags"    = "latest"
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
         }
       }
       spec {

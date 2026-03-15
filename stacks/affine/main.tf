@@ -112,6 +112,9 @@ resource "kubernetes_deployment" "affine" {
         labels = {
           app = "affine"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
+        }
       }
       spec {
         # Init container to run database migrations

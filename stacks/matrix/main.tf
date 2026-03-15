@@ -50,6 +50,9 @@ resource "kubernetes_deployment" "matrix" {
         labels = {
           app = "matrix"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+        }
       }
       spec {
         init_container {

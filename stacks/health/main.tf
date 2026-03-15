@@ -52,6 +52,9 @@ resource "kubernetes_deployment" "health" {
         labels = {
           app = "health"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+        }
       }
       spec {
         container {
