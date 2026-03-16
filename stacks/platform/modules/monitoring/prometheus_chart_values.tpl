@@ -98,6 +98,11 @@ alertmanager:
           - alertname = PowerOutage
         target_matchers:
           - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown"
+      # Containerd broken suppresses downstream pod alerts
+      - source_matchers:
+          - alertname = KubeletImagePullErrors
+        target_matchers:
+          - alertname =~ "PodsStuckContainerCreating|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -702,6 +707,50 @@ serverFiles:
               severity: info
             annotations:
               summary: "No node load data for 10m - check Prometheus scraping"
+      - name: "Node Runtime Health"
+        rules:
+          - alert: KubeletImagePullErrors
+            expr: sum by (node) (rate(kubelet_runtime_operations_errors_total{operation_type=~"pull_image|PullImage"}[10m])) > 0.1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Image pull errors on {{ $labels.node }}: {{ $value | printf \"%.2f\" }}/s — containerd may be broken"
+          - alert: KubeletPLEGUnhealthy
+            expr: (time() - kubelet_pleg_last_seen_seconds) > 180
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PLEG on {{ $labels.instance }} not seen for {{ $value | printf \"%.0f\" }}s — kubelet lifecycle management broken"
+          - alert: PodsStuckContainerCreating
+            expr: count by (node) (kube_pod_container_status_waiting_reason{reason="ContainerCreating"} == 1) > 3
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} pods stuck in ContainerCreating on {{ $labels.node }}"
+          - alert: KubeletRuntimeOperationsLatency
+            expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 30
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubelet {{ $labels.operation_type }} p99: {{ $value | printf \"%.0f\" }}s on {{ $labels.instance }} (threshold: 30s)"
+          - alert: KubeletRunningContainersDrop
+            expr: (kubelet_running_containers{container_state="running"} - kubelet_running_containers{container_state="running"} offset 10m) < -10
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Running containers on {{ $labels.instance }} dropped by {{ $value | printf \"%.0f\" }} in 10m"
+          - alert: CalicoNodeNotReady
+            expr: kube_daemonset_status_number_ready{namespace="calico-system", daemonset="calico-node"} < kube_daemonset_status_desired_number_scheduled{namespace="calico-system", daemonset="calico-node"}
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
