@@ -7,7 +7,6 @@ storage:
     blobdescriptor: inmemory
   filesystem:
     rootdirectory: /var/lib/registry
-    maxsize: 5GiB
   delete:
     enabled: true
   maintenance:
