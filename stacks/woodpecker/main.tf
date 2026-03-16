@@ -85,10 +85,8 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 # DB credentials from Vault database engine (rotated every 24h)
-# NOTE: Woodpecker Helm values use plan-time db_password from KV — the Helm
-# release will use the KV snapshot until the next terragrunt apply. This
-# ExternalSecret provides runtime-refreshed credentials for any future
-# migration to envFrom-based secret injection.
+# Updated: ExternalSecret now provides DATABASE_DATASOURCE
+# which gets injected via envFrom and auto-updates when password rotates
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -107,7 +105,8 @@ resource "kubernetes_manifest" "db_external_secret" {
         name = "woodpecker-db-creds"
         template = {
           data = {
-            DB_PASSWORD = "{{ .password }}"
+            # Key matches the Woodpecker Helm chart env var name
+            DATABASE_DATASOURCE = "postgres://woodpecker:{{ .password }}@${var.postgresql_host}:5432/woodpecker?sslmode=disable"
           }
         }
       }
@@ -203,6 +202,7 @@ resource "kubernetes_persistent_volume" "woodpecker_server_data" {
 }
 
 # Helm release for Woodpecker CI
+# Database datasource is now injected from ExternalSecret via envFrom
 resource "helm_release" "woodpecker" {
   name       = "woodpecker"
   namespace  = kubernetes_namespace.woodpecker.metadata[0].name
@@ -215,7 +215,6 @@ resource "helm_release" "woodpecker" {
       github_client_id      = data.vault_kv_secret_v2.secrets.data["github_client_id"]
       github_client_secret  = data.vault_kv_secret_v2.secrets.data["github_client_secret"]
       agent_secret          = data.vault_kv_secret_v2.secrets.data["agent_secret"]
-      db_password           = data.vault_kv_secret_v2.secrets.data["db_password"]
       postgresql_host       = var.postgresql_host
       forgejo_client_id     = data.vault_kv_secret_v2.secrets.data["forgejo_client_id"]
       forgejo_client_secret = data.vault_kv_secret_v2.secrets.data["forgejo_client_secret"]
@@ -225,7 +224,7 @@ resource "helm_release" "woodpecker" {
   ]
 
   timeout    = 600
-  depends_on = [kubernetes_job.db_init, kubernetes_persistent_volume.woodpecker_server_data]
+  depends_on = [kubernetes_job.db_init, kubernetes_persistent_volume.woodpecker_server_data, kubernetes_manifest.db_external_secret]
 }
 
 # ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces

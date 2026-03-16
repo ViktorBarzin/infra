@@ -18,7 +18,6 @@ server:
     WOODPECKER_GITHUB_SECRET: "${github_client_secret}"
     WOODPECKER_AGENT_SECRET: "${agent_secret}"
     WOODPECKER_DATABASE_DRIVER: "postgres"
-    WOODPECKER_DATABASE_DATASOURCE: "postgres://woodpecker:${db_password}@${postgresql_host}:5432/woodpecker?sslmode=disable"
     WOODPECKER_PLUGINS_PRIVILEGED: "woodpeckerci/plugin-docker-buildx,plugins/docker"
     WOODPECKER_PLUGINS_TRUSTED_CLONE: "woodpeckerci/plugin-git,alpine"
     WOODPECKER_LOG_LEVEL: "info"
@@ -26,6 +25,9 @@ server:
     WOODPECKER_FORGEJO_CLIENT: "${forgejo_client_id}"
     WOODPECKER_FORGEJO_SECRET: "${forgejo_client_secret}"
     WOODPECKER_FORGEJO_URL: "${forgejo_url}"
+  envFrom:
+    - secretRef:
+        name: woodpecker-db-creds
   service:
     type: ClusterIP
     port: 80
