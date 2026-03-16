@@ -43,6 +43,10 @@ resource "kubernetes_deployment" "k8s_portal" {
 
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    revision_history_limit = 3
     selector {
       match_labels = {
         app = "k8s-portal"
