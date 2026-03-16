@@ -64,7 +64,7 @@ resource "kubernetes_deployment" "f1-stream" {
     }
   }
   spec {
-    replicas = 0 # Scaled down for cluster stability — periodic scans cause memory pressure
+    replicas = 1
     selector {
       match_labels = {
         app = "f1-stream"
