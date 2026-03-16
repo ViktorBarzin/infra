@@ -11,10 +11,10 @@
 ## Instructions
 - **"remember X"**: Use `memory-tool store "content" --category facts --tags "tag1,tag2"` (via exec) for persistent cross-session memory. Also update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`. To recall: `memory-tool recall "query"`. To list: `memory-tool list`. To delete: `memory-tool delete <id>`. The native `memory_search` and `memory_get` tools are also available for searching indexed memory files. For **storing** new memories, always use the `memory-tool` CLI via exec.
 - **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies.
-- **New services need CI/CD** (Woodpecker) and **monitoring** (Prometheus/Uptime Kuma)
+- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma)
 - **New service**: Use `setup-project` skill for full workflow
 - **Ingress**: `ingress_factory` module. Auth: `protected = true`. Anti-AI: on by default.
-- **Docker images**: Always build for `linux/amd64` (`docker buildx build --platform linux/amd64`). Pull-through cache serves stale :latest — use versioned tags.
+- **Docker images**: Always build for `linux/amd64`. Use 8-char git SHA tags — `:latest` causes stale pull-through cache.
 - **LinuxServer.io containers**: `DOCKER_MODS` runs apt-get on every start — bake slow mods into a custom image (`RUN /docker-mods || true` then `ENV DOCKER_MODS=`). Set `NO_CHOWN=true` to skip recursive chown that hangs on NFS mounts.
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
@@ -29,7 +29,7 @@
 - **14 hybrid stacks** still keep `data "vault_kv_secret_v2"` for plan-time needs (job commands, Helm templatefile, module inputs). Platform has 48 plan-time refs — no migration possible without restructuring modules.
 - **Database rotation**: Vault DB engine rotates passwords every 24h. MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana. PostgreSQL: trading, health, linkwarden, affine, woodpecker, claude_memory. Excluded: authentik (PgBouncer), technitium/crowdsec (Helm-baked), root users.
 - **K8s credentials**: Vault K8s secrets engine. Roles: `dashboard-admin`, `ci-deployer`, `openclaw`, `local-admin`. Use `vault write kubernetes/creds/ROLE kubernetes_namespace=NS`. Helper: `scripts/vault-kubeconfig`.
-- **CI/CD (Woodpecker)**: Authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
+- **CI/CD (GHA + Woodpecker)**: Docker builds run on **GitHub Actions** (free on public repos). Woodpecker is **deploy-only** — receives image tag via API POST, runs `kubectl set image`. Woodpecker authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
 - **Platform cannot depend on vault** (circular). Apply order: vault first, then platform. Platform has 48 vault refs, all in module inputs — no ESO migration possible.
 - **Complex types** (maps/lists like `homepage_credentials`, `k8s_users`) stored as JSON strings in KV, decoded with `jsondecode()` in consuming stack `locals` blocks.
 - **New stacks**: Add secret in Vault UI/CLI at `secret/<stack-name>`, add ExternalSecret + `data "kubernetes_secret"` for plan-time, `secret_key_ref` for env vars. Use `data "vault_kv_secret_v2"` only if `data "kubernetes_secret"` won't work (e.g., first-apply bootstrap).
@@ -47,6 +47,34 @@
 - **NVIDIA GPU operator resources**: dcgm-exporter and cuda-validator resources configurable via `dcgmExporter.resources` and `validator.resources` in nvidia values.yaml.
 - **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
 - **Quarterly right-sizing**: Check Goldilocks dashboard. Compare VPA upperBound to current request. Also check for under-provisioned (VPA upper > request x 0.8).
+
+## CI/CD Architecture — GHA Builds + Woodpecker Deploy
+
+**Flow**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
+
+**Migrated to GHA** (6): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web
+**Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
+
+**Per-project files**:
+- `.github/workflows/build-and-deploy.yml` — GHA: checkout, build, push DockerHub, POST Woodpecker API
+- `.woodpecker/deploy.yml` — Woodpecker: `kubectl set image` + Slack notify (event: `[manual, push]`)
+- `.woodpecker/build-fallback.yml` — Old full build pipeline preserved (event: `deployment` — never auto-fires)
+
+**Woodpecker API**: Uses **numeric repo IDs** (`/api/repos/2/pipelines`), NOT owner/name paths (those return HTML).
+Repo IDs: Website=2, travel_blog=5, health=4, audiblez-web=9, f1-stream=10, claude-memory-mcp=78, infra-onboarding=79
+
+**Woodpecker YAML gotchas**:
+- Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
+- Use `bitnami/kubectl:latest` (not pinned versions — entrypoint compatibility issues)
+- Global secrets must have `manual` in their events list for API-triggered pipelines
+
+**GitHub repo secrets** (set on all repos): `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `WOODPECKER_TOKEN`
+
+**Infra pipelines unchanged**: `default.yml` (terragrunt apply), `renew-tls.yml` (certbot cron), `build-cli.yml` (dual registry push), `k8s-portal.yml` (path-filtered build) — all stay on Woodpecker.
+
+## Database Host
+
+**`postgresql_host`** in `config.tfvars` is `pg-cluster-rw.dbaas.svc.cluster.local` (the CNPG primary). The legacy `postgresql.dbaas` service has no endpoints — never use it. This variable is shared by ~12 stacks.
 
 ## Networking & Resilience
 - **Critical path services scaled to 3**: Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared.
