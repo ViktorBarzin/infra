@@ -200,6 +200,7 @@ module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.vault.metadata[0].name
   name            = "vault"
+  service_name    = "vault-active"
   tls_secret_name = var.tls_secret_name
   port            = 8200
   extra_annotations = {
@@ -456,7 +457,7 @@ resource "vault_database_secret_backend_static_role" "mysql_speedtest" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-speedtest"
   username        = "speedtest"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_wrongmove" {
@@ -464,7 +465,7 @@ resource "vault_database_secret_backend_static_role" "mysql_wrongmove" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-wrongmove"
   username        = "wrongmove"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_codimd" {
@@ -472,7 +473,7 @@ resource "vault_database_secret_backend_static_role" "mysql_codimd" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-codimd"
   username        = "codimd"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_nextcloud" {
@@ -480,7 +481,7 @@ resource "vault_database_secret_backend_static_role" "mysql_nextcloud" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-nextcloud"
   username        = "nextcloud"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_shlink" {
@@ -488,7 +489,7 @@ resource "vault_database_secret_backend_static_role" "mysql_shlink" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-shlink"
   username        = "shlink"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "mysql_grafana" {
@@ -496,7 +497,7 @@ resource "vault_database_secret_backend_static_role" "mysql_grafana" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-grafana"
   username        = "grafana"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 # --- PostgreSQL Static Roles ---
@@ -506,7 +507,7 @@ resource "vault_database_secret_backend_static_role" "pg_trading" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-trading"
   username        = "trading"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "pg_health" {
@@ -514,7 +515,7 @@ resource "vault_database_secret_backend_static_role" "pg_health" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-health"
   username        = "health"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "pg_linkwarden" {
@@ -522,7 +523,7 @@ resource "vault_database_secret_backend_static_role" "pg_linkwarden" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-linkwarden"
   username        = "linkwarden"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "pg_affine" {
@@ -530,7 +531,7 @@ resource "vault_database_secret_backend_static_role" "pg_affine" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-affine"
   username        = "affine"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "pg_woodpecker" {
@@ -538,7 +539,7 @@ resource "vault_database_secret_backend_static_role" "pg_woodpecker" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-woodpecker"
   username        = "woodpecker"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
@@ -546,7 +547,7 @@ resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-claude-memory"
   username        = "claude_memory"
-  rotation_period = 86400
+  rotation_period = 604800
 }
 
 # =============================================================================
