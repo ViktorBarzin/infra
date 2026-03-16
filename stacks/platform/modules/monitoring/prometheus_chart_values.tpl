@@ -104,6 +104,7 @@ alertmanager:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+            fallback: '{{ if eq .Status "firing" }}CRITICAL{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[CRITICAL]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
       - name: slack-warning
@@ -111,6 +112,7 @@ alertmanager:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+            fallback: '{{ if eq .Status "firing" }}WARNING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[WARNING]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
       - name: slack-info
@@ -118,6 +120,7 @@ alertmanager:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}#439FE0{{ else }}good{{ end }}'
+            fallback: 'INFO: {{ .GroupLabels.alertname }}'
             title: '[INFO] {{ .GroupLabels.alertname }}'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   # web.external-url seems to be hardcoded, edited deployment manually
@@ -366,7 +369,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} predicted to fill within 24h"
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: predicted full within 24h (current projected: {{ $value | humanize1024 }}B)"
           - alert: NFSServerUnresponsive
             expr: |
               (
@@ -379,7 +382,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Fewer than 2 nodes have NFS activity for 10m — TrueNAS (10.0.10.15) may be down"
+              summary: "Only {{ $value | printf \"%.0f\" }} node(s) have NFS activity — TrueNAS (10.0.10.15) may be down (need ≥2)"
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
@@ -395,28 +398,28 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: OOM killed"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }} OOM kill(s) in 15m"
           - alert: ClusterMemoryRequestsHigh
-            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) > 0.85
+            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) * 100 > 85
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Cluster memory requests above 85% of allocatable"
+              summary: "Cluster memory requests: {{ $value | printf \"%.0f\" }}% of allocatable (threshold: 85%)"
           - alert: ContainerNearOOM
-            expr: (container_memory_working_set_bytes / container_spec_memory_limit_bytes > 0.85) and container_spec_memory_limit_bytes > 0
+            expr: (container_memory_working_set_bytes{container!=""} / container_spec_memory_limit_bytes{container!=""} * 100 > 85) and container_spec_memory_limit_bytes{container!=""} > 0
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} using >85% of memory limit"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }}% of memory limit (threshold: 85%)"
           - alert: PodUnschedulable
             expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} unschedulable"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}: unschedulable — check resource requests and node affinity"
           - alert: NodeNotReady
             expr: kube_node_status_condition{condition="Ready",status="true"} == 0
             for: 5m
@@ -430,7 +433,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Node {{ $labels.node }}: {{ $labels.condition }}"
+              summary: "{{ $labels.node }}: {{ $labels.condition }} active"
           - alert: JobFailed
             expr: |
               kube_job_status_failed > 0
@@ -492,13 +495,13 @@ serverFiles:
               severity: critical
             annotations:
               summary: "etcd backup CronJob has never completed successfully"
-          - alert: New Tailscale client
+          - alert: NewTailscaleClient
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             for: 5m
             labels:
               severity: info
             annotations:
-              summary: "New Tailscale client registered"
+              summary: "New Tailscale client registered ({{ $value | printf \"%.2f\" }} reauth/s)"
           - alert: CrowdSecDown
             expr: up{job="crowdsec"} == 0
             for: 10m
@@ -769,7 +772,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "ForwardAuth resilience proxy serving fallback - check Poison Fountain and Authentik"
+              summary: "ForwardAuth fallback active — check Poison Fountain and Authentik availability"
           # - alert: OpenWRT High Memory Usage
           #   expr: 100 - ((openwrt_node_memory_MemAvailable_bytes * 100) / openwrt_node_memory_MemTotal_bytes) > 90
           #   for: 10m
