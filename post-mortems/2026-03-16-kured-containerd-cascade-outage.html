@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<base target="_blank">
+<title>Post-Incident Review: Kured + Containerd Cascade Outage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f3f0;
+  --bg-subtle: #ece9e4;
+  --surface: #ffffff;
+  --surface-hover: #faf9f7;
+  --text-primary: #1a1215;
+  --text-secondary: #6b5e64;
+  --text-muted: #9e9297;
+  --border: #ddd5d0;
+  --border-strong: #c4bab5;
+  --sev-red: #b91c1c;
+  --sev-red-light: #fef2f2;
+  --sev-red-glow: rgba(185, 28, 28, 0.15);
+  --amber: #b45309;
+  --amber-light: #fffbeb;
+  --green: #15803d;
+  --green-light: #f0fdf4;
+  --blue: #1d4ed8;
+  --blue-light: #eff6ff;
+  --accent: #991b1b;
+  --timeline-line: #ddd5d0;
+  --code-bg: #2d2024;
+  --cascade-gradient: linear-gradient(135deg, #b91c1c 0%, #b45309 40%, #1d4ed8 70%, #15803d 100%);
+}
+body.dark-mode {
+  --bg: #0f0b0d;
+  --bg-subtle: #1a1416;
+  --surface: #1e1719;
+  --surface-hover: #2a2224;
+  --text-primary: #ede8ea;
+  --text-secondary: #a89da2;
+  --text-muted: #6e6267;
+  --border: #332b2e;
+  --border-strong: #4a3f43;
+  --sev-red: #ef4444;
+  --sev-red-light: #2a1215;
+  --sev-red-glow: rgba(239, 68, 68, 0.2);
+  --amber: #f59e0b;
+  --amber-light: #231a0c;
+  --green: #22c55e;
+  --green-light: #0c1e14;
+  --blue: #60a5fa;
+  --blue-light: #0f1a2e;
+  --accent: #ef4444;
+  --timeline-line: #332b2e;
+  --code-bg: #0a0608;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background:
+    radial-gradient(ellipse at 20% 0%, var(--sev-red-glow) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(21, 128, 61, 0.06) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 0 24px 60px;
+}
+
+/* ===== HEADER ===== */
+.header {
+  background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 40%, #b91c1c 100%);
+  padding: 48px 40px 40px;
+  margin: 0 -24px 40px;
+  color: #fef2f2;
+  position: relative;
+  overflow: hidden;
+  animation: headerReveal 0.8s ease-out;
+}
+.dark-mode .header {
+  background: linear-gradient(135deg, #450a0a 0%, #7f1d1d 40%, #991b1b 100%);
+}
+@keyframes headerReveal {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 4px;
+  background: repeating-linear-gradient(90deg, #fbbf24 0, #fbbf24 20px, transparent 20px, transparent 30px);
+}
+.header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.sev-badge {
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.3);
+  padding: 3px 12px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.status-badge {
+  background: #22c55e;
+  color: #052e16;
+  padding: 3px 12px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.header h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.header-meta {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  font-weight: 300;
+}
+.header-meta strong { font-weight: 500; }
+
+/* ===== SUMMARY TRIPTYCH ===== */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
+}
+@media (max-width: 768px) { .summary-grid { grid-template-columns: 1fr; } }
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  border-top: 4px solid;
+  animation: cardIn 0.6s ease-out both;
+}
+.summary-card:nth-child(1) { border-top-color: var(--sev-red); animation-delay: 0.15s; }
+.summary-card:nth-child(2) { border-top-color: var(--amber); animation-delay: 0.25s; }
+.summary-card:nth-child(3) { border-top-color: var(--green); animation-delay: 0.35s; }
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.summary-card h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.summary-card:nth-child(1) h3 { color: var(--sev-red); }
+.summary-card:nth-child(2) h3 { color: var(--amber); }
+.summary-card:nth-child(3) h3 { color: var(--green); }
+.summary-card p {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+/* ===== METRICS BAR ===== */
+.metrics-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 40px;
+}
+@media (max-width: 768px) { .metrics-bar { grid-template-columns: repeat(2, 1fr); } }
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  animation: cardIn 0.6s ease-out both;
+}
+.metric-card:nth-child(1) { animation-delay: 0.2s; }
+.metric-card:nth-child(2) { animation-delay: 0.3s; }
+.metric-card:nth-child(3) { animation-delay: 0.4s; }
+.metric-card:nth-child(4) { animation-delay: 0.5s; }
+.metric-value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.metric-value.red { color: var(--sev-red); }
+.metric-value.amber { color: var(--amber); }
+.metric-value.blue { color: var(--blue); }
+.metric-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+/* ===== CASCADE DIAGRAM ===== */
+.section-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+  letter-spacing: -0.01em;
+}
+.cascade {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 40px;
+}
+.cascade-chain {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  padding: 8px 0;
+}
+@media (max-width: 768px) {
+  .cascade-chain { flex-direction: column; }
+  .cascade-arrow { transform: rotate(90deg); }
+}
+.cascade-node {
+  flex: 1;
+  min-width: 140px;
+  padding: 16px;
+  border-radius: 8px;
+  text-align: center;
+  border: 2px solid;
+  position: relative;
+}
+.cascade-node.trigger { background: var(--blue-light); border-color: var(--blue); }
+.cascade-node.failure { background: var(--sev-red-light); border-color: var(--sev-red); }
+.cascade-node.effect { background: var(--amber-light); border-color: var(--amber); }
+.cascade-node .stage-num {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.cascade-node.trigger .stage-num { color: var(--blue); }
+.cascade-node.failure .stage-num { color: var(--sev-red); }
+.cascade-node.effect .stage-num { color: var(--amber); }
+.cascade-node .stage-label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.cascade-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+/* ===== TIMELINE ===== */
+.timeline {
+  position: relative;
+  margin-bottom: 40px;
+  padding-left: 40px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, var(--sev-red), var(--amber), var(--green));
+}
+.timeline-event {
+  position: relative;
+  padding: 0 0 28px 28px;
+}
+.timeline-event:last-child { padding-bottom: 0; }
+.timeline-dot {
+  position: absolute;
+  left: -29px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 3px solid;
+  background: var(--surface);
+}
+.timeline-event.phase-trigger .timeline-dot { border-color: var(--blue); }
+.timeline-event.phase-detect .timeline-dot { border-color: var(--amber); }
+.timeline-event.phase-escalate .timeline-dot { border-color: var(--sev-red); }
+.timeline-event.phase-mitigate .timeline-dot { border-color: var(--green); }
+.timeline-event.phase-resolve .timeline-dot {
+  border-color: var(--green);
+  background: var(--green);
+}
+.timeline-time {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.timeline-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 4px;
+}
+.timeline-desc {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+/* ===== ROOT CAUSE ===== */
+.root-cause {
+  background: var(--sev-red-light);
+  border: 1px solid var(--sev-red);
+  border-left: 5px solid var(--sev-red);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 16px;
+}
+.root-cause h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--sev-red);
+  margin-bottom: 8px;
+}
+.root-cause p {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.contributing {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 40px;
+}
+.contributing h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+.contributing ul {
+  list-style: none;
+  padding: 0;
+}
+.contributing li {
+  padding: 8px 0;
+  padding-left: 24px;
+  position: relative;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.contributing li:last-child { border-bottom: none; }
+.contributing li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--amber);
+  transform: rotate(45deg);
+}
+
+/* ===== DERP CARDS ===== */
+.derp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 40px;
+}
+@media (max-width: 900px) { .derp-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 500px) { .derp-grid { grid-template-columns: 1fr; } }
+.derp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+.derp-card::before {
+  content: attr(data-letter);
+  position: absolute;
+  top: -12px;
+  right: -4px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 5rem;
+  font-weight: 700;
+  opacity: 0.06;
+  line-height: 1;
+}
+.derp-card h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+.derp-card ul {
+  list-style: none;
+  padding: 0;
+}
+.derp-card li {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 5px 0;
+  padding-left: 16px;
+  position: relative;
+}
+.derp-card li::before {
+  content: '\2022';
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+}
+
+/* ===== FOLLOW-UP TASKS ===== */
+.tasks {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 40px;
+}
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  transition: opacity 0.3s;
+}
+.task-item:last-child { border-bottom: none; }
+.task-item.done { opacity: 0.45; }
+.task-item.done .task-text { text-decoration: line-through; }
+.task-check {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  transition: all 0.2s;
+  font-size: 0.7rem;
+  color: transparent;
+}
+.task-item.done .task-check {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.task-text { flex: 1; font-size: 0.9rem; }
+.task-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.task-badge.p0 { background: var(--sev-red-light); color: var(--sev-red); border: 1px solid var(--sev-red); }
+.task-badge.p1 { background: var(--amber-light); color: var(--amber); border: 1px solid var(--amber); }
+.task-badge.p2 { background: var(--blue-light); color: var(--blue); border: 1px solid var(--blue); }
+.sla-badge {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* ===== DETECTION COVERAGE TABLE ===== */
+.coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 40px;
+  font-size: 0.85rem;
+}
+.coverage-table th {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.coverage-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.coverage-table tr:hover td { background: var(--surface-hover); }
+.coverage-table .new-badge {
+  display: inline-block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.65rem;
+  background: var(--green-light);
+  color: var(--green);
+  border: 1px solid var(--green);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.coverage-table .gap-badge {
+  display: inline-block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.65rem;
+  background: var(--sev-red-light);
+  color: var(--sev-red);
+  border: 1px solid var(--sev-red);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* ===== FOOTER ===== */
+.footer {
+  text-align: center;
+  padding: 24px 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+
+/* === INFRASTRUCTURE STYLES === */
+.viz-menu {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10000;
+    font-family: inherit;
+}
+.viz-menu-toggle {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border, #e2e8f0);
+    background: var(--surface, #fff);
+    color: var(--text-secondary, #64748b);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.viz-menu-toggle:hover {
+    background: var(--surface-hover, #f8fafc);
+    border-color: var(--border-strong, #cbd5e1);
+    transform: scale(1.05);
+}
+.viz-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 200px;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 10px;
+    padding: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+}
+.viz-menu.open .viz-menu-panel {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+.viz-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-primary, #0f172a);
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+    font-family: inherit;
+}
+.viz-menu-item:hover {
+    background: var(--surface-hover, #f1f5f9);
+}
+.viz-menu-icon {
+    width: 20px;
+    text-align: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+[data-animate] {
+    opacity: 0;
+    transition-property: opacity, transform, filter;
+    transition-duration: 0.6s;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-animate="fade-up"] { transform: translateY(20px); }
+[data-animate="fade-down"] { transform: translateY(-20px); }
+[data-animate="fade-left"] { transform: translateX(-20px); }
+[data-animate="fade-right"] { transform: translateX(20px); }
+[data-animate="scale-up"] { transform: scale(0.95); }
+[data-animate="blur-in"] { filter: blur(8px); }
+[data-animate].is-visible {
+    opacity: 1;
+    transform: none;
+    filter: none;
+}
+
+@media print {
+    .viz-menu { display: none !important; }
+    body { background: white !important; color: black !important; }
+    .dark-mode { all: unset; }
+    .card, .section, section { break-inside: avoid; }
+    .animate-in { opacity: 1 !important; animation: none !important; }
+    [data-animate] { opacity: 1 !important; transform: none !important; filter: none !important; transition: none !important; }
+    @page { margin: 1.5cm; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+    [data-animate] {
+        opacity: 1 !important;
+        transform: none !important;
+        filter: none !important;
+        transition: none !important;
+    }
+}
+</style>
+</head>
+<body>
+
+<!-- INFRA-MENU-HTML -->
+<nav class="viz-menu" id="vizMenu" aria-label="Visualization controls">
+    <button class="viz-menu-toggle" onclick="toggleMenu()" aria-label="Toggle menu" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="5" x2="15" y2="5"/>
+            <line x1="3" y1="9" x2="15" y2="9"/>
+            <line x1="3" y1="13" x2="15" y2="13"/>
+        </svg>
+    </button>
+    <div class="viz-menu-panel" id="vizMenuPanel">
+        <button onclick="toggleTheme()" class="viz-menu-item">
+            <span class="viz-menu-icon" id="themeIcon">&#9680;</span>
+            <span id="themeLabel">Toggle dark mode</span>
+        </button>
+        <button onclick="window.print()" class="viz-menu-item">
+            <span class="viz-menu-icon">&#9114;</span>
+            <span>Print / Save as PDF</span>
+        </button>
+        <button onclick="toggleFullscreen()" class="viz-menu-item">
+            <span class="viz-menu-icon" id="fsIcon">&#9974;</span>
+            <span id="fsLabel">Fullscreen</span>
+        </button>
+        <hr style="border:none;border-top:1px solid var(--border,#e2e8f0);margin:2px 8px">
+        <button onclick="saveAsImage()" class="viz-menu-item" id="saveImgBtn">
+            <span class="viz-menu-icon">&#128247;</span>
+            <span>Save as image</span>
+        </button>
+    </div>
+</nav>
+
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-badge">
+      <span class="sev-badge">SEV 1</span>
+      <span class="status-badge">Resolved</span>
+    </div>
+    <h1>Kured + Containerd Cascade Outage</h1>
+    <div class="header-meta">
+      <strong>Owner:</strong> Viktor Barzin &nbsp;&bull;&nbsp;
+      <strong>Duration:</strong> ~26 hours &nbsp;&bull;&nbsp;
+      <strong>Cluster:</strong> viktorbarzin.me k8s &nbsp;&bull;&nbsp;
+      <strong>Date:</strong> March 2026
+    </div>
+  </div>
+
+  <!-- 5-SECOND SUMMARY -->
+  <div class="summary-grid">
+    <div class="summary-card">
+      <h3>What Broke</h3>
+      <p>Containerd's overlayfs snapshotter corrupted after kernel update reboots. Image pulls failed, calico networking broke, cascading node-by-node outage.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Why It Took So Long</h3>
+      <p>Kured had no health gating &mdash; kept rebooting nodes even as the cluster degraded. No alert existed for image pull errors (stage 3 in the cascade). Reboot window config used wrong Helm keys.</p>
+    </div>
+    <div class="summary-card">
+      <h3>How It Was Fixed</h3>
+      <p>Manually cleaned containerd state on each node. Deployed sentinel gate DaemonSet to block reboots when cluster is unhealthy. Added 6 new Prometheus alerts covering the detection gap.</p>
+    </div>
+  </div>
+
+  <!-- IMPACT METRICS -->
+  <div class="metrics-bar">
+    <div class="metric-card" data-animate="fade-up">
+      <div class="metric-value red">26h</div>
+      <div class="metric-label">Total Outage</div>
+    </div>
+    <div class="metric-card" data-animate="fade-up" data-delay="100">
+      <div class="metric-value amber">~2h</div>
+      <div class="metric-label">Time to Detect</div>
+    </div>
+    <div class="metric-card" data-animate="fade-up" data-delay="200">
+      <div class="metric-value amber">~26h</div>
+      <div class="metric-label">Time to Mitigate</div>
+    </div>
+    <div class="metric-card" data-animate="fade-up" data-delay="300">
+      <div class="metric-value blue">5</div>
+      <div class="metric-label">Nodes Affected</div>
+    </div>
+  </div>
+
+  <!-- CASCADE CHAIN -->
+  <h2 class="section-title" data-animate="fade-up">Failure Cascade</h2>
+  <div class="cascade" data-animate="fade-up">
+    <div class="cascade-chain">
+      <div class="cascade-node trigger">
+        <div class="stage-num">Stage 1</div>
+        <div class="stage-label">Kernel Update</div>
+      </div>
+      <div class="cascade-arrow">&rarr;</div>
+      <div class="cascade-node trigger">
+        <div class="stage-num">Stage 2</div>
+        <div class="stage-label">Kured Reboot</div>
+      </div>
+      <div class="cascade-arrow">&rarr;</div>
+      <div class="cascade-node failure">
+        <div class="stage-num">Stage 3</div>
+        <div class="stage-label">Snapshotter Corrupt</div>
+      </div>
+      <div class="cascade-arrow">&rarr;</div>
+      <div class="cascade-node failure">
+        <div class="stage-num">Stage 4</div>
+        <div class="stage-label">Calico Down</div>
+      </div>
+      <div class="cascade-arrow">&rarr;</div>
+      <div class="cascade-node effect">
+        <div class="stage-num">Stage 5</div>
+        <div class="stage-label">Node NotReady</div>
+      </div>
+      <div class="cascade-arrow">&rarr;</div>
+      <div class="cascade-node effect">
+        <div class="stage-num">Stage 6</div>
+        <div class="stage-label">Pods Cascade Fail</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TIMELINE -->
+  <h2 class="section-title" data-animate="fade-up">Incident Timeline</h2>
+  <div class="timeline" data-animate="fade-up">
+    <div class="timeline-event phase-trigger">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+0</div>
+      <div class="timeline-title">unattended-upgrades installs kernel update</div>
+      <div class="timeline-desc">Automatic kernel update applied to all 5 nodes. <code>/var/run/reboot-required</code> created on each host.</div>
+    </div>
+    <div class="timeline-event phase-trigger">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+0 to T+2h</div>
+      <div class="timeline-title">Kured begins rebooting nodes</div>
+      <div class="timeline-desc">Kured detects sentinel files and starts rebooting nodes one by one. No health gating &mdash; proceeds regardless of cluster state. Reboot window config was not applied (wrong Helm keys).</div>
+    </div>
+    <div class="timeline-event phase-escalate">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+1h</div>
+      <div class="timeline-title">First node: containerd snapshotter corrupts</div>
+      <div class="timeline-desc">After reboot, containerd's overlayfs snapshotter is corrupted by the new kernel. Image pulls start failing on this node.</div>
+    </div>
+    <div class="timeline-event phase-detect">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+2h</div>
+      <div class="timeline-title">Detection: services failing</div>
+      <div class="timeline-desc">Noticed services going down. No Prometheus alert for image pull errors existed &mdash; detection was manual observation.</div>
+    </div>
+    <div class="timeline-event phase-escalate">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+2h to T+10h</div>
+      <div class="timeline-title">Cascade accelerates</div>
+      <div class="timeline-desc">Kured continues rebooting remaining nodes. Each rebooted node suffers the same containerd corruption. Calico-node pods fail to pull images, networking breaks node by node.</div>
+    </div>
+    <div class="timeline-event phase-mitigate">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+10h to T+24h</div>
+      <div class="timeline-title">Manual remediation begins</div>
+      <div class="timeline-desc">SSH to each node, clean containerd state, restart containerd + kubelet, drain and uncordon. Process repeated for all 5 nodes.</div>
+    </div>
+    <div class="timeline-event phase-resolve">
+      <div class="timeline-dot"></div>
+      <div class="timeline-time">T+26h</div>
+      <div class="timeline-title">Cluster fully recovered</div>
+      <div class="timeline-desc">All nodes Ready, all calico-node pods running, all services restored. Post-mortem remediation work begins.</div>
+    </div>
+  </div>
+
+  <!-- ROOT CAUSE -->
+  <h2 class="section-title" data-animate="fade-up">Root Cause</h2>
+  <div class="root-cause" data-animate="fade-up">
+    <h3>Primary Root Cause</h3>
+    <p>Containerd's overlayfs snapshotter became corrupted after a kernel update reboot. The new kernel was incompatible with existing overlayfs state, causing all subsequent image pulls to fail. This made calico-node (and all other pods) unable to start, breaking cluster networking.</p>
+  </div>
+  <div class="contributing" data-animate="fade-up">
+    <h3>Contributing Factors</h3>
+    <ul>
+      <li><strong>No health gating on kured:</strong> Kured kept rebooting nodes even as the cluster degraded. It had no mechanism to check if previous reboots were successful before proceeding to the next node.</li>
+      <li><strong>Wrong Helm configuration keys:</strong> Kured's reboot window used legacy keys (<code>reboot_days</code>) instead of the correct <code>configuration.rebootDays</code>. The window was never enforced.</li>
+      <li><strong>No monitoring for image pull errors:</strong> Stage 3 in the cascade (snapshotter corruption) had zero alerting. Detection relied on manual observation of service failures.</li>
+      <li><strong>No cool-down between reboots:</strong> Kured would reboot the next node immediately after the previous one came back, regardless of whether the cluster had stabilized.</li>
+      <li><strong>unattended-upgrades on k8s nodes:</strong> Kernel updates should not be automatically installed on production Kubernetes nodes. This was the initial trigger.</li>
+    </ul>
+  </div>
+
+  <!-- DERP SECTIONS -->
+  <h2 class="section-title" data-animate="fade-up">DERP Analysis</h2>
+  <div class="derp-grid">
+    <div class="derp-card" data-letter="D" data-animate="fade-up">
+      <h3>Detection</h3>
+      <ul>
+        <li>No alert for image pull errors &mdash; key gap filled by new <code>KubeletImagePullErrors</code> alert</li>
+        <li>Manual detection after ~2h when services started failing</li>
+        <li>Kured Slack notification was the only signal, but didn't indicate problems</li>
+      </ul>
+    </div>
+    <div class="derp-card" data-letter="E" data-animate="fade-up" data-delay="100">
+      <h3>Escalation</h3>
+      <ul>
+        <li>Single operator incident &mdash; no formal escalation needed (homelab)</li>
+        <li>Root cause identified by SSH-ing to nodes and checking containerd logs</li>
+        <li>Kured was not stopped quickly enough &mdash; continued rebooting during diagnosis</li>
+      </ul>
+    </div>
+    <div class="derp-card" data-letter="R" data-animate="fade-up" data-delay="200">
+      <h3>Remediation</h3>
+      <ul>
+        <li>Cleaned containerd overlayfs state on each node manually</li>
+        <li>Restarted containerd + kubelet on all affected nodes</li>
+        <li>Drained and uncordoned nodes one by one</li>
+        <li>Disabled unattended-upgrades on all nodes</li>
+      </ul>
+    </div>
+    <div class="derp-card" data-letter="P" data-animate="fade-up" data-delay="300">
+      <h3>Prevention</h3>
+      <ul>
+        <li>Sentinel gate DaemonSet: blocks kured unless all nodes Ready + calico healthy + 30m cool-down</li>
+        <li>Fixed kured Helm values: reboot window Mon-Fri 02:00-06:00 London</li>
+        <li>6 new Prometheus alerts covering node runtime health</li>
+        <li>Containerd cascade inhibition rule to suppress noise</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- DETECTION COVERAGE TABLE -->
+  <h2 class="section-title" data-animate="fade-up">Detection Chain Coverage</h2>
+  <table class="coverage-table" data-animate="fade-up">
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>What Happens</th>
+        <th>Alert</th>
+        <th>Latency</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1. Kernel update</td>
+        <td>reboot-required created</td>
+        <td><em>none</em> <span class="gap-badge">future</span></td>
+        <td>&mdash;</td>
+      </tr>
+      <tr>
+        <td>2. Kured reboots</td>
+        <td>Slack notification</td>
+        <td>Kured built-in</td>
+        <td>Immediate</td>
+      </tr>
+      <tr>
+        <td>3. Snapshotter corrupts</td>
+        <td>Image pull errors</td>
+        <td><strong>KubeletImagePullErrors</strong> <span class="new-badge">new</span></td>
+        <td>~10m</td>
+      </tr>
+      <tr>
+        <td>4. Calico breaks</td>
+        <td>DaemonSet mismatch</td>
+        <td><strong>CalicoNodeNotReady</strong> <span class="new-badge">new</span></td>
+        <td>~5m</td>
+      </tr>
+      <tr>
+        <td>5. Node networking fails</td>
+        <td>Node NotReady</td>
+        <td>NodeNotReady (existing)</td>
+        <td>~5m</td>
+      </tr>
+      <tr>
+        <td>6. Pods cascade fail</td>
+        <td>Replica mismatch</td>
+        <td>DeploymentReplicasMismatch (existing)</td>
+        <td>~30m</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- FOLLOW-UP TASKS -->
+  <h2 class="section-title" data-animate="fade-up">Follow-Up Tasks</h2>
+  <div class="tasks" data-animate="fade-up">
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Codify sentinel gate DaemonSet in Terraform (currently kubectl-applied)</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">7d</span>
+    </div>
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Investigate KubeletRuntimeOperationsLatency alert currently firing</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">7d</span>
+    </div>
+    <div class="task-item done" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Disable unattended-upgrades on all k8s nodes</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">done</span>
+    </div>
+    <div class="task-item done" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Fix kured Helm values &mdash; reboot window + gated sentinel</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">done</span>
+    </div>
+    <div class="task-item done" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Deploy sentinel gate DaemonSet with cluster health checks</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">done</span>
+    </div>
+    <div class="task-item done" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Add 6 Prometheus alerts for node runtime health</div>
+      <span class="task-badge p0">P0</span>
+      <span class="sla-badge">done</span>
+    </div>
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Add containerd health check to node provisioning (Terraform/cloud-init)</div>
+      <span class="task-badge p1">P1</span>
+      <span class="sla-badge">30d</span>
+    </div>
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Add Prometheus alert for /var/run/reboot-required existence (early warning)</div>
+      <span class="task-badge p1">P1</span>
+      <span class="sla-badge">30d</span>
+    </div>
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Evaluate switching from overlayfs to native snapshotter</div>
+      <span class="task-badge p2">P2</span>
+      <span class="sla-badge">90d</span>
+    </div>
+    <div class="task-item" onclick="this.classList.toggle('done')">
+      <div class="task-check">&#10003;</div>
+      <div class="task-text">Add runbook links to all new alerts</div>
+      <span class="task-badge p2">P2</span>
+      <span class="sla-badge">90d</span>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    Viktor Barzin &middot; March 16, 2026<br>
+    Generated by /visualize claude skill
+  </div>
+
+</div>
+
+<!-- INFRA-MENU-JS -->
+<script>
+function toggleMenu() {
+    const menu = document.getElementById('vizMenu');
+    const toggle = menu.querySelector('.viz-menu-toggle');
+    const isOpen = menu.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', isOpen);
+}
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('vizMenu');
+    if (menu && !menu.contains(e.target)) menu.classList.remove('open');
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const menu = document.getElementById('vizMenu');
+        if (menu) menu.classList.remove('open');
+    }
+});
+function toggleTheme() {
+    const isDark = document.body.classList.toggle('dark-mode');
+    localStorage.setItem('visualize-dark-mode', isDark);
+    updateThemeLabel();
+}
+function updateThemeLabel() {
+    const isDark = document.body.classList.contains('dark-mode');
+    const icon = document.getElementById('themeIcon');
+    const label = document.getElementById('themeLabel');
+    if (icon) icon.textContent = isDark ? '\u2600' : '\u25D0';
+    if (label) label.textContent = isDark ? 'Light mode' : 'Dark mode';
+}
+if (localStorage.getItem('visualize-dark-mode') === 'true' ||
+    (!localStorage.getItem('visualize-dark-mode') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.body.classList.add('dark-mode');
+}
+updateThemeLabel();
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+        document.exitFullscreen();
+    }
+}
+document.addEventListener('fullscreenchange', function() {
+    const icon = document.getElementById('fsIcon');
+    const label = document.getElementById('fsLabel');
+    const isFs = !!document.fullscreenElement;
+    if (icon) icon.textContent = isFs ? '\u26F6' : '\u26F6';
+    if (label) label.textContent = isFs ? 'Exit fullscreen' : 'Fullscreen';
+});
+(function initScrollReveal() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.querySelectorAll('[data-animate]').forEach(function(el) {
+            el.classList.add('is-visible');
+        });
+        return;
+    }
+    var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+            if (entry.isIntersecting) {
+                var el = entry.target;
+                var delay = parseInt(el.getAttribute('data-delay') || '0', 10);
+                var duration = el.getAttribute('data-duration');
+                if (duration) el.style.transitionDuration = duration + 'ms';
+                if (delay > 0) {
+                    setTimeout(function() { el.classList.add('is-visible'); }, delay);
+                } else {
+                    el.classList.add('is-visible');
+                }
+                observer.unobserve(el);
+            }
+        });
+    }, { threshold: 0.15 });
+    document.querySelectorAll('[data-animate]').forEach(function(el) {
+        observer.observe(el);
+    });
+})();
+function loadHtml2Canvas() {
+    if (typeof html2canvas !== 'undefined') return Promise.resolve();
+    return new Promise(function(resolve, reject) {
+        var script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        script.integrity = 'sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H';
+        script.crossOrigin = 'anonymous';
+        script.onload = resolve;
+        script.onerror = function() { reject(new Error('html2canvas load failed')); };
+        document.head.appendChild(script);
+    });
+}
+function saveAsImage() {
+    var btn = document.getElementById('saveImgBtn');
+    var label = btn.querySelector('span:last-child');
+    var origText = label.textContent;
+    label.textContent = 'Loading...';
+    btn.style.pointerEvents = 'none';
+    loadHtml2Canvas().then(function() {
+        label.textContent = 'Capturing...';
+        doCapture(btn, label, origText);
+    }).catch(function(err) {
+        console.error('Failed to load html2canvas:', err);
+        label.textContent = origText;
+        btn.style.pointerEvents = '';
+        alert('Could not load screenshot library. Try Print / Save as PDF instead.');
+    });
+}
+function doCapture(btn, label, origText) {
+    var menu = document.getElementById('vizMenu');
+    menu.style.display = 'none';
+    var target = document.querySelector('.container') || document.querySelector('main') || document.body;
+    var overrideStyle = document.createElement('style');
+    overrideStyle.id = 'html2canvas-capture-overrides';
+    overrideStyle.textContent = [
+        '*, *::before, *::after {',
+        '  animation-play-state: paused !important;',
+        '  animation-delay: 0s !important;',
+        '  animation-duration: 0s !important;',
+        '  transition-duration: 0s !important;',
+        '}',
+        '.ani, .animate-in, [class*="delay-"],',
+        '.d1,.d2,.d3,.d4,.d5,.d6,.d7,.d8,.d9,.d10,',
+        '[data-animate] {',
+        '  opacity: 1 !important;',
+        '  transform: none !important;',
+        '  filter: none !important;',
+        '}',
+        '.viz-menu-panel { opacity: 0 !important; pointer-events: none !important; }',
+    ].join('\n');
+    document.head.appendChild(overrideStyle);
+    var origBg = target.style.background;
+    if (target !== document.body) {
+        target.style.background = getComputedStyle(document.body).backgroundColor || '#ffffff';
+    }
+    var scrollPos = window.scrollY;
+    window.scrollTo(0, 0);
+    var capture = function() {
+        void target.offsetHeight;
+        html2canvas(target, {
+            scale: 2, useCORS: true, allowTaint: true, logging: false,
+            onclone: function(clonedDoc) {
+                var els = clonedDoc.querySelectorAll('.ani, .animate-in, [class*="delay-"], [data-animate]');
+                for (var i = 0; i < els.length; i++) {
+                    els[i].style.opacity = '1';
+                    els[i].style.transform = 'none';
+                    els[i].style.filter = 'none';
+                }
+            }
+        }).then(function(canvas) {
+            var link = document.createElement('a');
+            link.download = (document.title || 'visualization') + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }).catch(function(err) {
+            console.error('Screenshot failed:', err);
+            alert('Screenshot failed. Try Print / Save as PDF instead.');
+        }).finally(function() {
+            overrideStyle.remove();
+            target.style.background = origBg;
+            menu.style.display = '';
+            label.textContent = origText;
+            btn.style.pointerEvents = '';
+            menu.classList.remove('open');
+            window.scrollTo(0, scrollPos);
+        });
+    };
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function() { setTimeout(capture, 50); });
+    } else {
+        setTimeout(capture, 500);
+    }
+}
+</script>
+</body>
+</html>
