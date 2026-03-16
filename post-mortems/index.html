@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post-Mortems — viktorbarzin.me</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f3f0;
+  --surface: #ffffff;
+  --text: #1a1215;
+  --text-secondary: #6b5e64;
+  --border: #ddd5d0;
+  --accent: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f0b0d;
+    --surface: #1e1719;
+    --text: #ede8ea;
+    --text-secondary: #a89da2;
+    --border: #332b2e;
+    --accent: #ef4444;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 60px 24px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.subtitle {
+  color: var(--text-secondary);
+  margin-bottom: 40px;
+  font-size: 0.95rem;
+}
+.incident-list { list-style: none; }
+.incident-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-bottom: 12px;
+  transition: border-color 0.2s;
+}
+.incident-item:hover { border-color: var(--accent); }
+.incident-item a {
+  text-decoration: none;
+  color: var(--text);
+  display: block;
+}
+.incident-date {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.incident-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 4px 0;
+}
+.incident-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.sev-tag {
+  display: inline-block;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(185, 28, 28, 0.1);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+footer {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<h1>Post-Mortems</h1>
+<p class="subtitle">Incident reviews for the viktorbarzin.me Kubernetes cluster</p>
+<ul class="incident-list">
+  <li class="incident-item">
+    <a href="2026-03-16-kured-containerd-cascade-outage.html">
+      <span class="incident-date">2026-03-16</span>
+      <span class="sev-tag">SEV 1</span>
+      <div class="incident-title">Kured + Containerd Cascade Outage</div>
+      <div class="incident-desc">26h cluster outage: unattended-upgrades kernel update &rarr; kured reboot &rarr; containerd overlayfs snapshotter corruption &rarr; calico down &rarr; cascading failure across all 5 nodes.</div>
+    </a>
+  </li>
+</ul>
+<footer>viktorbarzin.me infrastructure</footer>
+</body>
+</html>
