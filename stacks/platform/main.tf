@@ -7,13 +7,12 @@
 # foundational infrastructure that application stacks depend on.
 #
 # Services included:
-#   metallb, cloudflared, infra-maintenance,
-#   redis, traefik, technitium, headscale, rbac, k8s-portal,
-#   monitoring, vaultwarden, reverse-proxy, metrics-server, vpa,
-#   nvidia, kyverno, uptime-kuma, wireguard, xray, mailserver
+#   metallb, infra-maintenance, redis, traefik, technitium, headscale,
+#   rbac, k8s-portal, vaultwarden, reverse-proxy, metrics-server, vpa,
+#   nfs-csi, iscsi-csi, cnpg, sealed-secrets, uptime-kuma, wireguard, xray
 #
 # Extracted to independent stacks:
-#   dbaas, authentik, crowdsec
+#   dbaas, authentik, crowdsec, monitoring, nvidia, mailserver, cloudflared, kyverno
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -43,14 +42,6 @@ variable "ssh_private_key" {
   default   = ""
   sensitive = true
 }
-variable "cloudflare_email" { type = string }
-variable "cloudflare_account_id" { type = string }
-variable "cloudflare_zone_id" { type = string }
-variable "cloudflare_tunnel_id" { type = string }
-variable "public_ip" { type = string }
-variable "cloudflare_proxied_names" {}
-variable "cloudflare_non_proxied_names" {}
-variable "monitoring_idrac_username" { type = string }
 
 # --- Vault KV secrets ---
 data "vault_kv_secret_v2" "secrets" {
@@ -63,16 +54,6 @@ locals {
   k8s_users               = jsondecode(data.vault_kv_secret_v2.secrets.data["k8s_users"])
   xray_reality_clients    = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_clients"])
   xray_reality_short_ids  = jsondecode(data.vault_kv_secret_v2.secrets.data["xray_reality_short_ids"])
-  mailserver_accounts     = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_accounts"])
-  mailserver_aliases      = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_aliases"])
-  mailserver_opendkim_key = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_opendkim_key"])
-  mailserver_sasl_passwd  = jsondecode(data.vault_kv_secret_v2.secrets.data["mailserver_sasl_passwd"])
-
-  # User domains from namespace-owners for DNS/Cloudflare
-  user_domains = flatten([
-    for name, user in local.k8s_users : lookup(user, "domains", [])
-    if user.role == "namespace-owner"
-  ])
 }
 
 # =============================================================================
@@ -159,25 +140,6 @@ module "k8s-portal" {
 }
 
 # -----------------------------------------------------------------------------
-# Monitoring — Prometheus / Grafana / Loki stack
-# -----------------------------------------------------------------------------
-module "monitoring" {
-  source                        = "./modules/monitoring"
-  tls_secret_name               = var.tls_secret_name
-  nfs_server                    = var.nfs_server
-  mysql_host                    = var.mysql_host
-  alertmanager_account_password = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
-  idrac_username                = var.monitoring_idrac_username
-  idrac_password                = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
-  alertmanager_slack_api_url    = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
-  tiny_tuya_service_secret      = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
-  haos_api_token                = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
-  pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
-  grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
-  tier                          = local.tiers.cluster
-}
-
-# -----------------------------------------------------------------------------
 # Vaultwarden — Password manager
 # -----------------------------------------------------------------------------
 module "vaultwarden" {
@@ -255,22 +217,6 @@ module "sealed-secrets" {
 }
 
 # -----------------------------------------------------------------------------
-# NVIDIA — GPU device plugin
-# -----------------------------------------------------------------------------
-module "nvidia" {
-  source          = "./modules/nvidia"
-  tls_secret_name = var.tls_secret_name
-  tier            = local.tiers.gpu
-}
-
-# -----------------------------------------------------------------------------
-# Kyverno — Policy engine
-# -----------------------------------------------------------------------------
-module "kyverno" {
-  source = "./modules/kyverno"
-}
-
-# -----------------------------------------------------------------------------
 # Uptime Kuma — Status monitoring
 # -----------------------------------------------------------------------------
 module "uptime-kuma" {
@@ -303,41 +249,6 @@ module "xray" {
   xray_reality_clients     = local.xray_reality_clients
   xray_reality_private_key = data.vault_kv_secret_v2.secrets.data["xray_reality_private_key"]
   xray_reality_short_ids   = local.xray_reality_short_ids
-}
-
-# -----------------------------------------------------------------------------
-# Mailserver — docker-mailserver
-# -----------------------------------------------------------------------------
-module "mailserver" {
-  source                  = "./modules/mailserver"
-  tls_secret_name         = var.tls_secret_name
-  nfs_server              = var.nfs_server
-  mysql_host              = var.mysql_host
-  mailserver_accounts     = local.mailserver_accounts
-  postfix_account_aliases = local.mailserver_aliases
-  opendkim_key            = local.mailserver_opendkim_key
-  sasl_passwd             = local.mailserver_sasl_passwd
-  roundcube_db_password   = data.vault_kv_secret_v2.secrets.data["mailserver_roundcubemail_db_password"]
-  tier                    = local.tiers.edge
-}
-
-# -----------------------------------------------------------------------------
-# Cloudflared — Cloudflare tunnel + DNS records
-# -----------------------------------------------------------------------------
-module "cloudflared" {
-  source          = "./modules/cloudflared"
-  tier            = local.tiers.core
-  tls_secret_name = var.tls_secret_name
-
-  cloudflare_api_key           = data.vault_kv_secret_v2.secrets.data["cloudflare_api_key"]
-  cloudflare_email             = var.cloudflare_email
-  cloudflare_account_id        = var.cloudflare_account_id
-  cloudflare_zone_id           = var.cloudflare_zone_id
-  cloudflare_tunnel_id         = var.cloudflare_tunnel_id
-  public_ip                    = var.public_ip
-  cloudflare_proxied_names     = concat(var.cloudflare_proxied_names, nonsensitive(local.user_domains))
-  cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
-  cloudflare_tunnel_token      = data.vault_kv_secret_v2.secrets.data["cloudflare_tunnel_token"]
 }
 
 # -----------------------------------------------------------------------------
