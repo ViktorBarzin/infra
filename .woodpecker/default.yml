@@ -45,18 +45,15 @@ steps:
       - "chmod 755 /usr/local/bin/terragrunt"
       # Source Vault token
       - "source .vault-env"
-      # Apply extracted stacks in parallel
-      - "cd stacks/dbaas && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/authentik && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/crowdsec && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/monitoring && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/nvidia && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/mailserver && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/cloudflared && terragrunt apply --non-interactive -auto-approve &"
-      - "cd stacks/kyverno && terragrunt apply --non-interactive -auto-approve &"
-      # Apply platform stack (remaining core infrastructure services)
-      - "cd stacks/platform && terragrunt apply --non-interactive -auto-approve"
-      - "wait"
+      # Apply all platform stacks in parallel
+      - |
+        for stack in dbaas authentik crowdsec monitoring nvidia mailserver cloudflared kyverno \
+                     metallb redis traefik technitium headscale rbac k8s-portal vaultwarden \
+                     reverse-proxy metrics-server vpa nfs-csi iscsi-csi cnpg sealed-secrets \
+                     uptime-kuma wireguard xray infra-maintenance platform; do
+          (cd stacks/$stack && terragrunt apply --non-interactive -auto-approve) &
+        done
+        wait
 
   - name: cleanup-and-push
     image: alpine
