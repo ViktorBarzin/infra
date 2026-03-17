@@ -59,6 +59,74 @@ Proxmox (Dell R730)
  └── ... (70+ more)</pre>
 		<p>Changes go through git: branch → PR → review → merge → CI applies automatically.</p>
 	</section>
+
+	<section>
+		<h2>Secrets &amp; State Encryption</h2>
+		<p>Terraform state is committed to git as SOPS-encrypted JSON. Secrets live in HashiCorp Vault.</p>
+		<pre class="output">
+Authentication &amp; Authorization
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+User → Authentik SSO (OIDC) → Vault Token
+                                  │
+                   ┌──────────────┼──────────────┐
+                   ▼              ▼              ▼
+            KV Secrets    Transit Keys    K8s Creds
+            (per-stack)   (per-stack)    (deployer)
+
+State Encryption Flow
+━━━━━━━━━━━━━━━━━━━━
+.tfstate ──SOPS──▶ .tfstate.enc ──git──▶ repo
+                      │
+              encrypted with:
+              ├── Vault Transit key (per-stack)
+              └── age keys (admin DR fallback)
+
+Access Control
+━━━━━━━━━━━━━━
+Admin:    vault-admin policy  → all transit keys
+User:     sops-user-* policy  → own stack keys only
+Fallback: age key on disk     → admin only (no users)</pre>
+	</section>
+
+	<section>
+		<h2>Request Flow</h2>
+		<pre class="output">
+Internet → Cloudflare (CDN + WAF)
+              │
+              ▼
+         Cloudflared tunnel
+              │
+              ▼
+         Traefik (3 replicas)
+         ├── CrowdSec bouncer (rate limit, bot block)
+         ├── Authentik forward-auth (SSO for protected apps)
+         └── TLS termination
+              │
+              ▼
+         K8s Service → Pod(s)
+              │
+              ├── NFS volume (app data)
+              └── iSCSI volume (databases)</pre>
+	</section>
+
+	<section>
+		<h2>CI/CD Pipeline</h2>
+		<pre class="output">
+git push
+   │
+   ├──▶ GitHub Actions (build Docker image, push to DockerHub)
+   │         │
+   │         ▼
+   │    POST Woodpecker API (trigger deploy)
+   │         │
+   │         ▼
+   │    Woodpecker (kubectl set image, Slack notify)
+   │
+   └──▶ Woodpecker (terragrunt apply — infra changes)
+              │
+              ▼
+         Kubernetes API → rolling update</pre>
+	</section>
 </main>
 
 <style>
