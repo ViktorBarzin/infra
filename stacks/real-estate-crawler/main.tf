@@ -33,6 +33,42 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.realestate-crawler]
 }
 
+# DB credentials from Vault database engine (rotated automatically)
+# Provides DB_CONNECTION_STRING that auto-updates when password rotates
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "realestate-crawler-db-creds"
+      namespace = "realestate-crawler"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "realestate-crawler-db-creds"
+        template = {
+          data = {
+            DB_CONNECTION_STRING = "mysql://wrongmove:{{ .password }}@${var.mysql_host}:3306/wrongmove"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-wrongmove"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.realestate-crawler]
+}
+
 data "kubernetes_secret" "eso_secrets" {
   metadata {
     name      = "real-estate-crawler-secrets"
@@ -189,18 +225,14 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             value = "prod"
           }
           env {
-            name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
-
+            name = "DB_CONNECTION_STRING"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-db-creds"
+                key  = "DB_CONNECTION_STRING"
+              }
+            }
           }
-          # env {
-          #   name  = "HTTP_PROXY"
-          #   value = "http://tor-proxy.tor-proxy:8118"
-          # }
-          # env {
-          #   name  = "HTTPS_PROXY"
-          #   value = "http://tor-proxy.tor-proxy:8118"
-          # }
           env {
             name  = "CELERY_BROKER_URL"
             value = "redis://${var.redis_host}:6379/0"
@@ -384,8 +416,13 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
             value = "prod"
           }
           env {
-            name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
+            name = "DB_CONNECTION_STRING"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-db-creds"
+                key  = "DB_CONNECTION_STRING"
+              }
+            }
           }
           env {
             name  = "CELERY_BROKER_URL"
@@ -498,8 +535,13 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
             value = "prod"
           }
           env {
-            name  = "DB_CONNECTION_STRING"
-            value = "mysql://wrongmove:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.mysql_host}:3306/wrongmove"
+            name = "DB_CONNECTION_STRING"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-db-creds"
+                key  = "DB_CONNECTION_STRING"
+              }
+            }
           }
           env {
             name  = "CELERY_BROKER_URL"

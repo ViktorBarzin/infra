@@ -61,8 +61,10 @@ externalDatabase:
   type: mysql
   host: ${mysql_host}
   user: nextcloud
-  password: ${db_password}
   database: nextcloud
+  existingSecret:
+    secretName: nextcloud-db-creds
+    passwordKey: DB_PASSWORD
 
 persistence:
   enabled: true

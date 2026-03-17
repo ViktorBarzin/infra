@@ -39,6 +39,42 @@ data "kubernetes_secret" "eso_secrets" {
   depends_on = [kubernetes_manifest.external_secret]
 }
 
+# DB credentials from Vault database engine (rotated automatically)
+# Provides DATABASE_URL that auto-updates when password rotates
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "affine-db-creds"
+      namespace = "affine"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "affine-db-creds"
+        template = {
+          data = {
+            DATABASE_URL = "postgresql://affine:{{ .password }}@${var.postgresql_host}:5432/affine"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-affine"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.affine]
+}
+
 locals {
   mailserver_accounts = jsondecode(data.kubernetes_secret.eso_secrets.data["mailserver_accounts"])
 }
@@ -64,10 +100,6 @@ module "tls_secret" {
 
 locals {
   common_env = [
-    {
-      name  = "DATABASE_URL"
-      value = "postgresql://affine:${data.kubernetes_secret.eso_secrets.data["db_password"]}@${var.postgresql_host}:5432/affine"
-    },
     {
       name  = "REDIS_SERVER_HOST"
       value = var.redis_host
@@ -163,6 +195,15 @@ resource "kubernetes_deployment" "affine" {
               value = env.value.value
             }
           }
+          env {
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "affine-db-creds"
+                key  = "DATABASE_URL"
+              }
+            }
+          }
 
           volume_mount {
             name       = "data"
@@ -198,6 +239,15 @@ resource "kubernetes_deployment" "affine" {
             content {
               name  = env.value.name
               value = env.value.value
+            }
+          }
+          env {
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = "affine-db-creds"
+                key  = "DATABASE_URL"
+              }
             }
           }
 

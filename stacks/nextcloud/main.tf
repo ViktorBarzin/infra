@@ -62,10 +62,7 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 # DB credentials from Vault database engine (rotated every 24h)
-# NOTE: Nextcloud Helm values use plan-time db_password from KV — the Helm
-# release will use the KV snapshot until the next terragrunt apply. This
-# ExternalSecret provides runtime-refreshed credentials for any future
-# migration to envFrom-based secret injection.
+# Nextcloud Helm chart reads password at runtime via existingSecret reference
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -146,8 +143,9 @@ resource "helm_release" "nextcloud" {
   atomic     = true
   version    = "8.8.1"
 
-  values  = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, db_password = data.vault_kv_secret_v2.secrets.data["db_password"], redis_host = var.redis_host, mysql_host = var.mysql_host })]
-  timeout = 6000
+  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, redis_host = var.redis_host, mysql_host = var.mysql_host })]
+  timeout    = 6000
+  depends_on = [kubernetes_manifest.db_external_secret]
 }
 
 resource "kubernetes_config_map" "apache_tuning" {
