@@ -184,10 +184,19 @@ resource "vault_policy" "admin" {
   EOT
 }
 
+resource "vault_policy" "sops_admin" {
+  name   = "sops-admin"
+  policy = <<-EOT
+    path "transit/encrypt/sops-state-*" { capabilities = ["update"] }
+    path "transit/decrypt/sops-state-*" { capabilities = ["update"] }
+    path "transit/keys/sops-state-*"    { capabilities = ["read"] }
+  EOT
+}
+
 resource "vault_identity_group" "admins" {
   name     = "authentik-admins"
   type     = "external"
-  policies = [vault_policy.admin.name]
+  policies = [vault_policy.admin.name, vault_policy.sops_admin.name]
 }
 
 resource "vault_identity_group_alias" "admins" {
@@ -694,7 +703,7 @@ locals {
 }
 
 resource "kubernetes_namespace" "user_namespace" {
-  for_each = local.user_namespaces
+  for_each = nonsensitive(local.user_namespaces)
 
   metadata {
     name = each.value
@@ -736,6 +745,66 @@ resource "vault_policy" "namespace_owner" {
   EOT
 }
 
+# =============================================================================
+# Transit Secrets Engine — SOPS State Encryption
+# =============================================================================
+
+resource "vault_mount" "transit" {
+  path       = "transit"
+  type       = "transit"
+  depends_on = [helm_release.vault]
+}
+
+# --- SOPS State Encryption — Per-Stack Transit Keys ---
+# Namespace-owners get Transit keys for their stacks only.
+# Admin gets a wildcard policy via vault-admin.
+
+resource "vault_transit_secret_backend_key" "sops_user_stack" {
+  for_each = nonsensitive(local.user_namespaces)
+
+  backend    = vault_mount.transit.path
+  name       = "sops-state-${each.value}"
+  depends_on = [vault_mount.transit]
+}
+
+resource "vault_policy" "sops_user" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name = "sops-user-${each.key}"
+  policy = join("\n", [
+    for ns in each.value.namespaces : <<-EOT
+    path "transit/encrypt/sops-state-${ns}" { capabilities = ["update"] }
+    path "transit/decrypt/sops-state-${ns}" { capabilities = ["update"] }
+    path "transit/keys/sops-state-${ns}"    { capabilities = ["read"] }
+    EOT
+  ])
+}
+
+resource "vault_identity_group" "sops_user" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name     = "sops-${each.key}"
+  type     = "external"
+  policies = [vault_policy.sops_user[each.key].name]
+}
+
+resource "vault_identity_group_alias" "sops_user" {
+  for_each = nonsensitive({
+    for name, user in local.k8s_users : name => user
+    if user.role == "namespace-owner"
+  })
+
+  name           = "sops-${each.key}"
+  mount_accessor = vault_jwt_auth_backend.oidc.accessor
+  canonical_id   = vault_identity_group.sops_user[each.key].id
+}
+
 resource "vault_identity_entity" "namespace_owner" {
   for_each = nonsensitive({
     for name, user in local.k8s_users : name => user
@@ -743,7 +812,7 @@ resource "vault_identity_entity" "namespace_owner" {
   })
 
   name     = each.key
-  policies = [vault_policy.namespace_owner[each.key].name]
+  policies = [vault_policy.namespace_owner[each.key].name, vault_policy.sops_user[each.key].name]
 }
 
 resource "vault_identity_entity_alias" "namespace_owner" {
@@ -758,7 +827,7 @@ resource "vault_identity_entity_alias" "namespace_owner" {
 }
 
 resource "kubernetes_role" "user_deployer" {
-  for_each = local.user_namespaces
+  for_each = nonsensitive(local.user_namespaces)
 
   metadata {
     name      = "${each.value}-deployer"
@@ -779,7 +848,7 @@ resource "kubernetes_role" "user_deployer" {
 }
 
 resource "vault_kubernetes_secret_backend_role" "user_deployer" {
-  for_each = local.user_namespaces
+  for_each = nonsensitive(local.user_namespaces)
 
   backend                       = vault_kubernetes_secret_backend.k8s.path
   name                          = "${each.value}-deployer"
