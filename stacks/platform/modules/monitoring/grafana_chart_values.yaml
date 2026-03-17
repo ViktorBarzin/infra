@@ -64,8 +64,10 @@ dashboardProviders:
     # editable: "true"
     options:
       path: "/var/lib/grafana/dashboards/default"
+envFromSecrets:
+  - name: grafana-db-creds
+    optional: false
 env:
-  GF_DATABASE_PASSWORD:  "${db_password}"
   GF_SERVER_ROOT_URL: https://grafana.viktorbarzin.me
 
 grafana.ini:

@@ -8,6 +8,8 @@ server:
     registry: docker.io
     repository: woodpeckerci/woodpecker-server
     tag: "v3.13.0"
+  extraSecretNamesForEnvFrom:
+    - woodpecker-db-creds
   env:
     WOODPECKER_HOST: "https://ci.viktorbarzin.me"
     WOODPECKER_ADMIN: "${woodpecker_admins}"
@@ -25,9 +27,6 @@ server:
     WOODPECKER_FORGEJO_CLIENT: "${forgejo_client_id}"
     WOODPECKER_FORGEJO_SECRET: "${forgejo_client_secret}"
     WOODPECKER_FORGEJO_URL: "${forgejo_url}"
-  envFrom:
-    - secretRef:
-        name: woodpecker-db-creds
   service:
     type: ClusterIP
     port: 80

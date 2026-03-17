@@ -220,7 +220,6 @@ module "monitoring" {
   tiny_tuya_service_secret      = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
   haos_api_token                = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
   pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
-  grafana_db_password           = data.vault_kv_secret_v2.secrets.data["grafana_db_password"]
   grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
   tier                          = local.tiers.cluster
 }

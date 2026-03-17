@@ -85,9 +85,12 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 # DB credentials from Vault database engine (rotated every 24h)
-# Updated: ExternalSecret now provides DATABASE_DATASOURCE
-# which gets injected via envFrom and auto-updates when password rotates
+# ExternalSecret provides WOODPECKER_DATABASE_DATASOURCE injected via
+# server.extraSecretNamesForEnvFrom — auto-updates when password rotates
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
     kind       = "ExternalSecret"
@@ -105,8 +108,7 @@ resource "kubernetes_manifest" "db_external_secret" {
         name = "woodpecker-db-creds"
         template = {
           data = {
-            # Key matches the Woodpecker Helm chart env var name
-            DATABASE_DATASOURCE = "postgres://woodpecker:{{ .password }}@${var.postgresql_host}:5432/woodpecker?sslmode=disable"
+            WOODPECKER_DATABASE_DATASOURCE = "postgres://woodpecker:{{ .password }}@${var.postgresql_host}:5432/woodpecker?sslmode=disable"
           }
         }
       }
@@ -215,7 +217,6 @@ resource "helm_release" "woodpecker" {
       github_client_id      = data.vault_kv_secret_v2.secrets.data["github_client_id"]
       github_client_secret  = data.vault_kv_secret_v2.secrets.data["github_client_secret"]
       agent_secret          = data.vault_kv_secret_v2.secrets.data["agent_secret"]
-      postgresql_host       = var.postgresql_host
       forgejo_client_id     = data.vault_kv_secret_v2.secrets.data["forgejo_client_id"]
       forgejo_client_secret = data.vault_kv_secret_v2.secrets.data["forgejo_client_secret"]
       forgejo_url           = var.woodpecker_forgejo_url

@@ -67,6 +67,41 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 #   }
 # }
 
+# DB credentials from Vault database engine (rotated automatically)
+# Provides GF_DATABASE_PASSWORD that auto-updates when password rotates
+resource "kubernetes_manifest" "grafana_db_creds" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-db-creds"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-db-creds"
+        template = {
+          data = {
+            GF_DATABASE_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-grafana"
+          property = "password"
+        }
+      }]
+    }
+  }
+}
+
 resource "kubernetes_config_map" "grafana_dashboards" {
   for_each = fileset("${path.module}/dashboards", "*.json")
 
@@ -92,5 +127,6 @@ resource "helm_release" "grafana" {
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"
 
-  values = [templatefile("${path.module}/grafana_chart_values.yaml", { db_password = var.grafana_db_password, grafana_admin_password = var.grafana_admin_password, mysql_host = var.mysql_host })]
+  values     = [templatefile("${path.module}/grafana_chart_values.yaml", { grafana_admin_password = var.grafana_admin_password, mysql_host = var.mysql_host })]
+  depends_on = [kubernetes_manifest.grafana_db_creds]
 }
