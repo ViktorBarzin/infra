@@ -32,9 +32,9 @@ steps:
       kubernetes:
         resources:
           requests:
-            memory: 2Gi
+            memory: 3Gi
           limits:
-            memory: 4Gi
+            memory: 6Gi
     commands:
       - "apk update && apk add curl unzip git openssh-client"
       # Install Terraform
@@ -45,10 +45,15 @@ steps:
       - "chmod 755 /usr/local/bin/terragrunt"
       # Source Vault token
       - "source .vault-env"
-      # Apply extracted stacks in parallel (slow modules)
+      # Apply extracted stacks in parallel
       - "cd stacks/dbaas && terragrunt apply --non-interactive -auto-approve &"
       - "cd stacks/authentik && terragrunt apply --non-interactive -auto-approve &"
       - "cd stacks/crowdsec && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/monitoring && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/nvidia && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/mailserver && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/cloudflared && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/kyverno && terragrunt apply --non-interactive -auto-approve &"
       # Apply platform stack (remaining core infrastructure services)
       - "cd stacks/platform && terragrunt apply --non-interactive -auto-approve"
       - "wait"
