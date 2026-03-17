@@ -13,14 +13,41 @@ vault_available() {
   VAULT_ADDR="$VAULT_ADDR" vault token lookup &>/dev/null 2>&1
 }
 
+# Per-stack Transit key URI
+transit_uri() {
+  local stack_name="$1"
+  echo "${VAULT_ADDR}/v1/transit/keys/sops-state-${stack_name}"
+}
+
+# Extract stack name from directory path
+stack_name_from_dir() {
+  basename "$1"
+}
+
+# Read age recipients from .sops.yaml
+AGE_RECIPIENTS="$(python3 -c "
+import yaml, sys
+with open('$REPO_ROOT/.sops.yaml') as f: c = yaml.safe_load(f)
+for r in c.get('creation_rules', []):
+    age = r.get('age', '')
+    if age:
+        print(age.replace('\n', '').strip())
+        break
+" 2>/dev/null || echo "")"
+
 encrypt_state() {
   local dir="$1"
   local src="$dir/terraform.tfstate"
   local dst="$dir/terraform.tfstate.enc"
+  local name
+  name="$(stack_name_from_dir "$dir")"
   [ -f "$src" ] || return 0
   # Only re-encrypt if state is newer than encrypted version
   if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
-    sops -e --input-type json --output-type json "$src" > "$dst"
+    sops -e --input-type json --output-type json \
+      --hc-vault-transit "$(transit_uri "$name")" \
+      --age "$AGE_RECIPIENTS" \
+      "$src" > "$dst"
   fi
 }
 
@@ -31,7 +58,7 @@ decrypt_state() {
   [ -f "$src" ] || return 0
 
   if vault_available; then
-    # Vault Transit — no local key needed
+    # Vault Transit — per-stack key, no local key needed
     sops -d --input-type json --output-type json "$src" > "$dst"
   elif [ -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" ]; then
     # Fallback: age key on disk (bootstrap / Vault down)
@@ -74,6 +101,7 @@ case "$cmd" in
     ;;
   help)
     echo "Usage: state-sync {encrypt|decrypt|commit} [stack-name]"
+    echo "Encrypt uses per-stack Vault Transit key (transit/keys/sops-state-<stack>)."
     echo "Decrypt uses Vault Transit if logged in, falls back to age key."
     ;;
 esac

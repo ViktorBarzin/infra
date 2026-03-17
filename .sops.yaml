@@ -1,6 +1,6 @@
 creation_rules:
   - path_regex: '\.tfstate(\.enc)?$'
-    hc_vault_transit_uri: "https://vault.viktorbarzin.me/v1/transit/keys/sops-state"
+    # Per-stack Transit key passed via --hc-vault-transit in state-sync
     age: >-
       age1z64h9t3acsm2rr74pz7j4846kwj5tutx9sk78jqv46y8fln4vs2sy920ce,
       age1rekkad48r2wzhwqgfetw5yugu3ln3qlht4xg3txmx55tee8cveess60r90
