@@ -3,9 +3,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATE_DIR="$REPO_ROOT/state/stacks"
+VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
 
 cmd="${1:-help}"
 stack="${2:-}"  # optional: operate on single stack
+
+# Check if Vault token is valid
+vault_available() {
+  VAULT_ADDR="$VAULT_ADDR" vault token lookup &>/dev/null 2>&1
+}
 
 encrypt_state() {
   local dir="$1"
@@ -23,7 +29,19 @@ decrypt_state() {
   local src="$dir/terraform.tfstate.enc"
   local dst="$dir/terraform.tfstate"
   [ -f "$src" ] || return 0
-  sops -d --input-type json --output-type json "$src" > "$dst"
+
+  if vault_available; then
+    # Vault Transit — no local key needed
+    sops -d --input-type json --output-type json "$src" > "$dst"
+  elif [ -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" ]; then
+    # Fallback: age key on disk (bootstrap / Vault down)
+    echo "state-sync: Vault unavailable, falling back to age key" >&2
+    SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" \
+      sops -d --input-type json --output-type json "$src" > "$dst"
+  else
+    echo "state-sync: ERROR — no Vault token and no age key at ~/.config/sops/age/keys.txt" >&2
+    return 1
+  fi
 }
 
 case "$cmd" in
@@ -56,5 +74,6 @@ case "$cmd" in
     ;;
   help)
     echo "Usage: state-sync {encrypt|decrypt|commit} [stack-name]"
+    echo "Decrypt uses Vault Transit if logged in, falls back to age key."
     ;;
 esac
