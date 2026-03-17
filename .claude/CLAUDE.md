@@ -10,7 +10,7 @@
 
 ## Instructions
 - **"remember X"**: Use `memory-tool store "content" --category facts --tags "tag1,tag2"` (via exec) for persistent cross-session memory. Also update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`. To recall: `memory-tool recall "query"`. To list: `memory-tool list`. To delete: `memory-tool delete <id>`. The native `memory_search` and `memory_get` tools are also available for searching indexed memory files. For **storing** new memories, always use the `memory-tool` CLI via exec.
-- **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies.
+- **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` (preferred — handles state decrypt/encrypt) or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies.
 - **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma)
 - **New service**: Use `setup-project` skill for full workflow
 - **Ingress**: `ingress_factory` module. Auth: `protected = true`. Anti-AI: on by default.
@@ -19,8 +19,19 @@
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
 
-## Secrets Management — Vault KV (SOPS removed)
-- **Vault is the sole source of truth** for secrets. SOPS pipeline has been removed entirely.
+## Terraform State — SOPS-Encrypted in Git
+- **State is local** (`backend "local"`), encrypted with SOPS and committed as `.tfstate.enc` files.
+- **Decrypt priority**: Vault Transit (primary, uses existing `vault login` session) → age key fallback (`~/.config/sops/age/keys.txt`, for bootstrap/DR).
+- **Encrypt**: Always encrypts to both Vault Transit (`transit/keys/sops-state`) + age recipients.
+- **Scripts**: `scripts/state-sync {encrypt|decrypt|commit} [stack]` — handles all state sync. `scripts/tg` auto-decrypts before and auto-encrypts+commits after mutating ops (apply/destroy/import).
+- **Workflow**: `git pull` → `scripts/tg plan` → `scripts/tg apply` → `git push`. State sync is transparent.
+- **Config**: `.sops.yaml` at repo root defines encryption rules. age public keys listed there.
+- **Backups disabled**: `terragrunt.hcl` passes `-backup=-` to prevent `.backup` file accumulation.
+- **Adding operator**: Generate age key (`age-keygen`), add pubkey to `.sops.yaml`, run `sops updatekeys` on all `.enc` files.
+- **Two workstations**: Laptop (macOS) + DevVM (10.0.10.10, Linux). Both have age keys + Vault access. Keys backed up in Vault (`secret/viktor/sops_age_key_laptop`, `sops_age_key_devvm`).
+
+## Secrets Management — Vault KV
+- **Vault is the sole source of truth** for secrets.
 - **`secret/viktor`** — go-to path for ALL personal secrets (135 keys). Contains every API key, token, password, SSH key, and config from the old terraform.tfvars. Check here first: `vault kv get -field=KEY secret/viktor`.
 - **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
 - **Vault stack self-reads**: `data "vault_kv_secret_v2" "vault"` reads its own OIDC creds from `secret/vault`.
@@ -52,7 +63,7 @@
 
 **Flow**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
 
-**Migrated to GHA** (6): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web
+**Migrated to GHA** (7): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book
 **Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
 
 **Per-project files**:
@@ -61,7 +72,7 @@
 - `.woodpecker/build-fallback.yml` — Old full build pipeline preserved (event: `deployment` — never auto-fires)
 
 **Woodpecker API**: Uses **numeric repo IDs** (`/api/repos/2/pipelines`), NOT owner/name paths (those return HTML).
-Repo IDs: Website=2, travel_blog=5, health=4, audiblez-web=9, f1-stream=10, claude-memory-mcp=78, infra-onboarding=79
+Repo IDs: Website=2, travel_blog=5, health=4, audiblez-web=9, f1-stream=10, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79
 
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
