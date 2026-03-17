@@ -327,8 +327,22 @@ resource "vault_policy" "ci" {
     path "secret/metadata/*" {
       capabilities = ["list"]
     }
+    # Allow CI to write k8s_users during automated user provisioning
+    path "secret/data/platform" {
+      capabilities = ["create", "read", "update"]
+    }
     # Allow CI to get dynamic K8s deploy tokens for user namespaces
     path "kubernetes/creds/*-deployer" {
+      capabilities = ["read"]
+    }
+    # SOPS state encrypt/decrypt (per-stack Transit keys)
+    path "transit/encrypt/sops-state-*" {
+      capabilities = ["update"]
+    }
+    path "transit/decrypt/sops-state-*" {
+      capabilities = ["update"]
+    }
+    path "transit/keys/sops-state-*" {
       capabilities = ["read"]
     }
   EOT

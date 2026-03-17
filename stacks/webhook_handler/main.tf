@@ -187,6 +187,37 @@ resource "kubernetes_deployment" "webhook_handler" {
             name  = "SSH_KEY"
             value = "/opt/id_rsa"
           }
+          env {
+            name  = "WOODPECKER_API_URL"
+            value = "https://ci.viktorbarzin.me"
+          }
+          env {
+            name = "WOODPECKER_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "woodpecker_token"
+              }
+            }
+          }
+          env {
+            name = "WOODPECKER_INFRA_REPO_ID"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "woodpecker_infra_repo_id"
+              }
+            }
+          }
+          env {
+            name = "AUTHENTIK_WEBHOOK_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "webhook-handler-secrets"
+                key  = "authentik_webhook_secret"
+              }
+            }
+          }
         }
         volume {
           name = "id-rsa"

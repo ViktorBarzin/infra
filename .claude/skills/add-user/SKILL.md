@@ -10,11 +10,51 @@ description: |
 
 # Add User
 
-Add a new namespace-owner to the cluster. No code changes needed — only Vault KV update + stack applies.
+Add a new namespace-owner to the cluster. Two modes: **automated** (preferred) and **manual** (fallback).
 
 SOPS state encryption access is **automatically provisioned** by the vault stack — per-stack Transit keys, policies, identity groups, and group aliases are all created from the `k8s_users` map. No manual SOPS setup required.
 
-## Workflow
+## Automated Flow (Preferred)
+
+**Admin creates an Authentik invite → user signs up → provisioning happens automatically.**
+
+### Steps
+
+1. **Create Authentik Invitation**
+   - Go to [Authentik Admin](https://authentik.viktorbarzin.me/if/admin/#/core/invitations)
+   - Create a new invitation
+   - Pre-assign the user to the **`kubernetes-namespace-owners`** group
+   - Copy the invite link
+
+2. **Send Invite Link to User**
+   - The user clicks the link and signs up
+
+3. **Automatic Provisioning**
+   - Authentik fires a webhook to `webhook.viktorbarzin.me/authentik/provision`
+   - The webhook handler validates the event and triggers the Woodpecker `provision-user` pipeline
+   - Pipeline automatically:
+     - Adds user to Vault KV (`secret/platform` → `k8s_users`) with convention defaults
+     - Creates `sops-<username>` group in Authentik and assigns the user
+     - Applies stacks: vault → rbac → cloudflared → woodpecker
+     - Commits encrypted state and pushes
+     - Sends Slack notification
+
+4. **Convention Defaults** (applied automatically)
+   - Namespace: `username`
+   - Quota: CPU 2, Memory 4Gi requests / 8Gi limits, 20 pods
+   - Domains: none (user can request later)
+
+5. **Post-Provisioning**
+   - Send user the onboarding link: `https://k8s-portal.viktorbarzin.me/onboarding?role=namespace-owner`
+   - If custom quota/domains needed, update Vault KV manually and re-apply stacks
+
+### Monitoring the Pipeline
+
+Watch the pipeline at: `https://ci.viktorbarzin.me` → infra repo → provision-user pipeline
+
+## Manual Flow (Fallback)
+
+Use when automated flow isn't available or custom configuration is needed.
 
 ### Step 1: Collect Information
 
@@ -98,20 +138,7 @@ cd stacks/woodpecker && ../../scripts/tg apply --non-interactive
 cd ../..
 ```
 
-### Step 4: Create Per-Stack Encrypted State
-
-For each of the user's namespaces, ensure the Transit key is used for state encryption. New stacks created for the user will automatically use per-stack keys via `scripts/state-sync`.
-
-If the user's stack already has state, re-encrypt it with the new per-stack key:
-```bash
-# Force re-encrypt (delete old .enc, state-sync will use per-stack Transit key)
-rm state/stacks/NAMESPACE/terraform.tfstate.enc
-scripts/state-sync encrypt NAMESPACE
-git add state/stacks/NAMESPACE/terraform.tfstate.enc
-git commit -m "state(NAMESPACE): re-encrypt with per-stack Transit key"
-```
-
-### Step 5: Verify
+### Step 4: Verify
 
 ```bash
 # Namespace exists
@@ -135,12 +162,9 @@ vault write kubernetes/creds/NAMESPACE-deployer kubernetes_namespace=NAMESPACE
 
 # SOPS Transit key exists
 vault read transit/keys/sops-state-NAMESPACE
-
-# DNS record (if domains specified)
-dig DOMAIN.viktorbarzin.me
 ```
 
-### Step 6: Notify User
+### Step 5: Notify User
 
 Tell the user to share these onboarding instructions with the new user:
 - K8s Portal: `https://k8s-portal.viktorbarzin.me/onboarding?role=namespace-owner`
@@ -171,7 +195,7 @@ scripts/state-sync decrypt NAMESPACE   # decrypts only their stack
 | Cloudflare DNS records | cloudflared | `domains` list |
 | Woodpecker admin access | woodpecker | user key |
 
-## Checklist
+## Checklist (Manual Flow)
 
 - [ ] Authentik: user added to `kubernetes-namespace-owners` group
 - [ ] Authentik: user added to `sops-USERNAME` group (for SOPS state decrypt)
