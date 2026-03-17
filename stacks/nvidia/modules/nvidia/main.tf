@@ -12,8 +12,34 @@ resource "kubernetes_namespace" "nvidia" {
     name = "nvidia"
     labels = {
       "istio-injection" : "disabled"
-      tier                               = var.tier
-      "resource-governance/custom-quota" = "true"
+      tier                                    = var.tier
+      "resource-governance/custom-quota"       = "true"
+      "resource-governance/custom-limitrange" = "true"
+    }
+  }
+}
+
+# Custom LimitRange — overrides Kyverno tier-2-gpu default (1Gi per container)
+# which was inflating NVIDIA operator init container requests by ~2.5Gi total.
+# Init containers do quick validation checks and need minimal memory.
+resource "kubernetes_limit_range" "nvidia_defaults" {
+  metadata {
+    name      = "tier-defaults"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        memory = "128Mi"
+      }
+      default_request = {
+        cpu    = "50m"
+        memory = "128Mi"
+      }
+      max = {
+        memory = "16Gi"
+      }
     }
   }
 }

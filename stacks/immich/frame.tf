@@ -66,6 +66,15 @@ resource "kubernetes_deployment" "immich-frame" {
         container {
           image = "ghcr.io/immichframe/immichframe:latest"
           name  = "immich-frame"
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
           port {
             container_port = 8080
             protocol       = "TCP"

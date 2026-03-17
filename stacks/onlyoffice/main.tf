@@ -134,10 +134,10 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "2304Mi"
+              memory = "1536Mi"
             }
             limits = {
-              memory = "2304Mi"
+              memory = "1536Mi"
             }
           }
           port {
