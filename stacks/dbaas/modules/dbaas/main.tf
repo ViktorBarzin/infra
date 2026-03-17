@@ -1,0 +1,1091 @@
+# DB as a service. Installs MySQL operator
+variable "tls_secret_name" {}
+variable "tier" { type = string }
+variable "dbaas_root_password" {}
+variable "cluster_master_service" {
+  default = "mysql"
+}
+variable "postgresql_root_password" {}
+variable "pgadmin_password" {}
+variable "prod" {
+  default = false
+  type    = bool
+}
+variable "nfs_server" { type = string }
+variable "kube_config_path" {
+  type      = string
+  sensitive = true
+}
+
+resource "kubernetes_namespace" "dbaas" {
+  metadata {
+    name = "dbaas"
+    labels = {
+      tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "dbaas" {
+  metadata {
+    name      = "dbaas-quota"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "20Gi"
+      "limits.memory"   = "20Gi"
+      pods              = "30"
+    }
+  }
+}
+
+module "tls_secret" {
+  source          = "../../../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+
+#### MYSQL — InnoDB Cluster via MySQL Operator
+#
+# 3 MySQL servers with Group Replication + 1 MySQL Router for auto-failover.
+# Operator installed in mysql-operator namespace (toleration for control-plane).
+# Init containers are slow (~20 min each) due to mysqlsh plugin loading.
+
+resource "kubernetes_namespace" "mysql_operator" {
+  metadata {
+    name = "mysql-operator"
+    labels = {
+      tier = "1-cluster"
+    }
+  }
+}
+
+resource "helm_release" "mysql_operator" {
+  namespace        = kubernetes_namespace.mysql_operator.metadata[0].name
+  create_namespace = false
+  name             = "mysql-operator"
+  timeout          = 300
+
+  repository = "https://mysql.github.io/mysql-operator/"
+  chart      = "mysql-operator"
+  version    = "2.2.7"
+
+  values = [yamlencode({
+    resources = {
+      requests = {
+        cpu    = "100m"
+        memory = "512Mi"
+      }
+      limits = {
+        memory = "512Mi"
+      }
+    }
+  })]
+}
+
+# The mysql-sidecar ClusterRole created by the Helm chart is missing
+# namespace and CRD list/watch permissions needed by the kopf framework
+# in the sidecar container. Without these, the sidecar enters degraded
+# mode and never completes InnoDB cluster join operations.
+resource "kubernetes_cluster_role" "mysql_sidecar_extra" {
+  metadata {
+    name = "mysql-sidecar-extra"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["namespaces"]
+    verbs      = ["list", "watch"]
+  }
+  rule {
+    api_groups = ["apiextensions.k8s.io"]
+    resources  = ["customresourcedefinitions"]
+    verbs      = ["list", "watch"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "mysql_sidecar_extra" {
+  metadata {
+    name = "mysql-sidecar-extra"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.mysql_sidecar_extra.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "mysql-cluster-sa"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+}
+
+resource "helm_release" "mysql_cluster" {
+  namespace        = kubernetes_namespace.dbaas.metadata[0].name
+  create_namespace = false
+  name             = "mysql-cluster"
+  timeout          = 900
+
+  repository = "https://mysql.github.io/mysql-operator/"
+  chart      = "mysql-innodbcluster"
+  version    = "2.2.7"
+
+  values = [yamlencode({
+    serverInstances = 3
+    routerInstances = 1
+    serverVersion   = "8.4.4"
+
+    credentials = {
+      root = {
+        user     = "root"
+        password = var.dbaas_root_password
+        host     = "%"
+      }
+    }
+
+    tls = {
+      useSelfSigned = true
+    }
+
+    datadirVolumeClaimTemplate = {
+      storageClassName = "iscsi-truenas"
+      resources = {
+        requests = {
+          storage = "30Gi"
+        }
+      }
+    }
+
+    serverConfig = {
+      "my.cnf" = <<-EOT
+        [mysqld]
+        skip-name-resolve
+        # Auto-recovery after crashes: rejoin group without manual intervention
+        group_replication_autorejoin_tries=2016
+        group_replication_exit_state_action=OFFLINE_MODE
+        group_replication_member_expel_timeout=30
+        group_replication_unreachable_majority_timeout=60
+        group_replication_start_on_boot=ON
+        # Cap XCom cache to prevent unbounded growth (default 1GB causes OOM)
+        group_replication_message_cache_size=134217728
+        # Reduce log buffer (16MB sufficient for this workload, was 64MB)
+        innodb_log_buffer_size=16777216
+        # Limit connections (peak usage ~40, no need for 151)
+        max_connections=80
+      EOT
+    }
+
+    resources = {
+      requests = {
+        cpu    = "250m"
+        memory = "2Gi"
+      }
+      limits = {
+        memory = "4Gi"
+      }
+    }
+
+    podSpec = {
+      affinity = {
+        nodeAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = {
+            nodeSelectorTerms = [{
+              matchExpressions = [{
+                key      = "kubernetes.io/hostname"
+                operator = "NotIn"
+                values   = ["k8s-node1", "k8s-node2"]
+              }]
+            }]
+          }
+        }
+        podAntiAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = [{
+            labelSelector = {
+              matchLabels = {
+                "component" = "mysqld"
+              }
+            }
+            topologyKey = "kubernetes.io/hostname"
+          }]
+        }
+      }
+      containers = [{
+        name = "mysql"
+        resources = {
+          requests = {
+            memory = "2Gi"
+            cpu    = "250m"
+          }
+          limits = {
+            memory = "4Gi"
+          }
+        }
+      }]
+      initContainers = [
+        {
+          name = "fixdatadir"
+          resources = {
+            requests = { memory = "64Mi", cpu = "25m" }
+            limits   = { memory = "64Mi" }
+          }
+        },
+        {
+          name = "initconf"
+          resources = {
+            requests = { memory = "256Mi", cpu = "50m" }
+            limits   = { memory = "256Mi" }
+          }
+        },
+        {
+          name = "initmysql"
+          resources = {
+            requests = { memory = "512Mi", cpu = "250m" }
+            limits   = { memory = "512Mi" }
+          }
+        }
+      ]
+    }
+  })]
+
+  depends_on = [helm_release.mysql_operator]
+}
+
+# Compatibility service: mysql.dbaas points at InnoDB Cluster mysqld pods
+# When router is available it handles failover, but we fall back to direct
+# mysqld access to avoid total outage during partial cluster failures
+resource "kubernetes_service" "mysql" {
+  metadata {
+    name      = var.cluster_master_service
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    publish_not_ready_addresses = true # bypass InnoDB Cluster readiness gate during partial failures
+    selector = {
+      "component"                     = "mysqld"
+      "mysql.oracle.com/cluster"      = "mysql-cluster"
+      "mysql.oracle.com/cluster-role" = "PRIMARY"
+    }
+    port {
+      port        = 3306
+      target_port = 3306
+    }
+  }
+
+  depends_on = [helm_release.mysql_cluster]
+}
+
+module "nfs_mysql_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-mysql-backup"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/mysql-backup"
+}
+
+module "nfs_pgadmin" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-pgadmin"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/postgresql/pgadmin"
+}
+
+module "nfs_postgresql_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-postgresql-backup"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/postgresql-backup"
+}
+
+resource "kubernetes_cron_job_v1" "mysql-backup" {
+  metadata {
+    name      = "mysql-backup"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 0 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "mysql-backup"
+              image = "mysql"
+              # TODO: would be nice to rotate at some point... Current size is 11MB so not really needed atm
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                mysqldump --all-databases -u root -p${var.dbaas_root_password} --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
+
+                # Rotate - delete last log file
+                cd /backup
+                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                echo Done
+              EOT
+              ]
+              # To restore (from outside of the cluster):
+              # run kubectl port-forward to pod e.g.:
+              # > kb port-forward mysql-647cfd4969-46rmw --address 0.0.0.0 3307:3306
+              # run mysql import (and specify non-localhost address to avoid using unix socket): (password is in tfvars)
+              # > mysql -u root -p --host 10.0.10.10 --port 3307 < /mnt/nfs/2024_01_06_13_54.sql
+              volume_mount {
+                name       = "mysql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "mysql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_mysql_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# resource "kubernetes_persistent_volume" "mysql" {
+#   metadata {
+#     name = "mysql-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "10Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+
+
+# resource "helm_release" "mysql" {
+#  namespace = kubernetes_namespace.dbaas.metadata[0].name
+#   create_namespace = false
+#   name             = "mysql"
+
+#   repository = "https://presslabs.github.io/charts"
+#   chart      = "mysql-operator"
+#   # version    = "v0.5.0-rc.3"
+
+#   values = [templatefile("${path.module}/mysql_chart_values.yaml", { secretName = var.tls_secret_name })]
+#   atomic = true
+
+#   depends_on = [kubernetes_namespace.dbaas]
+# }
+
+# # resource "helm_release" "mysql" {
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
+# #   create_namespace = false
+# #   name             = "mysql-operator"
+
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-operator"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# # }
+
+# # resource "helm_release" "innodb-cluster" {
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
+# #   create_namespace = false
+# #   name             = var.cluster_master_service
+
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-innodbcluster"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# #   values     = [templatefile("${path.module}/chart_values.tpl", { root_password = var.dbaas_root_password })]
+# # }
+
+# resource "kubernetes_persistent_volume" "mysql-operator" {
+#   metadata {
+#     name = "mysql-operator-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "1Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:operator"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+
+resource "kubernetes_secret" "cluster-password" {
+  metadata {
+    name      = "cluster-secret"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  type = "Opaque"
+  data = {
+    "ROOT_PASSWORD" = var.dbaas_root_password
+  }
+}
+
+# resource "kubernetes_ingress_v1" "dbaas" {
+#   metadata {
+#     name      = "orchestrator-ingress"
+#    namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     annotations = {
+#       "kubernetes.io/ingress.class"                        = "nginx"
+#       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+#       "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+#     }
+#   }
+
+#   spec {
+#     tls {
+#       hosts       = ["db.viktorbarzin.me"]
+#       secret_name = var.tls_secret_name
+#     }
+#     rule {
+#       host = "db.viktorbarzin.me"
+#       http {
+#         path {
+#           path = "/"
+#           backend {
+#             service {
+#               name = "mysql-mysql-operator"
+#               port {
+#                 number = 80
+#               }
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
+
+
+# PHPMyAdmin instance
+resource "kubernetes_deployment" "phpmyadmin" {
+  metadata {
+    name      = "phpmyadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "app" = "phpmyadmin"
+      tier  = var.tier
+
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    replicas = "1"
+    selector {
+      match_labels = {
+        "app" = "phpmyadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          "app" = "phpmyadmin"
+        }
+      }
+      spec {
+        container {
+          name  = "phpmyadmin"
+          image = "phpmyadmin/phpmyadmin:5.2.3"
+          port {
+            container_port = 80
+          }
+          env {
+            name  = "PMA_HOST"
+            value = var.cluster_master_service
+          }
+          env {
+            name  = "PMA_PORT"
+            value = "3306"
+          }
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "cluster-secret"
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+          env {
+            name  = "UPLOAD_LIMIT"
+            value = "300M"
+          }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "128Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "phpmyadmin" {
+  metadata {
+    name      = "pma"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app" = "phpmyadmin"
+    }
+    port {
+      name = "web"
+      port = 80
+    }
+  }
+}
+module "ingress" {
+  source                         = "../../../../modules/kubernetes/ingress_factory"
+  namespace                      = kubernetes_namespace.dbaas.metadata[0].name
+  name                           = "pma"
+  tls_secret_name                = var.tls_secret_name
+  protected                      = true
+  extra_annotations              = {}
+  rybbit_site_id                 = "942c76b8bd4d"
+  custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me"
+}
+
+
+# resource "kubectl_manifest" "mysql-cluster" {
+#   yaml_body  = <<-YAML
+#     apiVersion: mysql.presslabs.org/v1alpha1
+#     kind: MysqlCluster
+#     metadata:
+#       name: mysql-cluster
+#      namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     spec:
+#       mysqlVersion: "5.7"
+#       replicas: 1
+#       secretName: cluster-secret
+#       mysqlConf:
+#         # read_only: 0                          # mysql forms a single transaction for each sql statement, autocommit for each statement
+#         # automatic_sp_privileges: "ON"         # automatically grants the EXECUTE and ALTER ROUTINE privileges to the creator of a stored routine
+#         # auto_generate_certs: "ON"             # Auto Generation of Certificate
+#         # auto_increment_increment: 1           # Auto Incrementing value from +1
+#         # auto_increment_offset: 1              # Auto Increment Offset
+#         # binlog-format: "STATEMENT"            # contains various options such ROW(SLOW,SAFE) STATEMENT(FAST,UNSAFE), MIXED(combination of both)
+#         # wait_timeout: 31536000                # 28800 number of seconds the server waits for activity on a non-interactive connection before closing it, You might encounter MySQL server has gone away error, you then tweak this value acccordingly
+#         # interactive_timeout: 28800            # The number of seconds the server waits for activity on an interactive connection before closing it.
+#         # max_allowed_packet: "512M"            # Maximum size of MYSQL Network protocol packet that the server can create or read 4MB, 8MB, 16MB, 32MB
+#         # max-binlog-size: 1073741824           # binary logs contains the events that describe database changes, this parameter describe size for the bin_log file.
+#         # log_output: "TABLE"                   # Format in which the logout will be dumped
+#         # master-info-repository: "TABLE"       # Format in which the master info will be dumped
+#         # relay_log_info_repository: "TABLE"    # Format in which the relay info will be dumped
+#       volumeSpec:
+#         persistentVolumeClaim:
+#           accessModes:
+#           - ReadWriteOnce
+#           resources:
+#             requests:
+#               storage: 10Gi
+#   YAML
+#   depends_on = [helm_release.mysql]
+#   # manifest = {
+#   #   apiVersion = "mysql.presslabs.org/v1alpha1"
+#   #   kind       = "MysqlCluster"
+#   #   metadata = {
+#   #     name      = "mysql-cluster"
+#   #    namespace = kubernetes_namespace.dbaas.metadata[0].name
+#   #   }
+#   #   spec = {
+#   #     mysqlVersion = "5.7"
+#   #     replicas     = 1
+#   #     secretName   = "cluster-secret"
+#   #     mysqlConf = {
+#   #       read_only = 0
+#   #     }
+#   #     volumeSpec = {
+#   #       persistentVolumeClaim = {
+#   #         resources = {
+#   #           requests = {
+#   #             storage = "10Gi"
+#   #           }
+#   #         }
+#   #       }
+#   #     }
+#   #   }
+#   # }
+# }
+
+
+# For some unknwown reason not all CRDs are installed. Add them manually
+# resource "kubectl_manifest" "mysql-user" {
+#   yaml_body = <<-EOF
+#     apiVersion: apiextensions.k8s.io/v1
+#     kind: CustomResourceDefinition
+#     metadata:
+#       annotations:
+#         controller-gen.kubebuilder.io/version: v0.5.0
+#         helm.sh/hook: crd-install
+#       name: mysqlusers.mysql.presslabs.org
+#       labels:
+#         app: mysql-operator
+#     spec:
+#       group: mysql.presslabs.org
+#       names:
+#         kind: MysqlUser
+#         listKind: MysqlUserList
+#         plural: mysqlusers
+#         singular: mysqluser
+#       scope:namespace = kubernetes_namespace.dbaas.metadata[0].name
+#       versions:
+#         - additionalPrinterColumns:
+#             - description: The user status
+#               jsonPath: .status.conditions[?(@.type == 'Ready')].status
+#               name: Ready
+#               type: string
+#             - jsonPath: .spec.clusterRef.name
+#               name: Cluster
+#               type: string
+#             - jsonPath: .spec.user
+#               name: UserName
+#               type: string
+#             - jsonPath: .metadata.creationTimestamp
+#               name: Age
+#               type: date
+#           name: v1alpha1
+#           schema:
+#             openAPIV3Schema:
+#               description: MysqlUser is the Schema for the MySQL User API
+#               properties:
+#                 apiVersion:
+#                   description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+#                   type: string
+#                 kind:
+#                   description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+#                   type: string
+#                 metadata:
+#                   type: object
+#                 spec:
+#                   description: MysqlUserSpec defines the desired state of MysqlUserSpec
+#                   properties:
+#                     allowedHosts:
+#                       description: AllowedHosts is the allowed host to connect from.
+#                       items:
+#                         type: string
+#                       type: array
+#                     clusterRef:
+#                       description: ClusterRef represents a reference to the MySQL cluster. This field should be immutable.
+#                       properties:
+#                         name:
+#                           description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. apiVersion, kind, uid?'
+#                           type: string
+#                        namespace = kubernetes_namespace.dbaas.metadata[0].name
+#                           description:namespace = kubernetes_namespace.dbaas.metadata[0].name
+#                           type: string
+#                       type: object
+#                     password:
+#                       description: Password is the password for the user.
+#                       properties:
+#                         key:
+#                           description: The key of the secret to select from.  Must be a valid secret key.
+#                           type: string
+#                         name:
+#                           description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. apiVersion, kind, uid?'
+#                           type: string
+#                         optional:
+#                           description: Specify whether the Secret or its key must be defined
+#                           type: boolean
+#                       required:
+#                         - key
+#                       type: object
+#                     permissions:
+#                       description: Permissions is the list of roles that user has in the specified database.
+#                       items:
+#                         description: MysqlPermission defines a MySQL schema permission
+#                         properties:
+#                           permissions:
+#                             description: Permissions represents the permissions granted on the schema/tables
+#                             items:
+#                               type: string
+#                             type: array
+#                           schema:
+#                             description: Schema represents the schema to which the permission applies
+#                             type: string
+#                           tables:
+#                             description: Tables represents the tables inside the schema to which the permission applies
+#                             items:
+#                               type: string
+#                             type: array
+#                         required:
+#                           - permissions
+#                           - schema
+#                           - tables
+#                         type: object
+#                       type: array
+#                     resourceLimits:
+#                       additionalProperties:
+#                         anyOf:
+#                           - type: integer
+#                           - type: string
+#                         pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+#                         x-kubernetes-int-or-string: true
+#                       description: 'ResourceLimits allow settings limit per mysql user as defined here: https://dev.mysql.com/doc/refman/5.7/en/user-resources.html'
+#                       type: object
+#                     user:
+#                       description: User is the name of the user that will be created with will access the specified database. This field should be immutable.
+#                       type: string
+#                   required:
+#                     - allowedHosts
+#                     - clusterRef
+#                     - password
+#                     - user
+#                   type: object
+#                 status:
+#                   description: MysqlUserStatus defines the observed state of MysqlUser
+#                   properties:
+#                     allowedHosts:
+#                       description: AllowedHosts contains the list of hosts that the user is allowed to connect from.
+#                       items:
+#                         type: string
+#                       type: array
+#                     conditions:
+#                       description: Conditions represents the MysqlUser resource conditions list.
+#                       items:
+#                         description: MySQLUserCondition defines the condition struct for a MysqlUser resource
+#                         properties:
+#                           lastTransitionTime:
+#                             description: Last time the condition transitioned from one status to another.
+#                             format: date-time
+#                             type: string
+#                           lastUpdateTime:
+#                             description: The last time this condition was updated.
+#                             format: date-time
+#                             type: string
+#                           message:
+#                             description: A human readable message indicating details about the transition.
+#                             type: string
+#                           reason:
+#                             description: The reason for the condition's last transition.
+#                             type: string
+#                           status:
+#                             description: Status of the condition, one of True, False, Unknown.
+#                             type: string
+#                           type:
+#                             description: Type of MysqlUser condition.
+#                             type: string
+#                         required:
+#                           - lastTransitionTime
+#                           - message
+#                           - reason
+#                           - status
+#                           - type
+#                         type: object
+#                       type: array
+#                   type: object
+#               type: object
+#           served: true
+#           storage: true
+#           subresources:
+#             status: {}
+#   EOF
+# }
+
+#### POSTGRESQL — CloudNativePG Cluster
+#
+# Migrated from single NFS-backed pod to CNPG on local-path storage.
+# CNPG Cluster is managed via kubectl apply (not kubernetes_manifest)
+# because the CNPG webhook mutates the spec on apply, causing
+# Terraform provider "inconsistent result" errors.
+#
+# Rollback: apply old deployment yaml, revert service selector to app=postgresql.
+
+# Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
+resource "null_resource" "pg_cluster" {
+  triggers = {
+    instances     = "2"
+    image         = "ghcr.io/cloudnative-pg/postgis:16"
+    storage_size  = "20Gi"
+    storage_class = "iscsi-truenas"
+    memory_limit  = "512Mi"
+
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} apply -f - <<'EOF'
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: pg-cluster
+        namespace: dbaas
+      spec:
+        instances: 2
+        imageName: ghcr.io/cloudnative-pg/postgis:16
+        postgresql:
+          parameters:
+            search_path: '"$user", public'
+          enableAlterSystem: true
+        enableSuperuserAccess: true
+        storage:
+          size: 20Gi
+          storageClass: iscsi-truenas
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "512Mi"
+          limits:
+            memory: "512Mi"
+      EOF
+    EOT
+  }
+}
+
+# Service that maintains the original postgresql.dbaas endpoint,
+# now pointing at the CNPG primary pod instead of the old deployment.
+resource "kubernetes_service" "postgresql" {
+  metadata {
+    name      = "postgresql"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/instanceRole" = "primary"
+    }
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+}
+
+# Old PostgreSQL deployment — kept commented for rollback reference
+# resource "kubernetes_deployment" "postgres" {
+#   metadata {
+#     name      = "postgresql"
+#     namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     labels    = { tier = var.tier }
+#   }
+#   spec {
+#     replicas = 0  # scaled to 0 during CNPG migration
+#     selector { match_labels = { app = "postgresql" } }
+#     strategy { type = "Recreate" }
+#     template {
+#       metadata { labels = { app = "postgresql" } }
+#       spec {
+#         container {
+#           image = "viktorbarzin/postgres:16-master"
+#           name  = "postgresql"
+#           env { name = "POSTGRES_PASSWORD"; value = var.postgresql_root_password }
+#           env { name = "POSTGRES_USER"; value = "root" }
+#           port { container_port = 5432; protocol = "TCP"; name = "postgresql" }
+#           volume_mount { name = "postgresql-persistent-storage"; mount_path = "/var/lib/postgresql/data" }
+#         }
+#         volume {
+#           name = "postgresql-persistent-storage"
+#           nfs { path = "/mnt/main/postgresql/data"; server = var.nfs_server }
+#         }
+#       }
+#     }
+#   }
+# }
+
+#### PGADMIN
+
+resource "kubernetes_deployment" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+    labels = {
+      tier = var.tier
+    }
+  }
+  spec {
+    selector {
+      match_labels = {
+        app = "pgadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "pgadmin"
+        }
+      }
+      spec {
+        container {
+          image = "dpage/pgadmin4"
+          name  = "pgadmin"
+          env {
+            name  = "PGADMIN_DEFAULT_EMAIL"
+            value = "me@viktorbarzin.me"
+          }
+          env {
+            name = "PGADMIN_DEFAULT_PASSWORD"
+            # Changed at startup
+            value = var.pgadmin_password
+          }
+          port {
+            container_port = 80
+            name           = "web"
+          }
+          volume_mount {
+            name       = "pgadmin"
+            mount_path = "/var/lib/pgadmin/"
+          }
+
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "512Mi"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
+
+        }
+        volume {
+          name = "pgadmin"
+          # config_map {
+          #   name = "pgadmin-config"
+          # }
+          persistent_volume_claim {
+            claim_name = module.nfs_pgadmin.claim_name
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
+      }
+    }
+  }
+}
+resource "kubernetes_service" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app" = "pgadmin"
+    }
+    port {
+      name = "pgadmin"
+      port = 80
+    }
+  }
+}
+module "ingress-pgadmin" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
+  name            = "pgadmin"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  rybbit_site_id  = "7cef78e30485"
+}
+
+
+resource "kubernetes_cron_job_v1" "postgresql-backup" {
+  metadata {
+    name      = "postgresql-backup"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 0 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup"
+              image = "postgres:16.4-bullseye"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "pg-cluster-superuser"
+                    key  = "password"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres > /backup/dump_$now.sql
+
+                # Rotate - delete last log file
+                cd /backup
+                find . -name "dump_*.sql" -type f -mtime +7 -delete # 7 day retention of backups
+                echo Done
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

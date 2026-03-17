@@ -32,9 +32,9 @@ steps:
       kubernetes:
         resources:
           requests:
-            memory: 1Gi
-          limits:
             memory: 2Gi
+          limits:
+            memory: 4Gi
     commands:
       - "apk update && apk add curl unzip git openssh-client"
       # Install Terraform
@@ -45,8 +45,13 @@ steps:
       - "chmod 755 /usr/local/bin/terragrunt"
       # Source Vault token
       - "source .vault-env"
-      # Apply platform stack (core infrastructure services)
+      # Apply extracted stacks in parallel (slow modules)
+      - "cd stacks/dbaas && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/authentik && terragrunt apply --non-interactive -auto-approve &"
+      - "cd stacks/crowdsec && terragrunt apply --non-interactive -auto-approve &"
+      # Apply platform stack (remaining core infrastructure services)
       - "cd stacks/platform && terragrunt apply --non-interactive -auto-approve"
+      - "wait"
 
   - name: cleanup-and-push
     image: alpine

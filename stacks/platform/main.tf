@@ -2,15 +2,18 @@
 # Platform Stack — Core & Cluster Services
 # =============================================================================
 #
-# This stack groups ~22 core/cluster services that form the platform layer.
+# This stack groups core/cluster services that form the platform layer.
 # These services are always present (no DEFCON gating) and provide the
 # foundational infrastructure that application stacks depend on.
 #
 # Services included:
-#   metallb, dbaas, cloudflared, infra-maintenance,
-#   redis, traefik, technitium, headscale, authentik, rbac, k8s-portal,
-#   crowdsec, monitoring, vaultwarden, reverse-proxy, metrics-server, vpa,
+#   metallb, cloudflared, infra-maintenance,
+#   redis, traefik, technitium, headscale, rbac, k8s-portal,
+#   monitoring, vaultwarden, reverse-proxy, metrics-server, vpa,
 #   nvidia, kyverno, uptime-kuma, wireguard, xray, mailserver
+#
+# Extracted to independent stacks:
+#   dbaas, authentik, crowdsec
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -31,10 +34,6 @@ variable "postgresql_host" { type = string }
 variable "mysql_host" { type = string }
 variable "ollama_host" { type = string }
 variable "mail_host" { type = string }
-variable "prod" {
-  type    = bool
-  default = false
-}
 variable "k8s_ca_cert" {
   type    = string
   default = ""
@@ -89,21 +88,6 @@ module "metallb" {
 }
 
 # -----------------------------------------------------------------------------
-# DBaaS — MySQL + PostgreSQL + pgAdmin
-# -----------------------------------------------------------------------------
-module "dbaas" {
-  source                   = "./modules/dbaas"
-  prod                     = var.prod
-  tls_secret_name          = var.tls_secret_name
-  nfs_server               = var.nfs_server
-  dbaas_root_password      = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
-  postgresql_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_postgresql_root_password"]
-  pgadmin_password         = data.vault_kv_secret_v2.secrets.data["dbaas_pgadmin_password"]
-  kube_config_path         = var.kube_config_path
-  tier                     = local.tiers.cluster
-}
-
-# -----------------------------------------------------------------------------
 # Redis — Shared Redis instance
 # -----------------------------------------------------------------------------
 module "redis" {
@@ -154,19 +138,6 @@ module "headscale" {
 }
 
 # -----------------------------------------------------------------------------
-# Authentik — Identity provider (SSO)
-# -----------------------------------------------------------------------------
-module "authentik" {
-  source            = "./modules/authentik"
-  tier              = local.tiers.cluster
-  tls_secret_name   = var.tls_secret_name
-  secret_key        = data.vault_kv_secret_v2.secrets.data["authentik_secret_key"]
-  postgres_password = data.vault_kv_secret_v2.secrets.data["authentik_postgres_password"]
-  redis_host        = var.redis_host
-  homepage_token    = try(local.homepage_credentials["authentik"]["token"], "")
-}
-
-# -----------------------------------------------------------------------------
 # RBAC — Kubernetes OIDC RBAC (depends on Authentik)
 # -----------------------------------------------------------------------------
 module "rbac" {
@@ -185,24 +156,6 @@ module "k8s-portal" {
   tier            = local.tiers.edge
   tls_secret_name = var.tls_secret_name
   k8s_ca_cert     = var.k8s_ca_cert
-}
-
-# -----------------------------------------------------------------------------
-# CrowdSec — Security/WAF
-# -----------------------------------------------------------------------------
-module "crowdsec" {
-  source                         = "./modules/crowdsec"
-  tier                           = local.tiers.cluster
-  tls_secret_name                = var.tls_secret_name
-  mysql_host                     = var.mysql_host
-  homepage_username              = local.homepage_credentials["crowdsec"]["username"]
-  homepage_password              = local.homepage_credentials["crowdsec"]["password"]
-  enroll_key                     = data.vault_kv_secret_v2.secrets.data["crowdsec_enroll_key"]
-  db_password                    = data.vault_kv_secret_v2.secrets.data["crowdsec_db_password"]
-  crowdsec_dash_api_key          = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_api_key"]
-  crowdsec_dash_machine_id       = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_id"]
-  crowdsec_dash_machine_password = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_password"]
-  slack_webhook_url              = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
 }
 
 # -----------------------------------------------------------------------------
