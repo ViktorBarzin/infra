@@ -26,6 +26,11 @@ terraform {
     ]
   }
 
+  extra_arguments "no_backup" {
+    commands = ["apply", "plan", "destroy", "import"]
+    arguments = ["-backup=-"]
+  }
+
   extra_arguments "kube_config" {
     commands = get_terraform_commands_that_need_vars()
     arguments = [

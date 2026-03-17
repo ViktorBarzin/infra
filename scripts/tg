@@ -1,9 +1,35 @@
 #!/usr/bin/env bash
-# scripts/tg — wrapper: inject -auto-approve for non-interactive apply
+# scripts/tg — wrapper: decrypt state before, encrypt+commit after mutating ops
 # Usage: scripts/tg apply --non-interactive
 #        scripts/tg run --all -- plan
 # Auth: `vault login -method=oidc` (token at ~/.vault-token)
 set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SYNC="$REPO_ROOT/scripts/state-sync"
+
+# Determine stack name from cwd (relative to stacks/)
+STACK_NAME=""
+cwd="$(pwd)"
+stacks_dir="$REPO_ROOT/stacks"
+if [[ "$cwd" == "$stacks_dir"/* ]]; then
+  # Get first path component relative to stacks/
+  rel="${cwd#$stacks_dir/}"
+  STACK_NAME="${rel%%/*}"
+fi
+
+# Decrypt state before any operation
+if [ -n "$STACK_NAME" ] && [ -f "$REPO_ROOT/state/stacks/$STACK_NAME/terraform.tfstate.enc" ]; then
+  "$SYNC" decrypt "$STACK_NAME"
+fi
+
+# Detect if this is a mutating operation
+is_mutating=false
+for arg in "$@"; do
+  case "$arg" in
+    apply|destroy|import|state) is_mutating=true ;;
+  esac
+done
 
 # If running apply with --non-interactive, add -auto-approve for Terraform
 args=("$@")
@@ -25,7 +51,17 @@ if $has_apply && $has_non_interactive; then
       new_args+=("-auto-approve")
     fi
   done
-  exec terragrunt "${new_args[@]}"
+  terragrunt "${new_args[@]}"
 else
-  exec terragrunt "$@"
+  terragrunt "$@"
+fi
+
+# After mutating operations, encrypt and commit
+if $is_mutating && [ -n "$STACK_NAME" ]; then
+  "$SYNC" encrypt "$STACK_NAME"
+  cd "$REPO_ROOT"
+  git add "state/stacks/$STACK_NAME/terraform.tfstate.enc"
+  if ! git diff --cached --quiet; then
+    git commit -m "state($STACK_NAME): update encrypted state"
+  fi
 fi

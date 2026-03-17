@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: '\.tfstate(\.enc)?$'
+    age: >-
+      age1z64h9t3acsm2rr74pz7j4846kwj5tutx9sk78jqv46y8fln4vs2sy920ce
