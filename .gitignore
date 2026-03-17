@@ -7,8 +7,8 @@
 **/.terraform/*
 
 # .tfstate files
-#*.tfstate
-*.tfstate.*
+*.tfstate
+*.tfstate.backup
 
 # Crash log files
 crash.log
@@ -50,7 +50,16 @@ git_crypt.key
 
 # Terragrunt
 .terragrunt-cache/
-state/
+
+# Terraform state — plaintext is ignored, encrypted is committed
+state/stacks/*/terraform.tfstate
+state/stacks/*/terraform.tfstate.backup
+state/stacks/*/*.backup
+state/backups/
+state/terraform.tfstate
+state/infra/
+# Allow encrypted state
+!state/stacks/*/terraform.tfstate.enc
 
 # Terragrunt-generated files (providers, backend config)
 backend.tf
