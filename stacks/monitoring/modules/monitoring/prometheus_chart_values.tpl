@@ -161,9 +161,9 @@ server:
   resources:
     requests:
       cpu: 100m
-      memory: 4Gi
+      memory: 3Gi
     limits:
-      memory: 4Gi
+      memory: 3Gi
   livenessProbeInitialDelay: 300
   readinessProbeInitialDelay: 60
   strategy:
