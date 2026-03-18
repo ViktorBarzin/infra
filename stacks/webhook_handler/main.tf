@@ -229,6 +229,9 @@ resource "kubernetes_deployment" "webhook_handler" {
       }
     }
   }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "webhook_handler" {
