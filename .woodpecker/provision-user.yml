@@ -134,31 +134,29 @@ steps:
           limits:
             memory: 6Gi
     commands:
-      - "apk update && apk add curl unzip git openssh-client python3 py3-pip py3-yaml"
-      # Install sops
-      - "wget -qO /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64"
-      - "chmod 755 /usr/local/bin/sops"
-      # Install Terraform
-      - "wget -qO /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
-      - "unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform"
-      # Install Terragrunt
-      - "wget -qO /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
-      - "chmod 755 /usr/local/bin/terragrunt"
-      # Source Vault token
-      - "source .vault-env"
-      # Apply stacks sequentially: vault → rbac → cloudflared → woodpecker
       - |
-        source .vault-env
+        set -e
+        apk update && apk add curl unzip git openssh-client python3 py3-pip py3-yaml
+        # Install sops
+        wget -qO /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
+        chmod 755 /usr/local/bin/sops
+        # Install Terraform
+        wget -qO /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
+        unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform
+        # Install Terragrunt
+        wget -qO /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64
+        chmod 755 /usr/local/bin/terragrunt
+        # Source Vault token (must be in same shell block)
+        . .vault-env
         export VAULT_ADDR
         export VAULT_TOKEN
+        echo "Vault token acquired, applying stacks..."
+        # Apply stacks sequentially: vault → rbac → cloudflared → woodpecker
         for stack in vault rbac cloudflared woodpecker; do
           echo "=== Applying stack: $stack ==="
           cd "stacks/$stack"
-          # Decrypt state
           ../../scripts/state-sync decrypt "$stack" || true
-          # Apply
           terragrunt apply --non-interactive -auto-approve -backup=-
-          # Encrypt state
           ../../scripts/state-sync encrypt "$stack" || true
           cd ../..
           echo "=== Done: $stack ==="
