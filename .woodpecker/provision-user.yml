@@ -12,16 +12,21 @@ steps:
   - name: validate-inputs
     image: alpine
     commands:
+      - env | grep -i "CI_\|USERNAME\|EMAIL\|PROVISION" | sort || true
       - |
-        if [ -z "$CI_PIPELINE_VARIABLE_USERNAME" ] || [ -z "$CI_PIPELINE_VARIABLE_EMAIL" ]; then
+        USERNAME="$CI_PIPELINE_VARIABLE_USERNAME"
+        EMAIL="$CI_PIPELINE_VARIABLE_EMAIL"
+        # Fallback: try without VARIABLE_ prefix (Woodpecker 3.x may use different format)
+        [ -z "$USERNAME" ] && USERNAME="$CI_PIPELINE_DEPLOY_TASK"
+        echo "DEBUG: USERNAME=$USERNAME EMAIL=$EMAIL"
+        echo "DEBUG: All CI vars:" && env | grep ^CI_ | sort
+        if [ -z "$USERNAME" ] || [ -z "$EMAIL" ]; then
           echo "ERROR: USERNAME and EMAIL variables are required"
-          echo "Trigger with: POST /api/repos/{id}/pipelines {branch:master, variables:{USERNAME:x, EMAIL:y}}"
           exit 1
         fi
-        echo "Provisioning user: $CI_PIPELINE_VARIABLE_USERNAME ($CI_PIPELINE_VARIABLE_EMAIL)"
-        # Write vars to shared file for subsequent steps
-        echo "export PROVISION_USERNAME=$CI_PIPELINE_VARIABLE_USERNAME" > .provision-env
-        echo "export PROVISION_EMAIL=$CI_PIPELINE_VARIABLE_EMAIL" >> .provision-env
+        echo "Provisioning user: $USERNAME ($EMAIL)"
+        echo "export PROVISION_USERNAME=$USERNAME" > .provision-env
+        echo "export PROVISION_EMAIL=$EMAIL" >> .provision-env
 
   - name: prepare
     image: alpine
