@@ -136,7 +136,12 @@ steps:
     commands:
       - |
         set -e
-        apk update && apk add curl unzip git openssh-client python3 py3-pip py3-yaml
+        apk update && apk add curl unzip git git-crypt openssh-client python3 py3-pip py3-yaml jq
+        # Re-unlock git-crypt in this step (workspace is shared but env is not)
+        curl -sk https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key \
+          -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+          | jq -r .data.key | base64 -d > /tmp/key
+        git-crypt unlock /tmp/key && rm /tmp/key
         # Install sops
         wget -qO /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
         chmod 755 /usr/local/bin/sops
@@ -151,8 +156,22 @@ steps:
         export VAULT_ADDR
         export VAULT_TOKEN
         echo "Vault token acquired, applying stacks..."
-        # Apply stacks sequentially: vault → rbac → cloudflared → woodpecker
-        for stack in vault rbac cloudflared woodpecker; do
+        # Apply vault stack with -target for namespace + identity resources first
+        # (for_each on user_namespaces needs two-pass apply for new users)
+        echo "=== Applying vault stack (targeted — new user resources) ==="
+        cd stacks/vault
+        ../../scripts/state-sync decrypt vault || true
+        terragrunt apply --non-interactive -auto-approve -backup=- \
+          -target='kubernetes_namespace.user_namespace["'"$USERNAME"'"]' \
+          -target='vault_identity_entity.user["'"$USERNAME"'"]' \
+          -target='vault_policy.namespace_owner["'"$USERNAME"'"]' || true
+        # Full vault apply (now for_each keys are known)
+        terragrunt apply --non-interactive -auto-approve -backup=-
+        ../../scripts/state-sync encrypt vault || true
+        cd ../..
+        echo "=== Done: vault ==="
+        # Apply remaining stacks sequentially
+        for stack in rbac cloudflared woodpecker; do
           echo "=== Applying stack: $stack ==="
           cd "stacks/$stack"
           ../../scripts/state-sync decrypt "$stack" || true
