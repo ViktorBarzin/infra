@@ -130,9 +130,9 @@ steps:
       kubernetes:
         resources:
           requests:
-            memory: 3Gi
+            memory: 2Gi
           limits:
-            memory: 6Gi
+            memory: 4Gi
     commands:
       - |
         set -e
