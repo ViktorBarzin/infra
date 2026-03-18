@@ -158,6 +158,8 @@ server:
     existingClaim: prometheus-data
     # storageClass: rook-cephfs
   retention: "52w"
+  # NOTE: Memory must be >= 4Gi. The WAL tmpfs (2Gi, medium: Memory) shares
+  # the container's cgroup limit. At 3Gi, Prometheus OOM-kills during WAL replay.
   resources:
     requests:
       cpu: 100m
