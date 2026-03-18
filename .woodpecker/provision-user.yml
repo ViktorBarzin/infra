@@ -18,9 +18,19 @@ steps:
           echo "Trigger with: POST /api/repos/1/pipelines {branch:master, variables:{USERNAME:x, EMAIL:y}}"
           exit 1
         fi
+        # Validate username: lowercase alphanumeric + dash/underscore, 2-63 chars
+        if ! echo "$USERNAME" | grep -qE '^[a-z0-9][a-z0-9_-]{0,61}[a-z0-9]$'; then
+          echo "ERROR: USERNAME must be 2-63 chars, lowercase alphanumeric/dash/underscore"
+          exit 1
+        fi
+        # Validate email: basic format check
+        if ! echo "$EMAIL" | grep -qE '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'; then
+          echo "ERROR: EMAIL must be a valid email address"
+          exit 1
+        fi
         echo "Provisioning user: $USERNAME ($EMAIL)"
-        echo "export PROVISION_USERNAME=$USERNAME" > .provision-env
-        echo "export PROVISION_EMAIL=$EMAIL" >> .provision-env
+        echo "export PROVISION_USERNAME='$USERNAME'" > .provision-env
+        echo "export PROVISION_EMAIL='$EMAIL'" >> .provision-env
 
   - name: prepare
     image: alpine
@@ -31,7 +41,7 @@ steps:
         curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key \
           -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
           | jq -r .data.key | base64 -d > /tmp/key
-      - "git-crypt unlock /tmp/key && rm /tmp/key"
+      - "git-crypt unlock /tmp/key; rm -f /tmp/key"
       # Vault: authenticate via K8s service account JWT
       - |
         SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
@@ -44,10 +54,9 @@ steps:
     image: alpine
     commands:
       - "apk update && apk add jq curl"
-      - "source .provision-env && source .vault-env"
       # Read current platform secret
       - |
-        source .provision-env && source .vault-env
+        . .provision-env && . .vault-env
         CURRENT=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
           "$VAULT_ADDR/v1/secret/data/platform" | jq -r '.data.data')
 
@@ -91,10 +100,11 @@ steps:
           "$AUTHENTIK_URL/api/v3/core/groups/?name=$SOPS_GROUP" | jq -r '.results | length')
 
         if [ "$EXISTING" = "0" ]; then
+          GROUP_PAYLOAD=$(jq -n --arg name "$SOPS_GROUP" '{"name": $name, "is_superuser": false}')
           GROUP_PK=$(curl -s -X POST -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
             -H "Content-Type: application/json" \
             "$AUTHENTIK_URL/api/v3/core/groups/" \
-            -d "{\"name\": \"$SOPS_GROUP\", \"is_superuser\": false}" | jq -r '.pk')
+            -d "$GROUP_PAYLOAD" | jq -r '.pk')
           echo "Created Authentik group $SOPS_GROUP (pk=$GROUP_PK)"
         else
           GROUP_PK=$(curl -s -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
