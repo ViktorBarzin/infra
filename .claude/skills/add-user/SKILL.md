@@ -29,22 +29,29 @@ SOPS state encryption access is **automatically provisioned** by the vault stack
 2. **Send Invite Link to User**
    - The user clicks the link and signs up
 
-3. **Automatic Provisioning**
+3. **Automatic Provisioning (Vault KV + Authentik)**
    - Authentik fires a webhook to `webhook.viktorbarzin.me/authentik/provision`
    - The webhook handler validates the event and triggers the Woodpecker `provision-user` pipeline
    - Pipeline automatically:
      - Adds user to Vault KV (`secret/platform` → `k8s_users`) with convention defaults
      - Creates `sops-<username>` group in Authentik and assigns the user
-     - Applies stacks: vault → rbac → cloudflared → woodpecker
-     - Commits encrypted state and pushes
-     - Sends Slack notification
+     - Sends Slack notification with manual apply instructions
 
 4. **Convention Defaults** (applied automatically)
    - Namespace: `username`
    - Quota: CPU 2, Memory 4Gi requests / 8Gi limits, 20 pods
    - Domains: none (user can request later)
 
-5. **Post-Provisioning**
+5. **Manual Apply** (admin receives Slack notification)
+   - The vault stack requires TLS certs (git-crypt) and can't run in CI. Apply manually:
+   ```bash
+   cd /Users/viktorbarzin/code/infra
+   cd stacks/vault && ../../scripts/tg apply --non-interactive && cd ../..
+   cd stacks/rbac && ../../scripts/tg apply --non-interactive && cd ../..
+   cd stacks/woodpecker && ../../scripts/tg apply --non-interactive && cd ../..
+   ```
+
+6. **Post-Provisioning**
    - Send user the onboarding link: `https://k8s-portal.viktorbarzin.me/onboarding?role=namespace-owner`
    - If custom quota/domains needed, update Vault KV manually and re-apply stacks
 
