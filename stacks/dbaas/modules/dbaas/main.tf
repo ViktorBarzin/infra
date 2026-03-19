@@ -324,11 +324,19 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
             container {
               name  = "mysql-backup"
               image = "mysql"
-              # TODO: would be nice to rotate at some point... Current size is 11MB so not really needed atm
+              env {
+                name = "MYSQL_PWD"
+                value_from {
+                  secret_key_ref {
+                    name = "cluster-secret"
+                    key  = "ROOT_PASSWORD"
+                  }
+                }
+              }
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                mysqldump --all-databases -u root -p${var.dbaas_root_password} --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
+                mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
@@ -1068,7 +1076,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 
                 # Rotate - delete last log file
                 cd /backup
-                find . -name "dump_*.sql" -type f -mtime +7 -delete # 7 day retention of backups
+                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
                 echo Done
               EOT
               ]

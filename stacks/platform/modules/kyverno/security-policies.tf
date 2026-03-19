@@ -160,6 +160,97 @@ resource "kubernetes_manifest" "policy_restrict_capabilities" {
   depends_on = [helm_release.kyverno]
 }
 
+# =============================================================================
+# Image Pull Policy Governance
+# =============================================================================
+# Mutate imagePullPolicy to IfNotPresent for all containers with pinned tags
+# (non-:latest). This prevents pods from getting stuck in ImagePullBackOff
+# when the pull-through cache at 10.0.20.10 has transient failures.
+# For :latest or untagged images, set to Always so stale images don't persist.
+
+resource "kubernetes_manifest" "policy_set_image_pull_policy" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "set-image-pull-policy"
+      annotations = {
+        "policies.kyverno.io/title"       = "Set Image Pull Policy"
+        "policies.kyverno.io/category"    = "Best Practices"
+        "policies.kyverno.io/severity"    = "medium"
+        "policies.kyverno.io/description" = "Set imagePullPolicy to IfNotPresent for pinned tags and Always for :latest to prevent ImagePullBackOff from transient cache failures."
+      }
+    }
+    spec = {
+      background = false
+      rules = [
+        {
+          name = "set-ifnotpresent-for-pinned-tags"
+          match = {
+            any = [{
+              resources = {
+                kinds = ["Pod"]
+              }
+            }]
+          }
+          mutate = {
+            foreach = [{
+              list = "request.object.spec.containers"
+              preconditions = {
+                all = [{
+                  key      = "{{ ends_with(element.image, ':latest') || !contains(element.image, ':') }}"
+                  operator = "Equals"
+                  value    = false
+                }]
+              }
+              patchStrategicMerge = {
+                spec = {
+                  containers = [{
+                    name            = "{{ element.name }}"
+                    imagePullPolicy = "IfNotPresent"
+                  }]
+                }
+              }
+            }]
+          }
+        },
+        {
+          name = "set-always-for-latest"
+          match = {
+            any = [{
+              resources = {
+                kinds = ["Pod"]
+              }
+            }]
+          }
+          mutate = {
+            foreach = [{
+              list = "request.object.spec.containers"
+              preconditions = {
+                all = [{
+                  key      = "{{ ends_with(element.image, ':latest') || !contains(element.image, ':') }}"
+                  operator = "Equals"
+                  value    = true
+                }]
+              }
+              patchStrategicMerge = {
+                spec = {
+                  containers = [{
+                    name            = "{{ element.name }}"
+                    imagePullPolicy = "Always"
+                  }]
+                }
+              }
+            }]
+          }
+        }
+      ]
+    }
+  }
+
+  depends_on = [helm_release.kyverno]
+}
+
 resource "kubernetes_manifest" "policy_require_trusted_registries" {
   manifest = {
     apiVersion = "kyverno.io/v1"

@@ -283,12 +283,15 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
               image = "redis:7-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eux
+                TIMESTAMP=$(date +%Y%m%d-%H%M)
                 # Trigger a fresh RDB save on the master
                 redis-cli -h redis.redis BGSAVE
                 sleep 5
                 # Copy the RDB via redis-cli --rdb
-                redis-cli -h redis.redis --rdb /backup/dump.rdb
-                echo "Backup complete: $(ls -lh /backup/dump.rdb)"
+                redis-cli -h redis.redis --rdb /backup/redis-$TIMESTAMP.rdb
+                # Rotate — 7-day retention
+                find /backup -name 'redis-*.rdb' -type f -mtime +7 -delete
+                echo "Backup complete: redis-$TIMESTAMP.rdb"
               EOT
               ]
               volume_mount {

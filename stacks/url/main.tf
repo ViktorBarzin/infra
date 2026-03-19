@@ -170,6 +170,9 @@ resource "kubernetes_deployment" "shlink" {
         labels = {
           run = "shlink"
         }
+        annotations = {
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306"
+        }
       }
       spec {
         container {

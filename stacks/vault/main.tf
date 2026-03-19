@@ -163,8 +163,8 @@ resource "vault_jwt_auth_backend_role" "default" {
   backend        = vault_jwt_auth_backend.oidc.path
   role_name      = "default"
   token_policies = ["default"]
-  token_ttl      = 3600
-  token_max_ttl  = 86400
+  token_ttl      = 604800
+  token_max_ttl  = 604800
   user_claim     = "email"
   groups_claim   = "groups"
   role_type      = "oidc"
