@@ -431,10 +431,10 @@ resource "kubernetes_deployment" "immich-postgres" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
         }
