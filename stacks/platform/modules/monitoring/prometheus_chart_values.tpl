@@ -500,6 +500,90 @@ serverFiles:
               severity: critical
             annotations:
               summary: "etcd backup CronJob has never completed successfully"
+          - alert: PostgreSQLBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="postgresql-backup", namespace="dbaas"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: PostgreSQLBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="postgresql-backup", namespace="dbaas"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL backup CronJob has never completed successfully"
+          - alert: MySQLBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="mysql-backup", namespace="dbaas"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MySQL backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: MySQLBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="mysql-backup", namespace="dbaas"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "MySQL backup CronJob has never completed successfully"
+          - alert: VaultBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vault-raft-backup", namespace="vault"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: VaultBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="vault-raft-backup", namespace="vault"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault backup CronJob has never completed successfully"
+          - alert: VaultwardenBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vaultwarden backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: VaultwardenBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vaultwarden backup CronJob has never completed successfully"
+          - alert: RedisBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"}) > 14400
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis backup is {{ $value | humanizeDuration }} old (threshold: 4h)"
+          - alert: RedisBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis backup CronJob has never completed successfully"
+          - alert: CSIDriverCrashLoop
+            expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|iscsi-csi"} > 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "CSI driver CrashLoopBackOff in {{ $labels.namespace }}/{{ $labels.pod }} — storage-layer failure risk"
+          - alert: BackupCronJobFailed
+            expr: kube_job_status_failed{job_name=~".*backup.*"} > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
           - alert: NewTailscaleClient
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             for: 5m

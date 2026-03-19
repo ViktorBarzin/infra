@@ -7,7 +7,3 @@ dependency "platform" {
   skip_outputs = true
 }
 
-dependency "vault" {
-  config_path  = "../vault"
-  skip_outputs = true
-}

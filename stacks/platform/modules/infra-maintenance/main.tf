@@ -101,8 +101,8 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
             container {
               name    = "backup-etcd"
               image   = "registry.k8s.io/etcd:3.5.21-0"
-              command = ["etcdctl"]
-              args    = ["--endpoints=https://127.0.0.1:2379", "--cacert=/etc/kubernetes/pki/etcd/ca.crt", "--cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt", "--key=/etc/kubernetes/pki/etcd/healthcheck-client.key", "snapshot", "save", "/backup/etcd-snapshot-latest.db"]
+              command = ["/bin/sh", "-c"]
+              args    = ["ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt --key=/etc/kubernetes/pki/etcd/healthcheck-client.key snapshot save /backup/etcd-snapshot-$(date +%Y%m%d-%H%M%S).db"]
               env {
                 name  = "ETCDCTL_API"
                 value = "3"

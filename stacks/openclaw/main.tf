@@ -992,3 +992,163 @@ resource "kubernetes_cron_job_v1" "task_processor" {
     }
   }
 }
+
+# --- OpenLobster: Multi-user Telegram AI assistant (trial) ---
+
+module "nfs_openlobster_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "openlobster-data"
+  namespace  = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/openclaw/openlobster-data"
+}
+
+resource "random_password" "openlobster_graphql_token" {
+  length  = 32
+  special = false
+}
+
+resource "kubernetes_deployment" "openlobster" {
+  metadata {
+    name      = "openlobster"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app  = "openlobster"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    strategy {
+      type = "Recreate"
+    }
+    replicas = 0
+    selector {
+      match_labels = {
+        app = "openlobster"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "openlobster"
+        }
+      }
+      spec {
+        # node4 has corrupted containerd content store — avoid it
+        affinity {
+          node_affinity {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
+                match_expressions {
+                  key      = "kubernetes.io/hostname"
+                  operator = "NotIn"
+                  values   = ["k8s-node4"]
+                }
+              }
+            }
+          }
+        }
+        container {
+          name  = "openlobster"
+          image = "ghcr.io/neirth/openlobster/openlobster:latest"
+          port {
+            container_port = 8080
+          }
+          env {
+            name  = "OPENLOBSTER_GRAPHQL_AUTH_TOKEN"
+            value = random_password.openlobster_graphql_token.result
+          }
+          env {
+            name = "OPENLOBSTER_PROVIDERS_ANTHROPIC_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "openclaw-secrets"
+                key  = "anthropic_api_key"
+              }
+            }
+          }
+          env {
+            name  = "OPENLOBSTER_PROVIDERS_ANTHROPIC_MODEL"
+            value = "claude-sonnet-4-20250514"
+          }
+          env {
+            name = "OPENLOBSTER_CHANNELS_TELEGRAM_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "openclaw-secrets"
+                key  = "telegram_bot_token"
+              }
+            }
+          }
+          env {
+            name  = "OPENLOBSTER_DATABASE_DRIVER"
+            value = "sqlite"
+          }
+          env {
+            name  = "OPENLOBSTER_DATABASE_DSN"
+            value = "/app/data/openlobster.db"
+          }
+          env {
+            name  = "OPENLOBSTER_AGENT_NAME"
+            value = "Lobster"
+          }
+          env {
+            name  = "OPENLOBSTER_MEMORY_BACKEND"
+            value = "file"
+          }
+          volume_mount {
+            name       = "openlobster-data"
+            mount_path = "/app/data"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
+        volume {
+          name = "openlobster-data"
+          persistent_volume_claim {
+            claim_name = module.nfs_openlobster_data.claim_name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_service" "openlobster" {
+  metadata {
+    name      = "openlobster"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app = "openlobster"
+    }
+  }
+  spec {
+    selector = {
+      app = "openlobster"
+    }
+    port {
+      port        = 80
+      target_port = 8080
+    }
+  }
+}
+
+module "openlobster_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.openclaw.metadata[0].name
+  name            = "openlobster"
+  tls_secret_name = var.tls_secret_name
+  host            = "openlobster"
+  port            = 80
+  protected       = true
+}

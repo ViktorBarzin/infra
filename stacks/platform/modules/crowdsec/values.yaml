@@ -49,6 +49,9 @@ agent:
     - name: whitelist
       configMap:
         name: crowdsec-whitelist
+podAnnotations:
+  dependency.kyverno.io/wait-for: "mysql.dbaas:3306"
+
 lapi:
   resources:
     requests:
