@@ -256,6 +256,7 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
     job_template {
       metadata {}
       spec {
+        backoff_limit = 6
         template {
           metadata {}
           spec {
