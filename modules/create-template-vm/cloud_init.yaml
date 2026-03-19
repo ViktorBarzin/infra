@@ -67,6 +67,8 @@ runcmd:
   - ${containerd_config_update_command}
   - systemctl restart containerd
   - systemctl enable --now iscsid
+  # Create /sentinel directory for kured reboot gating (sentinel gate DaemonSet)
+  - mkdir -p /sentinel
   # Create 4Gi swap file for worker node memory pressure relief (NOT for master — etcd is latency-critical)
   - fallocate -l 4G /swapfile
   - chmod 600 /swapfile
