@@ -122,7 +122,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         defaults = {
           contextTokens     = 1000000
           bootstrapMaxChars = 30000
-          workspace         = "/workspace/infra"
+          workspace         = "/workspace"
           sandbox = {
             mode = "off"
           }
@@ -158,7 +158,7 @@ resource "kubernetes_config_map" "openclaw_config" {
           host        = "gateway"
           security    = "full"
           ask         = "off"
-          pathPrepend = ["/tools", "/workspace/infra"]
+          pathPrepend = ["/tools", "/workspace"]
         }
         web = {
           search = {
