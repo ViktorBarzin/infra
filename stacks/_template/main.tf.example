@@ -55,8 +55,8 @@ resource "kubernetes_deployment" "app" {
             container_port = 8080  # Change to your app's port
           }
           resources {
-            requests = { cpu = "10m", memory = "128Mi" }
-            limits   = { memory = "128Mi" }
+            requests = { cpu = "10m", memory = "256Mi" }
+            limits   = { memory = "256Mi" }
           }
         }
       }

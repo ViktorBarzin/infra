@@ -8,10 +8,12 @@ variable "k8s_users" {
     namespaces = optional(list(string), []) # for namespace-owners
     domains    = optional(list(string), []) # subdomains for user apps
     quota = optional(object({
-      cpu_requests    = optional(string, "2")
-      memory_requests = optional(string, "4Gi")
-      memory_limits   = optional(string, "8Gi")
-      pods            = optional(string, "20")
+      cpu_requests              = optional(string, "2")
+      memory_requests           = optional(string, "4Gi")
+      memory_limits             = optional(string, "8Gi")
+      pods                      = optional(string, "20")
+      storage_requests          = optional(string, "20Gi")
+      persistentvolumeclaims    = optional(string, "5")
     }), {})
   }))
   default = {}
@@ -223,10 +225,12 @@ resource "kubernetes_resource_quota" "user_namespace_quota" {
 
   spec {
     hard = {
-      "requests.cpu"    = each.value.quota.cpu_requests
-      "requests.memory" = each.value.quota.memory_requests
-      "limits.memory"   = each.value.quota.memory_limits
-      "pods"            = each.value.quota.pods
+      "requests.cpu"            = each.value.quota.cpu_requests
+      "requests.memory"         = each.value.quota.memory_requests
+      "limits.memory"           = each.value.quota.memory_limits
+      "pods"                    = each.value.quota.pods
+      "requests.storage"        = each.value.quota.storage_requests
+      "persistentvolumeclaims"  = each.value.quota.persistentvolumeclaims
     }
   }
 
