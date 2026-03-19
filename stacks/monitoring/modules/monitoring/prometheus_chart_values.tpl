@@ -407,19 +407,19 @@ serverFiles:
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }} OOM kill(s) in 15m"
           - alert: ClusterMemoryRequestsHigh
-            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) * 100 > 85
+            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) * 100 > 92
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Cluster memory requests: {{ $value | printf \"%.0f\" }}% of allocatable (threshold: 85%)"
+              summary: "Cluster memory requests: {{ $value | printf \"%.0f\" }}% of allocatable (threshold: 92%)"
           - alert: ContainerNearOOM
-            expr: (container_memory_working_set_bytes{container!=""} / container_spec_memory_limit_bytes{container!=""} * 100 > 85) and container_spec_memory_limit_bytes{container!=""} > 0
+            expr: (container_memory_working_set_bytes{container!=""} / container_spec_memory_limit_bytes{container!=""} * 100 > 90) and container_spec_memory_limit_bytes{container!=""} > 0
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }}% of memory limit (threshold: 85%)"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }}% of memory limit (threshold: 90%)"
           - alert: PodUnschedulable
             expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 5m
@@ -682,12 +682,12 @@ serverFiles:
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.daemonset }}: {{ $value | printf \"%.0f\" }} pod(s) missing"
           - alert: NodeMemoryPressureTrending
-            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) > 85
+            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) > 92
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Memory usage on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 85%)"
+              summary: "Memory usage on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 92%)"
           - alert: NodeExporterDown
             expr: up{job="prometheus-prometheus-node-exporter"} == 0
             for: 5m
@@ -779,11 +779,11 @@ serverFiles:
           - alert: HighService4xxRate
             expr: |
               (
-                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service)
-                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service)
+                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service)
                 * 100
               ) > 30
-              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*"}[5m])) by (service) > 0.1
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service) > 0.1
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             labels:

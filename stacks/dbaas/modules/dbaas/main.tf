@@ -81,7 +81,7 @@ resource "helm_release" "mysql_operator" {
         memory = "512Mi"
       }
       limits = {
-        memory = "512Mi"
+        memory = "580Mi"
       }
     }
   })]
