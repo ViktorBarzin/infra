@@ -111,6 +111,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     annotations = merge({
       "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
         "traefik-retry@kubernetescrd",
+        "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
