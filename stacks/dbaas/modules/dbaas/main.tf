@@ -74,14 +74,19 @@ resource "helm_release" "mysql_operator" {
   chart      = "mysql-operator"
   version    = "2.2.7"
 
+  # NOTE: The mysql-operator chart (2.2.7) does NOT expose a resources values key.
+  # The resources block below is ignored by the chart. Without explicit resources
+  # on the deployment, the LimitRange default (256Mi) applies silently.
+  # Fix: kubectl patch deployment mysql-operator -n mysql-operator --type=json \
+  #   -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"memory":"512Mi"}}}]'
   values = [yamlencode({
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "512Mi"
+        memory = "256Mi"
       }
       limits = {
-        memory = "580Mi"
+        memory = "512Mi"
       }
     }
   })]
@@ -323,7 +328,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
           spec {
             container {
               name  = "mysql-backup"
-              image = "mysql"
+              image = "docker.io/library/mysql:8.0"
               env {
                 name = "MYSQL_PWD"
                 value_from {
@@ -1059,7 +1064,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "postgres:16.4-bullseye"
+              image = "docker.io/library/postgres:16.4-bullseye"
               env {
                 name = "PGPASSWORD"
                 value_from {
