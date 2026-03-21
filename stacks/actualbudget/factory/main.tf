@@ -149,10 +149,10 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "128Mi"
+              memory = "384Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "384Mi"
             }
           }
 
