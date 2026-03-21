@@ -201,10 +201,10 @@ resource "helm_release" "traefik" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "384Mi"
+        memory = "768Mi"
       }
       limits = {
-        memory = "384Mi"
+        memory = "768Mi"
       }
     }
 
