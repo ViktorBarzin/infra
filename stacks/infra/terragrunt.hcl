@@ -6,7 +6,7 @@ include "root" {
 # Override provider generation to include proxmox + vault (k8s providers not needed)
 generate "providers" {
   path      = "providers.tf"
-  if_exists = "overwrite_terragrunt"
+  if_exists = "overwrite"
   contents  = <<EOF
 terraform {
   required_providers {
