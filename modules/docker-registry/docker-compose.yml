@@ -92,10 +92,12 @@ services:
     volumes:
       - /opt/registry/data/private:/var/lib/registry
       - /opt/registry/config-private.yml:/etc/docker/registry/config.yml:ro
+      - /opt/registry/htpasswd:/auth/htpasswd:ro
     networks:
       - registry
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      # 401 is expected (auth required) — any HTTP response means the registry is healthy
+      test: ["CMD", "sh", "-c", "wget -qS -O /dev/null http://localhost:5000/v2/ 2>&1 | grep -q 'HTTP/'"]
       interval: 30s
       timeout: 10s
       retries: 3

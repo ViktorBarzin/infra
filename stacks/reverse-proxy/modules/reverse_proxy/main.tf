@@ -186,10 +186,10 @@ module "proxmox" {
   }
 }
 
-# https://registry.viktorbarzin.me/
+# https://docker.viktorbarzin.me/ (registry web UI)
 module "docker-registry-ui" {
   source          = "./factory"
-  name            = "registry"
+  name            = "docker"
   external_name   = "docker-registry.viktorbarzin.lan"
   port            = 8080
   tls_secret_name = var.tls_secret_name
@@ -203,6 +203,25 @@ module "docker-registry-ui" {
     "gethomepage.dev/icon"                             = "docker.png"
     "gethomepage.dev/group"                            = "Infrastructure"
     "gethomepage.dev/pod-selector"                     = ""
+  }
+}
+
+# https://registry.viktorbarzin.me/ (Docker CLI push/pull endpoint)
+module "docker-registry-cli" {
+  source           = "./factory"
+  name             = "registry"
+  external_name    = "docker-registry.viktorbarzin.lan"
+  port             = 5050
+  backend_protocol = "HTTPS"
+  tls_secret_name  = var.tls_secret_name
+  protected        = false    # Docker CLI uses htpasswd, NOT Authentik
+  max_body_size    = "0"      # unlimited - Docker layers can be large
+  depends_on       = [kubernetes_namespace.reverse-proxy]
+  extra_annotations = {
+    # Skip rate-limit (Docker push/pull generates many rapid requests)
+    # Keep CrowdSec for L7 protection
+    "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+    "gethomepage.dev/enabled"                          = "false"
   }
 }
 

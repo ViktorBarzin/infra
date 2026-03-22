@@ -21,6 +21,11 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "infra"
 }
 
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
 # ---------------------------------------------------------------------------
 # Locals
 # ---------------------------------------------------------------------------
@@ -176,8 +181,8 @@ module "docker-registry-template" {
 
   # Setup registry config and start container
   provision_cmds = [
-    # Install and enable QEMU guest agent for remote management
-    "apt-get install -y qemu-guest-agent",
+    # Install dependencies (QEMU guest agent + htpasswd for registry auth)
+    "apt-get install -y qemu-guest-agent apache2-utils",
     "systemctl enable qemu-guest-agent",
     "systemctl start qemu-guest-agent",
     # Stop host nginx — we run nginx inside Docker instead
@@ -185,6 +190,11 @@ module "docker-registry-template" {
     "systemctl disable nginx || true",
     # Create directory structure
     "mkdir -p /opt/registry/data/dockerhub /opt/registry/data/ghcr /opt/registry/data/quay /opt/registry/data/k8s /opt/registry/data/kyverno /opt/registry/data/private /opt/registry/tls",
+    # Generate htpasswd file for private registry authentication
+    format("htpasswd -Bbn %s %s > /opt/registry/htpasswd",
+      data.vault_kv_secret_v2.viktor.data["registry_user"],
+      data.vault_kv_secret_v2.viktor.data["registry_password"]
+    ),
     # Write Docker Compose file
     format("echo %s | base64 -d > /opt/registry/docker-compose.yml",
       base64encode(file("${path.root}/../../modules/docker-registry/docker-compose.yml"))
