@@ -113,6 +113,22 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - Every new service gets Prometheus scrape config + Uptime Kuma monitor.
 - Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable.
 
+## Storage & Backup Architecture
+
+### Cloud Sync (TrueNAS → Synology NAS)
+- **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`. Uses `--no-traverse` to skip expensive remote directory listing (~1.8M files) — checks each changed source file individually instead.
+- **Snapshot consistency**: Pre-script creates `main@cloudsync-temp`, rclone reads from `/mnt/main/.zfs/snapshot/cloudsync-temp/`, post-script destroys it
+- **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps
+
+### iSCSI Backup Architecture
+- iSCSI zvols are raw block devices exported to k8s nodes via democratic-csi
+- TrueNAS cannot read filesystem contents inside zvols — only the k8s pod can
+- **Local protection**: ZFS snapshots (every 12h, 24h retention + daily, 3-week retention) cover zvols automatically
+- **Offsite protection**: Application-level backup CronJobs dump data to NFS paths, which Task 1 syncs to Synology
+- **Current CronJob coverage**: MySQL (mysqldump), PostgreSQL (pg_dumpall), Vault (raft snapshot), Redis (BGSAVE), Vaultwarden (sqlite3 .backup)
+- **Convention**: Any new iSCSI-backed app MUST add a backup CronJob to its Terraform stack that writes to `/mnt/main/<app>-backup/`
+- **Uncovered (acceptable)**: Prometheus (disposable metrics), Loki (disposable logs), plotting-book and novelapp (small, low-priority)
+
 ## Known Issues
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
 - **OpenClaw config is writable**: OpenClaw writes to `openclaw.json` at runtime (doctor --fix, plugin auto-enable). Never use subPath ConfigMap mounts for it — use an init container to copy into a writable volume. Needs 2Gi memory + `NODE_OPTIONS=--max-old-space-size=1536`.

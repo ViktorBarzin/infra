@@ -17,6 +17,14 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   }
 }
 
+module "nfs_prometheus_backup" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "monitoring-prometheus-backup"
+  namespace  = kubernetes_namespace.monitoring.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/prometheus-backup"
+}
+
 resource "helm_release" "prometheus" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true

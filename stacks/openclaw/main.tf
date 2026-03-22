@@ -330,6 +330,17 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
+        # Init 0: fix /workspace ownership so node user can write
+        init_container {
+          name    = "fix-workspace-perms"
+          image   = "busybox:1.37"
+          command = ["sh", "-c", "chown 1000:1000 /workspace"]
+          volume_mount {
+            name       = "workspace"
+            mount_path = "/workspace"
+          }
+        }
+
         # Init 1: copy openclaw.json from ConfigMap into writable NFS home
         init_container {
           name    = "copy-config"
@@ -468,6 +479,25 @@ resource "kubernetes_deployment" "openclaw" {
             requests = {
               cpu    = "100m"
               memory = "2Gi"
+            }
+          }
+        }
+
+        # Sidecar: playwright-mcp — headless browser for agents
+        container {
+          name  = "playwright-mcp"
+          image = "docker.io/viktorbarzin/playwright-mcp:v1"
+          args  = ["--headless", "--browser", "chromium", "--no-sandbox", "--port", "3000", "--host", "0.0.0.0"]
+          port {
+            container_port = 3000
+          }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "512Mi"
             }
           }
         }
