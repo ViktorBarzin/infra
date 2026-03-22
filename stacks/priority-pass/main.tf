@@ -47,7 +47,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "frontend"
-          image = "10.0.20.10:5050/priority-pass-frontend:v4"
+          image = "registry.viktorbarzin.me/priority-pass-frontend:v4"
           port {
             container_port = 3000
           }
@@ -71,7 +71,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "backend"
-          image = "10.0.20.10:5050/priority-pass-backend:v1"
+          image = "registry.viktorbarzin.me/priority-pass-backend:v1"
           port {
             container_port = 8000
           }
@@ -118,6 +118,6 @@ module "ingress" {
   namespace       = "priority-pass"
   name            = "priority-pass"
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  protected       = true
   max_body_size   = "10m"
 }
