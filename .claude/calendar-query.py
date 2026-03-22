@@ -196,6 +196,116 @@ def create_event(summary, start_time, end_time=None, calendar_name="Personal",
     }
 
 
+def get_todos(calendar_name=None, include_completed=False):
+    """Get todos from calendar(s)."""
+    client = get_client()
+    principal = client.principal()
+    calendars = principal.calendars()
+
+    all_todos = []
+
+    for cal in calendars:
+        if calendar_name and cal_name(cal).lower() != calendar_name.lower():
+            continue
+
+        try:
+            todos = cal.todos(include_completed=include_completed)
+            for todo in todos:
+                try:
+                    ical = Calendar.from_ical(todo.data)
+                    for component in ical.walk():
+                        if component.name == "VTODO":
+                            due = component.get("due")
+                            due_str = None
+                            if due:
+                                dt = due.dt
+                                due_str = dt.strftime("%Y-%m-%d %H:%M") if hasattr(dt, 'hour') else dt.strftime("%Y-%m-%d")
+
+                            priority = component.get("priority")
+                            all_todos.append({
+                                "calendar": cal_name(cal),
+                                "summary": str(component.get("summary", "No title")),
+                                "status": str(component.get("status", "NEEDS-ACTION")),
+                                "due": due_str,
+                                "priority": int(priority) if priority else None,
+                                "uid": str(component.get("uid", "")),
+                                "description": str(component.get("description", "")) or None,
+                                "_cal_obj": cal,
+                                "_todo_obj": todo,
+                            })
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Warning: Could not fetch todos from {cal_name(cal)}: {e}", file=sys.stderr)
+
+    # Sort: by due date (None last), then priority (None last), then name
+    def sort_key(t):
+        due = t["due"] or "9999-99-99"
+        pri = t["priority"] if t["priority"] is not None else 99
+        return (due, pri, t["summary"].lower())
+
+    all_todos.sort(key=sort_key)
+    return all_todos
+
+
+def complete_todo(search_term, calendar_name=None):
+    """Complete a todo by searching for it by name (substring match)."""
+    todos = get_todos(calendar_name=calendar_name, include_completed=False)
+    search_lower = search_term.lower()
+
+    matches = [t for t in todos if search_lower in t["summary"].lower()]
+
+    if not matches:
+        raise ValueError(f"No open todo matching '{search_term}' found.")
+    if len(matches) > 1:
+        names = [f"  - [{t['calendar']}] {t['summary']}" for t in matches]
+        raise ValueError(f"Multiple todos match '{search_term}':\n" + "\n".join(names) + "\nBe more specific.")
+
+    todo = matches[0]
+    todo_obj = todo["_todo_obj"]
+    todo_obj.complete()
+
+    return {
+        "status": "completed",
+        "summary": todo["summary"],
+        "calendar": todo["calendar"],
+    }
+
+
+def format_todos(todos, output_format="text"):
+    """Format todos for display."""
+    if output_format == "json":
+        clean = [{k: v for k, v in t.items() if not k.startswith("_")} for t in todos]
+        return json.dumps(clean, indent=2)
+
+    if not todos:
+        return "No todos found."
+
+    lines = []
+    current_cal = None
+
+    for todo in todos:
+        if todo["calendar"] != current_cal:
+            current_cal = todo["calendar"]
+            lines.append(f"\n## {current_cal}")
+
+        status_icon = "x" if todo["status"] == "COMPLETED" else " "
+        line = f"- [{status_icon}] {todo['summary']}"
+        if todo["due"]:
+            line += f" (due: {todo['due']})"
+        if todo["priority"] and todo["priority"] < 9:
+            line += f" [priority: {todo['priority']}]"
+        lines.append(line)
+
+        if todo["description"]:
+            desc = todo["description"][:200]
+            if len(todo["description"]) > 200:
+                desc += "..."
+            lines.append(f"  {desc}")
+
+    return "\n".join(lines)
+
+
 def format_events(events, output_format="text"):
     """Format events for display."""
     if output_format == "json":

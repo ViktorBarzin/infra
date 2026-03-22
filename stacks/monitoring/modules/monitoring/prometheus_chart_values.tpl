@@ -148,7 +148,7 @@ prometheus-node-exporter:
 server:
   # Enable me to delete metrics
   extraFlags:
-    # - "web.enable-admin-api"
+    - "web.enable-admin-api"
     - "web.enable-lifecycle"
     - "storage.tsdb.allow-overlapping-blocks"
     - "storage.tsdb.retention.size=180GB"
@@ -176,10 +176,80 @@ server:
         emptyDir:
           medium: Memory
           sizeLimit: 2Gi
-  # 2. Mount it over the WAL directory
+      - name: prometheus-backup
+        persistentVolumeClaim:
+          claimName: monitoring-prometheus-backup
   extraVolumeMounts:
     - name: prometheus-wal-tmpfs
-      mountPath: /data/wal  # Standard path for the chart
+      mountPath: /data/wal
+    - name: prometheus-backup
+      mountPath: /backup
+  sidecarContainers:
+    prometheus-backup:
+      image: docker.io/library/alpine:3.21
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Prometheus backup sidecar started"
+          while true; do
+            # Sleep until 03:00 UTC daily
+            hour=$(date -u +%H)
+            min=$(date -u +%M)
+            secs_since_midnight=$(( hour * 3600 + min * 60 ))
+            target_secs=$((3 * 3600))  # 03:00 UTC
+            if [ $secs_since_midnight -lt $target_secs ]; then
+              sleep_secs=$((target_secs - secs_since_midnight))
+            else
+              sleep_secs=$((86400 - secs_since_midnight + target_secs))
+            fi
+            echo "$(date) Sleeping $${sleep_secs}s until next backup window"
+            sleep $sleep_secs
+
+            echo "$(date) Starting Prometheus TSDB snapshot"
+            # Create TSDB snapshot via admin API (wget is built into BusyBox)
+            resp=$(wget -qO- --post-data='' http://localhost:9090/api/v1/admin/tsdb/snapshot 2>&1)
+            if [ $? -ne 0 ]; then
+              echo "$(date) ERROR: Failed to create snapshot: $resp"
+              continue
+            fi
+            # Parse snapshot name without jq: {"status":"success","data":{"name":"20260322T030000Z-..."}}
+            snap_name=$(echo "$resp" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)
+            if [ -z "$snap_name" ]; then
+              echo "$(date) ERROR: Could not parse snapshot name from: $resp"
+              continue
+            fi
+            echo "$(date) Snapshot created: $snap_name"
+
+            # Tar snapshot to NFS backup volume
+            backup_file="prometheus_$(date +%Y%m%d_%H%M).tar.gz"
+            tar czf "/backup/$backup_file" -C /data/snapshots/ "$snap_name"
+            echo "$(date) Backup written: $backup_file ($(du -h /backup/$backup_file | cut -f1))"
+
+            # Clean up snapshot from data dir
+            rm -rf "/data/snapshots/$snap_name"
+
+            # Rotate: keep 14 days of backups
+            find /backup -name "prometheus_*.tar.gz" -type f -mtime +14 -delete
+
+            # Push success metric to Pushgateway for alerting
+            echo "prometheus_backup_last_success_timestamp $(date +%s)" | wget -qO- --post-file=- http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/prometheus-backup 2>/dev/null
+
+            echo "$(date) Backup complete. Files in /backup:"
+            ls -lh /backup/prometheus_*.tar.gz 2>/dev/null || echo "  (none)"
+          done
+      volumeMounts:
+        - name: storage-volume
+          mountPath: /data
+          readOnly: false
+        - name: prometheus-backup
+          mountPath: /backup
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 128Mi
   ingress:
     enabled: true
     ingressClassName: "traefik"
@@ -572,6 +642,20 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Redis backup CronJob has never completed successfully"
+          - alert: PrometheusBackupStale
+            expr: (time() - prometheus_backup_last_success_timestamp{job="prometheus-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+          - alert: PrometheusBackupNeverRun
+            expr: absent(prometheus_backup_last_success_timestamp{job="prometheus-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Prometheus backup has never reported a successful run"
           - alert: CSIDriverCrashLoop
             expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|iscsi-csi"} > 0
             for: 10m
