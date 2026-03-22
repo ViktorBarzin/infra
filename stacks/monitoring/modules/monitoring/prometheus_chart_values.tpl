@@ -1,7 +1,7 @@
 # Helm values
 # all values - https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus/values.yaml
 alertmanager:
-  replicaCount: 2
+  replicaCount: 1
   persistentVolume:
     enabled: true
     existingClaim: alertmanager-pvc
