@@ -70,6 +70,20 @@ module "nfs_clickhouse_data" {
   nfs_path   = "/mnt/main/clickhouse"
 }
 
+resource "kubernetes_config_map" "clickhouse_memory" {
+  metadata {
+    name      = "clickhouse-memory-config"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+  }
+  data = {
+    "memory.xml" = <<-EOF
+      <clickhouse>
+          <max_server_memory_usage>838860800</max_server_memory_usage>
+      </clickhouse>
+    EOF
+  }
+}
+
 resource "kubernetes_deployment" "clickhouse" {
   metadata {
     name      = "clickhouse"
@@ -144,6 +158,11 @@ resource "kubernetes_deployment" "clickhouse" {
             name       = "data"
             mount_path = "/var/lib/clickhouse"
           }
+          volume_mount {
+            name       = "memory-config"
+            mount_path = "/etc/clickhouse-server/config.d/memory.xml"
+            sub_path   = "memory.xml"
+          }
           resources {
             requests = {
               cpu    = "500m"
@@ -158,6 +177,12 @@ resource "kubernetes_deployment" "clickhouse" {
           name = "data"
           persistent_volume_claim {
             claim_name = module.nfs_clickhouse_data.claim_name
+          }
+        }
+        volume {
+          name = "memory-config"
+          config_map {
+            name = kubernetes_config_map.clickhouse_memory.metadata[0].name
           }
         }
       }
