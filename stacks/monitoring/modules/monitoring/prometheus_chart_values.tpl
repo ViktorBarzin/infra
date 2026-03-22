@@ -191,20 +191,18 @@ server:
         - /bin/sh
         - -c
         - |
-          echo "Prometheus backup sidecar started"
+          echo "Prometheus backup sidecar started (monthly, 1st Sunday 04:00 UTC)"
           while true; do
-            # Sleep until 03:00 UTC daily
-            hour=$(date -u +%H)
-            min=$(date -u +%M)
-            secs_since_midnight=$(( hour * 3600 + min * 60 ))
-            target_secs=$((3 * 3600))  # 03:00 UTC
-            if [ $secs_since_midnight -lt $target_secs ]; then
-              sleep_secs=$((target_secs - secs_since_midnight))
-            else
-              sleep_secs=$((86400 - secs_since_midnight + target_secs))
-            fi
-            echo "$(date) Sleeping $${sleep_secs}s until next backup window"
-            sleep $sleep_secs
+            # Wait for 1st Sunday of month at 04:00 UTC
+            while true; do
+              dow=$(date -u +%w)       # 0=Sunday
+              dom=$(date -u +%d)       # day of month
+              hour=$(date -u +%H)
+              if [ "$dow" = "0" ] && [ "$dom" -le 7 ] && [ "$hour" -ge 4 ]; then
+                break
+              fi
+              sleep 3600  # check every hour
+            done
 
             echo "$(date) Starting Prometheus TSDB snapshot"
             # Create TSDB snapshot via admin API (wget is built into BusyBox)
@@ -223,20 +221,23 @@ server:
 
             # Tar snapshot to NFS backup volume
             backup_file="prometheus_$(date +%Y%m%d_%H%M).tar.gz"
-            tar czf "/backup/$backup_file" -C /data/snapshots/ "$snap_name"
+            tar cf - -C /data/snapshots/ "$snap_name" | gzip -9 > "/backup/$backup_file"
             echo "$(date) Backup written: $backup_file ($(du -h /backup/$backup_file | cut -f1))"
 
             # Clean up snapshot from data dir
             rm -rf "/data/snapshots/$snap_name"
 
-            # Rotate: keep 14 days of backups
-            find /backup -name "prometheus_*.tar.gz" -type f -mtime +14 -delete
+            # Rotate: keep 2 most recent backups
+            ls -t /backup/prometheus_*.tar.gz 2>/dev/null | tail -n +3 | xargs rm -f 2>/dev/null
 
             # Push success metric to Pushgateway for alerting
             echo "prometheus_backup_last_success_timestamp $(date +%s)" | wget -qO- --post-file=- http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/prometheus-backup 2>/dev/null
 
             echo "$(date) Backup complete. Files in /backup:"
             ls -lh /backup/prometheus_*.tar.gz 2>/dev/null || echo "  (none)"
+
+            # Sleep 24h to avoid re-triggering within the same Sunday window
+            sleep 86400
           done
       volumeMounts:
         - name: storage-volume
@@ -559,12 +560,12 @@ serverFiles:
             annotations:
               summary: "Prometheus notification errors: {{ $value | printf \"%.2f\" }}/s"
           - alert: EtcdBackupStale
-            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"}) > 129600
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"}) > 691200
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "etcd backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+              summary: "etcd backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: EtcdBackupNeverSucceeded
             expr: kube_cronjob_status_last_successful_time{cronjob="backup-etcd", namespace="default"} == 0
             for: 1h
@@ -601,12 +602,12 @@ serverFiles:
             annotations:
               summary: "MySQL backup CronJob has never completed successfully"
           - alert: VaultBackupStale
-            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vault-raft-backup", namespace="vault"}) > 129600
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vault-raft-backup", namespace="vault"}) > 691200
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "Vault backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+              summary: "Vault backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: VaultBackupNeverSucceeded
             expr: kube_cronjob_status_last_successful_time{cronjob="vault-raft-backup", namespace="vault"} == 0
             for: 1h
@@ -615,12 +616,12 @@ serverFiles:
             annotations:
               summary: "Vault backup CronJob has never completed successfully"
           - alert: VaultwardenBackupStale
-            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 129600
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 86400
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "Vaultwarden backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+              summary: "Vaultwarden backup is {{ $value | humanizeDuration }} old (threshold: 24h, runs every 6h)"
           - alert: VaultwardenBackupNeverSucceeded
             expr: kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"} == 0
             for: 1h
@@ -628,13 +629,20 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vaultwarden backup CronJob has never completed successfully"
+          - alert: VaultwardenDown
+            expr: (kube_deployment_status_replicas_available{namespace="vaultwarden", deployment="vaultwarden"} or on() vector(0)) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vaultwarden has no available replicas — password manager down"
           - alert: RedisBackupStale
-            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"}) > 14400
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"}) > 691200
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "Redis backup is {{ $value | humanizeDuration }} old (threshold: 4h)"
+              summary: "Redis backup is {{ $value | humanizeDuration }} old (threshold: 8d)"
           - alert: RedisBackupNeverSucceeded
             expr: kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"} == 0
             for: 1h
@@ -643,12 +651,12 @@ serverFiles:
             annotations:
               summary: "Redis backup CronJob has never completed successfully"
           - alert: PrometheusBackupStale
-            expr: (time() - prometheus_backup_last_success_timestamp{job="prometheus-backup"}) > 129600
+            expr: (time() - prometheus_backup_last_success_timestamp{job="prometheus-backup"}) > 2764800
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 36h)"
+              summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 32d)"
           - alert: PrometheusBackupNeverRun
             expr: absent(prometheus_backup_last_success_timestamp{job="prometheus-backup"})
             for: 48h
@@ -656,6 +664,27 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Prometheus backup has never reported a successful run"
+          - alert: CloudSyncStale
+            expr: (time() - cloudsync_last_success_timestamp{job="cloudsync-monitor"}) > 691200
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Cloud Sync task {{ $labels.task_id }} is {{ $value | humanizeDuration }} old (threshold: 8d) — off-site backups may have stopped"
+          - alert: CloudSyncNeverRun
+            expr: absent(cloudsync_last_success_timestamp{job="cloudsync-monitor"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloud Sync monitor has never reported — check cloudsync-monitor CronJob"
+          - alert: CloudSyncFailing
+            expr: cloudsync_job_state{job="cloudsync-monitor"} == 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloud Sync task {{ $labels.task_id }} last state was not SUCCESS"
           - alert: CSIDriverCrashLoop
             expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|iscsi-csi"} > 0
             for: 10m
