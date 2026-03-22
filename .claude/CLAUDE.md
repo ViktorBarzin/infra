@@ -4,7 +4,10 @@
 
 ## Claude-Specific Resources
 - **Skills**: `.claude/skills/` (7 active). Archived runbooks: `.claude/skills/archived/`
-- **Agents**: `.claude/agents/cluster-health-checker` (haiku, autonomous health checks)
+- **Agents**: All agents are global (`~/.claude/agents/`, shared via dotfiles). Install Viktor's dotfiles for the full set.
+  - **Infra specialists**: cluster-health-checker, dba, home-automation-engineer, network-engineer, observability-engineer, platform-engineer, security-engineer, sre
+  - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
+  - **DevOps**: devops-engineer, deploy-app, review-loop
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
 - **GitHub API**: `curl` with tokens from tfvars (`gh` CLI blocked by sandbox)
 
@@ -116,8 +119,8 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 ## Storage & Backup Architecture
 
 ### Cloud Sync (TrueNAS → Synology NAS)
-- **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`. Uses `--no-traverse` to skip expensive remote directory listing (~1.8M files) — checks each changed source file individually instead.
-- **Snapshot consistency**: Pre-script creates `main@cloudsync-temp`, rclone reads from `/mnt/main/.zfs/snapshot/cloudsync-temp/`, post-script destroys it
+- **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`
+- **zfs diff optimization**: Pre-script diffs `main@cloudsync-prev` vs `main@cloudsync-new`, writes changed files to `/tmp/cloudsync_files.txt`. Args: `--files-from /tmp/cloudsync_files.txt --no-traverse`. Post-script rotates snapshots. Falls back to full `find` if no prev snapshot or >100k changes.
 - **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps
 
 ### iSCSI Backup Architecture
