@@ -636,6 +636,20 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vaultwarden has no available replicas — password manager down"
+          - alert: VaultwardenSQLiteCorrupt
+            expr: vaultwarden_sqlite_integrity_ok == 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vaultwarden SQLite database failed integrity check — data corruption detected"
+          - alert: VaultwardenIntegrityCheckStale
+            expr: (time() - vaultwarden_sqlite_integrity_check_timestamp) > 7200
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Vaultwarden integrity check hasn't run in {{ $value | humanizeDuration }} (expected hourly)"
           - alert: RedisBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="redis-backup", namespace="redis"}) > 691200
             for: 30m
