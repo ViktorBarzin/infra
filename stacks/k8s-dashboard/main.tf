@@ -47,7 +47,7 @@ resource "helm_release" "kubernetes-dashboard" {
   namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name      = "kubernetes-dashboard"
 
-  repository = "https://kubernetes.github.io/dashboard/"
+  repository = "https://kubernetes-retired.github.io/dashboard/"
   chart      = "kubernetes-dashboard"
   atomic     = true
   version    = "7.12.0"

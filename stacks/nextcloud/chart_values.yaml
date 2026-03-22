@@ -64,6 +64,7 @@ externalDatabase:
   database: nextcloud
   existingSecret:
     secretName: nextcloud-db-creds
+    usernameKey: db-username
     passwordKey: DB_PASSWORD
 
 persistence:

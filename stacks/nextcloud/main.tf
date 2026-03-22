@@ -82,6 +82,7 @@ resource "kubernetes_manifest" "db_external_secret" {
         template = {
           data = {
             DB_PASSWORD = "{{ .password }}"
+            db-username = "nextcloud"
           }
         }
       }
