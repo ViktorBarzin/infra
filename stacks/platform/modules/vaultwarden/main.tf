@@ -199,7 +199,7 @@ module "ingress" {
 }
 
 # -----------------------------------------------------------------------------
-# Backup — Daily SQLite + data files to NFS
+# Backup — Every 6h SQLite + data files to NFS
 # -----------------------------------------------------------------------------
 
 module "nfs_vaultwarden_backup" {
@@ -218,7 +218,7 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
   spec {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 5
-    schedule                      = "0 0 * * *"
+    schedule                      = "0 */6 * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
     job_template {
@@ -248,9 +248,20 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
                 set -euxo pipefail
                 apk add --no-cache sqlite
                 now=$(date +"%Y_%m_%d_%H_%M")
+                # Pre-flight: verify source DB is healthy before backing up
+                if ! sqlite3 /data/db.sqlite3 "PRAGMA integrity_check;" | grep -q "^ok$"; then
+                  echo "ERROR: source database failed integrity check, skipping backup"
+                  exit 1
+                fi
                 mkdir -p /backup/$now
                 # Safe SQLite backup (handles WAL/locks)
                 sqlite3 /data/db.sqlite3 ".backup /backup/$now/db.sqlite3"
+                # Verify the backup copy is also healthy
+                if ! sqlite3 /backup/$now/db.sqlite3 "PRAGMA integrity_check;" | grep -q "^ok$"; then
+                  echo "ERROR: backup copy failed integrity check, removing"
+                  rm -rf /backup/$now
+                  exit 1
+                fi
                 # Copy RSA keys, attachments, sends, config
                 cp -a /data/rsa_key.pem /data/rsa_key.pub.pem /backup/$now/ 2>/dev/null || true
                 cp -a /data/attachments /backup/$now/ 2>/dev/null || true

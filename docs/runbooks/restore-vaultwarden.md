@@ -9,7 +9,8 @@
 - Each backup contains: `db.sqlite3`, `rsa_key.pem`, `rsa_key.pub.pem`, `attachments/`, `sends/`, `config.json`
 - Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
 - Retention: 30 days
-- Schedule: Daily at 00:00
+- Schedule: Every 6 hours (00:00, 06:00, 12:00, 18:00)
+- Integrity check: Both source and backup are verified before/after each backup
 
 ## Backup Contents
 | File | Purpose | Critical? |
@@ -40,7 +41,7 @@ kubectl scale deployment vaultwarden -n vaultwarden --replicas=0
 BACKUP_DIR="YYYY_MM_DD_HH_MM"  # Set to desired backup
 
 kubectl run vw-restore --rm -it --image=alpine \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"vaultwarden-backup"}},{"name":"data","persistentVolumeClaim":{"claimName":"vaultwarden-data"}}],"containers":[{"name":"vw-restore","image":"alpine","volumeMounts":[{"name":"backup","mountPath":"/backup"},{"name":"data","mountPath":"/data"}],"command":["/bin/sh","-c","cp /backup/'$BACKUP_DIR'/db.sqlite3 /data/db.sqlite3 && cp /backup/'$BACKUP_DIR'/rsa_key.pem /data/ && cp /backup/'$BACKUP_DIR'/rsa_key.pub.pem /data/ && cp -a /backup/'$BACKUP_DIR'/attachments /data/ 2>/dev/null; echo Restore complete"]}]}}' \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"vaultwarden-backup"}},{"name":"data","persistentVolumeClaim":{"claimName":"vaultwarden-data-iscsi"}}],"containers":[{"name":"vw-restore","image":"alpine","volumeMounts":[{"name":"backup","mountPath":"/backup"},{"name":"data","mountPath":"/data"}],"command":["/bin/sh","-c","cp /backup/'$BACKUP_DIR'/db.sqlite3 /data/db.sqlite3 && cp /backup/'$BACKUP_DIR'/rsa_key.pem /data/ && cp /backup/'$BACKUP_DIR'/rsa_key.pub.pem /data/ && cp -a /backup/'$BACKUP_DIR'/attachments /data/ 2>/dev/null; echo Restore complete"]}]}}' \
   -n vaultwarden
 ```
 
