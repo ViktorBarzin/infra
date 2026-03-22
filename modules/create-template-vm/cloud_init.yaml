@@ -67,6 +67,18 @@ runcmd:
   - ${containerd_config_update_command}
   - systemctl restart containerd
   - systemctl enable --now iscsid
+  # Harden iSCSI: increase recovery timeout (300s vs 120s default) and enable
+  # CRC32C data/header digests to detect bit flips over the network.
+  # Prevents SQLite corruption from transient iSCSI session drops.
+  - sed -i 's/^node.session.timeo.replacement_timeout = .*/node.session.timeo.replacement_timeout = 300/' /etc/iscsi/iscsid.conf
+  - sed -i 's/^node.conn\[0\].timeo.noop_out_interval = .*/node.conn[0].timeo.noop_out_interval = 10/' /etc/iscsi/iscsid.conf
+  - sed -i 's/^node.conn\[0\].timeo.noop_out_timeout = .*/node.conn[0].timeo.noop_out_timeout = 15/' /etc/iscsi/iscsid.conf
+  - |
+    if ! grep -q '^node.conn\[0\].iscsi.HeaderDigest' /etc/iscsi/iscsid.conf; then
+      echo 'node.conn[0].iscsi.HeaderDigest = CRC32C,None' >> /etc/iscsi/iscsid.conf
+      echo 'node.conn[0].iscsi.DataDigest = CRC32C,None' >> /etc/iscsi/iscsid.conf
+    fi
+  - systemctl restart iscsid
   # Create /sentinel directory for kured reboot gating (sentinel gate DaemonSet)
   - mkdir -p /sentinel
   # Create 4Gi swap file for worker node memory pressure relief (NOT for master — etcd is latency-critical)
