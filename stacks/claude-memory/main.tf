@@ -142,7 +142,7 @@ resource "kubernetes_deployment" "claude-memory" {
     }
   }
   spec {
-    replicas = 2
+    replicas = 1
     selector {
       match_labels = {
         app = "claude-memory"
