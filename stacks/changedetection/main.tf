@@ -76,7 +76,8 @@ resource "kubernetes_deployment" "changedetection" {
     }
   }
   spec {
-    replicas = 1
+    # Disabled: chronic OOM at 64Mi limit, not worth the memory cost to increase
+    replicas = 0
     strategy {
       type = "Recreate"
     }
