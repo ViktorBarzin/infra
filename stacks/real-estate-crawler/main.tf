@@ -192,7 +192,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
   }
   spec {
-    replicas = 2
+    replicas = 1
     strategy {
       type = "RollingUpdate"
       rolling_update {
