@@ -31,6 +31,53 @@ resource "kubernetes_secret" "registry_credentials" {
   }
 }
 
+# Grant Kyverno controllers permission to manage Secrets (needed for generate clone rules)
+resource "kubernetes_cluster_role" "kyverno_secret_manager" {
+  metadata {
+    name = "kyverno:secret-manager"
+    labels = {
+      "app.kubernetes.io/instance" = "kyverno"
+    }
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["secrets"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "kyverno_admission_secret_manager" {
+  metadata {
+    name = "kyverno:admission-controller:secret-manager"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.kyverno_secret_manager.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "kyverno-admission-controller"
+    namespace = "kyverno"
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "kyverno_background_secret_manager" {
+  metadata {
+    name = "kyverno:background-controller:secret-manager"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.kyverno_secret_manager.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "kyverno-background-controller"
+    namespace = "kyverno"
+  }
+}
+
 resource "kubernetes_manifest" "sync_registry_credentials" {
   manifest = {
     apiVersion = "kyverno.io/v1"
@@ -79,5 +126,7 @@ resource "kubernetes_manifest" "sync_registry_credentials" {
   depends_on = [
     helm_release.kyverno,
     kubernetes_secret.registry_credentials,
+    kubernetes_cluster_role_binding.kyverno_admission_secret_manager,
+    kubernetes_cluster_role_binding.kyverno_background_secret_manager,
   ]
 }

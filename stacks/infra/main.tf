@@ -75,6 +75,10 @@ module "k8s-node-template" {
   mkdir -p /etc/containerd/certs.d/ghcr.io
   printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
 
+  # Create hosts.toml for private registry (10.0.20.10:5050) — skip TLS verify (IP-based, wildcard cert)
+  mkdir -p /etc/containerd/certs.d/10.0.20.10:5050
+  printf 'server = "https://10.0.20.10:5050"\n\n[host."https://10.0.20.10:5050"]\n  capabilities = ["pull", "resolve", "push"]\n  skip_verify = true\n' > /etc/containerd/certs.d/10.0.20.10:5050/hosts.toml
+
   # Low-traffic registries (registry.k8s.io, quay.io, reg.kyverno.io) pull directly.
   # Pull-through cache removed: caused corrupted images (truncated downloads)
   # breaking VPA certgen and Kyverno image pulls.
