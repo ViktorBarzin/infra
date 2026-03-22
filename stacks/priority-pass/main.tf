@@ -77,11 +77,11 @@ resource "kubernetes_deployment" "priority-pass" {
           }
           resources {
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
         }
