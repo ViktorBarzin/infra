@@ -18,6 +18,7 @@
 - **New service**: Use `setup-project` skill for full workflow
 - **Ingress**: `ingress_factory` module. Auth: `protected = true`. Anti-AI: on by default.
 - **Docker images**: Always build for `linux/amd64`. Use 8-char git SHA tags — `:latest` causes stale pull-through cache.
+- **Private registry**: `registry.viktorbarzin.me` (htpasswd auth, credentials in Vault `secret/viktor`). Use `image: registry.viktorbarzin.me/<name>:<tag>` + `imagePullSecrets: [{name: registry-credentials}]`. Kyverno auto-syncs the secret to all namespaces. Build & push from registry VM (`10.0.20.10`). Containerd `hosts.toml` redirects pulls to LAN IP directly. Web UI at `docker.viktorbarzin.me` (Authentik-protected).
 - **LinuxServer.io containers**: `DOCKER_MODS` runs apt-get on every start — bake slow mods into a custom image (`RUN /docker-mods || true` then `ENV DOCKER_MODS=`). Set `NO_CHOWN=true` to skip recursive chown that hangs on NFS mounts.
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
