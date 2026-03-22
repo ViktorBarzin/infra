@@ -306,3 +306,87 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Integrity Check — Hourly SQLite PRAGMA check, pushes metric to Prometheus
+# -----------------------------------------------------------------------------
+
+resource "kubernetes_cron_job_v1" "vaultwarden-integrity-check" {
+  metadata {
+    name      = "vaultwarden-integrity-check"
+    namespace = kubernetes_namespace.vaultwarden.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 5
+    schedule                      = "30 * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "vaultwarden"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            container {
+              name  = "integrity-check"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euo pipefail
+                apk add --no-cache sqlite curl >/dev/null 2>&1
+                PUSHGW="http://prometheus-prometheus-pushgateway.monitoring.svc.cluster.local:9091"
+                result=$(sqlite3 /data/db.sqlite3 "PRAGMA integrity_check;" 2>&1)
+                if echo "$$result" | grep -q "^ok$$"; then
+                  echo "SQLite integrity check passed"
+                  cat <<METRICS | curl -s --data-binary @- "$$PUSHGW/metrics/job/vaultwarden-integrity/instance/vaultwarden"
+vaultwarden_sqlite_integrity_ok 1
+vaultwarden_sqlite_integrity_check_timestamp $(date +%s)
+METRICS
+                else
+                  echo "ERROR: SQLite integrity check FAILED: $$result"
+                  cat <<METRICS | curl -s --data-binary @- "$$PUSHGW/metrics/job/vaultwarden-integrity/instance/vaultwarden"
+vaultwarden_sqlite_integrity_ok 0
+vaultwarden_sqlite_integrity_check_timestamp $(date +%s)
+METRICS
+                  exit 1
+                fi
+              EOT
+              ]
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+                read_only  = true
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.vaultwarden_data.metadata[0].name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
