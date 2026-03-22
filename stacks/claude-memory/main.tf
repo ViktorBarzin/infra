@@ -188,11 +188,11 @@ resource "kubernetes_deployment" "claude-memory" {
             }
           }
           env {
-            name = "API_KEY"
+            name = "API_KEYS"
             value_from {
               secret_key_ref {
                 name = "claude-memory-secrets"
-                key  = "api_key"
+                key  = "api_keys"
               }
             }
           }
