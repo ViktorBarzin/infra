@@ -95,10 +95,10 @@ resource "kubernetes_deployment" "forgejo" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "384Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "384Mi"
             }
           }
           port {
