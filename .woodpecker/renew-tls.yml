@@ -57,10 +57,13 @@ steps:
       - "apk update && apk add curl"
       - "curl -LO https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl && chmod +x kubectl && mv kubectl /usr/local/bin/"
       - |
-        kubectl create secret tls tls-secret \
+        SECRET_YAML=$(kubectl create secret tls tls-secret \
           --cert=secrets/fullchain.pem --key=secrets/privkey.pem \
-          --namespace=kyverno --dry-run=client -o yaml | kubectl apply -f -
-      - "echo 'Source TLS secret updated in kyverno namespace — Kyverno will sync to all namespaces'"
+          --namespace=placeholder --dry-run=client -o yaml)
+        for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -v '^kube-'); do
+          echo "$SECRET_YAML" | sed "s/namespace: placeholder/namespace: $ns/" | kubectl apply -f - 2>/dev/null || true
+        done
+      - "echo 'TLS secret updated in all namespaces'"
 
   - name: slack
     image: curlimages/curl
