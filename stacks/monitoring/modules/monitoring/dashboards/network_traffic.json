@@ -61,11 +61,11 @@
         }
       },
       "targets": [
-        { "expr": "rate(goflow2_flow_traffic_bytes_total[5m])", "legendFormat": "Total" }
+        { "expr": "sum(rate(goflow2_flow_traffic_bytes_total[5m]))", "legendFormat": "Total" }
       ]
     },
     {
-      "title": "NetFlow Flows Processed",
+      "title": "Flows Processed/s",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
@@ -73,16 +73,17 @@
         "defaults": {
           "color": { "mode": "thresholds" },
           "unit": "short",
+          "decimals": 1,
           "thresholds": {
             "steps": [
               { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              { "color": "green", "value": 0.1 }
             ]
           }
         }
       },
       "targets": [
-        { "expr": "rate(goflow2_flow_process_nf_total[5m])", "legendFormat": "flows/s" }
+        { "expr": "sum(rate(goflow2_flow_process_nf_total[5m]))", "legendFormat": "flows/s" }
       ]
     },
     {
@@ -149,7 +150,7 @@
       ]
     },
     {
-      "title": "NetFlow Traffic Over Time",
+      "title": "NetFlow Bytes/s Over Time",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
@@ -160,24 +161,24 @@
         }
       },
       "targets": [
-        { "expr": "rate(goflow2_flow_traffic_bytes_total[5m])", "legendFormat": "Bytes/s" },
-        { "expr": "rate(goflow2_flow_traffic_packets_total[5m])", "legendFormat": "Packets/s" }
+        { "expr": "sum(rate(goflow2_flow_traffic_bytes_total[5m]))", "legendFormat": "NetFlow Bytes/s" }
       ]
     },
     {
-      "title": "NetFlow Processing",
+      "title": "NetFlow Flows Processed/s (by version)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "fieldConfig": {
         "defaults": {
-          "custom": { "fillOpacity": 10, "lineWidth": 1 }
+          "unit": "short",
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
         }
       },
       "targets": [
-        { "expr": "rate(goflow2_flow_process_nf_total[5m])", "legendFormat": "Flows processed/s (v{{ version }})" },
+        { "expr": "rate(goflow2_flow_process_nf_total[5m])", "legendFormat": "v{{ version }} flows/s" },
         { "expr": "rate(goflow2_flow_decoder_error_total[5m])", "legendFormat": "Decoder errors/s" },
-        { "expr": "rate(goflow2_flow_process_nf_errors_total[5m])", "legendFormat": "Processing errors/s ({{ error }})" }
+        { "expr": "rate(goflow2_flow_process_nf_errors_total[5m])", "legendFormat": "Errors/s ({{ error }})" }
       ]
     },
     {
@@ -210,7 +211,7 @@
       "targets": [
         { "expr": "cs_active_decisions", "legendFormat": "Active Decisions" },
         { "expr": "cs_alerts", "legendFormat": "Total Alerts" },
-        { "expr": "rate(cs_lapi_bouncer_requests_total[5m])", "legendFormat": "Bouncer req/s" }
+        { "expr": "sum(rate(cs_lapi_bouncer_requests_total[5m]))", "legendFormat": "Bouncer req/s" }
       ]
     },
     {
@@ -225,15 +226,30 @@
         }
       },
       "targets": [
-        { "expr": "histogram_quantile(0.50, rate(cs_lapi_request_duration_seconds_bucket[5m]))", "legendFormat": "p50" },
-        { "expr": "histogram_quantile(0.99, rate(cs_lapi_request_duration_seconds_bucket[5m]))", "legendFormat": "p99" }
+        { "expr": "histogram_quantile(0.50, sum(rate(cs_lapi_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.99, sum(rate(cs_lapi_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "title": "NetFlow Flowset Records by Type",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 15, "lineWidth": 1 }
+        }
+      },
+      "targets": [
+        { "expr": "rate(goflow2_flow_process_nf_flowset_records_total[5m])", "legendFormat": "{{ type }} (v{{ version }})" }
       ]
     },
     {
       "title": "DNS Metrics Over Time",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
       "fieldConfig": {
         "defaults": {
           "custom": { "fillOpacity": 15, "lineWidth": 2 }
@@ -246,26 +262,6 @@
         { "expr": "dns_anomaly_blocked", "legendFormat": "Blocked" },
         { "expr": "dns_anomaly_dga_suspects", "legendFormat": "DGA Suspects" }
       ]
-    },
-    {
-      "title": "DNS Anomaly Check Health",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "unit": "dateTimeFromNow",
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null }
-            ]
-          }
-        }
-      },
-      "targets": [
-        { "expr": "dns_anomaly_check_timestamp * 1000", "legendFormat": "Last Check" }
-      ]
     }
   ],
   "schemaVersion": 39,
@@ -276,5 +272,5 @@
   "timezone": "browser",
   "title": "Network Traffic & Adversary Detection",
   "uid": "network-traffic-adversary",
-  "version": 1
+  "version": 2
 }
