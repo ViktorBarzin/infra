@@ -72,7 +72,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -97,7 +97,7 @@ alertmanager:
       - source_matchers:
           - alertname = PowerOutage
         target_matchers:
-          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown"
+          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown|UPSMetricsMissing|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|ATSMetricsMissing|HomeAssistantMetricsMissing"
       # Containerd broken suppresses downstream pod alerts
       - source_matchers:
           - alertname = KubeletImagePullErrors
@@ -337,13 +337,6 @@ serverFiles:
               severity: info
             annotations:
               summary: "HDD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 10 MB/s)"
-          - alert: NoiDRACData
-            expr: (max(r730_idrac_idrac_system_health + 1) or on() vector(0)) == 0
-            for: 30m
-            labels:
-              severity: info
-            annotations:
-              summary: "No iDRAC data for 30m - check Prometheus scraping"
           - alert: HighSystemLoad
             expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
             for: 30m
@@ -432,6 +425,43 @@ serverFiles:
               severity: info
             annotations:
               summary: "On inverter for >24h - check grid switchover"
+      - name: Metric Staleness
+        rules:
+          - alert: UPSMetricsMissing
+            expr: absent(ups_upsInputVoltage)
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "UPS metrics missing for 10m - check SNMP exporter and ups.viktorbarzin.lan"
+          - alert: iDRACRedfishMetricsMissing
+            expr: absent(r730_idrac_idrac_power_supply_input_voltage)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "iDRAC Redfish metrics missing for 10m - check idrac-redfish-exporter pod"
+          - alert: iDRACSNMPMetricsMissing
+            expr: absent(r730_idrac_idrac_system_health)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "iDRAC SNMP metrics missing for 10m - check SNMP exporter and idrac.viktorbarzin.lan"
+          - alert: ATSMetricsMissing
+            expr: absent(automatic_transfer_switch_power_mode)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ATS metrics missing for 15m - check tuya-bridge pod"
+          - alert: HomeAssistantMetricsMissing
+            expr: absent(up{job="haos"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Home Assistant (ha-sofia) metrics missing for 10m - check HA Prometheus integration"
       - name: Storage
         rules:
           - alert: NodeFilesystemFull
