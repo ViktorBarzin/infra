@@ -52,8 +52,10 @@ steps:
       - "echo 'Certificate is valid for at least 7 more days'"
 
   - name: update-tls-source-secret
-    image: bitnami/kubectl:latest
+    image: alpine
     commands:
+      - "apk update && apk add curl"
+      - "curl -LO https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl && chmod +x kubectl && mv kubectl /usr/local/bin/"
       - |
         kubectl create secret tls tls-secret \
           --cert=secrets/fullchain.pem --key=secrets/privkey.pem \
