@@ -81,7 +81,7 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
     namespace = "default"
   }
   spec {
-    schedule                      = "0 0 * * *"
+    schedule                      = "0 1 * * 0"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"

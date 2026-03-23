@@ -249,7 +249,7 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
     namespace = kubernetes_namespace.vault.metadata[0].name
   }
   spec {
-    schedule                      = "0 2 * * *"
+    schedule                      = "0 2 * * 0"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
