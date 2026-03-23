@@ -283,15 +283,33 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
               image = "redis:7-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 set -eux
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
                 TIMESTAMP=$(date +%Y%m%d-%H%M)
                 # Trigger a fresh RDB save on the master
                 redis-cli -h redis.redis BGSAVE
                 sleep 5
                 # Copy the RDB via redis-cli --rdb
                 redis-cli -h redis.redis --rdb /backup/redis-$TIMESTAMP.rdb
-                # Rotate — 7-day retention
+                # Rotate — 28-day retention
                 find /backup -name 'redis-*.rdb' -type f -mtime +28 -delete
-                echo "Backup complete: redis-$TIMESTAMP.rdb"
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/redis-$$TIMESTAMP.rdb | awk '{print $5}')"
+
+                wget -qO- --post-data "backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_last_success_timestamp $(date +%s)
+                " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/redis-backup" || true
               EOT
               ]
               volume_mount {

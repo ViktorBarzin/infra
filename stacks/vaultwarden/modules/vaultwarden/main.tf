@@ -247,6 +247,10 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
                 apk add --no-cache sqlite
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
                 now=$(date +"%Y_%m_%d_%H_%M")
                 # Pre-flight: verify source DB is healthy before backing up
                 if ! sqlite3 /data/db.sqlite3 "PRAGMA integrity_check;" | grep -q "^ok$"; then
@@ -269,7 +273,21 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
                 cp -a /data/config.json /backup/$now/ 2>/dev/null || true
                 # Rotate — 30 day retention
                 find /backup -maxdepth 1 -mindepth 1 -type d -mtime +30 -exec rm -rf {} +
-                echo "Backup complete: $now"
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(du -sh /backup/$$now | awk '{print $$1}')"
+
+                wget -qO- --post-data "backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_last_success_timestamp $(date +%s)
+                " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vaultwarden-backup" || true
               EOT
               ]
               volume_mount {

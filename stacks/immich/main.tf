@@ -684,12 +684,32 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               name  = "postgresql-backup"
               image = "postgres:16.4-bullseye"
               command = ["/bin/sh", "-c", <<-EOT
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
                 export now=$(date +"%Y_%m_%d_%H_%M")
                 pg_dumpall  -h immich-postgresql -U immich > /backup/dump_$now.sql
 
                 # Rotate - delete last log file
                 cd /backup
                 find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/dump_$now.sql | awk '{print $5}')"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-postgresql-backup" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
               EOT
               ]
               env {

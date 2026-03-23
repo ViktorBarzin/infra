@@ -1,0 +1,377 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "datasource", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Backup health overview — K8s CronJob backups and TrueNAS Cloud Sync status",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 0,
+  "links": [],
+  "panels": [
+    {
+      "title": "Time Since Last Successful Backup",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 90000 },
+              { "color": "red", "value": 604800 }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": { "match": "null", "result": { "text": "No data", "color": "red" } }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "time() - backup_last_success_timestamp",
+          "legendFormat": "{{ job }}",
+          "refId": "A"
+        },
+        {
+          "expr": "time() - cloudsync_last_success_timestamp",
+          "legendFormat": "cloudsync-{{ task_id }}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "All Backups — Overview",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Duration (s)" },
+            "properties": [{ "id": "unit", "value": "s" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Read (MiB)" },
+            "properties": [{ "id": "unit", "value": "decmbytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Written (MiB)" },
+            "properties": [{ "id": "unit", "value": "decmbytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Last Success" },
+            "properties": [{ "id": "unit", "value": "dateTimeFromNow" }]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Last Success", "desc": true }]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value #Duration": "Duration (s)",
+              "Value #Read": "Read (MiB)",
+              "Value #Written": "Written (MiB)",
+              "Value #LastSuccess": "Last Success",
+              "job": "Backup"
+            },
+            "excludeByName": {
+              "Time": true,
+              "instance": true,
+              "__name__": true
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "expr": "backup_duration_seconds",
+          "legendFormat": "{{ job }}",
+          "refId": "Duration",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "backup_read_bytes / 1048576",
+          "legendFormat": "{{ job }}",
+          "refId": "Read",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "backup_written_bytes / 1048576",
+          "legendFormat": "{{ job }}",
+          "refId": "Written",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "backup_last_success_timestamp * 1000",
+          "legendFormat": "{{ job }}",
+          "refId": "LastSuccess",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "title": "Backup Duration Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "backup_duration_seconds",
+          "legendFormat": "{{ job }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Backup IO Trend (Read + Written)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "backup_read_bytes",
+          "legendFormat": "{{ job }} read",
+          "refId": "A"
+        },
+        {
+          "expr": "backup_written_bytes",
+          "legendFormat": "{{ job }} written",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Cloud Sync Status",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "SUCCESS", "color": "green" }, "0": { "text": "FAILED", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "cloudsync_job_state",
+          "legendFormat": "Task {{ task_id }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Cloud Sync Duration",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3600 },
+              { "color": "red", "value": 86400 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "cloudsync_duration_seconds",
+          "legendFormat": "Task {{ task_id }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Active Backup Alerts",
+      "type": "alertlist",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "datasource", "uid": "grafana" },
+      "options": {
+        "showOptions": "current",
+        "maxItems": 20,
+        "sortOrder": 1,
+        "dashboardAlerts": false,
+        "alertName": "backup",
+        "stateFilter": {
+          "firing": true,
+          "pending": true,
+          "noData": true,
+          "normal": false,
+          "error": true
+        },
+        "folder": { "id": null, "title": "" },
+        "folderId": null
+      }
+    },
+    {
+      "title": "CronJob Last Schedule",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "unit", "value": "dateTimeAsIso" }]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Value", "desc": true }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "cronjob": "CronJob",
+              "namespace": "Namespace",
+              "Value": "Last Scheduled"
+            },
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "uid": true
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "expr": "kube_cronjob_status_last_schedule_time{cronjob=~\".*backup.*|.*cloudsync.*|.*etcd.*|.*raft.*\"} * 1000",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "Prometheus",
+          "value": "PBFA97CFB590B2093"
+        },
+        "includeAll": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Backup Health",
+  "uid": "backup-health",
+  "version": 1,
+  "schemaVersion": 39
+}
