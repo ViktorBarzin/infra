@@ -127,6 +127,10 @@ resource "kubernetes_deployment" "frigate" {
             name       = "media"
             mount_path = "/media/frigate"
           }
+          volume_mount {
+            name       = "cache-tmpfs"
+            mount_path = "/tmp/cache"
+          }
           # Restart pod if GPU becomes unavailable, Frigate hangs, or
           # detector falls back to CPU (inference time spikes from ~20ms to 200ms+)
           liveness_probe {
@@ -182,6 +186,13 @@ for name, det in stats.get('detectors', {}).items():
           name = "media"
           persistent_volume_claim {
             claim_name = module.nfs_media.claim_name
+          }
+        }
+        volume {
+          name = "cache-tmpfs"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "512Mi"
           }
         }
         volume {
