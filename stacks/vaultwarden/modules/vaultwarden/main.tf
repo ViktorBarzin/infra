@@ -248,8 +248,8 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
                 set -euxo pipefail
                 apk add --no-cache sqlite
                 _t0=$(date +%s)
-                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
-                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 now=$(date +"%Y_%m_%d_%H_%M")
                 # Pre-flight: verify source DB is healthy before backing up
@@ -275,8 +275,8 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
                 find /backup -maxdepth 1 -mindepth 1 -type d -mtime +30 -exec rm -rf {} +
 
                 _dur=$(($(date +%s) - _t0))
-                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
-                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 echo "=== Backup IO Stats ==="
                 echo "duration: $${_dur}s"
                 echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
