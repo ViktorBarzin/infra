@@ -615,7 +615,7 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
               spec = {
                 hard = {
                   "requests.cpu"    = "8"
-                  "requests.memory" = "8Gi"
+                  "requests.memory" = "12Gi"
                   "limits.memory"   = "32Gi"
                   pods              = "40"
                 }
