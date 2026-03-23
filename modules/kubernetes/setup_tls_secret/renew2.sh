@@ -67,6 +67,14 @@ chmod 700 $certbot_cleanup
 cat $certbot_cleanup
 
 
+echo "Cleaning up stale _acme-challenge TXT records from Cloudflare"
+curl -s "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records?type=TXT&name=_acme-challenge.viktorbarzin.me" \
+    -H "Authorization: Bearer $CLOUDFLARE_TOKEN" | jq -r '.result[].id' | while read -r old_id; do
+    echo "Deleting stale record $old_id"
+    curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$old_id" \
+        -H "Authorization: Bearer $CLOUDFLARE_TOKEN" > /dev/null
+done
+
 echo "Executing certbot renew command"
 certbot certonly --manual --preferred-challenges=dns --email me@viktorbarzin.me --server https://acme-v02.api.letsencrypt.org/directory --agree-tos --manual-auth-hook $certbot_auth --config-dir $config_dir --work-dir $le_dir/workdir --logs-dir $le_dir/logsdir --no-eff-email --manual-cleanup-hook $certbot_cleanup -d viktorbarzin.me -d *.viktorbarzin.me
 
