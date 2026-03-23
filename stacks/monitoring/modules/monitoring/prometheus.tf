@@ -35,5 +35,7 @@ resource "helm_release" "prometheus" {
   # version    = "15.0.2"
   version = "25.8.2"
 
+  timeout = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
+
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token })]
 }

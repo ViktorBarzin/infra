@@ -12,6 +12,11 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "platform"
 }
 
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
 module "monitoring" {
   source                        = "./modules/monitoring"
   tls_secret_name               = var.tls_secret_name
@@ -26,4 +31,5 @@ module "monitoring" {
   pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
   grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
   tier                          = local.tiers.cluster
+  truenas_api_key               = data.vault_kv_secret_v2.viktor.data["truenas_api_key"]
 }
