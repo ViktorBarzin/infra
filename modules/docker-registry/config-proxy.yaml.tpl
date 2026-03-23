@@ -17,6 +17,7 @@ storage:
       dryrun: false
 http:
   addr: :5000
+  draintimeout: 60s
   headers:
     X-Content-Type-Options: [nosniff]
 health:
@@ -26,3 +27,4 @@ health:
     threshold: 3
 proxy:
   remoteurl: ${remote_url}
+  ttl: 168h

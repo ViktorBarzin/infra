@@ -19,6 +19,7 @@ storage:
       enabled: false
 http:
   addr: :5000
+  draintimeout: 60s
   headers:
     X-Content-Type-Options: [nosniff]
   debug:
@@ -37,3 +38,4 @@ proxy:
   remoteurl: https://registry-1.docker.io
   username: vbarzin@gmail.com
   password: ${password}
+  ttl: 168h
