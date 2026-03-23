@@ -465,7 +465,8 @@ resource "kubernetes_service" "mailserver" {
   }
 
   spec {
-    type = "LoadBalancer"
+    type             = "LoadBalancer"
+    load_balancer_ip = "10.0.20.201"
     # external_traffic_policy = "Cluster"
     external_traffic_policy = "Local"
     selector = {
