@@ -8,6 +8,7 @@ variable "cloudflare_account_id" { type = string }
 variable "cloudflare_zone_id" { type = string }
 variable "cloudflare_tunnel_id" { type = string }
 variable "public_ip" { type = string }
+variable "public_ipv6" { type = string }
 variable "cloudflare_proxied_names" {}
 variable "cloudflare_non_proxied_names" {}
 
@@ -36,6 +37,7 @@ module "cloudflared" {
   cloudflare_zone_id           = var.cloudflare_zone_id
   cloudflare_tunnel_id         = var.cloudflare_tunnel_id
   public_ip                    = var.public_ip
+  public_ipv6                  = var.public_ipv6
   cloudflare_proxied_names     = concat(var.cloudflare_proxied_names, nonsensitive(local.user_domains))
   cloudflare_non_proxied_names = var.cloudflare_non_proxied_names
   cloudflare_tunnel_token      = data.vault_kv_secret_v2.secrets.data["cloudflare_tunnel_token"]

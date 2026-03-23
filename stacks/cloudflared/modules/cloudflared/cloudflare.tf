@@ -18,6 +18,10 @@ variable "cloudflare_tunnel_id" {
 variable "public_ip" {
   type = string
 }
+variable "public_ipv6" {
+  type        = string
+  description = "Public IPv6 address for AAAA records (from HE tunnel broker)"
+}
 
 
 terraform {
@@ -98,6 +102,16 @@ resource "cloudflare_record" "non_proxied_dns_record" {
   zone_id = var.cloudflare_zone_id
 }
 
+
+resource "cloudflare_record" "non_proxied_dns_record_ipv6" {
+  for_each = local.cloudflare_non_proxied_names_map
+  name     = each.key
+  content  = var.public_ipv6
+  proxied  = false
+  ttl      = 1
+  type     = "AAAA"
+  zone_id  = var.cloudflare_zone_id
+}
 
 resource "cloudflare_record" "mail" {
   content  = "mail.viktorbarzin.me"

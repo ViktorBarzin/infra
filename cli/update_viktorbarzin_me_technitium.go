@@ -69,8 +69,8 @@ func UpdatePublicIPViaTechnitiumAPI(newIp net.IP, username string, password stri
 			return errors.Wrap(err, "failed to get A record for ns server")
 		}
 		currIp := net.ParseIP(currIpStr)
-		fmt.Printf("updating record %s to %s\n", nsRecordName, newIp.String())
-		err = UpdateTechnitiumNSARecord(token, nsRecordName, currIp, newIp)
+		fmt.Printf("updating A record %s to %s\n", nsRecordName, newIp.String())
+		err = UpdateTechnitiumNSRecord(token, nsRecordName, "A", currIp, newIp)
 		if err != nil {
 			return errors.Wrap(err, "failed to update NS A record")
 		}
@@ -78,12 +78,39 @@ func UpdatePublicIPViaTechnitiumAPI(newIp net.IP, username string, password stri
 	return nil
 }
 
-func UpdateTechnitiumNSARecord(token, domain string, currIp, newIp net.IP) error {
+func UpdatePublicIPv6ViaTechnitiumAPI(newIp net.IP, username string, password string) error {
+	token, err := createTechnitiumToken(username, password)
+	if err != nil {
+		return errors.Wrap(err, "failed to get technitium token")
+	}
+	for _, ns := range []string{"ns1", "ns2", "@"} {
+		nsRecordName := ""
+		if ns == "@" {
+			nsRecordName = "viktorbarzin.me."
+		} else {
+			nsRecordName = ns + ".viktorbarzin.me"
+		}
+		currIpStr, err := getRecordValue(token, nsRecordName, "AAAA")
+		if err != nil {
+			fmt.Printf("no existing AAAA record for %s, skipping\n", nsRecordName)
+			continue
+		}
+		currIp := net.ParseIP(currIpStr)
+		fmt.Printf("updating AAAA record %s to %s\n", nsRecordName, newIp.String())
+		err = UpdateTechnitiumNSRecord(token, nsRecordName, "AAAA", currIp, newIp)
+		if err != nil {
+			return errors.Wrap(err, "failed to update NS AAAA record")
+		}
+	}
+	return nil
+}
+
+func UpdateTechnitiumNSRecord(token, domain, recordType string, currIp, newIp net.IP) error {
 	baseURL := fmt.Sprintf("http://%s:5380/api/zones/records/update", TECHNITIUM_HOST)
 	params := map[string]string{
 		"token":        token,
 		"domain":       domain,
-		"type":         "A",
+		"type":         recordType,
 		"newIpAddress": newIp.String(),
 		"ipAddress":    currIp.String(),
 	}
