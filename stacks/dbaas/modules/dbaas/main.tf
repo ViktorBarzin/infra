@@ -314,7 +314,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
   spec {
     concurrency_policy        = "Replace"
     failed_jobs_history_limit = 5
-    schedule                  = "0 0 * * *"
+    schedule                  = "30 0 * * *"
     # schedule                      = "* * * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 10
@@ -341,11 +341,12 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local > /backup/dump_$now.sql
+                mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local | gzip -9 > /backup/dump_$now.sql.gz
 
-                # Rotate - delete last log file
+                # Rotate — 14 day retention
                 cd /backup
-                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
                 echo Done
               EOT
               ]
@@ -1077,11 +1078,12 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres > /backup/dump_$now.sql
+                PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
 
-                # Rotate - delete last log file
+                # Rotate — 14 day retention
                 cd /backup
-                find . -name "dump_*.sql" -type f -mtime +14 -delete # 14 day retention of backups
+                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
                 echo Done
               EOT
               ]

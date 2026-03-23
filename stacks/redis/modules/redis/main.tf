@@ -267,7 +267,7 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
   spec {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
-    schedule                      = "0 * * * *"
+    schedule                      = "0 3 * * 0"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 3
     job_template {
@@ -290,7 +290,7 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
                 # Copy the RDB via redis-cli --rdb
                 redis-cli -h redis.redis --rdb /backup/redis-$TIMESTAMP.rdb
                 # Rotate — 7-day retention
-                find /backup -name 'redis-*.rdb' -type f -mtime +7 -delete
+                find /backup -name 'redis-*.rdb' -type f -mtime +28 -delete
                 echo "Backup complete: redis-$TIMESTAMP.rdb"
               EOT
               ]
