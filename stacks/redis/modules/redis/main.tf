@@ -284,8 +284,8 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
               command = ["/bin/sh", "-c", <<-EOT
                 set -eux
                 _t0=$(date +%s)
-                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
-                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 TIMESTAMP=$(date +%Y%m%d-%H%M)
                 # Trigger a fresh RDB save on the master
@@ -297,8 +297,8 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
                 find /backup -name 'redis-*.rdb' -type f -mtime +28 -delete
 
                 _dur=$(($(date +%s) - _t0))
-                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
-                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 echo "=== Backup IO Stats ==="
                 echo "duration: $${_dur}s"
                 echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
