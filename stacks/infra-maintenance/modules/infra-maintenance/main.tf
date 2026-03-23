@@ -102,7 +102,30 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
               name    = "backup-etcd"
               image   = "registry.k8s.io/etcd:3.5.21-0"
               command = ["/bin/sh", "-c"]
-              args    = ["ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt --key=/etc/kubernetes/pki/etcd/healthcheck-client.key snapshot save /backup/etcd-snapshot-$(date +%Y%m%d-%H%M%S).db"]
+              args = [<<-EOT
+                set -eu
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
+                TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                ETCDCTL_API=3 etcdctl \
+                  --endpoints=https://127.0.0.1:2379 \
+                  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+                  --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+                  --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+                  snapshot save /backup/etcd-snapshot-$TIMESTAMP.db
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/etcd-snapshot-$TIMESTAMP.db | awk '{print $5}')"
+              EOT
+              ]
               env {
                 name  = "ETCDCTL_API"
                 value = "3"

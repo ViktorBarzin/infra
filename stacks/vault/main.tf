@@ -265,12 +265,26 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
               image   = "hashicorp/vault:1.18.1"
               command = ["/bin/sh", "-c"]
               args = [join("", [
+                "set -eu; ",
+                "_t0=$(date +%s); ",
+                "_rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0); ",
+                "_wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0); ",
                 "export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200 && ",
                 "export VAULT_TOKEN=$(cat /vault/token/vault-root-token) && ",
                 "TIMESTAMP=$(date +%Y%m%d-%H%M%S) && ",
                 "vault operator raft snapshot save /backup/vault-raft-$TIMESTAMP.db && ",
                 "find /backup -name '*.db' -mtime +30 -delete && ",
-                "echo \"Backup done: vault-raft-$TIMESTAMP.db\" && ls -lh /backup/"
+                "echo \"Backup done: vault-raft-$TIMESTAMP.db\" && ls -lh /backup/ && ",
+                "_dur=$(( $(date +%s) - _t0 )); ",
+                "_rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0); ",
+                "_wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0); ",
+                "echo '=== Backup IO Stats ==='; ",
+                "echo \"duration: $${_dur}s\"; ",
+                "echo \"read:    $(( (_rb1 - _rb0) / 1048576 )) MiB\"; ",
+                "echo \"written: $(( (_wb1 - _wb0) / 1048576 )) MiB\"; ",
+                "echo \"output:  $(ls -lh /backup/vault-raft-$TIMESTAMP.db | awk '{print $5}')\"; ",
+                "wget -qO- --post-data \"backup_duration_seconds $${_dur}\nbackup_read_bytes $((_rb1 - _rb0))\nbackup_written_bytes $((_wb1 - _wb0))\nbackup_last_success_timestamp $(date +%s)\n\" ",
+                "\"http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vault-raft-backup\" || true"
               ])]
               volume_mount {
                 mount_path = "/backup"

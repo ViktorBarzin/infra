@@ -144,7 +144,18 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
                     EPOCH_SECS=0
                   fi
 
-                  echo "Task $TASK_ID ($TASK_DESC): state=$JOB_STATE, last_finished=$EPOCH_SECS"
+                  # Extract transfer stats from job progress description (rclone output)
+                  JOB_PROGRESS=$(echo "$task" | jq -r '.job.progress.description // ""')
+                  BYTES_TX=$(echo "$JOB_PROGRESS" | grep -oP 'Transferred:\s+[\d.]+ \w+' | head -1 | awk '{print $2}' || echo 0)
+                  JOB_STARTED=$(echo "$task" | jq -r '.job.time_started."$date" // 0')
+                  JOB_FINISHED=$(echo "$task" | jq -r '.job.time_finished."$date" // 0')
+                  if [ "$JOB_STARTED" != "0" ] && [ "$JOB_STARTED" != "null" ] && [ "$JOB_FINISHED" != "0" ] && [ "$JOB_FINISHED" != "null" ]; then
+                    SYNC_DURATION=$(( (JOB_FINISHED - JOB_STARTED) / 1000 ))
+                  else
+                    SYNC_DURATION=0
+                  fi
+
+                  echo "Task $TASK_ID ($TASK_DESC): state=$JOB_STATE, last_finished=$EPOCH_SECS, duration=$${SYNC_DURATION}s"
 
                   # Push metrics to Pushgateway
                   cat <<METRICS | curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/cloudsync-monitor/task_id/$TASK_ID"
@@ -154,6 +165,9 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
                   # HELP cloudsync_job_state Cloud Sync job state (1=SUCCESS, 0=other)
                   # TYPE cloudsync_job_state gauge
                   cloudsync_job_state $([ "$JOB_STATE" = "SUCCESS" ] && echo 1 || echo 0)
+                  # HELP cloudsync_duration_seconds Duration of the last Cloud Sync run
+                  # TYPE cloudsync_duration_seconds gauge
+                  cloudsync_duration_seconds $SYNC_DURATION
                 METRICS
                 done
 

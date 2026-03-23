@@ -340,6 +340,10 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
               }
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
                 export now=$(date +"%Y_%m_%d_%H_%M")
                 mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local | gzip -9 > /backup/dump_$now.sql.gz
 
@@ -347,7 +351,22 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
                 cd /backup
                 find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
                 find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
-                echo Done
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
               EOT
               ]
               # To restore (from outside of the cluster):
@@ -1077,6 +1096,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               }
               command = ["/bin/bash", "-c", <<-EOT
                 set -euxo pipefail
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+
                 export now=$(date +"%Y_%m_%d_%H_%M")
                 PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
 
@@ -1084,7 +1107,22 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 cd /backup
                 find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
                 find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
-                echo Done
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/self/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
               EOT
               ]
               volume_mount {
