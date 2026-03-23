@@ -187,6 +187,129 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# DNS Anomaly Monitor — query Technitium stats API, detect anomalies, push to Pushgateway
+# Runs every 15 min. Checks for query spikes, high error rates, and suspicious patterns.
+# -----------------------------------------------------------------------------
+resource "kubernetes_cron_job_v1" "dns_anomaly_monitor" {
+  metadata {
+    name      = "dns-anomaly-monitor"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/15 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "dns-anomaly-monitor"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euo pipefail
+                apk add --no-cache curl jq
+
+                TECHNITIUM_URL="http://technitium-web.technitium.svc.cluster.local:5380"
+
+                # Get main stats
+                STATS=$(curl -sf "$TECHNITIUM_URL/api/stats/get?token=&type=LastHour" 2>&1) || {
+                  echo "ERROR: Failed to query Technitium stats API"
+                  exit 1
+                }
+
+                # Parse key metrics
+                TOTAL_QUERIES=$(echo "$STATS" | jq -r '.response.stats.totalQueries // 0')
+                SERVER_FAILURE=$(echo "$STATS" | jq -r '.response.stats.serverFailure // 0')
+                NX_DOMAIN=$(echo "$STATS" | jq -r '.response.stats.nxDomain // 0')
+                BLOCKED=$(echo "$STATS" | jq -r '.response.stats.blocked // 0')
+                NO_ERROR=$(echo "$STATS" | jq -r '.response.stats.noError // 0')
+
+                echo "DNS Stats (last hour): total=$TOTAL_QUERIES noError=$NO_ERROR nxDomain=$NX_DOMAIN serverFailure=$SERVER_FAILURE blocked=$BLOCKED"
+
+                # Get top clients for anomaly context
+                TOP_CLIENTS=$(curl -sf "$TECHNITIUM_URL/api/stats/getTopClients?token=&type=LastHour&limit=10" 2>&1) || true
+
+                # Get top domains for DGA/tunneling detection
+                TOP_DOMAINS=$(curl -sf "$TECHNITIUM_URL/api/stats/getTopDomains?token=&type=LastHour&limit=20" 2>&1) || true
+
+                # Check for high-entropy domains (potential DGA)
+                DGA_SUSPECT=0
+                if [ -n "$TOP_DOMAINS" ]; then
+                  # Simple heuristic: domains with many consonant clusters or very long labels
+                  DGA_SUSPECT=$(echo "$TOP_DOMAINS" | jq -r '[.response.topDomains[]?.name // empty | select(length > 30 or test("[bcdfghjklmnpqrstvwxyz]{5,}"))] | length')
+                fi
+
+                # Push metrics to Pushgateway
+                cat <<METRICS | curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/dns-anomaly-monitor"
+                # HELP dns_anomaly_total_queries Total DNS queries in last hour
+                # TYPE dns_anomaly_total_queries gauge
+                dns_anomaly_total_queries $TOTAL_QUERIES
+                # HELP dns_anomaly_server_failure DNS server failures in last hour
+                # TYPE dns_anomaly_server_failure gauge
+                dns_anomaly_server_failure $SERVER_FAILURE
+                # HELP dns_anomaly_nx_domain NX domain responses in last hour
+                # TYPE dns_anomaly_nx_domain gauge
+                dns_anomaly_nx_domain $NX_DOMAIN
+                # HELP dns_anomaly_blocked Blocked queries in last hour
+                # TYPE dns_anomaly_blocked gauge
+                dns_anomaly_blocked $BLOCKED
+                # HELP dns_anomaly_dga_suspects Domains with DGA-like characteristics
+                # TYPE dns_anomaly_dga_suspects gauge
+                dns_anomaly_dga_suspects $DGA_SUSPECT
+                # HELP dns_anomaly_check_timestamp Last successful check timestamp
+                # TYPE dns_anomaly_check_timestamp gauge
+                dns_anomaly_check_timestamp $(date +%s)
+              METRICS
+
+                # Calculate average for spike detection (store as a simple rolling metric)
+                # The Prometheus alert rule compares current vs stored average
+                AVG_FILE="/tmp/dns_avg"
+                if [ -f "$AVG_FILE" ]; then
+                  PREV_AVG=$(cat "$AVG_FILE")
+                  NEW_AVG=$(( (PREV_AVG + TOTAL_QUERIES) / 2 ))
+                else
+                  NEW_AVG=$TOTAL_QUERIES
+                fi
+
+                cat <<METRICS | curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/dns-anomaly-monitor"
+                # HELP dns_anomaly_avg_queries Rolling average DNS queries
+                # TYPE dns_anomaly_avg_queries gauge
+                dns_anomaly_avg_queries $NEW_AVG
+              METRICS
+
+                echo "DNS anomaly check complete (DGA suspects: $DGA_SUSPECT)"
+              EOT
+              ]
+              resources {
+                requests = {
+                  memory = "32Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 resource "kubernetes_manifest" "status_redirect_middleware" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
