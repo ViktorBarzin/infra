@@ -62,8 +62,9 @@ resource "kubernetes_deployment" "idrac-redfish" {
         priority_class_name = "tier-1-cluster"
         container {
           # https://github.com/mrlhansen/idrac_exporter?tab=readme-ov-file
-          # Pinned tag — Kyverno policy sets imagePullPolicy: IfNotPresent
-          image = "ghcr.io/mrlhansen/idrac_exporter:2.4.1"
+          # Patched v2.4.1 - restored missing idrac_power_supply_input_voltage metric
+          # See: https://github.com/mrlhansen/idrac_exporter/issues/176
+          image = "viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix"
           name  = "redfish-exporter"
           port {
             container_port = 9610
