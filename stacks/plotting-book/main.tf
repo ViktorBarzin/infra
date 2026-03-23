@@ -2,6 +2,7 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
+variable "nfs_server" { type = string }
 resource "kubernetes_namespace" "plotting-book" {
   metadata {
     name = "plotting-book"
@@ -198,6 +199,107 @@ module "ingress" {
     "gethomepage.dev/icon"         = "mdi-book-open-variant"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Backup — Weekly SQLite backup to NFS
+# -----------------------------------------------------------------------------
+
+module "nfs_plotting_book_backup" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "plotting-book-backup"
+  namespace  = kubernetes_namespace.plotting-book.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/plotting-book-backup"
+}
+
+resource "kubernetes_cron_job_v1" "plotting_book_backup" {
+  metadata {
+    name      = "plotting-book-backup"
+    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "0 3 * * 0"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "plotting-book"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            container {
+              name  = "plotting-book-backup"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euxo pipefail
+                apk add --no-cache sqlite
+                now=$(date +"%Y_%m_%d_%H_%M")
+                mkdir -p /backup/$now
+                sqlite3 /data/database.sqlite ".backup /backup/$now/database.sqlite"
+                # Rotate — 30 day retention
+                find /backup -maxdepth 1 -mindepth 1 -type d -mtime +30 -exec rm -rf {} +
+                echo "Backup complete: $now"
+              EOT
+              ]
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+              resources {
+                requests = {
+                  memory = "32Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.plotting-book-data.metadata[0].name
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_plotting_book_backup.claim_name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 
