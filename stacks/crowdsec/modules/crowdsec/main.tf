@@ -96,6 +96,27 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
 }
 
 
+# Syslog acquisition config for pfSense firewall log ingestion
+resource "kubernetes_config_map" "crowdsec_syslog_acquisition" {
+  metadata {
+    name      = "crowdsec-syslog-acquisition"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name" = "crowdsec"
+    }
+  }
+
+  data = {
+    "syslog.yaml" = <<-YAML
+      source: syslog
+      listen_addr: "0.0.0.0"
+      listen_port: 514
+      labels:
+        type: pf
+    YAML
+  }
+}
+
 resource "helm_release" "crowdsec" {
   namespace        = kubernetes_namespace.crowdsec.metadata[0].name
   create_namespace = true
@@ -107,7 +128,7 @@ resource "helm_release" "crowdsec" {
   chart      = "crowdsec"
 
   values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host })]
-  timeout       = 900
+  timeout       = 1200
   wait          = true
   wait_for_jobs = true
 }

@@ -17,12 +17,6 @@ agent:
       podName: traefik-*
       # as in crowdsec configuration, we need to specify the program name so the parser will match and parse logs
       program: traefik
-    # pfSense firewall logs via syslog
-    - source: syslog
-      listen_addr: "0.0.0.0"
-      listen_port: 514
-      labels:
-        type: pf
     # Mailserver logs for SMTP/IMAP brute-force detection
     - namespace: mailserver
       podName: mailserver-*
@@ -37,18 +31,10 @@ agent:
     #   value: "true"
     # As we are running Traefik, we want to install the Traefik collection
     - name: COLLECTIONS
-      value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/http-cve crowdsecurity/pf crowdsecurity/postfix crowdsecurity/dovecot crowdsecurity/sshd"
+      value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/http-cve crowdsecurity/pfsense firewallservices/pf crowdsecurity/postfix crowdsecurity/dovecot crowdsecurity/sshd"
     - name: SCENARIOS
       value: ""
       # value: "crowdsecurity/http-crawl-aggressive"
-  # Expose syslog port for pfSense log ingestion
-  additionalPorts:
-    - name: syslog-udp
-      containerPort: 514
-      protocol: UDP
-    - name: syslog-tcp
-      containerPort: 514
-      protocol: TCP
   # Mount custom scenarios into /etc/crowdsec/scenarios
   extraVolumeMounts:
     - name: custom-scenarios
@@ -63,6 +49,10 @@ agent:
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
       readonly: true
+    - name: syslog-acquisition
+      mountPath: /etc/crowdsec/acquis.d/syslog.yaml
+      subPath: "syslog.yaml"
+      readonly: true
   extraVolumes:
     - name: custom-scenarios
       configMap:
@@ -70,6 +60,9 @@ agent:
     - name: whitelist
       configMap:
         name: crowdsec-whitelist
+    - name: syslog-acquisition
+      configMap:
+        name: crowdsec-syslog-acquisition
 lapi:
   resources:
     requests:
