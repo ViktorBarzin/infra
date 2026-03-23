@@ -43,3 +43,32 @@ steps:
       - "git commit -m 'Woodpecker CI Update TLS Certificates Commit' || echo 'No changes'"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master"
       - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+
+  - name: verify-cert
+    image: alpine
+    commands:
+      - "apk update && apk add openssl"
+      - "openssl x509 -checkend 604800 -noout -in secrets/fullchain.pem"
+      - "echo 'Certificate is valid for at least 7 more days'"
+
+  - name: update-tls-source-secret
+    image: bitnami/kubectl:latest
+    commands:
+      - |
+        kubectl create secret tls tls-secret \
+          --cert=secrets/fullchain.pem --key=secrets/privkey.pem \
+          --namespace=kyverno --dry-run=client -o yaml | kubectl apply -f -
+      - "echo 'Source TLS secret updated in kyverno namespace — Kyverno will sync to all namespaces'"
+
+  - name: slack
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: TLS certificate renewal ${CI_PIPELINE_STATUS}\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [success, failure]
