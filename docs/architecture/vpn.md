@@ -1,0 +1,414 @@
+# VPN & Remote Access Architecture
+
+Last updated: 2026-03-24
+
+## Overview
+
+Remote access to the homelab is provided through a hybrid VPN architecture: WireGuard site-to-site tunnels connect physical locations (Sofia, London, Valchedrym), while Headscale (self-hosted Tailscale control server) provides mesh overlay networking for roaming clients. Split DNS architecture ensures resilience: AdGuard serves as the global DNS resolver for all VPN clients, while Technitium handles internal `.lan` domains. This design prevents tunnel dependency for public DNS resolution — if the Cloudflared tunnel goes down, clients can still access the internet.
+
+## Architecture Diagram
+
+### VPN Topology
+
+```mermaid
+graph TB
+    subgraph "Site-to-Site WireGuard"
+        Sofia[Sofia pfSense<br/>10.0.20.1]
+        London[London pfSense<br/>10.0.30.1]
+        Valchedrym[Valchedrym pfSense<br/>10.0.40.1]
+
+        Sofia ---|WireGuard Tunnel| London
+        Sofia ---|WireGuard Tunnel| Valchedrym
+        London ---|WireGuard Tunnel| Valchedrym
+    end
+
+    subgraph "Headscale Mesh Overlay"
+        HS[Headscale<br/>headscale.viktorbarzin.me<br/>K8s Service]
+        Authentik[Authentik OIDC<br/>SSO Login]
+        DERP[DERP Relay<br/>Region 999<br/>Embedded in Headscale]
+
+        subgraph "Clients"
+            Laptop[MacBook<br/>Tailscale Client]
+            Phone[iPhone<br/>Tailscale Client]
+            Remote[Remote VM<br/>Tailscale Client]
+        end
+
+        HS --> Authentik
+        HS --> DERP
+        Laptop -.mesh.- Phone
+        Laptop -.mesh.- Remote
+        Phone -.mesh.- Remote
+        Laptop --> HS
+        Phone --> HS
+        Remote --> HS
+
+        Laptop -.relay fallback.- DERP
+        Phone -.relay fallback.- DERP
+    end
+
+    Sofia --> HS
+```
+
+### DNS Resolution Flow
+
+```mermaid
+sequenceDiagram
+    participant Client as VPN Client
+    participant AdGuard as AdGuard DNS<br/>(Global)
+    participant Technitium as Technitium DNS<br/>(Internal .lan)
+    participant Cloudflare as Cloudflare DNS<br/>(Public Domains)
+
+    Note over Client: Query: immich.viktorbarzin.me
+    Client->>AdGuard: DNS query
+    AdGuard->>Cloudflare: Forward (not .lan)
+    Cloudflare-->>AdGuard: A record (Cloudflare IP)
+    AdGuard-->>Client: Response
+
+    Note over Client: Query: truenas.viktorbarzin.lan
+    Client->>AdGuard: DNS query
+    AdGuard->>Technitium: Forward (.lan domain)
+    Technitium-->>AdGuard: A record (10.0.10.15)
+    AdGuard-->>Client: Response
+
+    Note over Client,Technitium: If Cloudflared tunnel is down:
+    Client->>AdGuard: DNS query (google.com)
+    AdGuard->>Cloudflare: Forward (public DNS works)
+    Cloudflare-->>AdGuard: A record
+    AdGuard-->>Client: Response (no tunnel dependency)
+```
+
+## Components
+
+| Component | Version/Type | Location | Purpose |
+|-----------|-------------|----------|---------|
+| WireGuard | Built-in (pfSense) | Sofia/London/Valchedrym | Site-to-site encrypted tunnels |
+| Headscale | v0.23.x (container) | K8s (headscale.viktorbarzin.me) | Tailscale control server, mesh coordinator |
+| Tailscale | Client v1.x | User devices | Mesh VPN client |
+| Authentik | OIDC provider | K8s | SSO authentication for Headscale |
+| DERP Relay | Embedded in Headscale | K8s (region 999) | Relay for NAT traversal |
+| AdGuard DNS | Container | K8s | Global DNS resolver with ad-blocking |
+| Technitium DNS | Container | K8s (10.0.20.101) | Internal .lan domain resolver |
+
+## How It Works
+
+### WireGuard Site-to-Site
+
+Three physical locations are permanently connected via WireGuard tunnels configured on pfSense:
+- **Sofia** (primary): 10.0.20.0/24 (main K8s cluster)
+- **London**: 10.0.30.0/24 (secondary services)
+- **Valchedrym**: 10.0.40.0/24 (backup location)
+
+Each pfSense instance maintains two WireGuard tunnels, forming a full mesh. Routes are automatically injected into each location's routing table. This allows services in Sofia to communicate with services in London without additional client configuration.
+
+**Use cases**:
+- Replication of Vault data between Sofia and London
+- Offsite database replicas
+- Accessing Proxmox hosts across locations
+
+### Headscale Mesh Overlay
+
+Headscale is a self-hosted alternative to Tailscale's commercial control plane. It provides:
+- **Mesh networking**: Clients establish direct WireGuard connections to each other (peer-to-peer).
+- **NAT traversal**: DERP relays provide connectivity when direct connections fail.
+- **OIDC authentication**: Users log in via Authentik, no pre-shared keys.
+- **ACL policies**: Fine-grained control over which clients can reach which destinations.
+
+**Client onboarding**:
+1. User installs Tailscale client (official macOS/iOS/Android app)
+2. Runs: `tailscale login --login-server https://headscale.viktorbarzin.me`
+3. Browser opens to Authentik SSO login
+4. After successful login, Tailscale presents a registration URL
+5. Admin approves the device via `headscale nodes register --user <username> --key <key>`
+6. Client is added to the mesh, receives IP in 100.64.0.0/10 range
+
+**Connectivity test**: `ping 10.0.20.100` (Sofia K8s API server) verifies full access to the homelab network.
+
+### DERP Relay for NAT Traversal
+
+**Problem**: Symmetric NAT or restrictive firewalls prevent direct WireGuard connections between clients.
+
+**Solution**: Headscale runs an embedded DERP relay server (region 999, named "Home DERP"). DERP is Tailscale's NAT traversal protocol, implemented as an HTTPS-based relay.
+
+**How it works**:
+1. Clients attempt direct WireGuard connection via STUN/ICE.
+2. If direct connection fails, both clients connect to the DERP relay via HTTPS.
+3. Traffic is encrypted end-to-end with WireGuard, DERP only relays packets.
+4. No additional ports needed — DERP uses the same HTTPS ingress as Headscale (443).
+
+**Performance**: DERP adds latency (extra hop through Sofia K8s cluster), but ensures connectivity in all scenarios.
+
+### Split DNS Architecture
+
+**Design goal**: Prevent tunnel dependency for public DNS resolution. If the Headscale tunnel or Cloudflared tunnel fails, clients must still resolve public domains.
+
+**Implementation**:
+- **AdGuard DNS**: Global recursive resolver, serves all VPN clients. Includes ad-blocking and malicious domain filtering.
+- **Technitium DNS**: Internal authoritative server for `.viktorbarzin.lan` domains.
+
+**Resolution flow**:
+1. Client queries AdGuard for any domain.
+2. If domain ends in `.lan`, AdGuard forwards to Technitium (10.0.20.101).
+3. For all other domains, AdGuard resolves directly via upstream (Cloudflare 1.1.1.1).
+4. AdGuard caches responses, reducing load on Technitium and upstream.
+
+**Resilience**: Even if the tunnel to Sofia is down, clients can still resolve `google.com`, `github.com`, etc., because AdGuard talks directly to Cloudflare. Only `.lan` domains become unavailable.
+
+### Access Control (Authentik Groups)
+
+**Headscale Users** group in Authentik controls VPN access. Membership is invitation-only:
+1. Admin creates user in Authentik.
+2. Admin adds user to "Headscale Users" group.
+3. User logs in via OIDC during `tailscale login`.
+4. Headscale verifies group membership via OIDC claims.
+
+Removing a user from the group revokes VPN access on next re-authentication (every 30 days).
+
+## Configuration
+
+### Terraform Stacks
+
+| Stack | Path | Resources |
+|-------|------|-----------|
+| Headscale | `stacks/headscale/` | Deployment, Service, Ingress, ConfigMap |
+| AdGuard | `stacks/adguard/` | Deployment, Service, PVC |
+| Technitium | `stacks/technitium/` | Deployment, Service, PVC |
+| pfSense (Sofia) | `stacks/pfsense/` | WireGuard tunnel configs |
+
+### Headscale Configuration
+
+**ConfigMap**: `stacks/headscale/main.tf`
+```yaml
+server_url: https://headscale.viktorbarzin.me
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+
+oidc:
+  issuer: https://authentik.viktorbarzin.me/application/o/headscale/
+  client_id: <redacted>
+  client_secret: <from Vault>
+  scope: ["openid", "profile", "email", "groups"]
+  allowed_groups: ["Headscale Users"]
+
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: "home"
+    region_name: "Home DERP"
+    stun_listen_addr: "0.0.0.0:3478"
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
+
+ip_prefixes:
+  - 100.64.0.0/10
+
+dns_config:
+  nameservers:
+    - 10.0.20.102  # AdGuard DNS
+  domains:
+    - viktorbarzin.lan
+  magic_dns: true
+```
+
+**Secrets (Vault)**:
+- `secret/headscale/oidc_client_secret`
+
+**Ingress**: Standard `ingress_factory` with `protected = false` (OIDC is handled by Headscale itself).
+
+### AdGuard Configuration
+
+**Upstream DNS servers**:
+- Cloudflare: `1.1.1.1`, `1.0.0.1`
+- Google: `8.8.8.8`, `8.8.4.4`
+
+**Conditional forwarding**:
+- `viktorbarzin.lan` → `10.0.20.101` (Technitium)
+
+**Ad-blocking lists**:
+- AdGuard DNS filter
+- OISD full list
+- Developer Dan's ads and tracking list
+
+**Custom rules**: Block telemetry for Windows, macOS, and smart TVs.
+
+### WireGuard (pfSense)
+
+**Sofia → London tunnel**:
+- Interface: `wg0`
+- Local IP: `10.99.1.1/24`
+- Remote endpoint: `<public-ip>:51820`
+- Allowed IPs: `10.0.30.0/24`
+- Keepalive: 25 seconds
+
+**Sofia → Valchedrym tunnel**:
+- Interface: `wg1`
+- Local IP: `10.99.2.1/24`
+- Remote endpoint: `<public-ip>:51821`
+- Allowed IPs: `10.0.40.0/24`
+- Keepalive: 25 seconds
+
+### Vault Secrets
+
+- Headscale OIDC client secret: `secret/headscale/oidc_client_secret`
+- WireGuard private keys: `secret/pfsense/wg_privkey_london`, `secret/pfsense/wg_privkey_valchedrym`
+
+## Decisions & Rationale
+
+### Why Headscale Instead of Plain WireGuard?
+
+**Alternatives considered**:
+1. **WireGuard with static configs**: Requires manual key distribution, complex peer management.
+2. **OpenVPN**: Slower, more overhead, less mobile-friendly.
+3. **Commercial Tailscale**: SaaS, not self-hosted, less control over data.
+
+**Decision**: Headscale provides:
+- **Mesh networking**: Clients connect directly, not through a central server.
+- **OIDC authentication**: No pre-shared keys, integrates with existing SSO.
+- **Easy onboarding**: Users install official Tailscale app, no custom configs.
+- **Self-hosted**: Full control over control plane and data.
+
+**Trade-off**: More complex setup than plain WireGuard, but operational benefits outweigh initial complexity.
+
+### Why Split DNS (AdGuard + Technitium)?
+
+**Alternatives considered**:
+1. **Single DNS server (Technitium only)**: Requires forwarding all public domains to upstream, creating single point of failure.
+2. **Cloudflare only**: Fast, but no internal `.lan` domain support without zone delegation.
+3. **Tailscale MagicDNS only**: Depends on Headscale control plane, fails if control plane is down.
+
+**Decision**: Split DNS architecture provides:
+- **Resilience**: If Headscale tunnel fails, public DNS still works via AdGuard → Cloudflare.
+- **Ad-blocking**: AdGuard filters ads and malicious domains for all VPN clients.
+- **Internal domains**: Technitium authoritatively serves `.lan`, no external dependency.
+
+**Key benefit**: Zero tunnel dependency for public DNS. Users can browse the internet even if the homelab is completely offline.
+
+### Why Embedded DERP Relay?
+
+**Alternatives considered**:
+1. **External DERP relays only (Tailscale's public relays)**: Free, but adds latency and exposes traffic metadata to Tailscale.
+2. **No DERP, direct connections only**: Fails for symmetric NAT clients (mobile networks).
+
+**Decision**: Embedded DERP (region 999) provides:
+- **Privacy**: All relay traffic stays within the homelab.
+- **Reliability**: Not dependent on Tailscale's public infrastructure.
+- **No extra ports**: DERP uses HTTPS (443), same as Headscale API.
+
+**Trade-off**: Adds CPU/memory overhead to Headscale pod, but minimal compared to benefits.
+
+### Why OIDC Authentication Instead of Pre-Authorized Keys?
+
+**Alternatives considered**:
+1. **Pre-authorized keys**: Headscale generates keys, admin shares with users.
+2. **Shared secret**: Single password for all users.
+
+**Decision**: OIDC via Authentik provides:
+- **Centralized access control**: Add/remove users in one place.
+- **Audit trail**: Authentik logs all login attempts.
+- **Group-based authorization**: Only "Headscale Users" group can access VPN.
+- **SSO integration**: Users already have accounts in Authentik for other services.
+
+**Key workflow**: Admin invites user → user logs in via Authentik → admin approves device → access granted. No key exchange needed.
+
+## Troubleshooting
+
+### Headscale Login Fails (OIDC Error)
+
+**Symptoms**: `tailscale login --login-server` opens browser, but after Authentik login, shows "OIDC error: invalid state".
+
+**Diagnosis**: Check Headscale logs: `kubectl logs -n headscale deploy/headscale`
+
+**Common causes**:
+1. **Client clock skew**: OIDC tokens have short validity (5 minutes). Ensure client's system time is accurate.
+2. **Callback URL mismatch**: Authentik application must have `https://headscale.viktorbarzin.me/oidc/callback` in Redirect URIs.
+3. **Group membership**: User is not in "Headscale Users" group in Authentik.
+
+**Fix**: Sync system clock, verify Authentik application config, add user to group.
+
+### Direct Connection Fails, Traffic Goes via DERP
+
+**Symptoms**: `tailscale status` shows `relay "home"` instead of direct connection. Higher latency.
+
+**Diagnosis**: Check DERP usage: `tailscale netcheck`
+
+**Common causes**:
+1. **Symmetric NAT**: Mobile networks or restrictive corporate firewalls block UDP hole-punching.
+2. **Firewall blocking WireGuard**: Port 51820 UDP blocked on one or both clients.
+3. **STUN failure**: Can't determine external IP and port.
+
+**Fix**: This is expected behavior in many environments. DERP relay ensures connectivity. If latency is unacceptable, use site-to-site WireGuard instead.
+
+### Can't Resolve .lan Domains from VPN
+
+**Symptoms**: `nslookup truenas.viktorbarzin.lan` returns `NXDOMAIN`.
+
+**Diagnosis**: Check DNS chain: Client → AdGuard → Technitium.
+
+**Steps**:
+1. Verify AdGuard is running: `kubectl get pod -n adguard`
+2. Check AdGuard conditional forwarding: Query AdGuard directly: `nslookup truenas.viktorbarzin.lan <adguard-ip>`
+3. Check Technitium: `nslookup truenas.viktorbarzin.lan 10.0.20.101`
+
+**Common causes**:
+1. **AdGuard not forwarding .lan**: Conditional forwarding rule missing or misconfigured.
+2. **Technitium down**: Pod crash-looping or PVC corrupted.
+3. **DNS propagation delay**: Technitium zone update not yet applied.
+
+**Fix**: Verify conditional forwarding in AdGuard UI. Restart Technitium if needed. Check zone file in Technitium UI.
+
+### VPN Client Can't Reach K8s Services
+
+**Symptoms**: Can `ping 10.0.20.1` (pfSense), but `curl https://immich.viktorbarzin.me` times out.
+
+**Diagnosis**: Check connectivity at each layer:
+1. **DNS**: Does `nslookup immich.viktorbarzin.me` return correct IP?
+2. **Routing**: Can client reach MetalLB IP? `ping <loadbalancer-ip>`
+3. **Firewall**: Is pfSense blocking traffic from VPN subnet?
+
+**Common causes**:
+1. **Split DNS working too well**: Client resolves to Cloudflare IP instead of internal LAN IP. Expected for proxied domains — use direct domain (e.g., `immich-direct.viktorbarzin.me`).
+2. **ACL policy**: Headscale ACL blocks client from accessing certain subnets.
+3. **pfSense NAT rule missing**: Traffic from VPN subnet not routed to VLAN 20.
+
+**Fix**: For proxied domains, use non-proxied DNS names. Check Headscale ACL policy. Verify pfSense NAT rules.
+
+### DERP Relay Returns 502 Bad Gateway
+
+**Symptoms**: Tailscale clients can't connect, DERP shows offline in `tailscale netcheck`.
+
+**Diagnosis**: Check Headscale ingress: `kubectl get ingress -n headscale`
+
+**Common causes**:
+1. **Traefik middleware blocking DERP traffic**: Forward-auth interferes with WebSocket upgrade.
+2. **Headscale pod not ready**: Liveness probe failing.
+3. **Cloudflared tunnel issue**: DERP uses WebSockets, which require HTTP/1.1 upgrade support.
+
+**Fix**: Ensure Headscale ingress has `protected = false` (no forward-auth). Check Headscale pod readiness. Verify Cloudflared supports WebSocket upgrades.
+
+### WireGuard Site-to-Site Tunnel Disconnects
+
+**Symptoms**: Can't reach services in London from Sofia. `ping 10.0.30.1` fails.
+
+**Diagnosis**: Check pfSense WireGuard status: Dashboard → VPN → WireGuard → Status
+
+**Common causes**:
+1. **Keepalive packets dropped**: Firewall or ISP blocking UDP 51820.
+2. **Public IP changed**: Dynamic IP on remote site changed, config still has old IP.
+3. **Routing conflict**: Overlapping subnet on both sides.
+
+**Fix**: Increase keepalive interval (25s → 60s). Update remote endpoint if IP changed. Verify subnet uniqueness.
+
+## Related
+
+- **Runbooks**:
+  - `docs/runbooks/add-headscale-user.md`
+  - `docs/runbooks/reset-derp-relay.md`
+  - `docs/runbooks/update-wireguard-peer.md`
+- **Architecture Docs**:
+  - `docs/architecture/networking.md` — Core network architecture
+  - `docs/architecture/dns.md` — Full DNS architecture (coming soon)
+- **Reference**:
+  - `.claude/reference/authentik-state.md` — OIDC application configs
+  - `.claude/reference/service-catalog.md` — Full service inventory

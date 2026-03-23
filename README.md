@@ -5,6 +5,10 @@ My infrastructure is built using Terraform, Kubernetes and CI/CD is done using W
 Read more by visiting my website:
 https://viktorbarzin.me
 
+## Documentation
+
+Full architecture documentation is available in [`docs/`](docs/README.md) — covering networking, storage, security, monitoring, secrets, CI/CD, databases, and more.
+
 ## Adding a New User (Admin)
 
 Adding a new namespace-owner to the cluster requires three steps — no code changes needed.
