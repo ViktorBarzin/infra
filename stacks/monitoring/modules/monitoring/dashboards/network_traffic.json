@@ -1,0 +1,280 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "datasource", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Network traffic monitoring via GoFlow2 NetFlow + DNS anomaly detection + CrowdSec",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "GoFlow2 Status",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      },
+      "targets": [
+        { "expr": "up{job=\"goflow2\"}", "legendFormat": "GoFlow2" }
+      ]
+    },
+    {
+      "title": "NetFlow Bytes/s",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "Bps",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10485760 },
+              { "color": "red", "value": 104857600 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "rate(goflow2_flow_traffic_bytes_total[5m])", "legendFormat": "Total" }
+      ]
+    },
+    {
+      "title": "NetFlow Flows Processed",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "rate(goflow2_flow_process_nf_total[5m])", "legendFormat": "flows/s" }
+      ]
+    },
+    {
+      "title": "CrowdSec Active Decisions",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "cs_active_decisions", "legendFormat": "Decisions" }
+      ]
+    },
+    {
+      "title": "DNS Queries (Last Hour)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "red", "value": 20000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "dns_anomaly_total_queries", "legendFormat": "Queries" }
+      ]
+    },
+    {
+      "title": "DNS DGA Suspects",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "dns_anomaly_dga_suspects", "legendFormat": "DGA Suspects" }
+      ]
+    },
+    {
+      "title": "NetFlow Traffic Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        { "expr": "rate(goflow2_flow_traffic_bytes_total[5m])", "legendFormat": "Bytes/s" },
+        { "expr": "rate(goflow2_flow_traffic_packets_total[5m])", "legendFormat": "Packets/s" }
+      ]
+    },
+    {
+      "title": "NetFlow Processing",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 10, "lineWidth": 1 }
+        }
+      },
+      "targets": [
+        { "expr": "rate(goflow2_flow_process_nf_total[5m])", "legendFormat": "Flows processed/s (v{{ version }})" },
+        { "expr": "rate(goflow2_flow_decoder_error_total[5m])", "legendFormat": "Decoder errors/s" },
+        { "expr": "rate(goflow2_flow_process_nf_errors_total[5m])", "legendFormat": "Processing errors/s ({{ error }})" }
+      ]
+    },
+    {
+      "title": "NetFlow Processing Delay",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 1 }
+        }
+      },
+      "targets": [
+        { "expr": "goflow2_flow_process_nf_delay_seconds{quantile=\"0.5\"}", "legendFormat": "p50 delay" },
+        { "expr": "goflow2_flow_process_nf_delay_seconds{quantile=\"0.9\"}", "legendFormat": "p90 delay" },
+        { "expr": "goflow2_flow_process_nf_delay_seconds{quantile=\"0.99\"}", "legendFormat": "p99 delay" }
+      ]
+    },
+    {
+      "title": "CrowdSec Alerts & Decisions Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        { "expr": "cs_active_decisions", "legendFormat": "Active Decisions" },
+        { "expr": "cs_alerts", "legendFormat": "Total Alerts" },
+        { "expr": "rate(cs_lapi_bouncer_requests_total[5m])", "legendFormat": "Bouncer req/s" }
+      ]
+    },
+    {
+      "title": "CrowdSec LAPI Request Latency",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 1 }
+        }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(cs_lapi_request_duration_seconds_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.99, rate(cs_lapi_request_duration_seconds_bucket[5m]))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "title": "DNS Metrics Over Time",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        { "expr": "dns_anomaly_total_queries", "legendFormat": "Total Queries" },
+        { "expr": "dns_anomaly_nx_domain", "legendFormat": "NX Domain" },
+        { "expr": "dns_anomaly_server_failure", "legendFormat": "SERVFAIL" },
+        { "expr": "dns_anomaly_blocked", "legendFormat": "Blocked" },
+        { "expr": "dns_anomaly_dga_suspects", "legendFormat": "DGA Suspects" }
+      ]
+    },
+    {
+      "title": "DNS Anomaly Check Health",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "dateTimeFromNow",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "dns_anomaly_check_timestamp * 1000", "legendFormat": "Last Check" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["network", "security", "goflow2", "dns", "crowdsec"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Traffic & Adversary Detection",
+  "uid": "network-traffic-adversary",
+  "version": 1
+}

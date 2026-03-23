@@ -112,6 +112,31 @@ resource "helm_release" "crowdsec" {
   wait_for_jobs = true
 }
 
+# NodePort service for pfSense syslog → CrowdSec agent
+# pfSense sends firewall logs to 10.0.20.202:30514 (any k8s node IP works)
+resource "kubernetes_service" "crowdsec_syslog" {
+  metadata {
+    name      = "crowdsec-syslog"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app = "crowdsec-syslog"
+    }
+  }
+  spec {
+    type = "NodePort"
+    selector = {
+      "k8s-app" = "crowdsec"
+      type      = "agent"
+    }
+    port {
+      name        = "syslog-udp"
+      port        = 514
+      target_port = 514
+      node_port   = 30514
+      protocol    = "UDP"
+    }
+  }
+}
 
 # Deployment for my custom dashboard that helps me unblock myself when I blocklist myself
 resource "kubernetes_deployment" "crowdsec-web" {
