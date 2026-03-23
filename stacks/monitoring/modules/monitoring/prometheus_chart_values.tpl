@@ -388,6 +388,13 @@ serverFiles:
               severity: info
             annotations:
               summary: "VRAM used: {{ $value | printf \"%.1f\" }} GB (threshold: 14 GB)"
+          - alert: NvidiaExporterDown
+            expr: absent(nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP) == 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NVIDIA GPU exporter is down - no GPU metrics available"
       - name: Power
         rules:
           - alert: OnBattery
@@ -1131,6 +1138,63 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Privatebin has no available replicas"
+      - name: "Network Traffic (GoFlow2)"
+        rules:
+          - alert: GoFlow2Down
+            expr: up{job="goflow2"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GoFlow2 NetFlow collector is down — no network flow visibility"
+          - alert: NoNetFlowData
+            expr: absent(goflow2_flow_traffic_bytes_total) and on() up{job="goflow2"} == 1
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GoFlow2 is up but receiving no NetFlow data — check softflowd on pfSense"
+          - alert: NetFlowTrafficSpike
+            expr: |
+              rate(goflow2_flow_traffic_bytes_total[5m]) > 2 * avg_over_time(rate(goflow2_flow_traffic_bytes_total[5m])[1h:5m])
+              and rate(goflow2_flow_traffic_bytes_total[5m]) > 1048576
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "NetFlow traffic spike: {{ $value | humanize1024 }}B/s — more than 2x the 1h average"
+          - alert: NetFlowHighErrorRate
+            expr: |
+              rate(goflow2_flow_decoder_error_total[5m]) /
+              (rate(goflow2_flow_process_nf_total[5m]) + 1) > 0.1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GoFlow2 decoder error rate: {{ $value | printf \"%.1f\" }}% — possible malformed flows or attack"
+          - alert: NetFlowProcessingDelay
+            expr: goflow2_flow_process_nf_delay_seconds{quantile="0.5"} > 600
+            for: 15m
+            labels:
+              severity: info
+            annotations:
+              summary: "NetFlow processing delay p50: {{ $value | printf \"%.0f\" }}s — softflowd may be overloaded"
+      - name: "DNS Anomaly Detection"
+        rules:
+          - alert: DNSQuerySpike
+            expr: dns_anomaly_total_queries > 2 * dns_anomaly_avg_queries and dns_anomaly_total_queries > 1000
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x average)"
+          - alert: DNSHighErrorRate
+            expr: dns_anomaly_server_failure > 100
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High DNS SERVFAIL rate: {{ $value | printf \"%.0f\" }} failures detected"
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'
