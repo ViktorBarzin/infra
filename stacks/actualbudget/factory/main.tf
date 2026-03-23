@@ -64,6 +64,15 @@ resource "kubernetes_deployment" "actualbudget" {
           port {
             container_port = 5006
           }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "160Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"

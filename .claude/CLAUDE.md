@@ -103,7 +103,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 ## Service-Specific Notes
 | Service | Key Operational Knowledge |
 |---------|--------------------------|
-| Nextcloud | MaxRequestWorkers=150, needs 4Gi memory, very generous startup probe |
+| Nextcloud | MaxRequestWorkers=150, needs 8Gi limit (Apache transient memory spikes, see commit eb94144), very generous startup probe |
 | Immich | ML on SSD, disable ModSecurity (breaks streaming), CUDA for ML, frequent upgrades |
 | CrowdSec | Pin version, disable Metabase when not needed (CPU hog), LAPI scaled to 3 |
 | Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
