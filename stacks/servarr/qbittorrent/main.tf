@@ -23,6 +23,14 @@ module "nfs_downloads" {
   nfs_path   = "/mnt/main/servarr/downloads"
 }
 
+module "nfs_audiobooks" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-qbittorrent-audiobooks"
+  namespace  = "servarr"
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/audiobookshelf/audiobooks"
+}
+
 resource "kubernetes_deployment" "qbittorrent" {
   metadata {
     name      = "qbittorrent"
@@ -80,6 +88,10 @@ resource "kubernetes_deployment" "qbittorrent" {
             name       = "downloads"
             mount_path = "/downloads"
           }
+          volume_mount {
+            name       = "audiobooks"
+            mount_path = "/audiobooks"
+          }
         }
         volume {
           name = "data"
@@ -91,6 +103,12 @@ resource "kubernetes_deployment" "qbittorrent" {
           name = "downloads"
           persistent_volume_claim {
             claim_name = module.nfs_downloads.claim_name
+          }
+        }
+        volume {
+          name = "audiobooks"
+          persistent_volume_claim {
+            claim_name = module.nfs_audiobooks.claim_name
           }
         }
       }
