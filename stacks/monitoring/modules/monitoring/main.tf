@@ -29,6 +29,10 @@ variable "grafana_admin_password" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
+variable "truenas_api_key" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
@@ -82,6 +86,99 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
               name    = "monitor-prometheus"
               image   = "alpine"
               command = ["/bin/sh", "-c", "apk add --update curl && curl --connect-timeout 2 prometheus-server.monitoring.svc.cluster.local || curl https://webhook.viktorbarzin.me/fb/message-viktor -d 'Prometheus is down!'"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Cloud Sync Monitor — check TrueNAS Cloud Sync job status, push to Pushgateway
+# Runs every 6h. Alert fires if no successful sync in 8 days.
+# -----------------------------------------------------------------------------
+resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
+  metadata {
+    name      = "cloudsync-monitor"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "0 */6 * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "cloudsync-monitor"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euo pipefail
+                apk add --no-cache curl jq
+
+                # Query TrueNAS Cloud Sync tasks
+                RESPONSE=$(curl -sf -H "Authorization: Bearer $TRUENAS_API_KEY" \
+                  "http://10.0.10.15/api/v2.0/cloudsync" 2>&1) || {
+                  echo "ERROR: Failed to query TrueNAS API"
+                  exit 1
+                }
+
+                # Parse each task's last successful run
+                echo "$RESPONSE" | jq -c '.[]' | while read -r task; do
+                  TASK_ID=$(echo "$task" | jq -r '.id')
+                  TASK_DESC=$(echo "$task" | jq -r '.description // "task-\(.id)"' | tr ' ' '_' | tr -cd '[:alnum:]_-')
+                  JOB_STATE=$(echo "$task" | jq -r '.job.state // "UNKNOWN"')
+                  JOB_TIME=$(echo "$task" | jq -r '.job.time_finished."$date" // 0')
+
+                  if [ "$JOB_TIME" != "0" ] && [ "$JOB_TIME" != "null" ]; then
+                    # TrueNAS returns milliseconds since epoch
+                    EPOCH_SECS=$((JOB_TIME / 1000))
+                  else
+                    EPOCH_SECS=0
+                  fi
+
+                  echo "Task $TASK_ID ($TASK_DESC): state=$JOB_STATE, last_finished=$EPOCH_SECS"
+
+                  # Push metrics to Pushgateway
+                  cat <<METRICS | curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/cloudsync-monitor/task_id/$TASK_ID"
+                  # HELP cloudsync_last_success_timestamp Last successful Cloud Sync completion (unix epoch)
+                  # TYPE cloudsync_last_success_timestamp gauge
+                  cloudsync_last_success_timestamp $EPOCH_SECS
+                  # HELP cloudsync_job_state Cloud Sync job state (1=SUCCESS, 0=other)
+                  # TYPE cloudsync_job_state gauge
+                  cloudsync_job_state $([ "$JOB_STATE" = "SUCCESS" ] && echo 1 || echo 0)
+                METRICS
+                done
+
+                echo "Cloud Sync monitor complete"
+              EOT
+              ]
+              env {
+                name  = "TRUENAS_API_KEY"
+                value = var.truenas_api_key
+              }
+              resources {
+                requests = {
+                  memory = "32Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
             }
           }
         }
