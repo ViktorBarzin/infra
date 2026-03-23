@@ -1041,7 +1041,7 @@ serverFiles:
           - alert: HighServiceLatency
             expr: |
               histogram_quantile(0.99,
-                sum(rate(traefik_service_request_duration_seconds_bucket[5m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*"}[5m])) by (service, le)
               ) > 10
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
