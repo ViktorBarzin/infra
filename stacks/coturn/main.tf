@@ -193,8 +193,8 @@ resource "kubernetes_service" "coturn" {
     name      = "coturn"
     namespace = kubernetes_namespace.coturn.metadata[0].name
     annotations = {
-      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
-      "metallb.universe.tf/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
   }
 
