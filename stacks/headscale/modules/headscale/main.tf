@@ -71,8 +71,8 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image = "headscale/headscale:0.23.0"
-          # image   = "headscale/headscale:0.23.0-debug" # -debug is for debug images
+          image = "headscale/headscale:0.28.0"
+          # image   = "headscale/headscale:0.28.0-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
 
@@ -94,6 +94,10 @@ resource "kubernetes_deployment" "headscale" {
           }
           port {
             container_port = 41641
+          }
+          port {
+            container_port = 3479
+            protocol       = "UDP"
           }
 
           liveness_probe {
@@ -302,6 +306,11 @@ resource "kubernetes_service" "headscale-server" {
     port {
       name     = "headscale-udp"
       port     = "41641"
+      protocol = "UDP"
+    }
+    port {
+      name     = "stun"
+      port     = "3479"
       protocol = "UDP"
     }
   }
