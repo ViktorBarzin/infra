@@ -981,6 +981,7 @@ resource "kubernetes_cron_job_v1" "task_processor" {
                 echo "Executing task processor in pod $POD..."
                 kubectl exec -n openclaw "$POD" -c openclaw -- \
                   env FORGEJO_TOKEN="$FORGEJO_TOKEN" \
+                      FORGEJO_URL="http://forgejo.forgejo.svc.cluster.local" \
                       OPENCLAW_TOKEN="$OPENCLAW_TOKEN" \
                       OPENCLAW_URL="https://integrate.api.nvidia.com" \
                   bash /workspace/infra/scripts/task-processor.sh
