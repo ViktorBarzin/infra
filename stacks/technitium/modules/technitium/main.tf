@@ -265,6 +265,7 @@ resource "kubernetes_service" "technitium-dns" {
     labels = {
       "app" = "technitium"
     }
+    annotations = {}
   }
 
   spec {
