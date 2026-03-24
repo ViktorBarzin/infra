@@ -13,16 +13,12 @@ remote_state {
   }
 }
 
-# Load config.tfvars (plaintext) + terraform.tfvars (git-crypt encrypted, migration).
-# Secrets come from Vault KV — authenticate via `vault login -method=oidc`.
+# Load config.tfvars (plaintext). Secrets come from Vault KV — authenticate via `vault login -method=oidc`.
 terraform {
   extra_arguments "common_vars" {
     commands = get_terraform_commands_that_need_vars()
     required_var_files = [
       "${get_repo_root()}/config.tfvars"
-    ]
-    optional_var_files = [
-      "${get_repo_root()}/terraform.tfvars"
     ]
   }
 
