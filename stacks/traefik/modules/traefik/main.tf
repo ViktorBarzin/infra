@@ -144,7 +144,7 @@ resource "helm_release" "traefik" {
     service = {
       type = "LoadBalancer"
       annotations = {
-        "metallb.universe.tf/loadBalancerIPs" = "10.0.20.202"
+        "metallb.io/loadBalancerIPs" = "10.0.20.202"
       }
       spec = {
         externalTrafficPolicy = "Local"
