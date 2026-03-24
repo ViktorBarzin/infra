@@ -433,7 +433,7 @@ resource "kubernetes_deployment" "rybbit-client" {
           app = "rybbit-client"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "rybbit.rybbit:3001"
+          "dependency.kyverno.io/wait-for" = "rybbit.rybbit:80"
         }
       }
       spec {

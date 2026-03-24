@@ -1113,7 +1113,7 @@ serverFiles:
             annotations:
               summary: "MetalLB speaker: {{ $value | printf \"%.0f\" }} pod(s) missing"
           - alert: MetalLBControllerDown
-            expr: (kube_deployment_status_replicas_available{namespace="metallb-system", deployment="controller"} or on() vector(0)) < 1
+            expr: (kube_deployment_status_replicas_available{namespace="metallb-system", deployment="metallb-controller"} or on() vector(0)) < 1
             for: 5m
             labels:
               severity: critical
