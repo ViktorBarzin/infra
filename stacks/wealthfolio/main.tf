@@ -4,13 +4,6 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
-# To refresh transactions use finance db positions exporters:
-#
-# workon finace-app && cd ~/code/finance && python main.py fetch position --imap-user=$IMAP_USER --imap-password=$IMAP_PASSWORD --trading212-api-keys=$TRADING212_API_KEYS --output-file positions.csv && mv positions.csv /home/wizard/code/infra/modules/kubernetes/wealthfolio/updated_trades.csv
-#
-# Then upload updated_trades.csv
-# Note that currently wealthfolio doesn't dedup (https://github.com/afadil/wealthfolio/issues/476)
-
 resource "kubernetes_namespace" "wealthfolio" {
   metadata {
     name = "wealthfolio"
@@ -68,6 +61,9 @@ module "nfs_data" {
 }
 
 resource "kubernetes_deployment" "wealthfolio" {
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
   metadata {
     name      = "wealthfolio"
     namespace = kubernetes_namespace.wealthfolio.metadata[0].name
@@ -187,5 +183,105 @@ module "ingress" {
     "gethomepage.dev/icon"         = "mdi-finance"
     "gethomepage.dev/group"        = "Finance & Personal"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
+  metadata {
+    name      = "wealthfolio-sync"
+    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 8 1 * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name  = "sync"
+              image = "registry.viktorbarzin.me/wealthfolio-sync:latest"
+              env {
+                name = "IMAP_HOST"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "imap_host"
+                  }
+                }
+              }
+              env {
+                name = "IMAP_USER"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "imap_user"
+                  }
+                }
+              }
+              env {
+                name = "IMAP_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "imap_password"
+                  }
+                }
+              }
+              env {
+                name = "IMAP_DIRECTORY"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "imap_directory"
+                  }
+                }
+              }
+              env {
+                name = "TRADING212_API_KEYS"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "trading212_api_keys"
+                  }
+                }
+              }
+              env {
+                name  = "DB_PATH"
+                value = "/data/wealthfolio.db"
+              }
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = module.nfs_data.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
