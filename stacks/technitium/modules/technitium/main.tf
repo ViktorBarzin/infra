@@ -74,7 +74,7 @@ resource "kubernetes_config_map" "coredns" {
           rcode NXDOMAIN
           fallthrough
         }
-        forward . 10.0.20.204 # Technitium LoadBalancer
+        forward . 10.0.20.200 # Technitium LoadBalancer
         cache {
           success 10000 300 6
           denial 10000 300 60
@@ -265,7 +265,10 @@ resource "kubernetes_service" "technitium-dns" {
     labels = {
       "app" = "technitium"
     }
-    annotations = {}
+    annotations = {
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
+    }
   }
 
   spec {
@@ -275,7 +278,7 @@ resource "kubernetes_service" "technitium-dns" {
       port     = 53
       protocol = "UDP"
     }
-    external_traffic_policy = "Local"
+    external_traffic_policy = "Cluster"
     selector = {
       "dns-server" = "true"
     }

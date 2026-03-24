@@ -209,7 +209,8 @@ resource "kubernetes_service" "wireguard" {
     name      = "wireguard"
     namespace = kubernetes_namespace.wireguard.metadata[0].name
     annotations = {
-      "metallb.universe.tf/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
     labels = {
       "app" = "wireguard"

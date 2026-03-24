@@ -460,15 +460,14 @@ resource "kubernetes_service" "mailserver" {
     }
 
     annotations = {
-      "metallb.universe.tf/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
   }
 
   spec {
-    type             = "LoadBalancer"
-    load_balancer_ip = "10.0.20.201"
-    # external_traffic_policy = "Cluster"
-    external_traffic_policy = "Local"
+    type = "LoadBalancer"
+    external_traffic_policy = "Cluster"
     selector = {
       app = "mailserver"
     }
@@ -499,12 +498,6 @@ resource "kubernetes_service" "mailserver" {
       protocol    = "TCP"
       port        = 993
       target_port = "imap-secure"
-    }
-
-    port {
-      name     = "roundcube"
-      protocol = "TCP"
-      port     = 80
     }
   }
 }

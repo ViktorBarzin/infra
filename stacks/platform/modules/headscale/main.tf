@@ -283,7 +283,8 @@ resource "kubernetes_service" "headscale-server" {
       "app" = "headscale"
     }
     annotations = {
-      "metallb.universe.tf/allow-shared-ip" : "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
   }
 

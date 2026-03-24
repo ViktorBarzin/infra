@@ -189,6 +189,10 @@ resource "kubernetes_service" "xray-reality" {
     labels = {
       "app" = "xray"
     }
+    annotations = {
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
+    }
   }
 
   spec {

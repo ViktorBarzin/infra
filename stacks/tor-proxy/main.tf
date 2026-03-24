@@ -242,7 +242,8 @@ resource "kubernetes_service" "torrserver-bt" {
       app = "torrserver-bt"
     }
     annotations = {
-      "metallb.universe.tf/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
   }
 

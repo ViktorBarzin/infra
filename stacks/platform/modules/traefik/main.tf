@@ -144,10 +144,11 @@ resource "helm_release" "traefik" {
     service = {
       type = "LoadBalancer"
       annotations = {
-        "metallb.io/loadBalancerIPs" = "10.0.20.202"
+        "metallb.io/loadBalancerIPs" = "10.0.20.200"
+        "metallb.io/allow-shared-ip" = "shared"
       }
       spec = {
-        externalTrafficPolicy = "Local"
+        externalTrafficPolicy = "Cluster"
       }
     }
 

@@ -63,7 +63,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
       content {
         hostname = ingress_rule.value == "viktorbarzin.me" ? ingress_rule.value : "${ingress_rule.value}.viktorbarzin.me"
         path     = "/"
-        service  = "https://10.0.20.202:443"
+        service  = "https://10.0.20.200:443"
         origin_request {
           no_tls_verify = true
         }

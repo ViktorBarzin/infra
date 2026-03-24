@@ -181,7 +181,8 @@ resource "kubernetes_service" "windows_kms" {
       app = "kms-service"
     }
     annotations = {
-      "metallb.universe.tf/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip" = "shared"
     }
   }
 
