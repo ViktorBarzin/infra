@@ -131,10 +131,10 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# NFS Volumes - Calibre
+# NFS Volumes - Calibre (prefixed with ebooks- to avoid PV name clash with old stacks)
 module "nfs_calibre_library" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "calibre-library"
+  name       = "ebooks-calibre-library"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/calibre-web-automated/calibre-library"
@@ -142,7 +142,7 @@ module "nfs_calibre_library" {
 
 module "nfs_calibre_config" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "calibre-config"
+  name       = "ebooks-calibre-config"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/calibre-web-automated/config"
@@ -150,7 +150,7 @@ module "nfs_calibre_config" {
 
 module "nfs_calibre_ingest" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "calibre-ingest"
+  name       = "ebooks-calibre-ingest"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
@@ -158,16 +158,16 @@ module "nfs_calibre_ingest" {
 
 module "nfs_calibre_stacks_config" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "calibre-stacks-config"
+  name       = "ebooks-calibre-stacks-config"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/calibre-web-automated/stacks"
 }
 
-# NFS Volumes - Audiobookshelf
+# NFS Volumes - Audiobookshelf (prefixed with ebooks- to avoid PV name clash)
 module "nfs_audiobookshelf_audiobooks" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "audiobookshelf-audiobooks"
+  name       = "ebooks-abs-audiobooks"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/audiobookshelf/audiobooks"
@@ -175,7 +175,7 @@ module "nfs_audiobookshelf_audiobooks" {
 
 module "nfs_audiobookshelf_podcasts" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "audiobookshelf-podcasts"
+  name       = "ebooks-abs-podcasts"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/audiobookshelf/podcasts"
@@ -183,7 +183,7 @@ module "nfs_audiobookshelf_podcasts" {
 
 module "nfs_audiobookshelf_config" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "audiobookshelf-config"
+  name       = "ebooks-abs-config"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/audiobookshelf/config"
@@ -191,7 +191,7 @@ module "nfs_audiobookshelf_config" {
 
 module "nfs_audiobookshelf_metadata" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "audiobookshelf-metadata"
+  name       = "ebooks-abs-metadata"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/audiobookshelf/metadata"
