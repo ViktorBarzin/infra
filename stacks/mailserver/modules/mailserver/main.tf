@@ -628,7 +628,7 @@ except Exception as e:
 # Push to Uptime Kuma on success
 if success:
     try:
-        requests.get("https://uptime.viktorbarzin.me/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration)), timeout=10)
+        requests.get("http://uptime-kuma.uptime-kuma.svc.cluster.local/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration)), timeout=10)
         print("Pushed to Uptime Kuma")
     except Exception as e:
         print(f"Failed to push to Uptime Kuma: {e}")
