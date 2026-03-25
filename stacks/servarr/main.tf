@@ -115,13 +115,4 @@ module "aiostreams" {
   nfs_server                            = var.nfs_server
 }
 
-# Moved to stacks/ebooks/ namespace
-# module "audiobook_search" {
-#   source               = "./audiobook-search"
-#   tls_secret_name      = var.tls_secret_name
-#   tier                 = local.tiers.aux
-#   audiobookshelf_token = data.kubernetes_secret.eso_secrets.data["audiobookshelf_api_token"]
-#   qbittorrent_password = data.kubernetes_secret.eso_secrets.data["qbittorrent_password"]
-#   mam_email            = data.kubernetes_secret.eso_secrets.data["mam_email"]
-#   mam_password         = data.kubernetes_secret.eso_secrets.data["mam_password"]
-# }
+

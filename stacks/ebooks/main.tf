@@ -627,7 +627,7 @@ module "audiobookshelf_ingress" {
   }
 }
 
-# Book-Search Deployment (renamed from audiobook-search)
+# Book-Search Deployment
 resource "kubernetes_deployment" "book_search" {
   metadata {
     name      = "book-search"
