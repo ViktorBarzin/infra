@@ -121,4 +121,6 @@ module "audiobook_search" {
   tier                 = local.tiers.aux
   audiobookshelf_token = data.kubernetes_secret.eso_secrets.data["audiobookshelf_api_token"]
   qbittorrent_password = data.kubernetes_secret.eso_secrets.data["qbittorrent_password"]
+  mam_email            = data.kubernetes_secret.eso_secrets.data["mam_email"]
+  mam_password         = data.kubernetes_secret.eso_secrets.data["mam_password"]
 }
