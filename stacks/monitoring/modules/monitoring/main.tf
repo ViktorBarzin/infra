@@ -146,7 +146,15 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
 
                   # Extract transfer stats from job progress description (rclone output)
                   JOB_PROGRESS=$(echo "$task" | jq -r '.job.progress.description // ""')
-                  BYTES_TX=$(echo "$JOB_PROGRESS" | grep -oP 'Transferred:\s+[\d.]+ \w+' | head -1 | awk '{print $2}' || echo 0)
+                  TX_NUM=$(echo "$JOB_PROGRESS" | sed -n 's/.*Transferred:[[:space:]]*\([0-9.]*\).*/\1/p' | head -1)
+                  TX_NUM=$${TX_NUM:-0}
+                  TX_UNIT=$(echo "$JOB_PROGRESS" | sed -n 's/.*Transferred:[[:space:]]*[0-9.]*[[:space:]]*\([A-Za-z]*\).*/\1/p' | head -1)
+                  TX_UNIT=$${TX_UNIT:-Bytes}
+                  case "$TX_UNIT" in
+                    Bytes|B) TX_MULT=1 ;; KiB|kB) TX_MULT=1024 ;; MiB|MB) TX_MULT=1048576 ;;
+                    GiB|GB) TX_MULT=1073741824 ;; *) TX_MULT=1 ;;
+                  esac
+                  TRANSFERRED_BYTES=$(echo "$TX_NUM $TX_MULT" | awk '{printf "%.0f", $1 * $2}')
                   JOB_STARTED=$(echo "$task" | jq -r '.job.time_started."$date" // 0')
                   JOB_FINISHED=$(echo "$task" | jq -r '.job.time_finished."$date" // 0')
                   if [ "$JOB_STARTED" != "0" ] && [ "$JOB_STARTED" != "null" ] && [ "$JOB_FINISHED" != "0" ] && [ "$JOB_FINISHED" != "null" ]; then
@@ -168,6 +176,9 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
                   # HELP cloudsync_duration_seconds Duration of the last Cloud Sync run
                   # TYPE cloudsync_duration_seconds gauge
                   cloudsync_duration_seconds $SYNC_DURATION
+                  # HELP cloudsync_transferred_bytes Bytes transferred during Cloud Sync run
+                  # TYPE cloudsync_transferred_bytes gauge
+                  cloudsync_transferred_bytes $TRANSFERRED_BYTES
                 METRICS
                 done
 

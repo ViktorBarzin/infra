@@ -684,6 +684,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               name  = "postgresql-backup"
               image = "postgres:16.4-bullseye"
               command = ["/bin/sh", "-c", <<-EOT
+                apt-get update -qq && apt-get install -yqq curl >/dev/null 2>&1 || true
                 _t0=$(date +%s)
                 _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -704,10 +705,12 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
                 echo "output:  $(ls -lh /backup/dump_$now.sql | awk '{print $5}')"
 
+                _out_bytes=$(stat -c%s /backup/dump_$now.sql)
                 curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-postgresql-backup" <<PGEOF || true
                 backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
                 backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
                 backup_last_success_timestamp $(date +%s)
                 PGEOF
               EOT
