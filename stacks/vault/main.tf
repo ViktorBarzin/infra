@@ -283,7 +283,8 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
                 "echo \"read:    $(( (_rb1 - _rb0) / 1048576 )) MiB\"; ",
                 "echo \"written: $(( (_wb1 - _wb0) / 1048576 )) MiB\"; ",
                 "echo \"output:  $(ls -lh /backup/vault-raft-$TIMESTAMP.db | awk '{print $5}')\"; ",
-                "wget -qO- --post-data \"backup_duration_seconds $${_dur}\nbackup_read_bytes $((_rb1 - _rb0))\nbackup_written_bytes $((_wb1 - _wb0))\nbackup_last_success_timestamp $(date +%s)\n\" ",
+                "_out_bytes=$(stat -c%s /backup/vault-raft-$TIMESTAMP.db); ",
+                "wget -qO- --post-data \"backup_duration_seconds $${_dur}\nbackup_read_bytes $((_rb1 - _rb0))\nbackup_written_bytes $((_wb1 - _wb0))\nbackup_output_bytes $${_out_bytes}\nbackup_last_success_timestamp $(date +%s)\n\" ",
                 "\"http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vault-raft-backup\" || true"
               ])]
               volume_mount {

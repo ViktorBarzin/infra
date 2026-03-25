@@ -98,37 +98,39 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
             node_name           = "k8s-master"
             priority_class_name = "system-cluster-critical"
             host_network        = true
-            container {
+            dns_policy          = "ClusterFirstWithHostNet"
+            init_container {
               name    = "backup-etcd"
               image   = "registry.k8s.io/etcd:3.5.21-0"
-              command = ["/bin/sh", "-c"]
-              args = [<<-EOT
-                set -eu
-                _t0=$(date +%s)
-                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-
-                TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-                ETCDCTL_API=3 etcdctl \
-                  --endpoints=https://127.0.0.1:2379 \
-                  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-                  --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
-                  --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
-                  snapshot save /backup/etcd-snapshot-$TIMESTAMP.db
-
-                _dur=$(($(date +%s) - _t0))
-                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
-                echo "=== Backup IO Stats ==="
-                echo "duration: $${_dur}s"
-                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
-                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
-                echo "output:  $(ls -lh /backup/etcd-snapshot-$TIMESTAMP.db | awk '{print $5}')"
-              EOT
-              ]
+              command = ["etcdctl", "snapshot", "save", "/backup/etcd-snapshot-latest.db"]
+              resources {
+                requests = {
+                  memory = "256Mi"
+                  cpu    = "50m"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
               env {
                 name  = "ETCDCTL_API"
                 value = "3"
+              }
+              env {
+                name  = "ETCDCTL_ENDPOINTS"
+                value = "https://127.0.0.1:2379"
+              }
+              env {
+                name  = "ETCDCTL_CACERT"
+                value = "/etc/kubernetes/pki/etcd/ca.crt"
+              }
+              env {
+                name  = "ETCDCTL_CERT"
+                value = "/etc/kubernetes/pki/etcd/healthcheck-client.crt"
+              }
+              env {
+                name  = "ETCDCTL_KEY"
+                value = "/etc/kubernetes/pki/etcd/healthcheck-client.key"
               }
               volume_mount {
                 mount_path = "/backup"
@@ -141,11 +143,26 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
               }
             }
             container {
-              name    = "backup-purge"
-              image   = "busybox:1.31.1"
-              command = ["/bin/sh"]
-              args    = ["-c", "find /backup -type f -mtime +30 -name '*.db' -exec rm -- '{}' \\;"]
+              name    = "backup-manage"
+              image   = "busybox:1.37"
+              command = ["/bin/sh", "-c"]
+              args = [<<-EOT
+                set -eu
+                # Rename snapshot with timestamp
+                TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                mv /backup/etcd-snapshot-latest.db /backup/etcd-snapshot-$TIMESTAMP.db
+                _out_bytes=$(stat -c%s /backup/etcd-snapshot-$TIMESTAMP.db 2>/dev/null || echo 0)
+                echo "Backup done: etcd-snapshot-$TIMESTAMP.db ($${_out_bytes} bytes)"
 
+                # Rotate — 30 day retention
+                find /backup -type f -mtime +30 -name '*.db' -exec rm -- '{}' \;
+
+                # Push metrics to Pushgateway
+                wget -qO- --post-data "backup_output_bytes $${_out_bytes}
+                backup_last_success_timestamp $(date +%s)
+                " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/backup-etcd" || true
+              EOT
+              ]
               volume_mount {
                 mount_path = "/backup"
                 name       = "backup"

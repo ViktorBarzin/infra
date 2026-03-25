@@ -283,9 +283,11 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
                 echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
                 echo "output:  $(du -sh /backup/$$now | awk '{print $$1}')"
 
+                _out_bytes=$(du -sb /backup/$now | awk '{print $1}')
                 wget -qO- --post-data "backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
                 backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
                 backup_last_success_timestamp $(date +%s)
                 " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vaultwarden-backup" || true
               EOT

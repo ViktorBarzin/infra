@@ -85,6 +85,10 @@
             "properties": [{ "id": "unit", "value": "decmbytes" }]
           },
           {
+            "matcher": { "id": "byName", "options": "Output (MiB)" },
+            "properties": [{ "id": "unit", "value": "decmbytes" }]
+          },
+          {
             "matcher": { "id": "byName", "options": "Last Success" },
             "properties": [{ "id": "unit", "value": "dateTimeFromNow" }]
           }
@@ -106,6 +110,7 @@
               "Value #Duration": "Duration (s)",
               "Value #Read": "Read (MiB)",
               "Value #Written": "Written (MiB)",
+              "Value #Output": "Output (MiB)",
               "Value #LastSuccess": "Last Success",
               "job": "Backup"
             },
@@ -140,6 +145,13 @@
           "format": "table"
         },
         {
+          "expr": "backup_output_bytes / 1048576",
+          "legendFormat": "{{ job }}",
+          "refId": "Output",
+          "instant": true,
+          "format": "table"
+        },
+        {
           "expr": "backup_last_success_timestamp * 1000",
           "legendFormat": "{{ job }}",
           "refId": "LastSuccess",
@@ -157,11 +169,9 @@
         "defaults": {
           "unit": "s",
           "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "pointSize": 5,
-            "showPoints": "auto"
+            "drawStyle": "points",
+            "pointSize": 8,
+            "showPoints": "always"
           }
         },
         "overrides": []
@@ -187,11 +197,9 @@
         "defaults": {
           "unit": "bytes",
           "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "pointSize": 5,
-            "showPoints": "auto"
+            "drawStyle": "points",
+            "pointSize": 8,
+            "showPoints": "always"
           }
         },
         "overrides": []
@@ -214,9 +222,67 @@
       ]
     },
     {
+      "title": "Backup Output Size Trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "backup_output_bytes",
+          "legendFormat": "{{ job }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Write Throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "pointSize": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "backup_written_bytes / backup_duration_seconds",
+          "legendFormat": "{{ job }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "title": "Cloud Sync Status",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
         "defaults": {
@@ -250,7 +316,7 @@
     {
       "title": "Cloud Sync Duration",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
         "defaults": {
@@ -281,9 +347,42 @@
       ]
     },
     {
+      "title": "Cloud Sync Transfer Volume",
+      "type": "bargauge",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1073741824 },
+              { "color": "red", "value": 10737418240 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "cloudsync_transferred_bytes",
+          "legendFormat": "Task {{ task_id }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "title": "Active Backup Alerts",
       "type": "alertlist",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 28 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 42 },
       "datasource": { "type": "datasource", "uid": "grafana" },
       "options": {
         "showOptions": "current",
@@ -305,7 +404,7 @@
     {
       "title": "CronJob Last Schedule",
       "type": "table",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
         "defaults": {},
