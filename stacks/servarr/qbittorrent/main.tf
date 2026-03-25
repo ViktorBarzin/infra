@@ -78,7 +78,7 @@ resource "kubernetes_deployment" "qbittorrent" {
           }
           env {
             name  = "TORRENTING_PORT"
-            value = 6881
+            value = 50000
           }
           volume_mount {
             name       = "data"
@@ -159,14 +159,14 @@ resource "kubernetes_service" "qbittorrent-torrenting" {
     }
     port {
       name        = "torrenting"
-      port        = 6881
-      target_port = 6881
+      port        = 50000
+      target_port = 50000
     }
     port {
       name        = "torrenting-udp"
-      port        = 6881
+      port        = 50000
       protocol    = "UDP"
-      target_port = 6881
+      target_port = 50000
     }
   }
 }
