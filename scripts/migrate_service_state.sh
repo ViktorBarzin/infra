@@ -12,9 +12,7 @@ STATE_DIR="$(pwd)/state/stacks"
 MODULES=(
   actualbudget
   affine
-  audiobookshelf
   blog
-  calibre
   changedetection
   city-guesser
   coturn
