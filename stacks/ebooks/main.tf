@@ -707,6 +707,16 @@ resource "kubernetes_deployment" "book_search" {
             name  = "CWA_INGEST_PATH"
             value = "/cwa-book-ingest"
           }
+          env {
+            name = "MAM_ID"
+            value_from {
+              secret_key_ref {
+                name     = "servarr-secrets"
+                key      = "mam_id"
+                optional = true
+              }
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
