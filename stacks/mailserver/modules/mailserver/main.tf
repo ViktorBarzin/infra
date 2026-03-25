@@ -5,6 +5,14 @@ variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
 variable "sasl_passwd" {} # For sendgrid i.e relayhost
 variable "nfs_server" { type = string }
+variable "mailgun_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "email_monitor_imap_password" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "mailserver" {
   metadata {
@@ -466,7 +474,7 @@ resource "kubernetes_service" "mailserver" {
   }
 
   spec {
-    type = "LoadBalancer"
+    type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"
     selector = {
       app = "mailserver"
@@ -498,6 +506,164 @@ resource "kubernetes_service" "mailserver" {
       protocol    = "TCP"
       port        = 993
       target_port = "imap-secure"
+    }
+  }
+}
+
+# =============================================================================
+# E2E Email Roundtrip Monitor
+# Sends test email via Mailgun API, verifies delivery via IMAP, pushes metrics
+# =============================================================================
+resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
+  metadata {
+    name      = "email-roundtrip-monitor"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/30 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "email-roundtrip"
+              image = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check requests && python3 -c '
+import requests, imaplib, email, time, os, uuid, sys, ssl
+
+MAILGUN_API_KEY = os.environ["MAILGUN_API_KEY"]
+IMAP_USER = "spam@viktorbarzin.me"
+IMAP_PASS = os.environ["EMAIL_MONITOR_IMAP_PASSWORD"]
+IMAP_HOST = "mailserver.mailserver.svc.cluster.local"
+PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/email-roundtrip-monitor"
+DOMAIN = "viktorbarzin.me"
+
+marker = f"e2e-probe-{uuid.uuid4().hex[:12]}"
+subject = f"[E2E Monitor] {marker}"
+start = time.time()
+success = 0
+duration = 0
+
+try:
+    # Step 1: Send via Mailgun HTTP API to smoke-test@ (hits catch-all -> spam@)
+    resp = requests.post(
+        f"https://api.eu.mailgun.net/v3/{DOMAIN}/messages",
+        auth=("api", MAILGUN_API_KEY),
+        data={
+            "from": f"monitoring@{DOMAIN}",
+            "to": f"smoke-test@{DOMAIN}",
+            "subject": subject,
+            "text": f"E2E email monitoring probe {marker}. Auto-generated, will be deleted.",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print(f"Sent test email via Mailgun: {resp.status_code} marker={marker}")
+
+    # Step 2: Wait for delivery, retry IMAP up to 3 min
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    found = False
+    for attempt in range(9):
+        time.sleep(20)
+        try:
+            imap = imaplib.IMAP4_SSL(IMAP_HOST, 993, ssl_context=ctx)
+            imap.login(IMAP_USER, IMAP_PASS)
+            imap.select("INBOX")
+            _, msg_ids = imap.search(None, "SUBJECT", marker)
+            if msg_ids[0]:
+                found = True
+                print(f"Found test email after {attempt+1} attempts")
+                # Delete the test email
+                try:
+                    for mid in msg_ids[0].split():
+                        imap.store(mid, "+FLAGS", "\\Deleted")
+                    imap.expunge()
+                    print("Deleted test email")
+                except Exception as de:
+                    print(f"Delete failed (non-critical): {de}")
+            imap.logout()
+            if found:
+                break
+        except Exception as e:
+            print(f"IMAP attempt {attempt+1} failed: {e}")
+
+    duration = time.time() - start
+    if found:
+        success = 1
+        print(f"Round-trip SUCCESS in {duration:.1f}s")
+    else:
+        print(f"Round-trip FAILED - email not found after {duration:.1f}s")
+
+except Exception as e:
+    duration = time.time() - start
+    print(f"ERROR: {e}")
+
+# Push metrics to Pushgateway
+metrics = f"""# HELP email_roundtrip_success Whether the last e2e email probe succeeded
+# TYPE email_roundtrip_success gauge
+email_roundtrip_success {success}
+# HELP email_roundtrip_duration_seconds Duration of the last e2e email probe
+# TYPE email_roundtrip_duration_seconds gauge
+email_roundtrip_duration_seconds {duration:.2f}
+# HELP email_roundtrip_last_success_timestamp Unix timestamp of last successful probe
+# TYPE email_roundtrip_last_success_timestamp gauge
+email_roundtrip_last_success_timestamp {int(time.time()) if success else 0}
+"""
+try:
+    requests.put(PUSHGATEWAY, data=metrics, timeout=10)
+    print("Pushed metrics to Pushgateway")
+except Exception as e:
+    print(f"Failed to push metrics: {e}")
+
+# Push to Uptime Kuma on success
+if success:
+    try:
+        requests.get("https://uptime.viktorbarzin.me/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration)), timeout=10)
+        print("Pushed to Uptime Kuma")
+    except Exception as e:
+        print(f"Failed to push to Uptime Kuma: {e}")
+
+sys.exit(0 if success else 1)
+'
+              EOT
+              ]
+              env {
+                name  = "MAILGUN_API_KEY"
+                value = var.mailgun_api_key
+              }
+              env {
+                name  = "EMAIL_MONITOR_IMAP_PASSWORD"
+                value = var.email_monitor_imap_password
+              }
+              resources {
+                requests = {
+                  memory = "64Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
