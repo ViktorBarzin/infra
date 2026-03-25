@@ -8,6 +8,16 @@ variable "qbittorrent_password" {
   type      = string
   sensitive = true
 }
+variable "mam_email" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "mam_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
 
 resource "kubernetes_deployment" "audiobook_search" {
   metadata {
@@ -55,6 +65,14 @@ resource "kubernetes_deployment" "audiobook_search" {
           env {
             name  = "AUDIOBOOKSHELF_TOKEN"
             value = var.audiobookshelf_token
+          }
+          env {
+            name  = "MAM_EMAIL"
+            value = var.mam_email
+          }
+          env {
+            name  = "MAM_PASSWORD"
+            value = var.mam_password
           }
           resources {
             requests = {
