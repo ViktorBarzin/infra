@@ -144,11 +144,13 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
                     EPOCH_SECS=0
                   fi
 
-                  # Extract transfer stats from job progress description (rclone output)
+                  # Extract transfer stats from job progress description
+                  # Format: "1182 / 1182, 3.928 GiB / 3.928 GiB, 8.737 MiB/s, ..."
                   JOB_PROGRESS=$(echo "$task" | jq -r '.job.progress.description // ""')
-                  TX_NUM=$(echo "$JOB_PROGRESS" | sed -n 's/.*Transferred:[[:space:]]*\([0-9.]*\).*/\1/p' | head -1)
+                  TX_TOTAL=$(echo "$JOB_PROGRESS" | awk -F', ' '{split($2, a, " / "); print a[2]}')
+                  TX_NUM=$(echo "$TX_TOTAL" | awk '{print $1}')
                   TX_NUM=$${TX_NUM:-0}
-                  TX_UNIT=$(echo "$JOB_PROGRESS" | sed -n 's/.*Transferred:[[:space:]]*[0-9.]*[[:space:]]*\([A-Za-z]*\).*/\1/p' | head -1)
+                  TX_UNIT=$(echo "$TX_TOTAL" | awk '{print $2}')
                   TX_UNIT=$${TX_UNIT:-Bytes}
                   case "$TX_UNIT" in
                     Bytes|B) TX_MULT=1 ;; KiB|kB) TX_MULT=1024 ;; MiB|MB) TX_MULT=1048576 ;;
