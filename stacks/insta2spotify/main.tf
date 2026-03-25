@@ -205,11 +205,8 @@ resource "kubernetes_service" "insta2spotify" {
   }
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# TLS secret is auto-synced by Kyverno ClusterPolicy sync-tls-secret
+# No need for setup_tls_secret module
 
 # Main ingress — protected by Authentik (frontend)
 module "ingress" {
