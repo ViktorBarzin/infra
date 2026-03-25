@@ -514,20 +514,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }} OOM kill(s) in 15m"
-          - alert: ClusterMemoryRequestsHigh
-            expr: sum(kube_pod_container_resource_requests{resource="memory"}) / sum(kube_node_status_allocatable{resource="memory"}) * 100 > 92
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Cluster memory requests: {{ $value | printf \"%.0f\" }}% of allocatable (threshold: 92%)"
-          - alert: ContainerNearOOM
-            expr: (container_memory_working_set_bytes{container!=""} / container_spec_memory_limit_bytes{container!=""} * 100 > 90) and container_spec_memory_limit_bytes{container!=""} > 0
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }}% of memory limit (threshold: 90%)"
           - alert: PodUnschedulable
             expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 5m
@@ -880,13 +866,6 @@ serverFiles:
               severity: info
             annotations:
               summary: "CPU usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 60%)"
-          - alert: NodeLowFreeMemory
-            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) or on() vector(1)) * 100 > 95
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Memory usage on {{ $labels.node }}: {{ $value | printf \"%.0f\" }}% (threshold: 95%)"
           # - name: PodStuckNotReady
           #   rules:
           #   - alert: PodStuckNotReady
@@ -929,13 +908,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.daemonset }}: {{ $value | printf \"%.0f\" }} pod(s) missing"
-          - alert: NodeMemoryPressureTrending
-            expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) > 92
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Memory usage on {{ $labels.instance }}: {{ $value | printf \"%.0f\" }}% (threshold: 92%)"
           - alert: NodeExporterDown
             expr: up{job="prometheus-prometheus-node-exporter"} == 0
             for: 5m
@@ -1042,13 +1014,13 @@ serverFiles:
             expr: |
               histogram_quantile(0.99,
                 sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*"}[5m])) by (service, le)
-              ) > 10
+              ) > 30
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "p99 latency on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}s (threshold: 10s)"
+              summary: "p99 latency on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}s (threshold: 30s)"
           - alert: TLSCertExpiringSoon
             expr: (traefik_tls_certs_not_after - time()) / 86400 < 7
             for: 1h
