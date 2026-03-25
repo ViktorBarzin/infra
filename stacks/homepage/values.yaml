@@ -42,7 +42,8 @@ config:
         cpu: true
         memory: true
     - search:
-        provider: duckduckgo
+        provider: []
+        focus: true
         target: _blank
     - kubernetes:
         cluster:
@@ -60,6 +61,12 @@ config:
     mode: cluster
   docker:
   settings:
+    hideErrors: true
+    quicklaunch:
+      searchDescriptions: true
+      hideInternetSearch: true
+      showSearchSuggestions: true
+      hideVisitURL: false
     layout:
       Core Platform:
         style: row

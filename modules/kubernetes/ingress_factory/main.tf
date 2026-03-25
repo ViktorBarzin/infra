@@ -76,8 +76,58 @@ variable "anti_ai_scraping" {
   default = true
 }
 
+variable "homepage_group" {
+  type    = string
+  default = null # auto-detect from namespace
+}
+
+variable "homepage_enabled" {
+  type    = bool
+  default = true
+}
+
 locals {
   effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
+
+  ns_to_group = {
+    monitoring       = "Infrastructure"
+    prometheus       = "Infrastructure"
+    technitium       = "Infrastructure"
+    traefik          = "Infrastructure"
+    metallb-system   = "Infrastructure"
+    kyverno          = "Infrastructure"
+    authentik        = "Identity & Security"
+    crowdsec         = "Identity & Security"
+    woodpecker       = "Development & CI"
+    forgejo          = "Development & CI"
+    immich           = "Media & Entertainment"
+    frigate          = "Smart Home"
+    home-assistant   = "Smart Home"
+    ollama           = "AI & Data"
+    dbaas            = "Infrastructure"
+    servarr          = "Media & Entertainment"
+    navidrome        = "Media & Entertainment"
+    nextcloud        = "Productivity"
+    n8n              = "Automation"
+    changedetection  = "Automation"
+    finance          = "Finance & Personal"
+    homepage         = "Core Platform"
+    reverse-proxy    = "Smart Home"
+    mailserver       = "Infrastructure"
+  }
+
+  homepage_group = coalesce(
+    var.homepage_group,
+    lookup(local.ns_to_group, var.namespace, "Other")
+  )
+
+  homepage_defaults = var.homepage_enabled ? {
+    "gethomepage.dev/enabled" = "true"
+    "gethomepage.dev/name"    = replace(replace(var.name, "-", " "), "_", " ")
+    "gethomepage.dev/group"   = local.homepage_group
+    "gethomepage.dev/href"    = "https://${local.effective_host}"
+    "gethomepage.dev/icon"    = "${replace(var.name, "-", "")}.png"
+  } : {}
 }
 
 
@@ -126,7 +176,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }, var.extra_annotations)
+    }, local.homepage_defaults, var.extra_annotations)
   }
 
   spec {
