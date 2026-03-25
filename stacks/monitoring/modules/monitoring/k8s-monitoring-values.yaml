@@ -17,7 +17,6 @@ clusterEvents:
     - mailserver
     - crowdsec
     - descheduler
-    - calibre
     - monitoring
     - ingress-nginx
     - vaultwarden
@@ -51,7 +50,6 @@ podLogs:
     - mailserver
     - crowdsec
     - descheduler
-    - calibre
     - monitoring
     - ingress-nginx
     - vaultwarden

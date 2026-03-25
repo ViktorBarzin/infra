@@ -116,16 +116,6 @@ SERVICES = [
         ("auth_secret", "var.resume_auth_secret"),
         ("smtp_password", 'var.mailserver_accounts["info@viktorbarzin.me"]'),
     ]),
-    ("calibre", "calibre", [
-        ("tls_secret_name", "var.tls_secret_name"),
-        ("homepage_username", 'var.homepage_credentials["calibre-web"]["username"]'),
-        ("homepage_password", 'var.homepage_credentials["calibre-web"]["password"]'),
-        ("tier", "LOCAL_TIER:edge"),
-    ]),
-    ("audiobookshelf", "audiobookshelf", [
-        ("tls_secret_name", "var.tls_secret_name"),
-        ("tier", "LOCAL_TIER:aux"),
-    ]),
     ("frigate", "frigate", [
         ("tls_secret_name", "var.tls_secret_name"),
         ("tier", "LOCAL_TIER:gpu"),
