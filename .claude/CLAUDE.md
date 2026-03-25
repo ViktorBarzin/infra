@@ -116,6 +116,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - Exclude completed CronJob pods from "pod not ready" alerts.
 - Every new service gets Prometheus scrape config + Uptime Kuma monitor.
 - Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable.
+- **E2E email monitoring**: CronJob `email-roundtrip-monitor` (every 30 min) sends test email via Mailgun API to `smoke-test@viktorbarzin.me` (catch-all → `spam@`), verifies IMAP delivery, deletes test email, pushes metrics to Pushgateway + Uptime Kuma. Alerts: `EmailRoundtripFailing` (90m), `EmailRoundtripStale` (90m), `EmailRoundtripNeverRun` (2h). Vault: `mailgun_api_key` in `secret/viktor`.
 
 ## Storage & Backup Architecture
 

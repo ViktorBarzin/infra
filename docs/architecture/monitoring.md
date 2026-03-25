@@ -15,6 +15,7 @@ graph TB
         GPU[NVIDIA GPU via dcgm-exporter]
         UPS[UPS Exporter]
         NFS[NFS Exporter]
+        EMAIL[Email Roundtrip Probe<br/>CronJob every 30m]
     end
 
     subgraph "Monitoring Stack (platform stack)"
@@ -45,6 +46,8 @@ graph TB
     AM --> INHIBIT
     INHIBIT --> NOTIFY
 
+    EMAIL -->|Pushgateway| PROM
+    EMAIL -.->|Push| UPTIME
     PODS -.->|HTTP Health| UPTIME
 ```
 
@@ -52,12 +55,13 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| Prometheus | Latest (Diun monitored) | `stacks/platform/modules/monitoring/` | Metrics collection and storage, scrape configs for all services |
-| Grafana | Latest (Diun monitored) | `stacks/platform/modules/monitoring/` | Visualization, 14+ dashboards (API server, CoreDNS, GPU, UPS, etc.) |
-| Loki | Latest (Diun monitored) | `stacks/platform/modules/monitoring/` | Log aggregation and querying |
-| Alertmanager | Latest (Diun monitored) | `stacks/platform/modules/monitoring/` | Alert routing with cascade inhibitions |
-| Uptime Kuma | Latest (Diun monitored) | `stacks/platform/modules/monitoring/` | Per-service HTTP monitors, status page |
-| dcgm-exporter | Configurable resources | `stacks/platform/modules/monitoring/` | NVIDIA GPU metrics collection |
+| Prometheus | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Metrics collection and storage, scrape configs for all services |
+| Grafana | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Visualization, 14+ dashboards (API server, CoreDNS, GPU, UPS, etc.) |
+| Loki | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Log aggregation and querying |
+| Alertmanager | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Alert routing with cascade inhibitions |
+| Uptime Kuma | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Per-service HTTP monitors, status page |
+| dcgm-exporter | Configurable resources | `stacks/monitoring/modules/monitoring/` | NVIDIA GPU metrics collection |
+| Email Roundtrip Probe | Python 3.12 | `stacks/mailserver/modules/mailserver/` | E2E email delivery verification via Mailgun API + IMAP |
 
 ## How It Works
 
@@ -142,6 +146,21 @@ spec:
 
 #### Application Alerts
 - **4xx/5xx Error Rates**: HTTP error rate threshold exceeded
+
+#### Email Monitoring Alerts
+- **EmailRoundtripFailing**: E2E email probe returning failure for >90m
+- **EmailRoundtripStale**: No successful email round-trip in >90m
+- **EmailRoundtripNeverRun**: Email probe has never reported (CronJob not running)
+
+The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 30 min) in the `mailserver` namespace that:
+1. Sends a test email via Mailgun HTTP API to `smoke-test@viktorbarzin.me`
+2. Email lands in the `spam@` catch-all mailbox via MX delivery
+3. Verifies delivery via IMAP (searches by UUID marker in subject)
+4. Deletes the test email immediately
+5. Pushes metrics (`email_roundtrip_success`, `email_roundtrip_duration_seconds`, `email_roundtrip_last_success_timestamp`) to Prometheus Pushgateway
+6. Pushes status to Uptime Kuma E2E Push monitor
+
+Uptime Kuma also has TCP monitors for SMTP (port 25) and IMAP (port 993) on `10.0.20.200`.
 
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup
