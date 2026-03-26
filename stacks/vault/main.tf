@@ -370,7 +370,8 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
   token_policies                   = [vault_policy.ci.name]
-  token_ttl                        = 3600
+  token_ttl                        = 604800   # 7d
+  token_period                     = 604800   # periodic: auto-renews indefinitely
 }
 
 # --- ESO Policy & Role ---
@@ -398,7 +399,8 @@ resource "vault_kubernetes_auth_backend_role" "eso" {
   bound_service_account_names      = ["external-secrets"]
   bound_service_account_namespaces = ["external-secrets"]
   token_policies                   = [vault_policy.eso_reader.name]
-  token_ttl                        = 3600
+  token_ttl                        = 864000   # 10d (staggered from ci/openclaw)
+  token_period                     = 864000   # periodic: auto-renews indefinitely
 }
 
 # --- Woodpecker Secret Sync Policy & Role ---
@@ -418,7 +420,8 @@ resource "vault_kubernetes_auth_backend_role" "woodpecker_sync" {
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
   token_policies                   = [vault_policy.woodpecker_sync.name]
-  token_ttl                        = 600
+  token_ttl                        = 691200   # 8d (staggered from others)
+  token_period                     = 691200   # periodic: auto-renews indefinitely
 }
 
 # --- OpenClaw Policy & Role ---
@@ -441,7 +444,8 @@ resource "vault_kubernetes_auth_backend_role" "openclaw" {
   bound_service_account_names      = ["openclaw"]
   bound_service_account_namespaces = ["openclaw"]
   token_policies                   = [vault_policy.openclaw_k8s.name]
-  token_ttl                        = 3600
+  token_ttl                        = 777600   # 9d (staggered from others)
+  token_period                     = 777600   # periodic: auto-renews indefinitely
 }
 
 # =============================================================================
