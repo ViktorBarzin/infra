@@ -216,6 +216,24 @@ module "ingress" {
   }
 }
 
+# RBAC — grant vabbit81 (Gheorghe) admin access to novelapp namespace
+resource "kubernetes_role_binding" "novelapp_owner_vabbit81" {
+  metadata {
+    name      = "novelapp-owner-vabbit81"
+    namespace = kubernetes_namespace.novelapp.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "admin"
+  }
+  subject {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "User"
+    name      = "vabbit81@gmail.com"
+  }
+}
+
 # Sealed Secrets — encrypted secrets safe to commit to git
 resource "kubernetes_manifest" "sealed_secrets" {
   for_each = fileset(path.module, "sealed-*.yaml")
