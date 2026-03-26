@@ -123,11 +123,33 @@ resource "kubernetes_deployment" "novelapp" {
             value = "3000"
           }
           env {
-            name = "AUTH_SECRET"
+            name  = "NEXTAUTH_URL"
+            value = "https://novelapp.viktorbarzin.me"
+          }
+          env {
+            name = "NEXTAUTH_SECRET"
             value_from {
               secret_key_ref {
                 name = "novelapp-secrets"
-                key  = "auth_secret"
+                key  = "nextauth_secret"
+              }
+            }
+          }
+          env {
+            name = "GOOGLE_CLIENT_ID"
+            value_from {
+              secret_key_ref {
+                name = "novelapp-secrets"
+                key  = "google_client_id"
+              }
+            }
+          }
+          env {
+            name = "GOOGLE_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "novelapp-secrets"
+                key  = "google_client_secret"
               }
             }
           }
