@@ -716,7 +716,7 @@ serverFiles:
             annotations:
               summary: "Cloud Sync monitor has never reported — check cloudsync-monitor CronJob"
           - alert: CloudSyncFailing
-            expr: cloudsync_job_state{job="cloudsync-monitor"} == 0
+            expr: cloudsync_job_state{job="cloudsync-monitor", task_id!="2"} == 0
             for: 6h
             labels:
               severity: warning
