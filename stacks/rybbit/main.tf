@@ -78,7 +78,7 @@ resource "kubernetes_config_map" "clickhouse_memory" {
   data = {
     "memory.xml" = <<-EOF
       <clickhouse>
-          <max_server_memory_usage>838860800</max_server_memory_usage>
+          <max_server_memory_usage>1258291200</max_server_memory_usage>
       </clickhouse>
     EOF
   }
@@ -169,7 +169,7 @@ resource "kubernetes_deployment" "clickhouse" {
               memory = "1Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "1536Mi"
             }
           }
         }
