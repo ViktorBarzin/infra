@@ -472,7 +472,7 @@ serverFiles:
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
           - alert: PVFillingUp
-            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95
+            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95 and kubelet_volume_stats_capacity_bytes < 1099511627776
             for: 30m
             labels:
               severity: warning
