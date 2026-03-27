@@ -287,7 +287,7 @@ resource "kubernetes_deployment" "immich_server" {
               memory = "1700Mi"
             }
             limits = {
-              memory = "1700Mi"
+              memory = "2500Mi"
             }
           }
         }
