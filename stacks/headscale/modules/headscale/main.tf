@@ -175,7 +175,7 @@ resource "kubernetes_deployment" "headscale" {
         #   }
         # }
         container {
-          image = "ghcr.io/gurucomputing/headscale-ui:latest"
+          image = "ghcr.io/gurucomputing/headscale-ui@sha256:015f5ba04bcbd5ee03178540a1dbbfc97b6896d7411032e3bf33c2f3e08f8b6f"
           # image = "ghcr.io/tale/headplane:0.3.2"
           name = "headscale-ui"
 
@@ -422,5 +422,19 @@ resource "kubernetes_cron_job_v1" "headscale_backup" {
         }
       }
     }
+  }
+}
+
+# Grafana dashboard
+resource "kubernetes_config_map" "grafana_headscale_dashboard" {
+  metadata {
+    name      = "grafana-headscale-dashboard"
+    namespace = "monitoring"
+    labels = {
+      grafana_dashboard = "1"
+    }
+  }
+  data = {
+    "headscale.json" = file("${path.module}/dashboards/headscale.json")
   }
 }
