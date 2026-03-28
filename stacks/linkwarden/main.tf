@@ -68,6 +68,11 @@ resource "kubernetes_manifest" "db_external_secret" {
       target = {
         name = "linkwarden-db-creds"
         template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
           data = {
             DATABASE_URL = "postgresql://linkwarden:{{ .password }}@${var.postgresql_host}:5432/linkwarden"
             DB_PASSWORD  = "{{ .password }}"
