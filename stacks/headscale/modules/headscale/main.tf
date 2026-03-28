@@ -17,6 +17,9 @@ variable "ui_api_key" {
   type      = string
   sensitive = true
 }
+variable "headscale_derp_map" {
+  type = string
+}
 
 resource "kubernetes_namespace" "headscale" {
   metadata {
@@ -150,6 +153,10 @@ resource "kubernetes_deployment" "headscale" {
             items {
               key  = "acl.yaml"
               path = "acl.yaml"
+            }
+            items {
+              key  = "derp.yaml"
+              path = "derp.yaml"
             }
           }
         }
@@ -370,6 +377,7 @@ resource "kubernetes_config_map" "headscale-config" {
   data = {
     "config.yaml" = var.headscale_config
     "acl.yaml"    = var.headscale_acl
+    "derp.yaml"   = var.headscale_derp_map
   }
 }
 
