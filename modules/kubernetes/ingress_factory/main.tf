@@ -73,7 +73,7 @@ variable "skip_default_rate_limit" {
 }
 variable "anti_ai_scraping" {
   type    = bool
-  default = true
+  default = null # null = auto (enabled when not protected, disabled when protected)
 }
 
 variable "homepage_group" {
@@ -87,7 +87,8 @@ variable "homepage_enabled" {
 }
 
 locals {
-  effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
+  effective_host    = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
+  effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : !var.protected
 
   ns_to_group = {
     monitoring       = "Infrastructure"
@@ -165,10 +166,10 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
-        var.anti_ai_scraping ? "traefik-ai-bot-block@kubernetescrd" : null,
-        var.anti_ai_scraping ? "traefik-anti-ai-headers@kubernetescrd" : null,
-        var.anti_ai_scraping ? "traefik-strip-accept-encoding@kubernetescrd" : null,
-        var.anti_ai_scraping ? "traefik-anti-ai-trap-links@kubernetescrd" : null,
+        local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
+        local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
+        local.effective_anti_ai ? "traefik-strip-accept-encoding@kubernetescrd" : null,
+        local.effective_anti_ai ? "traefik-anti-ai-trap-links@kubernetescrd" : null,
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         var.rybbit_site_id != null ? "traefik-strip-accept-encoding@kubernetescrd" : null,
