@@ -9,6 +9,14 @@ variable "homepage_token" {
   default   = ""
   sensitive = true
 }
+variable "ui_cookie_secret" {
+  type      = string
+  sensitive = true
+}
+variable "ui_api_key" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "headscale" {
   metadata {
@@ -192,11 +200,11 @@ resource "kubernetes_deployment" "headscale" {
           }
           env {
             name  = "COOKIE_SECRET"
-            value = "kekekekke"
+            value = var.ui_cookie_secret
           }
           env {
             name  = "ROOT_API_KEY"
-            value = "kekekekeke"
+            value = var.ui_api_key
           }
         }
         dns_config {
@@ -362,5 +370,49 @@ resource "kubernetes_config_map" "headscale-config" {
   data = {
     "config.yaml" = var.headscale_config
     "acl.yaml"    = var.headscale_acl
+  }
+}
+
+# Backup CronJob — sqlite3 .backup to NFS for cloud sync pickup
+resource "kubernetes_cron_job_v1" "headscale_backup" {
+  metadata {
+    name      = "headscale-backup"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 */6 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name    = "backup"
+              image   = "keinos/sqlite3:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                mkdir -p /mnt/headscale-backup && \
+                sqlite3 /mnt/db.sqlite ".backup /mnt/headscale-backup/db.sqlite.bak" && \
+                echo "Backup completed at $(date)"
+              EOT
+              ]
+              volume_mount {
+                name       = "nfs-data"
+                mount_path = "/mnt"
+              }
+            }
+            volume {
+              name = "nfs-data"
+              persistent_volume_claim {
+                claim_name = module.nfs_data.claim_name
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
   }
 }
