@@ -304,7 +304,10 @@ serverFiles:
           insecure_skip_verify: true
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: '(apiserver_request_duration_seconds|apiserver_request_sli_duration_seconds|apiserver_request_body_size_bytes|etcd_request_duration_seconds|apiserver_watch_list_duration_seconds|apiserver_watch_cache_read_wait_seconds|apiserver_response_sizes|apiserver_watch_events_sizes|apiserver_admission_controller_admission_duration_seconds|workqueue_queue_duration_seconds|workqueue_work_duration_seconds)_bucket'
+            regex: '(apiserver_request_duration_seconds|apiserver_request_sli_duration_seconds|apiserver_request_body_size_bytes|etcd_request_duration_seconds|apiserver_watch_list_duration_seconds|apiserver_watch_cache_read_wait_seconds|apiserver_response_sizes|apiserver_watch_events_sizes|apiserver_admission_controller_admission_duration_seconds|workqueue_queue_duration_seconds|workqueue_work_duration_seconds|apiserver_flowcontrol_request_execution_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes)_bucket'
+            action: drop
+          - source_labels: [__name__]
+            regex: 'kubernetes_feature_enabled|apiserver_longrunning_requests'
             action: drop
       - job_name: kubernetes-nodes
         scheme: https
@@ -324,6 +327,13 @@ serverFiles:
         tls_config:
           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           insecure_skip_verify: true
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_image_pull_duration_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
+            action: drop
+          - source_labels: [__name__]
+            regex: 'kubernetes_feature_enabled|kubelet_container_log_filesystem_used_bytes'
+            action: drop
       - job_name: kubernetes-nodes-cadvisor
         scheme: https
         bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
@@ -347,7 +357,7 @@ serverFiles:
             regex: 'container_tasks_state|container_memory_failures_total'
             action: drop
           - source_labels: [__name__]
-            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets'
+            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets|container_network_(receive|transmit)_(errors|packets_dropped)_total|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_memory_(cache|failcnt|kernel_usage|mapped_file|max_usage_bytes|rss|swap|total_active_file_bytes|total_inactive_file_bytes)'
             action: drop
       - job_name: kubernetes-service-endpoints
         honor_labels: true
@@ -398,7 +408,7 @@ serverFiles:
             target_label: node
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: 'kube_replicaset_.*|kube_pod_tolerations|kube_pod_status_scheduled|kube_deployment_status_condition|kube_pod_labels|kube_pod_created|kube_pod_owner|kube_pod_container_info|kube_pod_init_container_.*|kube_endpoint_.*|kube_service_.*|kube_configmap_.*|kube_secret_.*|kube_lease_.*|kube_ingress_.*|kube_networkpolicy_.*|kube_certificatesigningrequest_.*|kube_limitrange_.*|kube_mutatingwebhookconfiguration_.*|kube_validatingwebhookconfiguration_.*|kube_verticalpodautoscaler_.*|kube_clusterrole.*|kube_role.*|kube_poddisruptionbudget_.*'
+            regex: 'kube_replicaset_.*|kube_pod_tolerations|kube_pod_status_scheduled|kube_deployment_status_condition|kube_pod_labels|kube_pod_created|kube_pod_owner|kube_pod_container_info|kube_pod_init_container_.*|kube_endpoint_.*|kube_service_.*|kube_configmap_.*|kube_secret_.*|kube_lease_.*|kube_ingress_.*|kube_networkpolicy_.*|kube_certificatesigningrequest_.*|kube_limitrange_.*|kube_mutatingwebhookconfiguration_.*|kube_validatingwebhookconfiguration_.*|kube_verticalpodautoscaler_.*|kube_clusterrole.*|kube_role.*|kube_poddisruptionbudget_.*|coredns_proxy_request_duration_seconds_bucket|node_filesystem_device_error|node_filesystem_readonly'
             action: drop
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -1800,7 +1810,7 @@ extraScrapeConfigs: |
         target_label: instance
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: 'traefik_(router|service|entrypoint)_request_duration_seconds_bucket'
+        regex: 'traefik_(router|service|entrypoint)_request_duration_seconds_bucket|traefik_router_.*'
         action: drop
   - job_name: 'realestate-crawler-api'
     kubernetes_sd_configs:
