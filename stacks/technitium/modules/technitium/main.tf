@@ -352,6 +352,9 @@ resource "kubernetes_config_map" "grafana_technitium_dashboard" {
     labels = {
       grafana_dashboard = "1"
     }
+    annotations = {
+      grafana_folder = "Networking"
+    }
   }
   data = {
     "technitium-dns.json" = file("${path.module}/dashboards/technitium-dns.json")
