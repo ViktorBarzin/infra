@@ -139,6 +139,25 @@ resource "kubernetes_manifest" "middleware_error_pages" {
   depends_on = [helm_release.traefik, kubernetes_service.error_pages]
 }
 
+# Default TLSStore — serves wildcard cert for unknown hosts instead of self-signed fallback
+resource "kubernetes_manifest" "tlsstore_default" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "TLSStore"
+    metadata = {
+      name      = "default"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      defaultCertificate = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik, module.tls_secret]
+}
+
 # Catch-all IngressRoute — serves 404 for unknown hosts (lowest priority)
 resource "kubernetes_manifest" "ingressroute_catchall" {
   manifest = {

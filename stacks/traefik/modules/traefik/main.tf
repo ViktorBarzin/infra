@@ -34,6 +34,14 @@ resource "helm_release" "traefik" {
   values = [yamlencode({
     deployment = {
       replicas = 3
+      terminationGracePeriodSeconds = 60
+      lifecycle = {
+        preStop = {
+          exec = {
+            command = ["/bin/sh", "-c", "sleep 15"]
+          }
+        }
+      }
       podAnnotations = {
         "diun.enable"       = "true"
         "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
@@ -193,6 +201,12 @@ resource "helm_release" "traefik" {
       "--serversTransport.forwardingTimeouts.dialTimeout=60s",
       "--serversTransport.forwardingTimeouts.responseHeaderTimeout=30s",
       "--serversTransport.forwardingTimeouts.idleConnTimeout=90s",
+      # Increase backend connection pool (default maxIdleConnsPerHost=2 is too low)
+      "--serversTransport.maxIdleConnsPerHost=100",
+      # Explicit entrypoint timeouts to bound tail latency from slow clients
+      "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=60s",
+      "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=60s",
+      "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=180s",
       # Use forwarded headers from trusted proxies
       "--entryPoints.websecure.forwardedHeaders.insecure=false",
       "--entryPoints.web.forwardedHeaders.insecure=false",

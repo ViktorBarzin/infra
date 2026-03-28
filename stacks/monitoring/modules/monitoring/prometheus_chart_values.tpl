@@ -1357,9 +1357,16 @@ serverFiles:
             expr: (traefik_tls_certs_not_after - time()) / 86400 < 7
             for: 1h
             labels:
-              severity: warning
+              severity: critical
             annotations:
               summary: "TLS cert {{ $labels.cn }} expires in {{ $value | printf \"%.0f\" }} days"
+          - alert: TLSCertRenewalOverdue
+            expr: (traefik_tls_certs_not_after - time()) / 86400 < 30
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "TLS cert {{ $labels.cn }} expires in {{ $value | printf \"%.0f\" }} days — renewal may have failed (LE certs valid 90d, renewed at 60d)"
           - alert: TraefikHighOpenConnections
             expr: sum(traefik_service_open_connections) by (service) > 500
             for: 5m
