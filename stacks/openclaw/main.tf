@@ -356,16 +356,10 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
-        # Init 2: install skills/agents/hooks from dotfiles repo
-        init_container {
-          name    = "install-dotfiles"
-          image   = "docker.io/alpine/git:2.47.2"
-          command = ["sh", "-c", "apk add --no-cache rsync >/dev/null 2>&1 && export OPENCLAW_HOME=/home/node/.openclaw && export DOTFILES_DIR=$$OPENCLAW_HOME/dotfiles && export DOTFILES_REPO=https://github.com/ViktorBarzin/dot_files.git && SRC=$$DOTFILES_DIR/dot_claude && if [ -d $$DOTFILES_DIR/.git ]; then git -C $$DOTFILES_DIR pull --ff-only 2>/dev/null || git -C $$DOTFILES_DIR pull --rebase || true; else git clone --depth 1 $$DOTFILES_REPO $$DOTFILES_DIR; fi && if [ -f $$SRC/executable_openclaw-install.sh ]; then sh $$SRC/executable_openclaw-install.sh; else for d in skills agents hooks commands; do [ -d $$SRC/$$d ] && mkdir -p $$OPENCLAW_HOME/$$d && rsync -a --delete $$SRC/$$d/ $$OPENCLAW_HOME/$$d/; done; [ -f $$SRC/CLAUDE.md ] && cp $$SRC/CLAUDE.md $$OPENCLAW_HOME/CLAUDE.md; fi && chown -R 1000:1000 $$OPENCLAW_HOME 2>/dev/null || true"]
-          volume_mount {
-            name       = "openclaw-home"
-            mount_path = "/home/node/.openclaw"
-          }
-        }
+        # Init 2 removed: install-dotfiles init container was cloning dotfiles
+        # repo via git on every pod start, causing 200+ small NFS writes.
+        # Dotfiles already exist on NFS at /home/node/.openclaw/dotfiles from
+        # a previous clone. To update, run git pull manually or via CronJob.
 
         # Main container: OpenClaw
         container {
