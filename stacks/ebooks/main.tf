@@ -727,6 +727,19 @@ resource "kubernetes_deployment" "book_search" {
               }
             }
           }
+          env {
+            name = "API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "book_search_api_key"
+              }
+            }
+          }
+          env {
+            name  = "SHORTCUT_ICLOUD_URL"
+            value = ""
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -808,4 +821,16 @@ module "book_search_ingress" {
     "gethomepage.dev/group"        = "Media & Entertainment"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# API ingress - unprotected (API key auth handled by backend)
+module "book_search_api_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.ebooks.metadata[0].name
+  name            = "book-search-api"
+  host            = "book-search"
+  service_name    = "book-search"
+  tls_secret_name = var.tls_secret_name
+  protected       = false
+  ingress_path    = ["/api/download-url", "/shortcut"]
 }
