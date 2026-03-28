@@ -304,7 +304,7 @@ serverFiles:
           insecure_skip_verify: true
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: '(apiserver_request_duration_seconds|apiserver_request_sli_duration_seconds|apiserver_request_body_size_bytes|etcd_request_duration_seconds)_bucket'
+            regex: '(apiserver_request_duration_seconds|apiserver_request_sli_duration_seconds|apiserver_request_body_size_bytes|etcd_request_duration_seconds|apiserver_watch_list_duration_seconds|apiserver_watch_cache_read_wait_seconds|apiserver_response_sizes|apiserver_watch_events_sizes|apiserver_admission_controller_admission_duration_seconds|workqueue_queue_duration_seconds|workqueue_work_duration_seconds)_bucket'
             action: drop
       - job_name: kubernetes-nodes
         scheme: https
@@ -345,6 +345,9 @@ serverFiles:
         metric_relabel_configs:
           - source_labels: [__name__]
             regex: 'container_tasks_state|container_memory_failures_total'
+            action: drop
+          - source_labels: [__name__]
+            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets'
             action: drop
       - job_name: kubernetes-service-endpoints
         honor_labels: true
@@ -393,6 +396,10 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_pod_node_name
             target_label: node
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'kube_replicaset_.*|kube_pod_tolerations|kube_pod_status_scheduled|kube_deployment_status_condition|kube_pod_labels|kube_pod_created|kube_pod_owner|kube_pod_container_info|kube_pod_init_container_.*|kube_endpoint_.*|kube_service_.*|kube_configmap_.*|kube_secret_.*|kube_lease_.*|kube_ingress_.*|kube_networkpolicy_.*|kube_certificatesigningrequest_.*|kube_limitrange_.*|kube_mutatingwebhookconfiguration_.*|kube_validatingwebhookconfiguration_.*|kube_verticalpodautoscaler_.*|kube_clusterrole.*|kube_role.*|kube_poddisruptionbudget_.*'
+            action: drop
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
         scrape_interval: 5m
@@ -485,6 +492,10 @@ serverFiles:
             regex: true
             source_labels:
               - __meta_kubernetes_pod_annotation_prometheus_io_scrape
+          - action: drop
+            regex: traefik
+            source_labels:
+              - __meta_kubernetes_namespace
           - action: drop
             regex: true
             source_labels:
