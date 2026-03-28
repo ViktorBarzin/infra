@@ -13,8 +13,8 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
     }
     spec = {
       rateLimit = {
-        average = 10
-        burst   = 50
+        average = 50
+        burst   = 200
       }
     }
   }
