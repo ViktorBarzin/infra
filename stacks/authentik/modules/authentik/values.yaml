@@ -25,9 +25,9 @@ server:
   resources:
     requests:
       cpu: 100m
-      memory: 1Gi
+      memory: 1.5Gi
     limits:
-      memory: 1Gi
+      memory: 1.5Gi
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
@@ -58,9 +58,9 @@ worker:
   resources:
     requests:
       cpu: 100m
-      memory: 896Mi
+      memory: 1Gi
     limits:
-      memory: 896Mi
+      memory: 1Gi
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
