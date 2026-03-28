@@ -1553,6 +1553,37 @@ serverFiles:
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} MAM torrents not yet seeded 72h (limit: 20 for new members)"
 
+      - name: Headscale VPN
+        rules:
+          - alert: HeadscaleDown
+            expr: up{job="kubernetes-service-endpoints", namespace="headscale"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Headscale VPN control plane is down"
+          - alert: HeadscaleNoOnlineNodes
+            expr: headscale_nodestore_nodes_total == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "No nodes registered in Headscale"
+          - alert: HeadscaleHighHTTPLatency
+            expr: histogram_quantile(0.95, rate(headscale_http_duration_seconds_bucket[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Headscale p95 HTTP latency is {{ $value | printf \"%.1f\" }}s"
+          - alert: HeadscaleHighErrorRate
+            expr: sum(rate(headscale_http_requests_total{code=~"5.."}[5m])) / sum(rate(headscale_http_requests_total[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Headscale 5xx error rate is {{ $value | printf \"%.1f\" }}%"
+
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'
     static_configs:
