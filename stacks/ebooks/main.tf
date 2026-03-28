@@ -408,6 +408,16 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
           port {
             container_port = 7788
           }
+          liveness_probe {
+            http_get {
+              path = "/api/version"
+              port = 7788
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
           volume_mount {
             name       = "config"
             mount_path = "/opt/stacks/config"
