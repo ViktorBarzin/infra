@@ -268,6 +268,38 @@ module "ingress" {
   }
 }
 
+# Dedicated IngressRoute for DERP — bypasses CrowdSec, rate limiting, anti-AI,
+# and error pages middlewares that interfere with the Upgrade: DERP protocol.
+resource "kubernetes_manifest" "derp_ingress_route" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "headscale-derp"
+      namespace = kubernetes_namespace.headscale.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`headscale.viktorbarzin.me`) && PathPrefix(`/derp`)"
+        kind  = "Rule"
+        services = [{
+          name = kubernetes_service.headscale.metadata[0].name
+          port = 8080
+        }]
+        # Only retry middleware — no CrowdSec, rate limit, anti-AI, error pages
+        middlewares = [{
+          name      = "retry"
+          namespace = "traefik"
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
 module "ingress-ui" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
