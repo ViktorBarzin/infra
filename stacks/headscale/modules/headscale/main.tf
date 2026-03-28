@@ -433,6 +433,9 @@ resource "kubernetes_config_map" "grafana_headscale_dashboard" {
     labels = {
       grafana_dashboard = "1"
     }
+    annotations = {
+      grafana_folder = "Networking"
+    }
   }
   data = {
     "headscale.json" = file("${path.module}/dashboards/headscale.json")

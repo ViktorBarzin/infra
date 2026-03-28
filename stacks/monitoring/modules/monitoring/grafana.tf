@@ -102,6 +102,41 @@ resource "kubernetes_manifest" "grafana_db_creds" {
   }
 }
 
+locals {
+  # Dashboard folder assignments
+  dashboard_folders = {
+    # Cluster & Kubernetes
+    "api_server.json"            = "Cluster"
+    "cluster_health.json"        = "Cluster"
+    "nodes.json"                 = "Cluster"
+    "pods.json"                  = "Cluster"
+    "kube-state-metrics.json"    = "Cluster"
+    # Networking & DNS
+    "caretta-dashboard.json"     = "Networking"
+    "core_dns.json"              = "Networking"
+    "technitium-dns.json"        = "Networking"
+    "nginx_ingress.json"         = "Networking"
+    "network_traffic.json"       = "Networking"
+
+    # Hardware & Host
+    "node_exporter_full.json"    = "Hardware"
+    "proxmox_node_exporter.json" = "Hardware"
+    "idrac.json"                 = "Hardware"
+    "ups.json"                   = "Hardware"
+    "nvidia.json"                = "Hardware"
+
+    # Operations
+    "backup_health.json"         = "Operations"
+    "registry.json"              = "Operations"
+    "loki.json"                  = "Operations"
+    "k8s-audit.json"             = "Operations"
+
+    # Applications
+    "qbittorrent.json"           = "Applications"
+    "realestate-crawler.json"    = "Applications"
+  }
+}
+
 resource "kubernetes_config_map" "grafana_dashboards" {
   for_each = fileset("${path.module}/dashboards", "*.json")
 
@@ -110,6 +145,9 @@ resource "kubernetes_config_map" "grafana_dashboards" {
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels = {
       grafana_dashboard = "1"
+    }
+    annotations = {
+      grafana_folder = lookup(local.dashboard_folders, each.value, "General")
     }
   }
   data = {
