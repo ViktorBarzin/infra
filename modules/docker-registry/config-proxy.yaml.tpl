@@ -27,4 +27,4 @@ health:
     threshold: 3
 proxy:
   remoteurl: ${remote_url}
-  ttl: 168h
+  ttl: 0
