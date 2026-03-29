@@ -270,6 +270,10 @@ module "docker-registry-template" {
     format("echo %s | base64 -d > /opt/registry/cleanup-tags.sh && chmod +x /opt/registry/cleanup-tags.sh",
       base64encode(file("${path.root}/../../modules/docker-registry/cleanup-tags.sh"))
     ),
+    # Write blob integrity checker
+    format("echo %s | base64 -d > /opt/registry/fix-broken-blobs.sh && chmod +x /opt/registry/fix-broken-blobs.sh",
+      base64encode(file("${path.root}/../../modules/docker-registry/fix-broken-blobs.sh"))
+    ),
     # Create systemd unit for docker compose
     format("echo %s | base64 -d > /etc/systemd/system/docker-compose-registry.service",
       base64encode(<<-UNIT
@@ -304,6 +308,9 @@ UNIT
     "( crontab -l 2>/dev/null; echo '25 3 * * 0 /usr/bin/docker exec registry-private registry garbage-collect -m /etc/docker/registry/config.yml >> /var/log/registry-gc.log 2>&1' ) | crontab -",
     # Cron: tag cleanup (daily 2am, keep last 10 tags per image)
     "( crontab -l 2>/dev/null; echo '0 2 * * * python3 /opt/registry/cleanup-tags.sh 10 >> /var/log/registry-cleanup.log 2>&1' ) | crontab -",
+    # Cron: blob integrity check (after GC on Sunday, and daily 2:30am after tag cleanup)
+    "( crontab -l 2>/dev/null; echo '30 3 * * 0 python3 /opt/registry/fix-broken-blobs.sh >> /var/log/registry-fix-blobs.log 2>&1' ) | crontab -",
+    "( crontab -l 2>/dev/null; echo '30 2 * * 1-6 python3 /opt/registry/fix-broken-blobs.sh >> /var/log/registry-fix-blobs.log 2>&1' ) | crontab -",
   ]
 }
 
