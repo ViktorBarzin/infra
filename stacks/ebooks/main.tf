@@ -787,6 +787,15 @@ resource "kubernetes_deployment" "book_search" {
               }
             }
           }
+          env {
+            name = "SLACK_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "slack_webhook_url"
+              }
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
