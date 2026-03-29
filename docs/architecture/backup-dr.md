@@ -254,7 +254,11 @@ TrueNAS Cloud Sync Task 1 runs `rclone sync` which:
 | `clickhouse/**` | Regenerable logs/metrics | 2.47M files |
 | `loki/**` | Regenerable logs | 68K files |
 | `iocage/**` | Legacy FreeBSD jails (unused) | 96K files |
-| `frigate/recordings/**` | Ephemeral security cam footage | 57K files |
+| `frigate/**` | Ephemeral recordings/clips, trivial config | 57K+ files |
+| `audiblez/**` | Generated audiobooks, regenerable from source ebooks | — |
+| `ebook2audiobook/**` | Same service as audiblez, second volume | — |
+| `ollama/**` | UI data (chat history/settings), low value | — |
+| `real-estate-crawler/**` | Scraped property data, regenerable by re-crawling | — |
 | `prometheus/**` | Covered by monthly app backup | Large TSDB |
 | `crowdsec/**` | Regenerable threat intelligence | — |
 | `servarr/downloads/**` | Transient download staging | — |

@@ -123,7 +123,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 ### Cloud Sync (TrueNAS → Synology NAS)
 - **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`
 - **zfs diff optimization**: Pre-script diffs `main@cloudsync-prev` vs `main@cloudsync-new`, writes changed files to `/tmp/cloudsync_files.txt`. Args: `--files-from /tmp/cloudsync_files.txt --no-traverse`. Post-script rotates snapshots. Falls back to full `find` if no prev snapshot or >100k changes.
-- **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps
+- **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps, frigate, audiblez, ebook2audiobook, ollama, real-estate-crawler
 
 ### iSCSI Backup Architecture
 - iSCSI zvols are raw block devices exported to k8s nodes via democratic-csi
