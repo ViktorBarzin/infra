@@ -15,7 +15,7 @@ services:
     ports:
       - "5001:5001"
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -31,7 +31,7 @@ services:
     networks:
       - registry
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -47,7 +47,7 @@ services:
     networks:
       - registry
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -63,7 +63,7 @@ services:
     networks:
       - registry
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -79,7 +79,7 @@ services:
     networks:
       - registry
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -97,7 +97,7 @@ services:
       - registry
     healthcheck:
       # 401 is expected (auth required) — any HTTP response means the registry is healthy
-      test: ["CMD", "sh", "-c", "wget -qS -O /dev/null http://localhost:5000/v2/ 2>&1 | grep -q 'HTTP/'"]
+      test: ["CMD", "sh", "-c", "wget -qS -O /dev/null http://127.0.0.1:5000/v2/ 2>&1 | grep -q 'HTTP/'"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -134,7 +134,7 @@ services:
       registry-private:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5000/v2/ >/dev/null 2>&1"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 3
