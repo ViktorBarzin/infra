@@ -38,4 +38,4 @@ proxy:
   remoteurl: https://registry-1.docker.io
   username: vbarzin@gmail.com
   password: ${password}
-  ttl: 168h
+  ttl: 0
