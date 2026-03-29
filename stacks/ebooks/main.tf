@@ -790,10 +790,10 @@ resource "kubernetes_deployment" "book_search" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "512Mi"
             }
           }
           liveness_probe {
