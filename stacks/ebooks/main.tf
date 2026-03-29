@@ -140,12 +140,21 @@ module "nfs_calibre_library" {
   nfs_path   = "/mnt/main/calibre-web-automated/calibre-library"
 }
 
-module "nfs_calibre_config" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-config"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/calibre-web-automated/config"
+# iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
+resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
+  metadata {
+    name      = "ebooks-calibre-config-iscsi"
+    namespace = kubernetes_namespace.ebooks.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "iscsi-truenas"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
 }
 
 module "nfs_calibre_ingest" {
@@ -248,10 +257,6 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             value = "true"
           }
           env {
-            name  = "NETWORK_SHARE_MODE"
-            value = "true"
-          }
-          env {
             name  = "CALIBRE_PORT"
             value = "8083"
           }
@@ -309,7 +314,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_config.claim_name
+            claim_name = kubernetes_persistent_volume_claim.calibre_config_iscsi.metadata[0].name
           }
         }
         volume {
@@ -744,6 +749,44 @@ resource "kubernetes_deployment" "book_search" {
             name  = "STACKS_DB_PATH"
             value = "/stacks-config/queue.db"
           }
+          env {
+            name  = "CALIBRE_WEB_USER"
+            value = "admin"
+          }
+          env {
+            name = "CALIBRE_WEB_PASS"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "calibre_web_password"
+              }
+            }
+          }
+          env {
+            name  = "SMTP_HOST"
+            value = "mail.viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_PORT"
+            value = "587"
+          }
+          env {
+            name  = "SMTP_USER"
+            value = "calibre-web@viktorbarzin.me"
+          }
+          env {
+            name  = "SMTP_FROM"
+            value = "Calibre-Web <calibre-web@viktorbarzin.me>"
+          }
+          env {
+            name = "SMTP_PASS"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "smtp_password"
+              }
+            }
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -856,5 +899,5 @@ module "book_search_api_ingress" {
   service_name    = "book-search"
   tls_secret_name = var.tls_secret_name
   protected       = false
-  ingress_path    = ["/api/download-url", "/api/download-status", "/shortcut"]
+  ingress_path    = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
 }
