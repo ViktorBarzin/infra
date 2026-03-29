@@ -740,6 +740,10 @@ resource "kubernetes_deployment" "book_search" {
             name  = "SHORTCUT_ICLOUD_URL"
             value = ""
           }
+          env {
+            name  = "STACKS_DB_PATH"
+            value = "/stacks-config/queue.db"
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -765,6 +769,10 @@ resource "kubernetes_deployment" "book_search" {
             name       = "audiobooks"
             mount_path = "/audiobooks"
           }
+          volume_mount {
+            name       = "stacks-config"
+            mount_path = "/stacks-config"
+          }
         }
         volume {
           name = "cwa-ingest"
@@ -776,6 +784,12 @@ resource "kubernetes_deployment" "book_search" {
           name = "audiobooks"
           persistent_volume_claim {
             claim_name = module.nfs_audiobookshelf_audiobooks.claim_name
+          }
+        }
+        volume {
+          name = "stacks-config"
+          persistent_volume_claim {
+            claim_name = module.nfs_calibre_stacks_config.claim_name
           }
         }
       }
