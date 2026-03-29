@@ -773,6 +773,10 @@ resource "kubernetes_deployment" "book_search" {
             name       = "stacks-config"
             mount_path = "/stacks-config"
           }
+          volume_mount {
+            name       = "calibre-library"
+            mount_path = "/calibre-library"
+          }
         }
         volume {
           name = "cwa-ingest"
@@ -784,6 +788,12 @@ resource "kubernetes_deployment" "book_search" {
           name = "audiobooks"
           persistent_volume_claim {
             claim_name = module.nfs_audiobookshelf_audiobooks.claim_name
+          }
+        }
+        volume {
+          name = "calibre-library"
+          persistent_volume_claim {
+            claim_name = module.nfs_calibre_library.claim_name
           }
         }
         volume {
