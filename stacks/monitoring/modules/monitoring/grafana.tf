@@ -112,7 +112,6 @@ locals {
     "pods.json"                  = "Cluster"
     "kube-state-metrics.json"    = "Cluster"
     # Networking & DNS
-    "caretta-dashboard.json"     = "Networking"
     "core_dns.json"              = "Networking"
     "technitium-dns.json"        = "Networking"
     "nginx_ingress.json"         = "Networking"

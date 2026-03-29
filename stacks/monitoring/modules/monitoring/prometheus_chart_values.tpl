@@ -1845,11 +1845,6 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: instance
     metrics_path: '/metrics'
-  - job_name: 'caretta'
-    static_configs:
-        - targets:
-          - "caretta-metrics.monitoring.svc.cluster.local:7117"
-    metrics_path: '/metrics'
   - job_name: 'goflow2'
     static_configs:
         - targets:
