@@ -13,13 +13,19 @@ will re-fetch the missing blobs from the upstream registry.
 Run after garbage-collect (e.g., 3:15 AM Sunday) or daily.
 """
 
+import argparse
 import os
 import sys
 
 sys.stdout.reconfigure(line_buffering=True)
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "/opt/registry/data"
-DRY_RUN = "--dry-run" in sys.argv
+parser = argparse.ArgumentParser(description="Remove orphaned registry layer links")
+parser.add_argument("base", nargs="?", default="/opt/registry/data", help="Registry data directory")
+parser.add_argument("--dry-run", action="store_true", help="Report but don't delete")
+args = parser.parse_args()
+
+BASE = args.base
+DRY_RUN = args.dry_run
 
 total_removed = 0
 total_checked = 0
