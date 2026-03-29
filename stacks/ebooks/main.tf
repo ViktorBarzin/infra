@@ -832,5 +832,5 @@ module "book_search_api_ingress" {
   service_name    = "book-search"
   tls_secret_name = var.tls_secret_name
   protected       = false
-  ingress_path    = ["/api/download-url", "/shortcut"]
+  ingress_path    = ["/api/download-url", "/api/download-status", "/shortcut"]
 }
