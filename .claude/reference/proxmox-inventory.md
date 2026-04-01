@@ -3,11 +3,76 @@
 > Static reference for VMs, hardware, and network topology.
 
 ## Proxmox Host Hardware
-- **CPU**: Intel Xeon E5-2699 v4 @ 2.20GHz (22 cores / 44 threads, single socket)
-- **RAM**: 142 GB (Dell R730 server)
+- **Model**: Dell R730
+- **CPU**: Intel Xeon E5-2699 v4 @ 2.20GHz (22 cores / 44 threads, single socket, CPU2 unpopulated)
+- **RAM**: 272 GB DDR4-2400 ECC RDIMM (10 DIMMs, see Memory Layout below)
 - **GPU**: NVIDIA Tesla T4 (PCIe passthrough to k8s-node1)
-- **Disks**: 1.1TB + 931GB + 10.7TB (local storage)
+- **iDRAC**: 192.168.1.4 (root/calvin)
+- **Disks**: 1.1TB RAID1 SAS (unused) + 931GB Samsung SSD + 10.7TB RAID1 HDD
 - **Proxmox access**: `ssh root@192.168.1.127`
+
+## Memory Layout (updated 2026-04-01)
+
+### Physical DIMM Slot Map
+
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                          CPU1 DIMM SLOTS                                    ║
+║                                                                              ║
+║  ┌─── WHITE (1st per channel) ───┐                                          ║
+║  │                                │                                          ║
+║  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                                    ║
+║  │  │  A1  │ │  A2  │ │  A3  │ │  A4  │                                    ║
+║  │  │ 32G  │ │ 32G  │ │ 32G  │ │ 32G  │  Samsung M393A4K40BB1-CRC (2R)    ║
+║  │  │██████│ │██████│ │██████│ │██████│                                    ║
+║  │  └──────┘ └──────┘ └──────┘ └──────┘                                    ║
+║  │   Ch 0     Ch 1     Ch 2     Ch 3                                        ║
+║  └────────────────────────────────┘                                          ║
+║                                                                              ║
+║  ┌─── BLACK (2nd per channel) ───┐                                          ║
+║  │                                │                                          ║
+║  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                                    ║
+║  │  │  A5  │ │  A6  │ │  A7  │ │  A8  │                                    ║
+║  │  │ 32G  │ │ 32G  │ │ 32G  │ │ 32G  │  Samsung M393A4K40CB1-CRC (2R)    ║
+║  │  │▓▓▓▓▓▓│ │▓▓▓▓▓▓│ │▓▓▓▓▓▓│ │▓▓▓▓▓▓│                                    ║
+║  │  └──────┘ └──────┘ └──────┘ └──────┘                                    ║
+║  │   Ch 0     Ch 1     Ch 2     Ch 3                                        ║
+║  └────────────────────────────────┘                                          ║
+║                                                                              ║
+║  ┌─── GREEN (3rd per channel) ───┐                                          ║
+║  │                                │                                          ║
+║  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                                    ║
+║  │  │  A9  │ │  A10 │ │  A11 │ │  A12 │                                    ║
+║  │  │      │ │      │ │  8G  │ │  8G  │  SK Hynix HMA81GR7AFR8N-UH (1R)   ║
+║  │  │ empty│ │ empty│ │░░░░░░│ │░░░░░░│                                    ║
+║  │  └──────┘ └──────┘ └──────┘ └──────┘                                    ║
+║  │   Ch 0     Ch 1     Ch 2     Ch 3                                        ║
+║  └────────────────────────────────┘                                          ║
+║                                                                              ║
+║  B1-B12: All empty (requires CPU2)                                           ║
+║                                                                              ║
+║  Legend:  ██ = Samsung BB1 32G    ▓▓ = Samsung CB1 32G    ░░ = Hynix 8G     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
+
+### Channel Summary
+
+```
+Channel 0:  A1 [32G] ──── A5 [32G]  ──── A9 [    ]     = 64 GB  ✓ matched
+Channel 1:  A2 [32G] ──── A6 [32G]  ──── A10[    ]     = 64 GB  ✓ matched
+Channel 2:  A3 [32G] ──── A7 [32G]  ──── A11[ 8G ]     = 72 GB  ~ +8G bonus
+Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  ~ +8G bonus
+            ─────────      ─────────      ──────────
+             WHITE          BLACK          GREEN          TOTAL: 272 GB
+```
+
+### DIMM Details
+
+- **A1-A4**: Samsung M393A4K40BB1-CRC 32GB DDR4-2400 ECC RDIMM (2-rank, original)
+- **A5-A8**: Samsung M393A4K40CB1-CRC 32GB DDR4-2400 ECC RDIMM (2-rank, added 2026-04-01)
+- **A11-A12**: SK Hynix HMA81GR7AFR8N-UH 8GB DDR4-2400 ECC RDIMM (1-rank, relocated from A5/A6)
+- **A9-A10, B1-B12**: Empty (B-side requires CPU2)
+- **Speed**: 2400 MHz (BIOS override — 3 DPC defaults to 1866 MHz, forced to 2400 via System BIOS > Memory Settings > Memory Frequency)
 
 ## Network Topology
 ```
@@ -25,18 +90,20 @@
 
 | VMID | Name | Status | CPUs | RAM | Network | Disk | Notes |
 |------|------|--------|------|-----|---------|------|-------|
-| 101 | pfsense | running | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall |
+| 101 | pfsense | running | 8 | 4GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall |
 | 102 | devvm | running | 16 | 8GB | vmbr1:vlan10 | 100G | Development VM |
 | 103 | home-assistant | running | 8 | 8GB | vmbr0 | 64G | HA Sofia, net0(vlan10) disabled, SSH: vbarzin@192.168.1.8 |
 | 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup (unused) |
-| 200 | k8s-master | running | 8 | 8GB* | vmbr1:vlan20 | 64G | Control plane (10.0.20.100). *Verify via `qm config 200` |
-| 201 | k8s-node1 | running | 16 | 16GB* | vmbr1:vlan20 | 256G | GPU node, Tesla T4. *Verify via `qm config 201` |
-| 202 | k8s-node2 | running | 8 | 24GB* | vmbr1:vlan20 | 256G | Worker. *Inferred from k8s allocatable (~22 GiB) |
-| 203 | k8s-node3 | running | 8 | 24GB* | vmbr1:vlan20 | 256G | Worker. *Inferred from k8s allocatable (~22 GiB) |
-| 204 | k8s-node4 | running | 8 | 24GB* | vmbr1:vlan20 | 256G | Worker. *Inferred from k8s allocatable (~22 GiB) |
+| 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |
+| 201 | k8s-node1 | running | 16 | 32GB | vmbr1:vlan20 | 256G | GPU node, Tesla T4 |
+| 202 | k8s-node2 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
+| 203 | k8s-node3 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
+| 204 | k8s-node4 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
 | 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
 | 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM |
-| 9000 | truenas | running | 16 | 16GB | vmbr1:vlan10 | 32G+7x256G+1T | NFS (10.0.10.15) |
+| 9000 | truenas | running | 16 | 8GB | vmbr1:vlan10 | 32G+7x256G+1T | NFS (10.0.10.15) |
+
+**Total VM RAM allocated**: 180 GB of 272 GB (66%) — 92 GB free for future VMs
 
 ## VM Templates
 | VMID | Name | Purpose |
