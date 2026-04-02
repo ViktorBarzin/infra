@@ -2,13 +2,13 @@
 
 resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   metadata {
-    name      = "prometheus-data"
+    name      = "prometheus-data-proxmox"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
   }
 
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "200Gi"

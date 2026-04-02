@@ -186,12 +186,12 @@ resource "kubernetes_config_map" "apache_tuning" {
 
 resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
   metadata {
-    name      = "nextcloud-data-iscsi"
+    name      = "nextcloud-data-proxmox"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "20Gi"
