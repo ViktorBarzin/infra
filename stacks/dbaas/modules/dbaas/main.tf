@@ -156,7 +156,7 @@ resource "helm_release" "mysql_cluster" {
     }
 
     datadirVolumeClaimTemplate = {
-      storageClassName = "iscsi-truenas"
+      storageClassName = "proxmox-lvm"
       resources = {
         requests = {
           storage = "30Gi"
@@ -189,7 +189,7 @@ resource "helm_release" "mysql_cluster" {
         memory = "2Gi"
       }
       limits = {
-        memory = "5Gi"
+        memory = "4Gi"
       }
     }
 
@@ -225,7 +225,7 @@ resource "helm_release" "mysql_cluster" {
             cpu    = "250m"
           }
           limits = {
-            memory = "5Gi"
+            memory = "4Gi"
           }
         }
       }]
@@ -876,7 +876,7 @@ resource "null_resource" "pg_cluster" {
     instances     = "2"
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
-    storage_class = "iscsi-truenas"
+    storage_class = "proxmox-lvm"
     memory_limit  = "512Mi"
 
   }
@@ -899,7 +899,7 @@ resource "null_resource" "pg_cluster" {
         enableSuperuserAccess: true
         storage:
           size: 20Gi
-          storageClass: iscsi-truenas
+          storageClass: proxmox-lvm
         resources:
           requests:
             cpu: "50m"

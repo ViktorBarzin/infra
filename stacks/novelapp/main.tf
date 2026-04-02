@@ -48,12 +48,12 @@ module "tls_secret" {
 
 resource "kubernetes_persistent_volume_claim" "novelapp-data" {
   metadata {
-    name      = "novelapp-data"
+    name      = "novelapp-data-proxmox"
     namespace = kubernetes_namespace.novelapp.metadata[0].name
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "1Gi"

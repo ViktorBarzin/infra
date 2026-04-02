@@ -22,12 +22,12 @@ module "tls_secret" {
 
 resource "kubernetes_persistent_volume_claim" "vaultwarden_data" {
   metadata {
-    name      = "vaultwarden-data-iscsi"
+    name      = "vaultwarden-data-proxmox"
     namespace = kubernetes_namespace.vaultwarden.metadata[0].name
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "1Gi"

@@ -48,12 +48,12 @@ module "tls_secret" {
 
 resource "kubernetes_persistent_volume_claim" "plotting-book-data" {
   metadata {
-    name      = "plotting-book-data"
+    name      = "plotting-book-data-proxmox"
     namespace = kubernetes_namespace.plotting-book.metadata[0].name
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "1Gi"

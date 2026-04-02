@@ -59,7 +59,7 @@ resource "helm_release" "redis" {
     master = {
       persistence = {
         enabled      = true
-        storageClass = "iscsi-truenas"
+        storageClass = "proxmox-lvm"
         size         = "2Gi"
       }
 
@@ -79,7 +79,7 @@ resource "helm_release" "redis" {
 
       persistence = {
         enabled      = true
-        storageClass = "iscsi-truenas"
+        storageClass = "proxmox-lvm"
         size         = "2Gi"
       }
 
