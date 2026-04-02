@@ -69,11 +69,11 @@ module "k8s-node-template" {
 
   # Create hosts.toml for docker.io (Docker Hub) — high traffic, rate-limited
   mkdir -p /etc/containerd/certs.d/docker.io
-  printf 'server = "https://registry-1.docker.io"\n\n[host."http://10.0.20.10:5000"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/docker.io/hosts.toml
+  printf 'server = "https://registry-1.docker.io"\n\n[host."http://10.0.20.10:5000"]\n  capabilities = ["pull", "resolve"]\n\n[host."https://registry-1.docker.io"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/docker.io/hosts.toml
 
   # Create hosts.toml for ghcr.io — medium traffic
   mkdir -p /etc/containerd/certs.d/ghcr.io
-  printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
+  printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n\n[host."https://ghcr.io"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
 
   # Create hosts.toml for private registry — both IP and hostname entries
   # IP-based (10.0.20.10:5050): direct access, skip TLS verify (wildcard cert, no IP SAN)
