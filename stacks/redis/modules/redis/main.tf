@@ -61,6 +61,11 @@ resource "helm_release" "redis" {
         enabled      = true
         storageClass = "proxmox-lvm"
         size         = "2Gi"
+        annotations = {
+          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/increase"      = "50%"
+          "resize.topolvm.io/storage_limit" = "10Gi"
+        }
       }
 
       resources = {
@@ -81,6 +86,11 @@ resource "helm_release" "redis" {
         enabled      = true
         storageClass = "proxmox-lvm"
         size         = "2Gi"
+        annotations = {
+          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/increase"      = "50%"
+          "resize.topolvm.io/storage_limit" = "10Gi"
+        }
       }
 
       resources = {

@@ -157,6 +157,13 @@ resource "helm_release" "mysql_cluster" {
 
     datadirVolumeClaimTemplate = {
       storageClassName = "proxmox-lvm"
+      metadata = {
+        annotations = {
+          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/increase"      = "20%"
+          "resize.topolvm.io/storage_limit" = "100Gi"
+        }
+      }
       resources = {
         requests = {
           storage = "30Gi"
@@ -897,6 +904,11 @@ resource "null_resource" "pg_cluster" {
             search_path: '"$user", public'
           enableAlterSystem: true
         enableSuperuserAccess: true
+        inheritedMetadata:
+          annotations:
+            resize.topolvm.io/threshold: "80%"
+            resize.topolvm.io/increase: "20%"
+            resize.topolvm.io/storage_limit: "100Gi"
         storage:
           size: 20Gi
           storageClass: proxmox-lvm

@@ -4,6 +4,11 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   metadata {
     name      = "prometheus-data-proxmox"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "90%"
+      "resize.topolvm.io/increase"      = "10%"
+      "resize.topolvm.io/storage_limit" = "500Gi"
+    }
   }
 
   spec {
