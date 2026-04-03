@@ -143,12 +143,12 @@ module "nfs_calibre_library" {
 # iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
 resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
   metadata {
-    name      = "ebooks-calibre-config-iscsi"
+    name      = "ebooks-calibre-config-proxmox"
     namespace = kubernetes_namespace.ebooks.metadata[0].name
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "iscsi-truenas"
+    storage_class_name = "proxmox-lvm"
     resources {
       requests = {
         storage = "2Gi"

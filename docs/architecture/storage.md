@@ -1,10 +1,16 @@
 # Storage Architecture
 
-Last updated: 2026-03-24
+Last updated: 2026-04-03
 
 ## Overview
 
-The cluster storage layer is built on TrueNAS ZFS at `10.0.10.15` (VMID 9000), providing both NFS shared storage and iSCSI block devices via democratic-csi. NFS serves ~100 application data directories for stateless services and those using file-based or SQLite databases, while iSCSI provides block devices for ~19 PVCs backing production MySQL and PostgreSQL databases. This hybrid approach optimizes for both performance (iSCSI for databases requiring ACID guarantees) and simplicity (NFS for everything else), with ZFS snapshot-based local protection and incremental offsite replication.
+The cluster uses two storage backends: **Proxmox CSI** for database block storage and **TrueNAS NFS** for application data.
+
+**Block storage (Proxmox CSI)**: 13 PVCs for databases (CNPG PostgreSQL, MySQL InnoDB, Redis, Vaultwarden, Prometheus, Nextcloud, Calibre-Web) use `StorageClass: proxmox-lvm`, which provisions thin LVs directly from the Proxmox host's `local-lvm` storage. This eliminates the previous double-CoW (ZFS + LVM-thin) path that caused 56 ZFS checksum errors.
+
+**NFS storage (TrueNAS)**: ~100 NFS shares for application data, media, configs, and backup targets continue to use TrueNAS ZFS at `10.0.10.15` via `StorageClass: nfs-truenas`.
+
+**Migration (2026-04-02)**: All iSCSI block volumes were migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver is deprecated and pending removal.
 
 ## Architecture Diagram
 
@@ -53,13 +59,15 @@ graph TB
 
 | Component | Version/Config | Location | Purpose |
 |-----------|---------------|----------|---------|
-| TrueNAS VM | VMID 9000, 16c/16GB | Proxmox host (10.0.10.15) | ZFS storage server |
-| ZFS pool `main` | 1.64 TiB usable | 32G + 7x256G + 1T disks | Primary storage for all services |
-| ZFS pool `ssd` | ~256GB SSD | Dedicated SSD | High-performance data (Immich ML, PostgreSQL) |
-| democratic-csi-nfs | Helm chart | Namespace: democratic-csi | NFS CSI driver |
-| democratic-csi-iscsi | Helm chart | Namespace: democratic-csi | iSCSI CSI driver (SSH mode) |
+| **Proxmox CSI plugin** | Helm chart | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
+| **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Databases and stateful apps |
+| TrueNAS VM | VMID 9000, 16c/16GB | Proxmox host (10.0.10.15) | ZFS NFS storage server |
+| ZFS pool `main` | 1.64 TiB usable | 32G + 7x256G + 1T disks | NFS data for all services |
+| ZFS pool `ssd` | ~256GB SSD | Dedicated SSD | High-performance data (Immich ML) |
+| nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
 | StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | Default storage for apps |
-| StorageClass `iscsi-truenas` | RWO, block device | Cluster-wide | Databases only |
+| ~~democratic-csi-iscsi~~ | **DEPRECATED** | Namespace: iscsi-csi | Replaced by Proxmox CSI (2026-04-02) |
+| ~~StorageClass `iscsi-truenas`~~ | **DEPRECATED** | Cluster-wide | Replaced by `proxmox-lvm` |
 | TF module `nfs_volume` | `modules/kubernetes/nfs_volume/` | Infra repo | NFS PV/PVC factory |
 
 ## How It Works
@@ -84,19 +92,26 @@ graph TB
 
 **CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-truenas` StorageClass via PVCs.
 
-### iSCSI Storage Flow
+### Block Storage Flow (Proxmox CSI) — NEW
 
-1. **Zvol creation**: democratic-csi creates ZFS zvols under `main/iscsi/<pvc-name>` via SSH commands
-2. **Target setup**: TrueNAS iSCSI service exposes zvols as iSCSI LUNs
-3. **Initiator connection**: K8s nodes connect via open-iscsi, sessions managed by democratic-csi
-4. **Hardened timeouts**: All 5 nodes use relaxed iSCSI parameters (baked into cloud-init):
-   - `replacement_timeout=300s` (not 120s default)
-   - `noop_out_interval=10s`, `noop_out_timeout=15s`
-   - HeaderDigest/DataDigest: `CRC32C,None`
-5. **Filesystem**: Pods format zvols as ext4 (or leave raw for database engines)
-6. **Exclusive access**: RWO only — zvol can only be attached to one node at a time
+1. **PVC creation**: Pod requests a PVC with `storageClass: proxmox-lvm`
+2. **CSI provisioning**: Proxmox CSI plugin calls the Proxmox API to create a thin LV in the `local-lvm` storage
+3. **SCSI hotplug**: The thin LV is hotplugged as a VirtIO-SCSI disk directly into the K8s node VM
+4. **Filesystem**: CSI formats the disk as ext4 and mounts it into the pod
+5. **Exclusive access**: RWO only — disk is attached to one VM at a time
+6. **Topology**: Nodes are labeled with `topology.kubernetes.io/region=pve` and `zone=pve` for scheduling
 
-**Why SSH driver**: The democratic-csi API driver has reliability issues. SSH driver execs `zfs create -V` commands directly, proven stable over 2+ years.
+**Key advantage**: Single CoW layer (LVM-thin only). No ZFS, no iSCSI network hop, no double-CoW corruption.
+
+**Proxmox API token**: `csi@pve!csi-token` with CSI role (`VM.Audit VM.Config.Disk Datastore.Allocate Datastore.AllocateSpace Datastore.Audit`). Stored in Vault at `secret/viktor`.
+
+### iSCSI Storage Flow (DEPRECATED — replaced 2026-04-02)
+
+> **This section is historical.** All iSCSI PVCs have been migrated to Proxmox CSI (`proxmox-lvm`). The democratic-csi iSCSI driver is pending removal.
+
+1. ~~Zvol creation: democratic-csi creates ZFS zvols under `main/iscsi/<pvc-name>` via SSH commands~~
+2. ~~Target setup: TrueNAS iSCSI service exposes zvols as iSCSI LUNs~~
+3. ~~Initiator connection: K8s nodes connect via open-iscsi~~
 
 ### SQLite on NFS — Why It Fails
 
@@ -105,7 +120,7 @@ SQLite uses `fsync()` to guarantee durability. NFS's soft mount + async semantic
 - Network blips during fsync → incomplete writes → corruption
 - WAL mode helps but doesn't eliminate the race
 
-**Solution**: Use iSCSI for any SQLite database (Vaultwarden, plotting-book) or local disk (ephemeral).
+**Solution**: Use Proxmox CSI (`proxmox-lvm`) for any SQLite database (Vaultwarden, plotting-book) or local disk (ephemeral).
 
 ### Democratic-CSI Sidecar Resources
 
@@ -137,11 +152,11 @@ Total footprint: ~1.5Gi → ~400Mi.
 | Path | Purpose |
 |------|---------|
 | `/root/secrets/nfs_exports.sh` | TrueNAS: generates `/etc/exports` with all service shares |
-| `stacks/democratic-csi/` | Terraform stack for both CSI drivers |
+| `stacks/proxmox-csi/` | Terraform stack for Proxmox CSI plugin + StorageClass |
+| `stacks/iscsi-csi/` | **DEPRECATED** — democratic-csi iSCSI driver (pending removal) |
+| `stacks/nfs-csi/` | NFS CSI driver |
 | `modules/kubernetes/nfs_volume/` | Reusable module for NFS PV/PVC creation |
 | `config.tfvars` | Variable `nfs_server = "10.0.10.15"` shared by all stacks |
-| `/var/lib/kubelet/config.yaml` | K8s nodes: iSCSI hardening params applied here |
-| `modules/create-template-vm/cloud_init.yaml` | Cloud-init template: bakes iSCSI settings into new nodes |
 
 ### Vault Paths
 
@@ -152,9 +167,11 @@ Total footprint: ~1.5Gi → ~400Mi.
 
 ### Terraform Stacks
 
-- **`stacks/democratic-csi/`**: Deploys both NFS and iSCSI CSI drivers
+- **`stacks/proxmox-csi/`**: Deploys Proxmox CSI plugin + `proxmox-lvm` StorageClass + node topology labels
+- **`stacks/nfs-csi/`**: Deploys NFS CSI driver for TrueNAS
+- **`stacks/iscsi-csi/`**: ~~Deploys democratic-csi iSCSI driver~~ — **DEPRECATED**, pending removal
 - All application stacks reference NFS volumes via `module "nfs_<name>"` calls
-- iSCSI PVCs created implicitly by StatefulSets (MySQL, PostgreSQL) using `iscsi-truenas` StorageClass
+- Database PVCs use `storageClass: proxmox-lvm` (CNPG, MySQL Helm VCT, Redis Helm, standalone PVCs)
 
 ### NFS Export Management
 
