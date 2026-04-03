@@ -801,13 +801,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
+          - alert: PVAutoExpanding
+            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 80 and kubelet_volume_stats_capacity_bytes < 1099511627776
+            for: 5m
+            labels:
+              severity: info
+            annotations:
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — auto-expansion should trigger"
           - alert: PVFillingUp
             expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95 and kubelet_volume_stats_capacity_bytes < 1099511627776
-            for: 30m
+            for: 10m
             labels:
-              severity: warning
+              severity: critical
             annotations:
-              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used (threshold: 95%)"
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — auto-expansion may have failed"
           - alert: PVPredictedFull
             expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes
             for: 1h

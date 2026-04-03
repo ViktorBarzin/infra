@@ -188,6 +188,11 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
   metadata {
     name      = "nextcloud-data-proxmox"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "20%"
+      "resize.topolvm.io/storage_limit" = "100Gi"
+    }
   }
   spec {
     access_modes       = ["ReadWriteOnce"]

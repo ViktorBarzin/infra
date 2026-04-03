@@ -50,6 +50,11 @@ resource "kubernetes_persistent_volume_claim" "novelapp-data" {
   metadata {
     name      = "novelapp-data-proxmox"
     namespace = kubernetes_namespace.novelapp.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
