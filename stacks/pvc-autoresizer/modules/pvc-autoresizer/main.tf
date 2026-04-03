@@ -35,5 +35,13 @@ resource "helm_release" "pvc_autoresizer" {
         }
       }
     }
+    webhook = {
+      certificate = {
+        generate = true
+      }
+      pvcMutatingWebhook = {
+        enabled = false
+      }
+    }
   })]
 }
