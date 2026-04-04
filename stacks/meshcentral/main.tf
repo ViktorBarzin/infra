@@ -37,6 +37,50 @@ module "nfs_files" {
   nfs_path   = "/mnt/main/meshcentral/meshcentral-files"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "meshcentral-data-proxmox"
+    namespace = kubernetes_namespace.meshcentral.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume_claim" "files_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "meshcentral-files-proxmox"
+    namespace = kubernetes_namespace.meshcentral.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 module "nfs_backups" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "meshcentral-backups"
@@ -133,13 +177,13 @@ resource "kubernetes_deployment" "meshcentral" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
         volume {
           name = "files"
           persistent_volume_claim {
-            claim_name = module.nfs_files.claim_name
+            claim_name = kubernetes_persistent_volume_claim.files_proxmox.metadata[0].name
           }
         }
         volume {

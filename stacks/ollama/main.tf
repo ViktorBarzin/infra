@@ -76,6 +76,28 @@ module "nfs_ollama_ui_data" {
   nfs_path   = "/mnt/main/ollama"
 }
 
+resource "kubernetes_persistent_volume_claim" "ollama_ui_data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "ollama-ui-data-proxmox"
+    namespace = kubernetes_namespace.ollama.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 # resource "helm_release" "ollama" {
 #  namespace = kubernetes_namespace.ollama.metadata[0].name
 #   name      = "ollama"
@@ -266,6 +288,9 @@ resource "kubernetes_deployment" "ollama-ui" {
   spec {
     # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
     replicas = 0
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "ollama-ui"
@@ -310,7 +335,7 @@ resource "kubernetes_deployment" "ollama-ui" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_ollama_ui_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.ollama_ui_data_proxmox.metadata[0].name
           }
         }
       }

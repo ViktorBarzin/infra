@@ -46,6 +46,50 @@ module "nfs_roundcube_enigma" {
 # }
 
 
+resource "kubernetes_persistent_volume_claim" "roundcube_html_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "roundcubemail-html-proxmox"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume_claim" "roundcube_enigma_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "roundcubemail-enigma-proxmox"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "roundcubemail" {
   metadata {
     name      = "roundcubemail"
@@ -61,7 +105,7 @@ resource "kubernetes_deployment" "roundcubemail" {
   spec {
     replicas = "1"
     strategy {
-      type = "RollingUpdate"
+      type = "Recreate"
     }
     selector {
       match_labels = {
@@ -176,13 +220,13 @@ resource "kubernetes_deployment" "roundcubemail" {
         volume {
           name = "html"
           persistent_volume_claim {
-            claim_name = module.nfs_roundcube_html.claim_name
+            claim_name = kubernetes_persistent_volume_claim.roundcube_html_proxmox.metadata[0].name
           }
         }
         volume {
           name = "enigma"
           persistent_volume_claim {
-            claim_name = module.nfs_roundcube_enigma.claim_name
+            claim_name = kubernetes_persistent_volume_claim.roundcube_enigma_proxmox.metadata[0].name
           }
         }
         dns_config {

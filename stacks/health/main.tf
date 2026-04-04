@@ -28,6 +28,28 @@ module "nfs_uploads" {
   nfs_path   = "/mnt/main/health"
 }
 
+resource "kubernetes_persistent_volume_claim" "uploads_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "health-uploads-proxmox"
+    namespace = kubernetes_namespace.health.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "health" {
   metadata {
     name      = "health"
@@ -42,6 +64,9 @@ resource "kubernetes_deployment" "health" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "health"
@@ -118,7 +143,7 @@ resource "kubernetes_deployment" "health" {
         volume {
           name = "uploads"
           persistent_volume_claim {
-            claim_name = module.nfs_uploads.claim_name
+            claim_name = kubernetes_persistent_volume_claim.uploads_proxmox.metadata[0].name
           }
         }
       }

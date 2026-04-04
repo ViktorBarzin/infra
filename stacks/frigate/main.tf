@@ -31,6 +31,28 @@ module "nfs_config" {
   nfs_path   = "/mnt/main/frigate/config"
 }
 
+resource "kubernetes_persistent_volume_claim" "config_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "frigate-config-proxmox"
+    namespace = kubernetes_namespace.frigate.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 module "nfs_media" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "frigate-media"
@@ -172,7 +194,7 @@ for name, det in stats.get('detectors', {}).items():
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = module.nfs_config.claim_name
+            claim_name = kubernetes_persistent_volume_claim.config_proxmox.metadata[0].name
           }
         }
         volume {
