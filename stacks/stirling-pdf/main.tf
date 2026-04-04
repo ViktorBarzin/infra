@@ -29,6 +29,28 @@ module "nfs_configs" {
   nfs_path   = "/mnt/main/stirling-pdf"
 }
 
+resource "kubernetes_persistent_volume_claim" "configs_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "stirling-pdf-configs-proxmox"
+    namespace = kubernetes_namespace.stirling-pdf.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "stirling-pdf" {
   metadata {
     name      = "stirling-pdf"
@@ -79,7 +101,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
         volume {
           name = "configs"
           persistent_volume_claim {
-            claim_name = module.nfs_configs.claim_name
+            claim_name = kubernetes_persistent_volume_claim.configs_proxmox.metadata[0].name
           }
         }
       }

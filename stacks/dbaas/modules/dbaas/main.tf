@@ -208,7 +208,7 @@ resource "helm_release" "mysql_cluster" {
               matchExpressions = [{
                 key      = "kubernetes.io/hostname"
                 operator = "NotIn"
-                values   = ["k8s-node1", "k8s-node2"]
+                values   = ["k8s-node1"]
               }]
             }]
           }
@@ -303,6 +303,28 @@ module "nfs_pgadmin" {
   namespace  = kubernetes_namespace.dbaas.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/postgresql/pgadmin"
+}
+
+resource "kubernetes_persistent_volume_claim" "pgadmin_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "dbaas-pgadmin-proxmox"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
 }
 
 module "nfs_postgresql_backup" {
@@ -988,6 +1010,9 @@ resource "kubernetes_deployment" "pgadmin" {
     }
   }
   spec {
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "pgadmin"
@@ -1038,7 +1063,7 @@ resource "kubernetes_deployment" "pgadmin" {
           #   name = "pgadmin-config"
           # }
           persistent_volume_claim {
-            claim_name = module.nfs_pgadmin.claim_name
+            claim_name = kubernetes_persistent_volume_claim.pgadmin_proxmox.metadata[0].name
           }
         }
         dns_config {
@@ -1116,7 +1141,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=$PGPASSWORD pg_dumpall -h postgresql.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
+                PGPASSWORD=$PGPASSWORD pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
 
                 # Rotate — 14 day retention
                 cd /backup

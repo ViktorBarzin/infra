@@ -280,6 +280,28 @@ module "nfs_openclaw_home" {
   nfs_path   = "/mnt/main/openclaw/home"
 }
 
+resource "kubernetes_persistent_volume_claim" "home_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "openclaw-home-proxmox"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 module "nfs_workspace" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "openclaw-workspace"
@@ -294,6 +316,28 @@ module "nfs_data" {
   namespace  = kubernetes_namespace.openclaw.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/openclaw/data"
+}
+
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "openclaw-data-proxmox"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
 }
 
 ## cc-config NFS volume removed — replaced by dotfiles repo clone in init container
@@ -556,7 +600,7 @@ resource "kubernetes_deployment" "openclaw" {
         volume {
           name = "openclaw-home"
           persistent_volume_claim {
-            claim_name = module.nfs_openclaw_home.claim_name
+            claim_name = kubernetes_persistent_volume_claim.home_proxmox.metadata[0].name
           }
         }
         volume {
@@ -568,7 +612,7 @@ resource "kubernetes_deployment" "openclaw" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
         volume {
@@ -1028,6 +1072,28 @@ module "nfs_openlobster_data" {
   nfs_path   = "/mnt/main/openclaw/openlobster-data"
 }
 
+resource "kubernetes_persistent_volume_claim" "openlobster_data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "openlobster-data-proxmox"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "random_password" "openlobster_graphql_token" {
   length  = 32
   special = false
@@ -1138,7 +1204,7 @@ resource "kubernetes_deployment" "openlobster" {
         volume {
           name = "openlobster-data"
           persistent_volume_claim {
-            claim_name = module.nfs_openlobster_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.openlobster_data_proxmox.metadata[0].name
           }
         }
       }

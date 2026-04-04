@@ -95,6 +95,28 @@ module "nfs_extensions" {
   nfs_path   = "/mnt/main/freshrss/extensions"
 }
 
+resource "kubernetes_persistent_volume_claim" "extensions_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "freshrss-extensions-proxmox"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 
 resource "kubernetes_deployment" "freshrss" {
   metadata {
@@ -172,7 +194,7 @@ resource "kubernetes_deployment" "freshrss" {
         volume {
           name = "extensions"
           persistent_volume_claim {
-            claim_name = module.nfs_extensions.claim_name
+            claim_name = kubernetes_persistent_volume_claim.extensions_proxmox.metadata[0].name
           }
         }
       }

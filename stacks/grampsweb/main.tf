@@ -70,6 +70,28 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/grampsweb"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "grampsweb-data-proxmox"
+    namespace = kubernetes_namespace.grampsweb.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "random_password" "secret_key" {
   length  = 64
   special = false
@@ -157,6 +179,9 @@ resource "kubernetes_deployment" "grampsweb" {
     # Disabled: grampsweb uses ~1.8GB actual memory with 3GB limit per replica.
     # Not actively used — disabled to reduce cluster memory pressure (2026-03-14 node2 OOM incident).
     replicas = 0
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "grampsweb"
@@ -308,7 +333,7 @@ resource "kubernetes_deployment" "grampsweb" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
       }

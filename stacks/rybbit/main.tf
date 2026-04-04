@@ -70,6 +70,28 @@ module "nfs_clickhouse_data" {
   nfs_path   = "/mnt/main/clickhouse"
 }
 
+resource "kubernetes_persistent_volume_claim" "clickhouse_data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "rybbit-clickhouse-data-proxmox"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_config_map" "clickhouse_memory" {
   metadata {
     name      = "clickhouse-memory-config"
@@ -176,7 +198,7 @@ resource "kubernetes_deployment" "clickhouse" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_clickhouse_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.clickhouse_data_proxmox.metadata[0].name
           }
         }
         volume {
