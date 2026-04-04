@@ -60,6 +60,28 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/wealthfolio"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "wealthfolio-data-proxmox"
+    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "wealthfolio" {
   lifecycle {
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
@@ -77,6 +99,9 @@ resource "kubernetes_deployment" "wealthfolio" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "wealthfolio"
@@ -141,7 +166,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
       }
@@ -276,7 +301,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = module.nfs_data.claim_name
+                claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
               }
             }
           }

@@ -44,6 +44,28 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/headscale"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "headscale-data-proxmox"
+    namespace = kubernetes_namespace.headscale.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "headscale" {
   metadata {
     name      = "headscale"
@@ -164,7 +186,7 @@ resource "kubernetes_deployment" "headscale" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
         # container {
@@ -414,7 +436,7 @@ resource "kubernetes_cron_job_v1" "headscale_backup" {
             volume {
               name = "nfs-data"
               persistent_volume_claim {
-                claim_name = module.nfs_data.claim_name
+                claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
               }
             }
             restart_policy = "OnFailure"
