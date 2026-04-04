@@ -66,6 +66,28 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/navidrome"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "navidrome-data-proxmox"
+    namespace = kubernetes_namespace.navidrome.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 module "nfs_music" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "navidrome-music"
@@ -80,6 +102,14 @@ module "nfs_lidarr" {
   namespace  = kubernetes_namespace.navidrome.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/mnt/main/servarr/lidarr"
+}
+
+module "nfs_freedify" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "navidrome-freedify"
+  namespace  = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/mnt/main/freedify-music"
 }
 
 resource "kubernetes_deployment" "navidrome" {
@@ -125,6 +155,15 @@ resource "kubernetes_deployment" "navidrome" {
             mount_path = "/lidarr"
             read_only  = true
           }
+          volume_mount {
+            name       = "freedify"
+            mount_path = "/freedify-music"
+            read_only  = true
+          }
+          env {
+            name  = "ND_SCANSCHEDULE"
+            value = "0"
+          }
           port {
             name           = "http"
             container_port = 4533
@@ -143,7 +182,7 @@ resource "kubernetes_deployment" "navidrome" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
         volume {
@@ -156,6 +195,12 @@ resource "kubernetes_deployment" "navidrome" {
           name = "lidarr"
           persistent_volume_claim {
             claim_name = module.nfs_lidarr.claim_name
+          }
+        }
+        volume {
+          name = "freedify"
+          persistent_volume_claim {
+            claim_name = module.nfs_freedify.claim_name
           }
         }
       }

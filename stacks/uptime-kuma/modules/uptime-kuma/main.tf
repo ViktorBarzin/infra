@@ -28,6 +28,28 @@ module "nfs_data" {
   nfs_path   = "/mnt/main/uptime-kuma"
 }
 
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "uptime-kuma-data-proxmox"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "50%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "5Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "uptime-kuma" {
   metadata {
     name      = "uptime-kuma"
@@ -106,7 +128,7 @@ resource "kubernetes_deployment" "uptime-kuma" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
           }
         }
         dns_config {

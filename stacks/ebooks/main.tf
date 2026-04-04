@@ -203,6 +203,28 @@ module "nfs_audiobookshelf_config" {
   nfs_path   = "/mnt/main/audiobookshelf/config"
 }
 
+resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "ebooks-abs-config-proxmox"
+    namespace = kubernetes_namespace.ebooks.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+}
+
 module "nfs_audiobookshelf_metadata" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "ebooks-abs-metadata"
@@ -589,7 +611,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobookshelf_config.claim_name
+            claim_name = kubernetes_persistent_volume_claim.abs_config_proxmox.metadata[0].name
           }
         }
         volume {
