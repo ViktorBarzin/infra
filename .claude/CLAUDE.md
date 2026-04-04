@@ -120,18 +120,57 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 
 ## Storage & Backup Architecture
 
+### Storage Class Decision Rule (for new services)
+
+Choose storage class based on workload type:
+
+| Use **proxmox-lvm** when | Use **NFS** (`nfs_volume` module) when |
+|--------------------------|----------------------------------------|
+| Database files (SQLite, embedded DBs) | Shared data across multiple pods (RWX) |
+| Write-heavy / fsync-heavy workloads | Media libraries (music, ebooks, photos) |
+| Single-pod app state (RWO is fine) | Backup destinations (cloud sync picks up from NFS) |
+| Latency-sensitive data | Large datasets (>10Gi) where snapshots matter |
+| Any new service by default | Data you want to browse/inspect from outside k8s |
+
+**Default is proxmox-lvm.** Only use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
+
+**proxmox-lvm PVC template** (Terraform):
+```hcl
+resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "<service>-data-proxmox"
+    namespace = kubernetes_namespace.<ns>.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = { storage = "1Gi" }
+    }
+  }
+}
+```
+- `wait_until_bound = false` is **required** (WaitForFirstConsumer binding)
+- Deployment strategy **must be Recreate** (RWO volumes)
+- Autoresizer annotations are **required** on all proxmox-lvm PVCs
+- Every proxmox-lvm app **MUST** add a backup CronJob writing to NFS `/mnt/main/<app>-backup/`
+
 ### Cloud Sync (TrueNAS → Synology NAS)
 - **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`
 - **zfs diff optimization**: Pre-script diffs `main@cloudsync-prev` vs `main@cloudsync-new`, writes changed files to `/tmp/cloudsync_files.txt`. Args: `--files-from /tmp/cloudsync_files.txt --no-traverse`. Post-script rotates snapshots. Falls back to full `find` if no prev snapshot or >100k changes.
 - **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps, frigate, audiblez, ebook2audiobook, ollama, real-estate-crawler
 
-### iSCSI Backup Architecture
-- iSCSI zvols are raw block devices exported to k8s nodes via democratic-csi
-- TrueNAS cannot read filesystem contents inside zvols — only the k8s pod can
-- **Local protection**: ZFS snapshots (every 12h, 24h retention + daily, 3-week retention) cover zvols automatically
-- **Offsite protection**: Application-level backup CronJobs dump data to NFS paths, which Task 1 syncs to Synology
-- **Current CronJob coverage**: MySQL (mysqldump), PostgreSQL (pg_dumpall), Vault (raft snapshot), Redis (BGSAVE), Vaultwarden (sqlite3 .backup)
-- **Convention**: Any new iSCSI-backed app MUST add a backup CronJob to its Terraform stack that writes to `/mnt/main/<app>-backup/`
+### Proxmox-LVM Backup Architecture
+- proxmox-lvm volumes are thin LVs on the Proxmox host — opaque to TrueNAS
+- **Offsite protection**: Application-level backup CronJobs dump data to NFS paths, which Cloud Sync Task 1 syncs to Synology
+- **Current CronJob coverage**: MySQL (mysqldump), PostgreSQL (pg_dumpall), Vault (raft snapshot), Redis (BGSAVE), Vaultwarden (sqlite3 .backup), Headscale (sqlite3 .backup)
+- **Convention**: Any new proxmox-lvm app MUST add a backup CronJob to its Terraform stack that writes to `/mnt/main/<app>-backup/`
 - **Uncovered (acceptable)**: Prometheus (disposable metrics), Loki (disposable logs), plotting-book and novelapp (small, low-priority)
 
 ## Known Issues
