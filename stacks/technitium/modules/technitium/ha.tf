@@ -14,6 +14,28 @@ module "nfs_secondary_config" {
   nfs_path   = "/mnt/main/technitium-secondary"
 }
 
+resource "kubernetes_persistent_volume_claim" "secondary_config_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "technitium-secondary-config-proxmox"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+}
+
 # Primary-only service for zone transfers (AXFR) and API access
 resource "kubernetes_service" "technitium_primary" {
   metadata {
@@ -59,11 +81,7 @@ resource "kubernetes_deployment" "technitium_secondary" {
   spec {
     replicas = 1
     strategy {
-      type = "RollingUpdate"
-      rolling_update {
-        max_unavailable = "0"
-        max_surge       = "1"
-      }
+      type = "Recreate"
     }
     selector {
       match_labels = {
@@ -143,7 +161,7 @@ resource "kubernetes_deployment" "technitium_secondary" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = module.nfs_secondary_config.claim_name
+            claim_name = kubernetes_persistent_volume_claim.secondary_config_proxmox.metadata[0].name
           }
         }
         dns_config {
