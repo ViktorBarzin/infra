@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "tandoor" {
       spec {
         container {
           name              = "recipes"
-          image             = "vabene1111/recipes"
+          image             = "vabene1111/recipes:1.5.27"
           image_pull_policy = "IfNotPresent"
           env {
             name  = "SECRET_KEY"

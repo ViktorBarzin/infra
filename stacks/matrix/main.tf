@@ -76,7 +76,7 @@ resource "kubernetes_deployment" "matrix" {
           app = "matrix"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+          "dependency.kyverno.io/wait-for" = "pg-cluster-rw.dbaas:5432"
         }
       }
       spec {
