@@ -242,20 +242,8 @@ resource "kubernetes_deployment" "claude-memory" {
   }
 }
 
-resource "kubernetes_pod_disruption_budget_v1" "claude-memory" {
-  metadata {
-    name      = "claude-memory"
-    namespace = kubernetes_namespace.claude-memory.metadata[0].name
-  }
-  spec {
-    min_available = "1"
-    selector {
-      match_labels = {
-        app = "claude-memory"
-      }
-    }
-  }
-}
+# PDB removed — single replica with minAvailable=1 blocks all node drains.
+# claude-memory is non-critical and recovers quickly after rescheduling.
 
 resource "kubernetes_service" "claude-memory" {
   metadata {
