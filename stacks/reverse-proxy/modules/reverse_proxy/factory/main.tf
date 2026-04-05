@@ -41,6 +41,10 @@ variable "extra_middlewares" {
   type    = list(string)
   default = []
 }
+variable "skip_global_rate_limit" {
+  type    = bool
+  default = false
+}
 
 
 resource "kubernetes_service" "proxied-service" {
@@ -71,7 +75,8 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     namespace = var.namespace
     annotations = merge({
       "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
-        "traefik-rate-limit@kubernetescrd",
+        "traefik-retry@kubernetescrd",
+        var.skip_global_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
