@@ -208,7 +208,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                       memory = "256Mi"
                     }
                     max = {
-                      memory = "4Gi"
+                      memory = "8Gi"
                     }
                   }
                 ]
