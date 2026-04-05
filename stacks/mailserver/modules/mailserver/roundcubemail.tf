@@ -20,30 +20,40 @@ module "nfs_roundcube_enigma" {
   nfs_path   = "/mnt/main/roundcubemail/enigma"
 }
 
-# If you want to override settings mount this in /var/roundcube/config
-# more info in https://github.com/roundcube/roundcubemail-docker?tab=readme-ov-file
-# resource "kubernetes_config_map" "roundcubemail_config" {
-#   metadata {
-#     name      = "roundcubemail.config"
-#     namespace = "mailserver"
+resource "kubernetes_config_map" "roundcubemail_config" {
+  metadata {
+    name      = "roundcubemail.config"
+    namespace = "mailserver"
 
-#     labels = {
-#       app = "mailserver"
-#     }
-#     annotations = {
-#       "reloader.stakater.com/match" = "true"
-#     }
-#   }
+    labels = {
+      app = "roundcubemail"
+    }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
 
-#   data = {
-#     # if you want to override things see https://github.com/roundcube/roundcubemail/blob/master/config/defaults.inc.php
-#     "imap.php" = <<-EOF
-#     <?php
-#       $config['imap_host'] = 'ssl://mail.viktorbarzin.me:993';
-#     ?>
-#     EOF
-#   }
-# }
+  data = {
+    # Disable TLS peer verification for internal service name connections
+    # The mailserver cert is issued for mail.viktorbarzin.me, not the k8s service name
+    "custom.php" = <<-EOF
+    <?php
+      $config['imap_conn_options'] = [
+        'ssl' => [
+          'verify_peer' => false,
+          'verify_peer_name' => false,
+        ],
+      ];
+      $config['smtp_conn_options'] = [
+        'ssl' => [
+          'verify_peer' => false,
+          'verify_peer_name' => false,
+        ],
+      ];
+    ?>
+    EOF
+  }
+}
 
 
 resource "kubernetes_persistent_volume_claim" "roundcube_html_proxmox" {
@@ -122,15 +132,14 @@ resource "kubernetes_deployment" "roundcubemail" {
         container {
           name  = "roundcube"
           image = "roundcube/roundcubemail:1.6.13-apache"
-          # Uncomment me to mount additional settings
-          #   volume_mount {
-          #     name       = "imap-config"
-          #     mount_path = "/var/roundcube/config/imap.php"
-          #     sub_path   = "imap.php"
-          #   }
+          volume_mount {
+            name       = "roundcube-config"
+            mount_path = "/var/roundcube/config/custom.php"
+            sub_path   = "custom.php"
+          }
           env {
             name  = "ROUNDCUBEMAIL_DEFAULT_HOST"
-            value = "ssl://mail.viktorbarzin.me" # tls cert must be valid!
+            value = "ssl://mailserver" # internal k8s service name
           }
           env {
             name  = "ROUNDCUBEMAIL_DEFAULT_PORT"
@@ -138,7 +147,7 @@ resource "kubernetes_deployment" "roundcubemail" {
           }
           env {
             name  = "ROUNDCUBEMAIL_SMTP_SERVER"
-            value = "tls://mail.viktorbarzin.me" # tls cert must be valid!
+            value = "tls://mailserver" # internal k8s service name
           }
 
           env {
@@ -210,12 +219,12 @@ resource "kubernetes_deployment" "roundcubemail" {
           }
         }
 
-        # volume {
-        #   name = "imap-config"
-        #   config_map {
-        #     name = "roundcubemail.config"
-        #   }
-        # }
+        volume {
+          name = "roundcube-config"
+          config_map {
+            name = kubernetes_config_map.roundcubemail_config.metadata[0].name
+          }
+        }
 
         volume {
           name = "html"

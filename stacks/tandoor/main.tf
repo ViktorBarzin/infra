@@ -97,8 +97,7 @@ resource "kubernetes_deployment" "tandoor" {
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
-    replicas = 0
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -212,10 +211,10 @@ resource "kubernetes_deployment" "tandoor" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "256Mi"
+              memory = "384Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
         }

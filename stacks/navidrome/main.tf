@@ -172,10 +172,10 @@ resource "kubernetes_deployment" "navidrome" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "384Mi"
             }
           }
         }
