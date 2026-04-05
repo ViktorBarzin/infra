@@ -158,7 +158,9 @@ resource "kubernetes_manifest" "tlsstore_default" {
   depends_on = [helm_release.traefik, module.tls_secret]
 }
 
-# Catch-all IngressRoute — serves 404 for unknown hosts (lowest priority)
+# Catch-all IngressRoute — serves 404 for unmatched *.viktorbarzin.me hosts (lowest priority)
+# Only matches *.viktorbarzin.me — non-viktorbarzin.me domains get TLS rejection (no matching router)
+# This prevents leaking the wildcard cert to attackers who point arbitrary domains at our IP
 resource "kubernetes_manifest" "ingressroute_catchall" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -170,9 +172,13 @@ resource "kubernetes_manifest" "ingressroute_catchall" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match    = "HostRegexp(`.+`)"
+        match    = "HostRegexp(`^(.+\\.)?viktorbarzin\\.me$`)"
         kind     = "Rule"
         priority = 1
+        middlewares = [
+          { name = "rate-limit", namespace = kubernetes_namespace.traefik.metadata[0].name },
+          { name = "crowdsec", namespace = kubernetes_namespace.traefik.metadata[0].name },
+        ]
         services = [{
           name      = "error-pages"
           namespace = kubernetes_namespace.traefik.metadata[0].name

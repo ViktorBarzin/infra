@@ -324,11 +324,17 @@ resource "kubernetes_manifest" "derp_ingress_route" {
           name = kubernetes_service.headscale.metadata[0].name
           port = 8080
         }]
-        # Only retry middleware — no CrowdSec, rate limit, anti-AI, error pages
-        middlewares = [{
-          name      = "retry"
-          namespace = "traefik"
-        }]
+        # Minimal middleware — retry + rate-limit. No CrowdSec/anti-AI (DERP is a relay protocol)
+        middlewares = [
+          {
+            name      = "retry"
+            namespace = "traefik"
+          },
+          {
+            name      = "rate-limit"
+            namespace = "traefik"
+          },
+        ]
       }]
       tls = {
         secretName = var.tls_secret_name
