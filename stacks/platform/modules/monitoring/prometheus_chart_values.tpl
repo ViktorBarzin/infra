@@ -169,6 +169,7 @@ server:
       memory: 4Gi
   livenessProbeInitialDelay: 300
   readinessProbeInitialDelay: 60
+  terminationGracePeriodSeconds: 60
   strategy:
     type: Recreate
   baseURL: "https://prometheus.viktorbarzin.me"
