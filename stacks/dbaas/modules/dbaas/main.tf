@@ -27,6 +27,29 @@ resource "kubernetes_namespace" "dbaas" {
   }
 }
 
+# Override Kyverno tier-1-cluster LimitRange (max 4Gi) to allow MySQL 6Gi limit
+resource "kubernetes_limit_range" "dbaas" {
+  metadata {
+    name      = "tier-defaults"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "50m"
+        memory = "256Mi"
+      }
+      max = {
+        memory = "8Gi"
+      }
+    }
+  }
+}
+
 resource "kubernetes_resource_quota" "dbaas" {
   metadata {
     name      = "dbaas-quota"
