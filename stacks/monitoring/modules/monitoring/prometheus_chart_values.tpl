@@ -1060,7 +1060,7 @@ serverFiles:
             annotations:
               summary: "Cloud Sync task {{ $labels.task_id }} last state was not SUCCESS"
           - alert: CSIDriverCrashLoop
-            expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|iscsi-csi"} > 0
+            expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|proxmox-csi"} > 0
             for: 10m
             labels:
               severity: critical
@@ -1484,13 +1484,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "NFS CSI controller down — new NFS volume provisioning broken"
-          - alert: ISCSICSIControllerDown
-            expr: (kube_deployment_status_replicas_available{namespace="iscsi-csi", deployment="democratic-csi-iscsi-controller"} or on() vector(0)) < 1
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "iSCSI CSI controller down — new iSCSI volume provisioning broken"
+          # ISCSICSIControllerDown alert removed — democratic-csi replaced by proxmox-csi (2026-04-05)
       - name: "Application Health"
         rules:
           - alert: MailServerDown
