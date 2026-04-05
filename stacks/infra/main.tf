@@ -180,6 +180,41 @@ LOGIND_CONF
 TimeoutStopSec=420s
 KUBELET_SHUTDOWN
   sudo systemctl daemon-reload
+
+  # Tune controller-manager + apiserver for faster volume detach on node failure
+  # Only on master node (has static pod manifests)
+  if [ -f /etc/kubernetes/manifests/kube-controller-manager.yaml ]; then
+    sudo python3 -c "
+import yaml
+# Controller-manager: faster attach-detach reconciliation (15s vs 1m default)
+with open('/etc/kubernetes/manifests/kube-controller-manager.yaml') as f:
+    m = yaml.safe_load(f)
+args = m['spec']['containers'][0]['command']
+for flag in ['--attach-detach-reconcile-sync-period=15s']:
+    key = flag.split('=')[0]
+    args = [a for a in args if not a.startswith(key)]
+    args.append(flag)
+m['spec']['containers'][0]['command'] = args
+with open('/etc/kubernetes/manifests/kube-controller-manager.yaml', 'w') as f:
+    yaml.dump(m, f, default_flow_style=False)
+print('controller-manager: attach-detach-reconcile-sync-period=15s')
+"
+    sudo python3 -c "
+import yaml
+# API server: faster pod eviction from unreachable nodes (60s vs 300s default)
+with open('/etc/kubernetes/manifests/kube-apiserver.yaml') as f:
+    m = yaml.safe_load(f)
+args = m['spec']['containers'][0]['command']
+for flag in ['--default-unreachable-toleration-seconds=60', '--default-not-ready-toleration-seconds=60']:
+    key = flag.split('=')[0]
+    args = [a for a in args if not a.startswith(key)]
+    args.append(flag)
+m['spec']['containers'][0]['command'] = args
+with open('/etc/kubernetes/manifests/kube-apiserver.yaml', 'w') as f:
+    yaml.dump(m, f, default_flow_style=False)
+print('apiserver: unreachable+not-ready toleration=60s')
+"
+  fi
   EOF
   k8s_join_command                 = var.k8s_join_command
 }
