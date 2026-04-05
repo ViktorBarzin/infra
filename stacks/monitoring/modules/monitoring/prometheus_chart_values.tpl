@@ -1506,14 +1506,14 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Bank sync failing for {{ $labels.job }}. Accounts may need GoCardless reauthorization."
+              summary: "Bank sync failing. Accounts may need GoCardless reauthorization. Check Pushgateway for which instance."
           - alert: BankSyncStale
             expr: (time() - bank_sync_last_success_timestamp) > 172800
             for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "Bank sync for {{ $labels.job }} has not succeeded in >48h. Check CronJob and account auth."
+              summary: "Bank sync has not succeeded in more than 48h. Check CronJob and account auth."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
             for: 90m
