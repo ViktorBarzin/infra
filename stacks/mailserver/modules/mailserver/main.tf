@@ -58,6 +58,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     ENABLE_RSPAMD                          = "1"
     ENABLE_OPENDKIM                        = "0"
     ENABLE_OPENDMARC                       = "0"
+    ENABLE_RSPAMD_REDIS                    = "0"
     RSPAMD_LEARN                           = "1"
     ENABLE_SRS                             = "1"
     FETCHMAIL_POLL                         = "120"
@@ -186,7 +187,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     storage_class_name = "proxmox-lvm"
     resources {
       requests = {
-        storage = "1Gi"
+        storage = "2Gi"
       }
     }
   }
