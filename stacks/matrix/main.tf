@@ -15,6 +15,41 @@ resource "kubernetes_namespace" "matrix" {
   }
 }
 
+# DB credentials from Vault database engine (rotated every 24h)
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "matrix-db-creds"
+      namespace = "matrix"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "matrix-db-creds"
+        template = {
+          data = {
+            DB_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-matrix"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.matrix]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.matrix.metadata[0].name
@@ -87,6 +122,31 @@ resource "kubernetes_deployment" "matrix" {
           volume_mount {
             name       = "extra-packages"
             mount_path = "/extra-packages"
+          }
+        }
+        init_container {
+          name  = "inject-db-password"
+          image = "busybox:1.37"
+          command = ["/bin/sh", "-c", <<-EOF
+            # Update database config in homeserver.yaml with current Vault-managed password
+            sed -i "s|host: .*dbaas.*|host: pg-cluster-rw.dbaas.svc.cluster.local|" /data/homeserver.yaml
+            sed -i "s|user: .*|user: matrix|" /data/homeserver.yaml
+            sed -i "s|password: .*|password: $DB_PASSWORD|" /data/homeserver.yaml
+            echo "DB password injected"
+          EOF
+          ]
+          env {
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "matrix-db-creds"
+                key  = "DB_PASSWORD"
+              }
+            }
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
           }
         }
         container {
