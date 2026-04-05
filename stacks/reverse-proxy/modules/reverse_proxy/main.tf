@@ -274,15 +274,36 @@ module "mladost3" {
 # }
 
 # https://ha-sofia.viktorbarzin.me/
+resource "kubernetes_manifest" "ha_sofia_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "ha-sofia-rate-limit"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 200
+      }
+    }
+  }
+}
+
 module "ha-sofia" {
-  source          = "./factory"
-  name            = "ha-sofia"
-  external_name   = "ha-sofia.viktorbarzin.lan"
-  port            = 8123
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.reverse-proxy]
-  protected       = false
-  rybbit_site_id  = "590fc392690a"
+  source                 = "./factory"
+  name                   = "ha-sofia"
+  external_name          = "ha-sofia.viktorbarzin.lan"
+  port                   = 8123
+  tls_secret_name        = var.tls_secret_name
+  depends_on             = [kubernetes_namespace.reverse-proxy]
+  protected              = false
+  rybbit_site_id         = "590fc392690a"
+  skip_global_rate_limit = true
+  extra_middlewares = [
+    "reverse-proxy-ha-sofia-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Home Assistant Sofia"
@@ -291,6 +312,21 @@ module "ha-sofia" {
     "gethomepage.dev/group"        = "Smart Home"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# https://music-assistant.viktorbarzin.me/
+module "music-assistant" {
+  source                 = "./factory"
+  name                   = "music-assistant"
+  external_name          = "ha-sofia.viktorbarzin.lan"
+  port                   = 8095
+  tls_secret_name        = var.tls_secret_name
+  depends_on             = [kubernetes_namespace.reverse-proxy]
+  protected              = false
+  skip_global_rate_limit = true
+  extra_middlewares = [
+    "reverse-proxy-ha-sofia-rate-limit@kubernetescrd",
+  ]
 }
 
 # https://ha-london.viktorbarzin.me/
