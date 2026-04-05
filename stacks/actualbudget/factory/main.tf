@@ -240,13 +240,13 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 5
     schedule                      = "0 0 * * *" # Daily
-    starting_deadline_seconds     = 10
+    starting_deadline_seconds     = 60
     successful_jobs_history_limit = 10
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 3
-        ttl_seconds_after_finished = 10
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
         template {
           metadata {}
           spec {
@@ -254,8 +254,41 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
               name  = "bank-sync"
               image = "curlimages/curl"
               command = ["/bin/sh", "-c", <<-EOT
-              # set -eux # Shows credentials so use only when debugging
-              curl -X POST --location 'http://budget-http-api-${var.name}/v1/budgets/${var.sync_id}/accounts/banksync' --header 'accept: application/json' --header 'budget-encryption-password: ${var.budget_encryption_password}' --header 'x-api-key: ${random_string.api-key.result}'
+              PUSHGATEWAY="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/bank-sync-${var.name}"
+              START=$(date +%s)
+
+              HTTP_CODE=$(curl -s -o /tmp/response.txt -w '%%{http_code}' \
+                -X POST --location \
+                'http://budget-http-api-${var.name}/v1/budgets/${var.sync_id}/accounts/banksync' \
+                --header 'accept: application/json' \
+                --header 'budget-encryption-password: ${var.budget_encryption_password}' \
+                --header 'x-api-key: ${random_string.api-key.result}')
+
+              END=$(date +%s)
+              DURATION=$((END - START))
+
+              if [ "$HTTP_CODE" = "200" ]; then
+                SUCCESS=1
+                LAST_SUCCESS=$END
+              else
+                SUCCESS=0
+                LAST_SUCCESS=0
+                echo "Bank sync failed with HTTP $HTTP_CODE:"
+                cat /tmp/response.txt
+                echo ""
+              fi
+
+              cat <<METRICS | curl -s --data-binary @- "$PUSHGATEWAY"
+              # HELP bank_sync_success Whether the last bank sync succeeded (1=ok, 0=fail)
+              # TYPE bank_sync_success gauge
+              bank_sync_success $SUCCESS
+              # HELP bank_sync_duration_seconds Duration of the last bank sync run
+              # TYPE bank_sync_duration_seconds gauge
+              bank_sync_duration_seconds $DURATION
+              # HELP bank_sync_last_success_timestamp Unix timestamp of the last successful sync
+              # TYPE bank_sync_last_success_timestamp gauge
+              bank_sync_last_success_timestamp $LAST_SUCCESS
+              METRICS
               EOT
               ]
             }

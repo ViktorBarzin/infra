@@ -1073,6 +1073,34 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
+          - alert: LVMSnapshotStale
+            expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 86400
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "LVM PVC snapshots are {{ $value | humanizeDuration }} old (expected every 12h)"
+          - alert: LVMSnapshotNeverRun
+            expr: absent(lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "LVM PVC snapshot job has never reported metrics to Pushgateway"
+          - alert: LVMSnapshotFailing
+            expr: lvm_snapshot_last_status{job="lvm-pvc-snapshot"} != 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "LVM PVC snapshot job failed (status={{ $value }})"
+          - alert: LVMThinPoolLow
+            expr: lvm_snapshot_thinpool_free_pct{job="lvm-pvc-snapshot"} < 15
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "LVM thin pool has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
           - alert: NewTailscaleClient
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             for: 5m
@@ -1472,6 +1500,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Mail server has no available replicas - mail may not be received"
+          - alert: BankSyncFailing
+            expr: bank_sync_success == 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync failing for {{ $labels.job }}. Accounts may need GoCardless reauthorization."
+          - alert: BankSyncStale
+            expr: (time() - bank_sync_last_success_timestamp) > 172800
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync for {{ $labels.job }} has not succeeded in >48h. Check CronJob and account auth."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
             for: 90m
