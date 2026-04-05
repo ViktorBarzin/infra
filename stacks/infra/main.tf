@@ -138,6 +138,48 @@ evictionSoftGracePeriod:
 memorySwap:
   swapBehavior: "LimitedSwap"
 KUBELET_PATCH
+
+  # Remove old 2-bucket shutdown config if present (replaced by priority-based)
+  sudo sed -i '/^shutdownGracePeriod:/d; /^shutdownGracePeriodCriticalPods:/d' /var/lib/kubelet/config.yaml
+  # Remove old shutdownGracePeriodByPodPriority block if present (idempotent re-apply)
+  sudo python3 -c "
+import yaml, sys
+with open('/var/lib/kubelet/config.yaml') as f:
+    cfg = yaml.safe_load(f)
+cfg.pop('shutdownGracePeriod', None)
+cfg.pop('shutdownGracePeriodCriticalPods', None)
+cfg.pop('shutdownGracePeriodByPodPriority', None)
+cfg['shutdownGracePeriodByPodPriority'] = [
+    {'priority': 0,          'shutdownGracePeriodSeconds': 20},
+    {'priority': 200000,     'shutdownGracePeriodSeconds': 20},
+    {'priority': 400000,     'shutdownGracePeriodSeconds': 30},
+    {'priority': 600000,     'shutdownGracePeriodSeconds': 30},
+    {'priority': 800000,     'shutdownGracePeriodSeconds': 90},
+    {'priority': 1000000,    'shutdownGracePeriodSeconds': 30},
+    {'priority': 1200000,    'shutdownGracePeriodSeconds': 30},
+    {'priority': 2000000000, 'shutdownGracePeriodSeconds': 30},
+    {'priority': 2000001000, 'shutdownGracePeriodSeconds': 30},
+]
+with open('/var/lib/kubelet/config.yaml', 'w') as f:
+    yaml.dump(cfg, f, default_flow_style=False)
+"
+
+  # Systemd: increase InhibitDelayMaxSec so logind doesn't force-kill before kubelet finishes graceful shutdown
+  # Total kubelet shutdown time: 310s. InhibitDelay must exceed this.
+  mkdir -p /etc/systemd/logind.conf.d
+  cat <<'LOGIND_CONF' | sudo tee /etc/systemd/logind.conf.d/kubelet-shutdown.conf
+[Login]
+InhibitDelayMaxSec=480
+LOGIND_CONF
+  sudo systemctl restart systemd-logind
+
+  # Systemd: increase kubelet stop timeout to match total shutdown grace period (310s + buffer)
+  mkdir -p /etc/systemd/system/kubelet.service.d
+  cat <<'KUBELET_SHUTDOWN' | sudo tee /etc/systemd/system/kubelet.service.d/20-shutdown.conf
+[Service]
+TimeoutStopSec=420s
+KUBELET_SHUTDOWN
+  sudo systemctl daemon-reload
   EOF
   k8s_join_command                 = var.k8s_join_command
 }
@@ -331,6 +373,11 @@ module "docker-registry-vm" {
   cisnippet_name = "docker-registry.yaml"
   agent          = 1
 
+  # Boot order: after TrueNAS (order=2), before k8s nodes (order=4)
+  startup_order    = 3
+  startup_delay    = 60
+  shutdown_timeout = 120
+
   vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
   bridge         = "vmbr1"
   vlan_tag       = "20"
@@ -345,4 +392,60 @@ module "docker-registry-vm" {
   # 5040 -> registry-kyverno (reg.kyverno.io) — DISABLED
   # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
+}
+
+# ---------------------------------------------------------------------------
+# K8s node VMs (imported from existing Proxmox VMs)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# K8s node VMs — imported from existing Proxmox VMs
+#
+# NOTE: Nodes with iSCSI PVC disks (201, 203, 204) cannot be imported yet
+# due to telmate/proxmox provider bug: it constructs wrong volume references
+# for shared iSCSI disks on update, causing API 500 errors. These nodes will
+# be importable after migrating to the bpg/proxmox provider.
+# ---------------------------------------------------------------------------
+
+module "k8s-master" {
+  source = "../../modules/create-vm"
+  vmid   = 200
+
+  vm_name        = "k8s-master"
+  vm_cpus        = 8
+  vm_mem_mb      = 32768
+  vm_disk_size   = "64G"
+  balloon        = 0
+  qemu_os        = "other"
+  use_cloud_init = false
+  boot           = "order=scsi0"
+  vm_mac_address = "00:50:56:b0:a1:39"
+  bridge         = "vmbr1"
+  vlan_tag       = "20"
+
+  startup_order    = 4
+  startup_delay    = 45
+  shutdown_timeout = 420
+}
+
+module "k8s-node2" {
+  source = "../../modules/create-vm"
+  vmid   = 202
+
+  vm_name        = "k8s-node2"
+  vm_cpus        = 8
+  vm_mem_mb      = 32768
+  vm_disk_size   = "256G"
+  balloon        = 0
+  qemu_os        = "other"
+  use_cloud_init = false
+  boot           = "c"
+  boot_disk      = "scsi0"
+  vm_mac_address = "00:50:56:b0:a1:36"
+  bridge         = "vmbr1"
+  vlan_tag       = "20"
+
+  startup_order    = 5
+  startup_delay    = 45
+  shutdown_timeout = 420
 }
