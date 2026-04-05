@@ -231,8 +231,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
-    replicas = 0
+    replicas = 1
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -335,8 +334,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
-    replicas = 0
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -384,10 +382,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -456,10 +454,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -492,10 +490,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -528,10 +526,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
@@ -564,10 +562,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }

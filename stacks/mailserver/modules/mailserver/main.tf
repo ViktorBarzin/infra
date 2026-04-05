@@ -116,6 +116,10 @@ resource "kubernetes_config_map" "mailserver_config" {
         }
     }
     EOF
+    # Increase max IMAP connections per user+IP - all Roundcube connections come from same pod IP
+    "dovecot.cf" = <<-EOF
+    mail_max_userip_connections = 50
+    EOF
     fail2ban_conf       = <<-EOF
     [DEFAULT]
 
@@ -286,12 +290,12 @@ resource "kubernetes_deployment" "mailserver" {
             sub_path   = "fetchmail.cf"
             read_only  = true
           }
-          # volume_mount {
-          #   name       = "config"
-          #   mount_path = "/tmp/docker-mailserver/dovecot.cf"
-          #   sub_path   = "dovecot.cf"
-          #   read_only  = true
-          # }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/dovecot.cf"
+            sub_path   = "dovecot.cf"
+            read_only  = true
+          }
           # volume_mount {
           #   name       = "user-patches"
           #   mount_path = "/tmp/user-patches.sh"

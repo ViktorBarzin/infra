@@ -109,9 +109,9 @@ resource "helm_release" "redis" {
       enabled = false
     }
 
-    # Use the existing service name so clients don't need changes
-    # Sentinel-enabled Bitnami chart creates a headless service
-    # and a regular service pointing at the master
+    # Disable the Helm chart's ClusterIP service — we manage our own
+    # that points to HAProxy (master-only routing). The headless service
+    # is still needed for StatefulSet pod DNS resolution.
     nameOverride = "redis"
   })]
 }
@@ -209,10 +209,10 @@ resource "kubernetes_deployment" "haproxy" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "16Mi"
+              memory = "32Mi"
             }
             limits = {
-              memory = "16Mi"
+              memory = "64Mi"
             }
           }
           liveness_probe {
@@ -236,28 +236,24 @@ resource "kubernetes_deployment" "haproxy" {
   depends_on = [helm_release.redis]
 }
 
-resource "kubernetes_service" "redis" {
-  metadata {
-    name      = "redis"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  spec {
-    selector = {
-      app = "redis-haproxy"
-    }
-    port {
-      name        = "tcp-redis"
-      port        = 6379
-      target_port = 6379
-    }
-    port {
-      name        = "tcp-sentinel"
-      port        = 26379
-      target_port = 26379
-    }
+# The Helm chart creates a `redis` Service that selects all nodes (master + replica),
+# causing READONLY errors when clients hit the replica. We patch it post-Helm to
+# route through HAProxy instead, which health-checks and routes only to the master.
+# This runs on every apply to ensure the Helm chart's service is always corrected.
+resource "null_resource" "patch_redis_service" {
+  triggers = {
+    always = timestamp()
   }
 
-  depends_on = [kubernetes_deployment.haproxy]
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig=${abspath("${path.module}/../../../../config")} \
+        patch svc redis -n redis --type='json' \
+        -p='[{"op":"replace","path":"/spec/selector","value":{"app":"redis-haproxy"}}]'
+    EOT
+  }
+
+  depends_on = [helm_release.redis, kubernetes_deployment.haproxy]
 }
 
 module "nfs_backup" {

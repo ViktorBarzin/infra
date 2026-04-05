@@ -115,6 +115,15 @@ resource "kubernetes_deployment" "matrix" {
             name       = "extra-packages"
             mount_path = "/extra-packages"
           }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
         }
         volume {
           name = "data"

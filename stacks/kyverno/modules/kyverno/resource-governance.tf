@@ -315,14 +315,14 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "192Mi"
+                      memory = "256Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
-                      memory = "96Mi"
+                      memory = "128Mi"
                     }
                     max = {
-                      memory = "4Gi"
+                      memory = "8Gi"
                     }
                   }
                 ]
@@ -433,14 +433,14 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
                   {
                     type = "Container"
                     default = {
-                      memory = "128Mi"
+                      memory = "192Mi"
                     }
                     defaultRequest = {
                       cpu    = "50m"
                       memory = "128Mi"
                     }
                     max = {
-                      memory = "2Gi"
+                      memory = "4Gi"
                     }
                   }
                 ]
