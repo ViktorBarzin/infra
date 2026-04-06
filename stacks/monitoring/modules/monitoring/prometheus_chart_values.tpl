@@ -763,12 +763,12 @@ serverFiles:
             annotations:
               summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 300W)"
           - alert: UsingInverterEnergyForTooLong
-            expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
-            for: 24h
+            expr: automatic_transfer_switch_power_mode > 0 and on() ups_upsEstimatedChargeRemaining < 80
+            for: 1h
             labels:
-              severity: info
+              severity: warning
             annotations:
-              summary: "On inverter for >24h - check grid switchover"
+              summary: "On inverter with battery draining ({{ $value }}% charge) - may be stuck on inverter"
           - alert: UPSAlarmsActive
             expr: ups_upsAlarmsPresent > 0
             for: 5m
