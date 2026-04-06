@@ -144,7 +144,7 @@ resource "helm_release" "nextcloud" {
   atomic     = true
   version    = "8.8.1"
 
-  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, redis_host = var.redis_host, mysql_host = var.mysql_host })]
+  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host })]
   timeout    = 6000
   depends_on = [kubernetes_manifest.db_external_secret]
 }
@@ -156,13 +156,13 @@ resource "kubernetes_config_map" "apache_tuning" {
   }
   data = {
     "mpm_prefork.conf" = <<-EOF
-      # Tuned for Nextcloud on MySQL (no SQLite lock contention)
-      # CPU/RAM usage is low (~20m/143Mi), so more workers are safe
+      # Tuned for Nextcloud on MySQL
+      # Capped MaxRequestWorkers to prevent runaway Apache consuming all node CPU
       <IfModule mpm_prefork_module>
         StartServers            5
-        MinSpareServers         5
-        MaxSpareServers         15
-        MaxRequestWorkers       150
+        MinSpareServers         3
+        MaxSpareServers         10
+        MaxRequestWorkers       30
         MaxConnectionsPerChild  500
       </IfModule>
     EOF
@@ -213,80 +213,6 @@ module "nfs_nextcloud_backup" {
   nfs_path   = "/mnt/main/nextcloud-backup"
 }
 
-resource "kubernetes_deployment" "whiteboard" {
-  metadata {
-    name      = "whiteboard"
-    namespace = kubernetes_namespace.nextcloud.metadata[0].name
-    labels = {
-      app  = "whiteboard"
-      tier = local.tiers.edge
-    }
-    annotations = {
-      "reloader.stakater.com/search" = "true"
-    }
-  }
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        app = "whiteboard"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "whiteboard"
-        }
-      }
-      spec {
-        priority_class_name = "tier-3-edge"
-        container {
-          image = "ghcr.io/nextcloud-releases/whiteboard:release"
-          name  = "whiteboard"
-
-          port {
-            container_port = 3002
-          }
-          env {
-            name  = "NEXTCLOUD_URL"
-            value = "http://nextcloud:8080"
-          }
-          env {
-            name = "JWT_SECRET_KEY"
-            value_from {
-              secret_key_ref {
-                name = "nextcloud-secrets"
-                key  = "db_password"
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-resource "kubernetes_service" "whiteboard" {
-  metadata {
-    name      = "whiteboard"
-    namespace = kubernetes_namespace.nextcloud.metadata[0].name
-    labels = {
-      app = "whiteboard"
-    }
-  }
-
-  spec {
-    selector = {
-      app = "whiteboard"
-    }
-    port {
-      name        = "http"
-      port        = 80
-      target_port = 3002
-    }
-  }
-}
-
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.nextcloud.metadata[0].name
@@ -308,13 +234,6 @@ module "ingress" {
   }
 }
 
-module "whiteboard_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
-  name            = "whiteboard"
-  tls_secret_name = var.tls_secret_name
-  port            = 80
-}
 
 resource "kubernetes_config_map" "backup-script" {
   metadata {
@@ -391,6 +310,113 @@ resource "kubernetes_config_map" "backup-script" {
       echo "Restore completed!"
       echo "Remember to run: kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --off"
     EOF
+  }
+}
+
+# Watchdog: auto-restart Nextcloud when Apache workers go runaway
+# Checks every 5 minutes if Apache has >40 active workers (normal is 5-15).
+# If runaway detected, restarts the deployment to recover node CPU.
+resource "kubernetes_service_account" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments"]
+    verbs      = ["get", "patch"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list", "get"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.nextcloud_watchdog.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.nextcloud_watchdog.metadata[0].name
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  spec {
+    schedule                      = "*/5 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+
+    job_template {
+      metadata {}
+      spec {
+        active_deadline_seconds = 120
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.nextcloud_watchdog.metadata[0].name
+            restart_policy       = "Never"
+
+            container {
+              name  = "watchdog"
+              image = "bitnami/kubectl:latest"
+
+              command = ["/bin/bash", "-c", <<-EOF
+                set -e
+                # Find the nextcloud pod
+                POD=$(kubectl get pods -n nextcloud -l app.kubernetes.io/name=nextcloud -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                if [ -z "$POD" ]; then
+                  echo "No nextcloud pod found, skipping"
+                  exit 0
+                fi
+
+                # Count Apache worker processes (exclude grep itself and the parent apache2 process)
+                WORKERS=$(kubectl exec -n nextcloud "$POD" -c nextcloud -- pgrep -c apache2 2>/dev/null || echo "0")
+                echo "$(date): Apache worker count: $WORKERS"
+
+                # Normal operation: 5-15 workers. Runaway threshold: 40+
+                if [ "$WORKERS" -gt 40 ]; then
+                  echo "RUNAWAY DETECTED: $WORKERS Apache workers (threshold: 40)"
+                  echo "Restarting nextcloud deployment..."
+                  kubectl rollout restart deployment nextcloud -n nextcloud
+                  echo "Restart triggered at $(date)"
+                else
+                  echo "Apache workers within normal range ($WORKERS <= 40)"
+                fi
+              EOF
+              ]
+            }
+          }
+        }
+      }
+    }
   }
 }
 
