@@ -197,14 +197,164 @@ resource "kubernetes_service" "technitium_secondary_web" {
   }
 }
 
-# PodDisruptionBudget — keep at least 1 DNS pod running during voluntary disruptions
+# Tertiary DNS deployment — another zone-transfer replica for ETP=Local coverage
+resource "kubernetes_persistent_volume_claim" "tertiary_config_proxmox" {
+  wait_until_bound = false
+  metadata {
+    name      = "technitium-tertiary-config-proxmox"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "technitium_tertiary" {
+  metadata {
+    name      = "technitium-tertiary"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    labels = {
+      app  = "technitium-tertiary"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "technitium-tertiary"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app          = "technitium-tertiary"
+          "dns-server" = "true"
+        }
+      }
+      spec {
+        affinity {
+          pod_anti_affinity {
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_expressions {
+                  key      = "dns-server"
+                  operator = "In"
+                  values   = ["true"]
+                }
+              }
+              topology_key = "kubernetes.io/hostname"
+            }
+          }
+        }
+        container {
+          image = "technitium/dns-server:latest"
+          name  = "technitium"
+          env {
+            name  = "DNS_SERVER_ADMIN_PASSWORD"
+            value = var.technitium_password
+          }
+          env {
+            name  = "DNS_SERVER_ENABLE_BLOCKING"
+            value = "true"
+          }
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "512Mi"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
+          port {
+            container_port = 5380
+          }
+          port {
+            container_port = 53
+          }
+          port {
+            container_port = 80
+          }
+          liveness_probe {
+            tcp_socket {
+              port = 53
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+          }
+          readiness_probe {
+            tcp_socket {
+              port = 53
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+          }
+          volume_mount {
+            mount_path = "/etc/dns"
+            name       = "config"
+          }
+        }
+        volume {
+          name = "config"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.tertiary_config_proxmox.metadata[0].name
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "technitium_tertiary_web" {
+  metadata {
+    name      = "technitium-tertiary-web"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    labels = {
+      "app" = "technitium-tertiary"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "technitium-tertiary"
+    }
+    port {
+      name     = "api"
+      port     = 5380
+      protocol = "TCP"
+    }
+  }
+}
+
+# PodDisruptionBudget — keep at least 2 DNS pods running during voluntary disruptions
 resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
   metadata {
     name      = "technitium-dns"
     namespace = kubernetes_namespace.technitium.metadata[0].name
   }
   spec {
-    min_available = "1"
+    min_available = "2"
     selector {
       match_labels = {
         "dns-server" = "true"
@@ -213,10 +363,10 @@ resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
   }
 }
 
-# Setup Job — configures secondary zones via Technitium REST API
+# Setup Job — configures secondary + tertiary zones via Technitium REST API
 resource "kubernetes_job" "technitium_secondary_setup" {
   metadata {
-    name      = "technitium-secondary-setup"
+    name      = "technitium-replica-setup"
     namespace = kubernetes_namespace.technitium.metadata[0].name
   }
   spec {
@@ -231,37 +381,40 @@ resource "kubernetes_job" "technitium_secondary_setup" {
           command = ["/bin/sh", "-c", <<-SCRIPT
             set -e
             PRIMARY="http://technitium-primary.technitium.svc.cluster.local:5380"
-            SECONDARY="http://technitium-secondary-web.technitium.svc.cluster.local:5380"
+            REPLICAS="http://technitium-secondary-web.technitium.svc.cluster.local:5380 http://technitium-tertiary-web.technitium.svc.cluster.local:5380"
 
-            # Wait for both to be ready
+            # Wait for primary
             until curl -sf "$PRIMARY/api/user/login?user=$TECH_USER&pass=$TECH_PASS" -o /tmp/p.json; do echo "Waiting for primary..."; sleep 5; done
-            until curl -sf "$SECONDARY/api/user/login?user=$TECH_USER&pass=$TECH_PASS" -o /tmp/s.json; do echo "Waiting for secondary..."; sleep 5; done
             P_TOKEN=$(cat /tmp/p.json | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-            S_TOKEN=$(cat /tmp/s.json | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-            # Get zones from primary (split JSON into lines so sed can match each zone)
+            # Get zones from primary
             curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/zones.txt
             echo "Found zones:"; cat /tmp/zones.txt
 
-            # Enable zone transfers on primary for each zone
+            # Enable zone transfers on primary
             while read -r zone; do
               echo "Enabling zone transfer for: $zone"
               curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" || true
             done < /tmp/zones.txt
 
-            # Create secondary zones on secondary instance (ignore "already exists" errors)
-            while read -r zone; do
-              echo "Creating secondary zone: $zone"
-              curl -sf "$SECONDARY/api/zones/create?token=$S_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" || true
-            done < /tmp/zones.txt
+            # Configure each replica
+            for REPLICA in $REPLICAS; do
+              echo "=== Configuring replica: $REPLICA ==="
+              until curl -sf "$REPLICA/api/user/login?user=$TECH_USER&pass=$TECH_PASS" -o /tmp/r.json; do echo "Waiting for $REPLICA..."; sleep 5; done
+              R_TOKEN=$(cat /tmp/r.json | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-            # Force resync all secondary zones to pull latest data
-            while read -r zone; do
-              echo "Resyncing: $zone"
-              curl -sf "$SECONDARY/api/zones/resync?token=$S_TOKEN&zone=$zone" || true
-            done < /tmp/zones.txt
+              while read -r zone; do
+                echo "Creating secondary zone: $zone on $REPLICA"
+                curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" || true
+              done < /tmp/zones.txt
 
-            echo "Secondary zone setup complete"
+              while read -r zone; do
+                echo "Resyncing: $zone on $REPLICA"
+                curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" || true
+              done < /tmp/zones.txt
+            done
+
+            echo "Replica zone setup complete"
           SCRIPT
           ]
           env {
@@ -290,7 +443,9 @@ resource "kubernetes_job" "technitium_secondary_setup" {
   depends_on = [
     kubernetes_deployment.technitium,
     kubernetes_deployment.technitium_secondary,
+    kubernetes_deployment.technitium_tertiary,
     kubernetes_service.technitium_primary,
     kubernetes_service.technitium_secondary_web,
+    kubernetes_service.technitium_tertiary_web,
   ]
 }

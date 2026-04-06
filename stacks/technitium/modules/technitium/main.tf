@@ -57,7 +57,7 @@ resource "kubernetes_config_map" "coredns" {
               ttl 30
           }
           prometheus :9153
-          forward . 8.8.8.8 1.1.1.1 10.0.20.1
+          forward . 10.0.20.1 8.8.8.8 1.1.1.1
           cache {
             success 10000 300 6
             denial 10000 300 60
