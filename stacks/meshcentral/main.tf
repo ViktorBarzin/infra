@@ -227,11 +227,11 @@ module "ingress" {
   port            = 443
   protected       = true
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "MeshCentral"
-    "gethomepage.dev/description"  = "Remote management"
-    "gethomepage.dev/icon"         = "meshcentral.png"
-    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/enabled"                           = "true"
+    "gethomepage.dev/name"                              = "MeshCentral"
+    "gethomepage.dev/description"                       = "Remote management"
+    "gethomepage.dev/icon"                              = "meshcentral.png"
+    "gethomepage.dev/group"                             = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
   }
 }

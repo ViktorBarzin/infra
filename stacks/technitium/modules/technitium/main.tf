@@ -92,28 +92,6 @@ module "nfs_config" {
   nfs_path   = "/mnt/main/technitium"
 }
 
-resource "kubernetes_persistent_volume_claim" "config_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "technitium-config-proxmox"
-    namespace = kubernetes_namespace.technitium.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-}
-
 resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
