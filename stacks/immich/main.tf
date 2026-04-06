@@ -15,7 +15,7 @@ locals {
 variable "immich_version" {
   type = string
   # Change me to upgrade
-  default = "v2.6.1"
+  default = "v2.6.3"
 }
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
