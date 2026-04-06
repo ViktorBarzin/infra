@@ -112,10 +112,14 @@ resource "kubernetes_deployment" "wealthfolio" {
         labels = {
           app = "wealthfolio"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^v?\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "afadil/wealthfolio:latest"
+          image = "afadil/wealthfolio:v1.1.0"
           name  = "wealthfolio"
           port {
             container_port = 8080

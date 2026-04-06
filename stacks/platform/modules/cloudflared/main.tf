@@ -45,6 +45,10 @@ resource "kubernetes_deployment" "cloudflared" {
         labels = {
           app = "cloudflared"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d{4}\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         topology_spread_constraint {
@@ -59,7 +63,7 @@ resource "kubernetes_deployment" "cloudflared" {
         }
         container {
           # image = "wisdomsky/cloudflared-web:latest"
-          image   = "cloudflare/cloudflared"
+          image   = "cloudflare/cloudflared:2026.3.0"
           name    = "cloudflared"
           command = ["cloudflared", "tunnel", "run"]
           env {

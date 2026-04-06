@@ -41,10 +41,14 @@ resource "kubernetes_deployment" "echo" {
         labels = {
           app = "echo"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+$"
+        }
       }
       spec {
         container {
-          image = "mendhak/http-https-echo"
+          image = "mendhak/http-https-echo:36"
           name  = "echo"
           port {
             container_port = 8080

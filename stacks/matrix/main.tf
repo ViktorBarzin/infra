@@ -111,13 +111,15 @@ resource "kubernetes_deployment" "matrix" {
           app = "matrix"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^v\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "pg-cluster-rw.dbaas:5432"
         }
       }
       spec {
         init_container {
           name    = "install-psycopg2"
-          image   = "matrixdotorg/synapse:latest"
+          image   = "matrixdotorg/synapse:v1.125.0"
           command = ["/bin/sh", "-c", "pip install --target=/extra-packages psycopg2-binary 2>/dev/null"]
           volume_mount {
             name       = "extra-packages"
@@ -150,7 +152,7 @@ resource "kubernetes_deployment" "matrix" {
           }
         }
         container {
-          image = "matrixdotorg/synapse:latest"
+          image = "matrixdotorg/synapse:v1.125.0"
           name  = "matrix"
           port {
             container_port = 8008

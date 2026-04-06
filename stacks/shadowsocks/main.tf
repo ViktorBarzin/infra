@@ -66,11 +66,15 @@ resource "kubernetes_deployment" "shadowsocks" {
         labels = {
           "app" = "shadowsocks"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^v\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
           name              = "shadowsocks"
-          image             = "shadowsocks/shadowsocks-libev"
+          image             = "shadowsocks/shadowsocks-libev:v3.3.5"
           image_pull_policy = "IfNotPresent"
           env {
             name  = "METHOD"

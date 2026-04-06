@@ -48,10 +48,14 @@ resource "kubernetes_deployment" "snmp-exporter" {
         labels = {
           app = "snmp-exporter"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^v\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "prom/snmp-exporter"
+          image = "prom/snmp-exporter:v0.30.1"
           name  = "snmp-exporter"
           # command = ["/usr/local/bin/redfish_exporter", "--config.file", "/app/config.yml"]
 

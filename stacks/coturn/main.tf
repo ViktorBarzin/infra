@@ -139,12 +139,16 @@ resource "kubernetes_deployment" "coturn" {
         labels = {
           app = "coturn"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+-r\\d+$"
+        }
       }
 
       spec {
         container {
           name  = "coturn"
-          image = "coturn/coturn:latest"
+          image = "coturn/coturn:4.6.3-r1"
           args  = ["-c", "/etc/turnserver/turnserver.conf"]
 
           # STUN/TURN signaling port

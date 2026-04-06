@@ -46,10 +46,14 @@ resource "kubernetes_deployment" "cyberchef" {
         labels = {
           app = "cyberchef"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^v\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "mpepping/cyberchef:latest"
+          image = "mpepping/cyberchef:v10.24.0"
           name  = "cyberchef"
 
           port {

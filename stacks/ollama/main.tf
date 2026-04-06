@@ -132,6 +132,10 @@ resource "kubernetes_deployment" "ollama" {
         labels = {
           app = "ollama"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         node_selector = {
@@ -143,7 +147,7 @@ resource "kubernetes_deployment" "ollama" {
           effect = "NoSchedule"
         }
         container {
-          image = "ollama/ollama:latest"
+          image = "ollama/ollama:0.6.10"
           name  = "ollama"
           env {
             name  = "OLLAMA_HOST"

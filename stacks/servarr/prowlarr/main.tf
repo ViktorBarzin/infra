@@ -72,10 +72,14 @@ resource "kubernetes_deployment" "prowlarr" {
         labels = {
           app = "prowlarr"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/prowlarr:latest"
+          image = "lscr.io/linuxserver/prowlarr:1.31.1"
           name  = "prowlarr"
 
           resources {

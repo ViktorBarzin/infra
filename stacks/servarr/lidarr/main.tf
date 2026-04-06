@@ -43,10 +43,14 @@ resource "kubernetes_deployment" "lidarr" {
         labels = {
           app = "lidarr"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/lidarr:latest"
+          image = "lscr.io/linuxserver/lidarr:2.9.4"
           # image = "youegraillot/lidarr-on-steroids"
           name = "lidarr"
 

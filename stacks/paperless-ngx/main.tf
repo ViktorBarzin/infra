@@ -119,14 +119,14 @@ resource "kubernetes_deployment" "paperless-ngx" {
           app = "paperless-ngx"
         }
         annotations = {
-          "diun.enable"                    = "false"
+          "diun.enable"                    = "true"
           "diun.include_tags"              = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
           "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
         }
       }
       spec {
         container {
-          image = "ghcr.io/paperless-ngx/paperless-ngx:latest"
+          image = "ghcr.io/paperless-ngx/paperless-ngx:2.16.4"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"

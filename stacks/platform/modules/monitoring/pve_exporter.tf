@@ -38,12 +38,16 @@ resource "kubernetes_deployment" "pve_exporter" {
         labels = {
           app = "proxmox-exporter"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
 
       spec {
         container {
           name  = "proxmox-exporter"
-          image = "prompve/prometheus-pve-exporter:latest"
+          image = "prompve/prometheus-pve-exporter:3.8.2"
 
           port {
             container_port = 9221

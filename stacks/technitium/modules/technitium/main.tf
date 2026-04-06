@@ -114,9 +114,8 @@ resource "kubernetes_deployment" "technitium" {
     template {
       metadata {
         annotations = {
-          "diun.enable" = "false"
-          # "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-          "diun.include_tags" = "latest"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
         }
         labels = {
           app          = "technitium"
@@ -140,7 +139,7 @@ resource "kubernetes_deployment" "technitium" {
           }
         }
         container {
-          image = "technitium/dns-server:latest"
+          image = "technitium/dns-server:14.3.0"
           name  = "technitium"
           resources {
             requests = {
