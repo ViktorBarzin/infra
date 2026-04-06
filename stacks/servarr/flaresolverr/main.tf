@@ -14,7 +14,7 @@ resource "kubernetes_deployment" "flaresolverr" {
     }
   }
   spec {
-    replicas = 0 # Scaled down — headless Chrome with no effective resource limits causes node OOM
+    replicas = 1
     selector {
       match_labels = {
         app = "flaresolverr"
@@ -37,7 +37,7 @@ resource "kubernetes_deployment" "flaresolverr" {
               memory = "512Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
