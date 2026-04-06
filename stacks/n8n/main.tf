@@ -148,6 +148,8 @@ resource "kubernetes_deployment" "n8n" {
           app = "n8n"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
         }
       }
@@ -155,7 +157,7 @@ resource "kubernetes_deployment" "n8n" {
         service_account_name = kubernetes_service_account.n8n.metadata[0].name
         container {
           name  = "n8n"
-          image = "docker.n8n.io/n8nio/n8n"
+          image = "docker.n8n.io/n8nio/n8n:1.80.0"
           env {
             name  = "DB_TYPE"
             value = "postgresdb"

@@ -111,7 +111,7 @@ resource "kubernetes_deployment" "technitium_secondary" {
           }
         }
         container {
-          image = "technitium/dns-server:latest"
+          image = "technitium/dns-server:14.3.0"
           name  = "technitium"
           env {
             name  = "DNS_SERVER_ADMIN_PASSWORD"
@@ -262,7 +262,7 @@ resource "kubernetes_deployment" "technitium_tertiary" {
           }
         }
         container {
-          image = "technitium/dns-server:latest"
+          image = "technitium/dns-server:14.3.0"
           name  = "technitium"
           env {
             name  = "DNS_SERVER_ADMIN_PASSWORD"

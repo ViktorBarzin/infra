@@ -80,10 +80,14 @@ resource "kubernetes_deployment" "xray" {
         labels = {
           app = "xray"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image             = "teddysun/xray"
+          image             = "teddysun/xray:26.3.27"
           name              = "xray"
           image_pull_policy = "IfNotPresent"
           port {

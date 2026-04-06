@@ -64,15 +64,14 @@ resource "kubernetes_deployment" "headscale" {
           app = "headscale"
         }
         annotations = {
-          # "diun.enable"       = "true"
-          "diun.enable"       = "false"
+          "diun.enable"       = "true"
           "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
         }
       }
       spec {
         container {
-          image = "headscale/headscale:0.23.0"
-          # image   = "headscale/headscale:0.23.0-debug" # -debug is for debug images
+          image = "headscale/headscale:0.28.0"
+          # image   = "headscale/headscale:0.28.0-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
 

@@ -203,6 +203,8 @@ resource "kubernetes_deployment" "affine" {
           app = "affine"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
         }
       }
@@ -210,7 +212,7 @@ resource "kubernetes_deployment" "affine" {
         # Init container to run database migrations
         init_container {
           name    = "migration"
-          image   = "ghcr.io/toeverything/affine:stable"
+          image   = "ghcr.io/toeverything/affine:0.20.7"
           command = ["sh", "-c", "npx prisma migrate deploy && SERVER_FLAVOR=script node ./dist/main.js run"]
 
           dynamic "env" {
@@ -253,7 +255,7 @@ resource "kubernetes_deployment" "affine" {
 
         container {
           name  = "affine"
-          image = "ghcr.io/toeverything/affine:stable"
+          image = "ghcr.io/toeverything/affine:0.20.7"
 
           port {
             container_port = 3010

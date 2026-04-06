@@ -171,12 +171,14 @@ resource "kubernetes_deployment" "shlink" {
           run = "shlink"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306"
         }
       }
       spec {
         container {
-          image = "shlinkio/shlink:stable"
+          image = "shlinkio/shlink:4.3.4"
           name  = "shlink"
           env {
             name  = "DEFAULT_DOMAIN"

@@ -316,12 +316,14 @@ resource "kubernetes_deployment" "rybbit" {
           app = "rybbit"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^v?\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,clickhouse.rybbit:8123"
         }
       }
       spec {
         container {
-          image = "ghcr.io/rybbit-io/rybbit-backend:latest"
+          image = "ghcr.io/rybbit-io/rybbit-backend:v1.0.21"
           name  = "rybbit"
 
           env {
@@ -477,7 +479,7 @@ resource "kubernetes_deployment" "rybbit-client" {
       spec {
         container {
           name  = "rybbit-client"
-          image = "ghcr.io/rybbit-io/rybbit-client:latest"
+          image = "ghcr.io/rybbit-io/rybbit-client:v1.0.20"
           env {
             name  = "NODE_ENV"
             value = "production"

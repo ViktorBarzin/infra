@@ -111,12 +111,14 @@ resource "kubernetes_deployment" "speedtest" {
           app = "speedtest"
         }
         annotations = {
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306"
         }
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/speedtest-tracker:latest"
+          image = "lscr.io/linuxserver/speedtest-tracker:0.24.1"
           name  = "speedtest"
           port {
             container_port = 80

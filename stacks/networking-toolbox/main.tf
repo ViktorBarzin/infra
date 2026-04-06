@@ -41,10 +41,14 @@ resource "kubernetes_deployment" "networking-toolbox" {
         labels = {
           app = "networking-toolbox"
         }
+        annotations = {
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+\\.\\d+\\.\\d+$"
+        }
       }
       spec {
         container {
-          image = "lissy93/networking-toolbox"
+          image = "lissy93/networking-toolbox:1.1.1"
           name  = "networking-toolbox"
           port {
             container_port = 3000

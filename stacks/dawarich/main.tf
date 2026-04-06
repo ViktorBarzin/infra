@@ -82,8 +82,8 @@ resource "kubernetes_deployment" "dawarich" {
           app = "dawarich"
         }
         annotations = {
-          # "diun.enable"          = "true"
-          # "diun.include_tags"    = "latest"
+          "diun.enable"                    = "true"
+          "diun.include_tags"              = "^v?\\d+\\.\\d+\\.\\d+$"
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
         }
       }
