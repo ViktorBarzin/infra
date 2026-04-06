@@ -1,5 +1,7 @@
 # Restore MySQL (InnoDB Cluster)
 
+Last updated: 2026-04-06
+
 ## Prerequisites
 - `kubectl` access to the cluster
 - MySQL root password (from `cluster-secret` in `dbaas` namespace, key `ROOT_PASSWORD`)
@@ -7,8 +9,9 @@
 
 ## Backup Location
 - NFS: `/mnt/main/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz`
-- Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
-- Retention: 14 days
+- Mirrored to sda: `/mnt/backup/nfs-mirror/mysql-backup/` (PVE host 192.168.1.127)
+- Replicated to Synology NAS: `Synology/Backup/Viki/pve-backup/nfs-mirror/mysql-backup/`
+- Retention: 14 days (on NFS), latest only (on sda), unlimited (on Synology)
 - Size: ~11MB per dump
 
 ## Restore Procedure
@@ -91,6 +94,39 @@ kubectl exec -it mysql-cluster-0 -n dbaas -c mysql -- mysqlsh root@localhost --p
 
 # Force rejoin a member
 kubectl exec -it mysql-cluster-0 -n dbaas -c mysql -- mysqlsh root@localhost --password="$ROOT_PWD" -- cluster rejoinInstance root@mysql-cluster-1:3306
+```
+
+## Alternative: Restore from sda Backup
+
+If TrueNAS NFS is unavailable but the PVE host is accessible:
+
+```bash
+# 1. SSH to PVE host
+ssh root@192.168.1.127
+
+# 2. Find the latest backup
+ls -lt /mnt/backup/nfs-mirror/mysql-backup/
+
+# 3. Copy backup to a location accessible from cluster (e.g., via kubectl cp)
+# Or mount sda backup on a pod:
+kubectl run mysql-restore --rm -it --image=mysql \
+  --overrides='{"spec":{"volumes":[{"name":"backup","hostPath":{"path":"/mnt/backup/nfs-mirror/mysql-backup"}}],"containers":[{"name":"mysql-restore","image":"mysql","env":[{"name":"MYSQL_PWD","value":"'$ROOT_PWD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | mysql -u root --host mysql.dbaas.svc.cluster.local"]}],"nodeName":"k8s-master"}}' \
+  -n dbaas
+```
+
+## Alternative: Restore from Synology (if PVE host is down)
+
+If both TrueNAS and PVE host are unavailable:
+
+```bash
+# 1. SSH to Synology NAS
+ssh Administrator@192.168.1.13
+
+# 2. Navigate to backup directory
+cd /volume1/Backup/Viki/pve-backup/nfs-mirror/mysql-backup/
+
+# 3. Copy dump to a temporary location accessible from cluster
+# (e.g., via rsync to a surviving node, or restore TrueNAS first)
 ```
 
 ## Estimated Time

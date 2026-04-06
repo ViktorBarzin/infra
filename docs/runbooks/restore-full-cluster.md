@@ -1,5 +1,7 @@
 # Full Cluster Rebuild
 
+Last updated: 2026-04-06
+
 ## When to Use
 - Complete cluster failure (all VMs lost)
 - etcd corruption requiring full rebuild
@@ -7,7 +9,8 @@
 
 ## Prerequisites
 - Proxmox host (192.168.1.127) accessible
-- TrueNAS NFS server (192.168.1.2) accessible — or Synology NAS (192.168.1.13) for backups
+- TrueNAS NFS server (10.0.10.15) accessible — or Synology NAS (192.168.1.13) for backups
+- sda backup disk mounted at `/mnt/backup` on PVE host (or restore from Synology first)
 - Git repo with infra code
 - SOPS age keys for state decryption (`~/.config/sops/age/keys.txt`)
 - Vault unseal keys (emergency kit)
@@ -41,14 +44,54 @@ sudo kubeadm init --config /etc/kubernetes/kubeadm-config.yaml
 
 ### Phase 3: Storage Layer
 ```bash
-# 6. Deploy CSI drivers (NFS + iSCSI)
+# 6. Deploy CSI drivers (NFS + Proxmox)
 scripts/tg apply stacks/nfs-csi
-scripts/tg apply stacks/iscsi-csi
+scripts/tg apply stacks/proxmox-csi
 
 # 7. Verify PVs are accessible
 kubectl get pv
 kubectl get pvc -A | grep -v Bound
 ```
+
+### Phase 3.5: Restore PVC Data from sda Backup
+
+After storage layer is deployed, restore PVC data from the sda backup disk:
+
+```bash
+# 8a. List available backup weeks
+ssh root@192.168.1.127
+ls -l /mnt/backup/pvc-data/
+
+# 8b. For each critical PVC, restore files:
+# Example: vaultwarden-data-proxmox
+WEEK="2026-14"  # Use most recent week
+NAMESPACE="vaultwarden"
+PVC_NAME="vaultwarden-data-proxmox"
+
+# Find the PV LV name
+kubectl get pv -o custom-columns='PV:.metadata.name,PVC:.spec.claimRef.name,NS:.spec.claimRef.namespace,HANDLE:.spec.csi.volumeHandle' | grep $PVC_NAME
+
+# Assuming volumeHandle is "local-lvm:vm-999-pvc-abc123"
+LV_NAME="vm-999-pvc-abc123"
+
+# Mount the LV
+lvchange -ay pve/$LV_NAME
+mkdir -p /mnt/restore-temp
+mount /dev/pve/$LV_NAME /mnt/restore-temp
+
+# Restore from backup
+rsync -avP --delete /mnt/backup/pvc-data/$WEEK/$NAMESPACE/$PVC_NAME/ /mnt/restore-temp/
+
+# Unmount
+umount /mnt/restore-temp
+lvchange -an pve/$LV_NAME
+
+# 8c. Repeat for all critical PVCs (prioritize: vaultwarden, vault, redis, nextcloud)
+```
+
+**Note on pfSense restore**: If pfSense needs restoration, restore `config.xml` from `/mnt/backup/pfsense/<week>/config.xml` via web UI, or full filesystem tar for custom scripts.
+
+**Note on PVE config restore**: If custom scripts/timers are lost, restore from `/mnt/backup/pve-config/` (weekly-backup, offsite-sync-backup, lvm-pvc-snapshot scripts + timers).
 
 ### Phase 4: Vault (secrets foundation)
 ```bash
@@ -117,10 +160,11 @@ kubectl create job --from=cronjob/vaultwarden-backup manual-vw-backup -n vaultwa
 
 ## Dependency Graph
 ```
-etcd → K8s API → CSI Drivers → Vault → ESO → Platform → Databases → Apps
-                                                              ↓
-                                                        Restore data from
-                                                        NFS/Synology backups
+etcd → K8s API → CSI Drivers → Restore PVC data from sda → Vault → ESO → Platform → Databases → Apps
+                                                                                          ↓
+                                                                                    Restore DB dumps from
+                                                                                    /mnt/backup/nfs-mirror
+                                                                                    or Synology/pve-backup
 ```
 
 ## Estimated Time

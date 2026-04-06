@@ -1,5 +1,7 @@
 # Restore PostgreSQL (CNPG)
 
+Last updated: 2026-04-06
+
 ## Prerequisites
 - `kubectl` access to the cluster
 - CNPG operator running in the cluster
@@ -8,8 +10,9 @@
 
 ## Backup Location
 - NFS: `/mnt/main/postgresql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz`
-- Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
-- Retention: 14 days
+- Mirrored to sda: `/mnt/backup/nfs-mirror/postgresql-backup/` (PVE host 192.168.1.127)
+- Replicated to Synology NAS: `Synology/Backup/Viki/pve-backup/nfs-mirror/postgresql-backup/`
+- Retention: 14 days (on NFS), latest only (on sda), unlimited (on Synology)
 
 ## Restore from pg_dumpall
 
@@ -81,11 +84,39 @@ kubectl rollout restart deployment -n linkwarden
 # ... repeat for all PG-dependent services (excluding trading — disabled)
 ```
 
-## Restore from Synology (if TrueNAS is down)
-1. SSH to Synology NAS (192.168.1.13)
-2. Find the replicated dataset: `zfs list | grep postgresql-backup`
-3. Mount or copy the backup file to a location accessible from the cluster
-4. Follow the restore procedure above
+## Alternative: Restore from sda Backup
+
+If TrueNAS NFS is unavailable but the PVE host is accessible:
+
+```bash
+# 1. SSH to PVE host
+ssh root@192.168.1.127
+
+# 2. Find the latest backup
+ls -lt /mnt/backup/nfs-mirror/postgresql-backup/
+
+# 3. Mount sda backup on a pod
+PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d)
+
+kubectl run pg-restore --rm -it --image=postgres:16.4-bullseye \
+  --overrides='{"spec":{"volumes":[{"name":"backup","hostPath":{"path":"/mnt/backup/nfs-mirror/postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}],"nodeName":"k8s-master"}}' \
+  -n dbaas
+```
+
+## Alternative: Restore from Synology (if PVE host is down)
+
+If both TrueNAS and PVE host are unavailable:
+
+```bash
+# 1. SSH to Synology NAS
+ssh Administrator@192.168.1.13
+
+# 2. Navigate to backup directory
+cd /volume1/Backup/Viki/pve-backup/nfs-mirror/postgresql-backup/
+
+# 3. Copy dump to a temporary location accessible from cluster
+# (e.g., via rsync to a surviving node, or restore TrueNAS first)
+```
 
 ## Estimated Time
 - Restore into existing cluster: ~10 minutes (depends on dump size)
