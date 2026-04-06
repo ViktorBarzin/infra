@@ -756,12 +756,12 @@ serverFiles:
             annotations:
               summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
           - alert: HighPowerUsage
-            expr: r730_idrac_idrac_power_control_consumed_watts > 200
+            expr: r730_idrac_idrac_power_control_consumed_watts > 300
             for: 60m
             labels:
               severity: info
             annotations:
-              summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 200W)"
+              summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 300W)"
           - alert: UsingInverterEnergyForTooLong
             expr: automatic_transfer_switch_power_mode  > 0 # 1 = Inverter; 0 = Grid
             for: 24h
@@ -1577,10 +1577,10 @@ serverFiles:
           - alert: HighServiceLatency
             expr: |
               (
-                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*"}[5m])) by (service)
-                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*"}[5m])) by (service)
+                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service)
+                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service)
               ) > 10
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*"}[5m])) by (service) > 0.01
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service) > 0.01
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             labels:
