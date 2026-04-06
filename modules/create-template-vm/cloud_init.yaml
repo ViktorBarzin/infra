@@ -61,6 +61,10 @@ runcmd:
   - sed -i 's/#Storage=auto/Storage=persistent/' /etc/systemd/journald.conf
   - systemctl restart systemd-journald
   %{if is_k8s_template}
+  # Disable unattended-upgrades to prevent unexpected kernel updates that can break containerd/kubelet
+  # (Root cause of 26h cluster outage: unattended-upgrades → kernel update → containerd failure)
+  - systemctl disable --now unattended-upgrades || true
+  - apt-get remove -y unattended-upgrades || true
   - apt-mark hold kubelet kubeadm kubectl
   - systemctl stop kubelet
   - containerd config default | sudo tee /etc/containerd/config.toml
