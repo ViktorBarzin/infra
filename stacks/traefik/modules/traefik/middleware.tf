@@ -19,6 +19,10 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
     }
   }
 
+  field_manager {
+    force_conflicts = true
+  }
+
   depends_on = [helm_release.traefik]
 }
 
