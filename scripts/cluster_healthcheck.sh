@@ -26,7 +26,7 @@ JSON=false
 KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=25
+TOTAL_CHECKS=29
 
 # --- Helpers ---
 info()  { [[ "$JSON" == true ]] && return 0; echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -1206,6 +1206,426 @@ check_overcommit() {
     json_add "overcommit" "$status" "$detail"
 }
 
+# --- HA helpers ---
+HA_CACHE_DIR=""
+
+ha_sofia_available() {
+    if [[ -z "${HOME_ASSISTANT_SOFIA_URL:-}" ]] || [[ -z "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Fetch all HA data once and cache in temp files
+ha_sofia_fetch_cache() {
+    if [[ -n "$HA_CACHE_DIR" ]]; then
+        return 0
+    fi
+    HA_CACHE_DIR=$(mktemp -d)
+    export HA_CACHE_DIR
+    trap "rm -rf $HA_CACHE_DIR" EXIT
+
+    python3 << 'HA_FETCH_EOF'
+import os, json, requests, sys
+
+url = os.environ["HOME_ASSISTANT_SOFIA_URL"]
+token = os.environ["HOME_ASSISTANT_SOFIA_TOKEN"]
+cache = os.environ["HA_CACHE_DIR"]
+headers = {"Authorization": f"Bearer {token}"}
+
+errors = []
+
+# Fetch states (used by checks 26, 28)
+try:
+    resp = requests.get(f"{url}/api/states", headers=headers, timeout=30)
+    resp.raise_for_status()
+    with open(f"{cache}/states.json", "w") as f:
+        json.dump(resp.json(), f)
+except Exception as e:
+    errors.append(f"states:{e}")
+
+# Fetch config entries (used by check 27)
+try:
+    resp = requests.get(f"{url}/api/config/config_entries/entry", headers=headers, timeout=30)
+    resp.raise_for_status()
+    with open(f"{cache}/entries.json", "w") as f:
+        json.dump(resp.json(), f)
+except Exception as e:
+    errors.append(f"entries:{e}")
+
+# Fetch config (used by check 29)
+try:
+    resp = requests.get(f"{url}/api/config", headers=headers, timeout=10)
+    resp.raise_for_status()
+    with open(f"{cache}/config.json", "w") as f:
+        json.dump(resp.json(), f)
+except Exception as e:
+    errors.append(f"config:{e}")
+
+if errors:
+    with open(f"{cache}/errors.txt", "w") as f:
+        f.write("\n".join(errors))
+HA_FETCH_EOF
+}
+
+# --- 26. HA Entity Availability ---
+check_ha_entities() {
+    section 26 "HA Sofia — Entity Availability"
+
+    if ! ha_sofia_available; then
+        warn "HA Sofia token not configured — skipping"
+        json_add "ha_entities" "WARN" "Token not configured"
+        return 0
+    fi
+
+    ha_sofia_fetch_cache
+
+    if [[ ! -f "$HA_CACHE_DIR/states.json" ]]; then
+        local err=""
+        [[ -f "$HA_CACHE_DIR/errors.txt" ]] && err=$(grep "^states:" "$HA_CACHE_DIR/errors.txt" | head -1)
+        [[ "$QUIET" == true ]] && section_always 26 "HA Sofia — Entity Availability"
+        warn "HA Sofia API unreachable: ${err:-unknown error}"
+        json_add "ha_entities" "WARN" "API unreachable"
+        return 0
+    fi
+
+    local result
+    result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
+import os, json
+
+cache = os.environ["HA_CACHE_DIR"]
+with open(f"{cache}/states.json") as f:
+    states = json.load(f)
+
+unavail = [s for s in states if s.get("state") in ("unavailable", "unknown")]
+domains = {}
+for s in unavail:
+    d = s["entity_id"].split(".")[0]
+    domains[d] = domains.get(d, 0) + 1
+
+total = len(states)
+count = len(unavail)
+summary = ", ".join(f"{d}:{n}" for d, n in sorted(domains.items(), key=lambda x: -x[1]))
+entity_list = "\n".join("ENTITY:" + s["entity_id"] for s in unavail)
+print(f"{count}:{total}:{summary}")
+if entity_list:
+    print(entity_list)
+PYEOF
+) || result="ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 26 "HA Sofia — Entity Availability"
+        warn "HA Sofia: ${result#ERROR:}"
+        json_add "ha_entities" "WARN" "${result#ERROR:}"
+        return 0
+    fi
+
+    local first_line count total summary
+    first_line=$(echo "$result" | head -1)
+    count=$(echo "$first_line" | cut -d: -f1)
+    total=$(echo "$first_line" | cut -d: -f2)
+    summary=$(echo "$first_line" | cut -d: -f3-)
+
+    if [[ "$count" -eq 0 ]]; then
+        pass "All $total HA entities available"
+        json_add "ha_entities" "PASS" "0/$total unavailable"
+    elif [[ "$count" -le 10 ]]; then
+        [[ "$QUIET" == true ]] && section_always 26 "HA Sofia — Entity Availability"
+        warn "$count/$total entities unavailable ($summary)"
+        if [[ "$JSON" != true && "$QUIET" != true ]]; then
+            echo "$result" | grep "^ENTITY:" | sed 's/^ENTITY:/    /'
+        fi
+        json_add "ha_entities" "WARN" "$count/$total: $summary"
+    else
+        [[ "$QUIET" == true ]] && section_always 26 "HA Sofia — Entity Availability"
+        fail "$count/$total entities unavailable ($summary)"
+        if [[ "$JSON" != true && "$QUIET" != true ]]; then
+            echo "$result" | grep "^ENTITY:" | head -20 | sed 's/^ENTITY:/    /'
+            local entity_count
+            entity_count=$(echo "$result" | grep -c "^ENTITY:" || true)
+            if [[ "$entity_count" -gt 20 ]]; then
+                echo "    ... and $((entity_count - 20)) more"
+            fi
+        fi
+        json_add "ha_entities" "FAIL" "$count/$total: $summary"
+    fi
+}
+
+# --- 27. HA Integration Health ---
+check_ha_integrations() {
+    section 27 "HA Sofia — Integration Health"
+
+    if ! ha_sofia_available; then
+        warn "HA Sofia token not configured — skipping"
+        json_add "ha_integrations" "WARN" "Token not configured"
+        return 0
+    fi
+
+    ha_sofia_fetch_cache
+
+    if [[ ! -f "$HA_CACHE_DIR/entries.json" ]]; then
+        [[ "$QUIET" == true ]] && section_always 27 "HA Sofia — Integration Health"
+        warn "HA Sofia config entries API unavailable"
+        json_add "ha_integrations" "WARN" "API unavailable"
+        return 0
+    fi
+
+    local result
+    result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
+import os, json
+
+cache = os.environ["HA_CACHE_DIR"]
+with open(f"{cache}/entries.json") as f:
+    entries = json.load(f)
+
+total = len(entries)
+not_loaded = []
+setup_error = []
+for e in entries:
+    state = e.get("state", "loaded")
+    domain = e.get("domain", "?")
+    title = e.get("title", "?")
+    if state == "setup_error" or state == "setup_retry":
+        setup_error.append(f"{domain} ({title})")
+    elif state == "not_loaded":
+        not_loaded.append(f"{domain} ({title})")
+
+error_count = len(setup_error)
+unloaded_count = len(not_loaded)
+error_names = "; ".join(setup_error) if setup_error else ""
+unloaded_names = "; ".join(not_loaded) if not_loaded else ""
+print(f"{total}:{error_count}:{unloaded_count}:{error_names}:{unloaded_names}")
+PYEOF
+) || result="ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 27 "HA Sofia — Integration Health"
+        warn "HA Sofia: ${result#ERROR:}"
+        json_add "ha_integrations" "WARN" "${result#ERROR:}"
+        return 0
+    fi
+
+    local total error_count unloaded_count error_names unloaded_names
+    total=$(echo "$result" | cut -d: -f1)
+    error_count=$(echo "$result" | cut -d: -f2)
+    unloaded_count=$(echo "$result" | cut -d: -f3)
+    error_names=$(echo "$result" | cut -d: -f4)
+    unloaded_names=$(echo "$result" | cut -d: -f5-)
+
+    if [[ "$error_count" -gt 0 ]]; then
+        [[ "$QUIET" == true ]] && section_always 27 "HA Sofia — Integration Health"
+        fail "$error_count integration(s) in error state: $error_names"
+        json_add "ha_integrations" "FAIL" "$error_count errors: $error_names"
+    elif [[ "$unloaded_count" -gt 0 ]]; then
+        [[ "$QUIET" == true ]] && section_always 27 "HA Sofia — Integration Health"
+        warn "$unloaded_count integration(s) not loaded: $unloaded_names"
+        json_add "ha_integrations" "WARN" "$unloaded_count not loaded: $unloaded_names"
+    else
+        pass "All $total integrations loaded"
+        json_add "ha_integrations" "PASS" "All $total loaded"
+    fi
+}
+
+# --- 28. HA Automation Status ---
+check_ha_automations() {
+    section 28 "HA Sofia — Automation Status"
+
+    if ! ha_sofia_available; then
+        warn "HA Sofia token not configured — skipping"
+        json_add "ha_automations" "WARN" "Token not configured"
+        return 0
+    fi
+
+    ha_sofia_fetch_cache
+
+    if [[ ! -f "$HA_CACHE_DIR/states.json" ]]; then
+        [[ "$QUIET" == true ]] && section_always 28 "HA Sofia — Automation Status"
+        warn "HA Sofia states API unavailable"
+        json_add "ha_automations" "WARN" "API unavailable"
+        return 0
+    fi
+
+    local result
+    result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
+import os, json
+from datetime import datetime, timezone
+
+cache = os.environ["HA_CACHE_DIR"]
+with open(f"{cache}/states.json") as f:
+    states = json.load(f)
+
+autos = [s for s in states if s["entity_id"].startswith("automation.")]
+total = len(autos)
+disabled = [a["entity_id"] for a in autos if a["state"] == "off"]
+disabled_count = len(disabled)
+
+now = datetime.now(timezone.utc)
+stale = []
+for a in autos:
+    if a["state"] == "off":
+        continue
+    lt = a.get("attributes", {}).get("last_triggered")
+    if lt:
+        try:
+            t = datetime.fromisoformat(lt.replace("Z", "+00:00"))
+            days = (now - t).days
+            if days > 30:
+                stale.append(a["entity_id"] + "=" + str(days) + "d")
+        except:
+            pass
+
+stale_count = len(stale)
+disabled_names = "; ".join(disabled)
+stale_names = "; ".join(stale[:10])
+print(f"{total}:{disabled_count}:{stale_count}:{disabled_names}:{stale_names}")
+PYEOF
+) || result="ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 28 "HA Sofia — Automation Status"
+        warn "HA Sofia: ${result#ERROR:}"
+        json_add "ha_automations" "WARN" "${result#ERROR:}"
+        return 0
+    fi
+
+    local total disabled_count stale_count disabled_names stale_names
+    total=$(echo "$result" | cut -d: -f1)
+    disabled_count=$(echo "$result" | cut -d: -f2)
+    stale_count=$(echo "$result" | cut -d: -f3)
+    disabled_names=$(echo "$result" | cut -d: -f4)
+    stale_names=$(echo "$result" | cut -d: -f5-)
+
+    local status="PASS" detail=""
+    if [[ "$disabled_count" -gt 0 ]]; then
+        [[ "$QUIET" == true ]] && section_always 28 "HA Sofia — Automation Status"
+        warn "$disabled_count/$total automation(s) disabled"
+        if [[ "$JSON" != true && "$QUIET" != true && -n "$disabled_names" ]]; then
+            echo "$disabled_names" | tr ';' '\n' | sed 's/^ */    /'
+        fi
+        status="WARN"
+        detail+="$disabled_count disabled; "
+    fi
+
+    if [[ "$stale_count" -gt 0 ]]; then
+        [[ "$status" == "PASS" && "$QUIET" == true ]] && section_always 28 "HA Sofia — Automation Status"
+        warn "$stale_count automation(s) not triggered in 30+ days"
+        if [[ "$JSON" != true && "$QUIET" != true && -n "$stale_names" ]]; then
+            echo "$stale_names" | tr ';' '\n' | sed 's/^ */    /'
+        fi
+        [[ "$status" == "PASS" ]] && status="WARN"
+        detail+="$stale_count stale; "
+    fi
+
+    if [[ "$status" == "PASS" ]]; then
+        pass "All $total automations enabled and recently active"
+        json_add "ha_automations" "PASS" "All $total active"
+    else
+        json_add "ha_automations" "$status" "$detail"
+    fi
+}
+
+# --- 29. HA System Resources ---
+check_ha_system() {
+    section 29 "HA Sofia — System Resources"
+
+    if ! ha_sofia_available; then
+        warn "HA Sofia token not configured — skipping"
+        json_add "ha_system" "WARN" "Token not configured"
+        return 0
+    fi
+
+    ha_sofia_fetch_cache
+
+    if [[ ! -f "$HA_CACHE_DIR/states.json" ]] || [[ ! -f "$HA_CACHE_DIR/config.json" ]]; then
+        [[ "$QUIET" == true ]] && section_always 29 "HA Sofia — System Resources"
+        warn "HA Sofia API unavailable for system check"
+        json_add "ha_system" "WARN" "API unavailable"
+        return 0
+    fi
+
+    local result
+    result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
+import os, json
+
+cache = os.environ["HA_CACHE_DIR"]
+with open(f"{cache}/states.json") as f:
+    states = json.load(f)
+with open(f"{cache}/config.json") as f:
+    config = json.load(f)
+
+version = config.get("version", "unknown")
+entity_map = {s["entity_id"]: s for s in states}
+
+cpu_patterns = ["sensor.processor_use", "sensor.system_monitor_processor_use"]
+mem_patterns = ["sensor.memory_use_percent", "sensor.system_monitor_memory_use_percent"]
+disk_patterns = ["sensor.disk_use_percent", "sensor.disk_use_percent_", "sensor.system_monitor_disk_use_percent"]
+
+def find_entity(patterns):
+    for p in patterns:
+        if p in entity_map:
+            try:
+                return float(entity_map[p]["state"])
+            except (ValueError, TypeError):
+                pass
+    for eid, s in entity_map.items():
+        for p in patterns:
+            if p.rstrip("_") in eid and "percent" in eid:
+                try:
+                    return float(s["state"])
+                except (ValueError, TypeError):
+                    pass
+    return None
+
+cpu = find_entity(cpu_patterns)
+mem = find_entity(mem_patterns)
+disk = find_entity(disk_patterns)
+
+parts = ["version=" + version]
+if cpu is not None:
+    parts.append("cpu=" + str(int(cpu)))
+if mem is not None:
+    parts.append("mem=" + str(int(mem)))
+if disk is not None:
+    parts.append("disk=" + str(int(disk)))
+
+level = "PASS"
+for val in [cpu, mem, disk]:
+    if val is not None:
+        if val > 90:
+            level = "FAIL"
+            break
+        elif val > 80:
+            level = "WARN"
+
+print(level + ":" + ":".join(parts))
+PYEOF
+) || result="ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 29 "HA Sofia — System Resources"
+        warn "HA Sofia: ${result#ERROR:}"
+        json_add "ha_system" "WARN" "${result#ERROR:}"
+        return 0
+    fi
+
+    local level detail
+    level=$(echo "$result" | cut -d: -f1)
+    detail=$(echo "$result" | cut -d: -f2-)
+
+    if [[ "$level" == "FAIL" ]]; then
+        [[ "$QUIET" == true ]] && section_always 29 "HA Sofia — System Resources"
+        fail "HA Sofia resources critical: $detail"
+        json_add "ha_system" "FAIL" "$detail"
+    elif [[ "$level" == "WARN" ]]; then
+        [[ "$QUIET" == true ]] && section_always 29 "HA Sofia — System Resources"
+        warn "HA Sofia resources elevated: $detail"
+        json_add "ha_system" "WARN" "$detail"
+    else
+        pass "HA Sofia healthy ($detail)"
+        json_add "ha_system" "PASS" "$detail"
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -1283,6 +1703,10 @@ main() {
     check_gpu
     check_cloudflare_tunnel
     check_overcommit
+    check_ha_entities
+    check_ha_integrations
+    check_ha_automations
+    check_ha_system
     print_summary
 
     # Exit code: 2 for failures, 1 for warnings, 0 for clean
