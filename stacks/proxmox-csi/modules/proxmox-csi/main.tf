@@ -89,3 +89,67 @@ resource "null_resource" "node_labels" {
     zone   = each.value.proxmox_node
   }
 }
+
+# --- RBAC for PVE host snapshot restore script ---
+# Provides kubectl access from the Proxmox host for the lvm-pvc-snapshot restore subcommand.
+# Minimal permissions: read PVs/PVCs/Pods, scale Deployments/StatefulSets.
+
+resource "kubernetes_service_account" "pve_snapshot_admin" {
+  metadata {
+    name      = "pve-snapshot-admin"
+    namespace = "kube-system"
+  }
+}
+
+resource "kubernetes_secret" "pve_snapshot_admin_token" {
+  metadata {
+    name      = "pve-snapshot-admin-token"
+    namespace = "kube-system"
+    annotations = {
+      "kubernetes.io/service-account.name" = kubernetes_service_account.pve_snapshot_admin.metadata[0].name
+    }
+  }
+  type = "kubernetes.io/service-account-token"
+}
+
+resource "kubernetes_cluster_role" "pve_snapshot_admin" {
+  metadata {
+    name = "pve-snapshot-admin"
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["persistentvolumes", "persistentvolumeclaims", "pods"]
+    verbs      = ["get", "list"]
+  }
+
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets", "replicasets"]
+    verbs      = ["get", "list", "update", "patch"]
+  }
+
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments/scale", "statefulsets/scale"]
+    verbs      = ["get", "update", "patch"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "pve_snapshot_admin" {
+  metadata {
+    name = "pve-snapshot-admin"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.pve_snapshot_admin.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.pve_snapshot_admin.metadata[0].name
+    namespace = "kube-system"
+  }
+}

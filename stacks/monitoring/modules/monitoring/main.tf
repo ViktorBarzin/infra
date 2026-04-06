@@ -337,6 +337,27 @@ resource "kubernetes_cron_job_v1" "dns_anomaly_monitor" {
   }
 }
 
+# Expose Pushgateway via NodePort so the PVE host can push LVM snapshot metrics
+resource "kubernetes_service" "pushgateway_nodeport" {
+  metadata {
+    name      = "pushgateway-nodeport"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    type = "NodePort"
+    selector = {
+      "app.kubernetes.io/name"     = "prometheus-pushgateway"
+      "app.kubernetes.io/instance" = "prometheus"
+    }
+    port {
+      port        = 9091
+      target_port = 9091
+      node_port   = 30091
+      protocol    = "TCP"
+    }
+  }
+}
+
 resource "kubernetes_manifest" "status_redirect_middleware" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -355,36 +376,30 @@ resource "kubernetes_manifest" "status_redirect_middleware" {
   }
 }
 
-resource "kubernetes_ingress_v1" "status" {
-  metadata {
-    name      = "hetrix-redirect-ingress"
-    namespace = kubernetes_namespace.monitoring.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "monitoring-status-redirect@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+resource "kubernetes_manifest" "status_ingress_route" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "hetrix-redirect-ingress"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
     }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["status.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "status.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "not-used"
-              port {
-                number = 80 # redirected by middleware
-              }
-            }
-          }
-        }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`status.viktorbarzin.me`)"
+        kind  = "Rule"
+        middlewares = [{
+          name      = "status-redirect"
+          namespace = kubernetes_namespace.monitoring.metadata[0].name
+        }]
+        services = [{
+          kind = "TraefikService"
+          name = "noop@internal"
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
       }
     }
   }
@@ -408,36 +423,30 @@ resource "kubernetes_manifest" "yotovski_redirect_middleware" {
   }
 }
 
-resource "kubernetes_ingress_v1" "status_yotovski" {
-  metadata {
-    name      = "hetrix-yotovski-redirect-ingress"
-    namespace = kubernetes_namespace.monitoring.metadata[0].name
-    annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "monitoring-yotovski-redirect@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+resource "kubernetes_manifest" "yotovski_ingress_route" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "hetrix-yotovski-redirect-ingress"
+      namespace = kubernetes_namespace.monitoring.metadata[0].name
     }
-  }
-
-  spec {
-    ingress_class_name = "traefik"
-    tls {
-      hosts       = ["yotovski-status.viktorbarzin.me"]
-      secret_name = var.tls_secret_name
-    }
-    rule {
-      host = "yotovski-status.viktorbarzin.me"
-      http {
-        path {
-          path = "/"
-          backend {
-            service {
-              name = "not-used" # redirected by middleware
-              port {
-                number = 80
-              }
-            }
-          }
-        }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`yotovski-status.viktorbarzin.me`)"
+        kind  = "Rule"
+        middlewares = [{
+          name      = "yotovski-redirect"
+          namespace = kubernetes_namespace.monitoring.metadata[0].name
+        }]
+        services = [{
+          kind = "TraefikService"
+          name = "noop@internal"
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
       }
     }
   }
