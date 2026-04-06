@@ -45,7 +45,7 @@ DAY_OF_MONTH=$(date +%d)
 if [ "${DAY_OF_MONTH}" -le 7 ]; then
     # First Sunday of month: full sync with --delete to clean orphans on Synology
     log "Monthly full sync (1st Sunday)..."
-    rsync -az --delete \
+    rsync -rltz --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r \
         --exclude='.changed-files' \
         --exclude='.last-offsite-sync' \
         --exclude='.lv-pvc-mapping.json' \
@@ -54,7 +54,7 @@ elif [ -s "${MANIFEST}" ]; then
     # Incremental: only send files listed in manifest (no remote dir walk)
     MANIFEST_LINES=$(wc -l < "${MANIFEST}")
     log "Incremental sync (${MANIFEST_LINES} files from manifest)..."
-    rsync -az --files-from="${MANIFEST}" --no-traverse \
+    rsync -rltz --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" --no-traverse \
         "${BACKUP_ROOT}/" "${DEST}/" 2>&1 || STATUS=1
 else
     log "No changed files in manifest, nothing to sync"
