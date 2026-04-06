@@ -115,8 +115,18 @@ resource "kubernetes_deployment" "meshcentral" {
           command           = ["/bin/sh"]
           args = ["-c", <<-EOT
 if [ -f /opt/meshcentral/meshcentral-data/config.json ]; then
-  # Replace "certUrl" with "_certUrl" to disable it when using TLSOffload
+  # Disable certUrl when using Traefik reverse proxy with TLS offload
   sed -i 's/"certUrl":/"_certUrl":/g' /opt/meshcentral/meshcentral-data/config.json
+
+  # Fix WebRTC value from string to boolean
+  sed -i 's/"WebRTC": "[^"]*"/"WebRTC": false/g' /opt/meshcentral/meshcentral-data/config.json
+
+  # Ensure TLSOffload is enabled (Traefik terminates TLS, MeshCentral serves HTTP on 443)
+  # Re-enable if previously disabled by restoring _TLSOffload back to TLSOffload
+  sed -i 's/"_TLSOffload":/"TLSOffload":/g' /opt/meshcentral/meshcentral-data/config.json
+  # Set TLSOffload to true (accepts any reverse proxy)
+  sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' /opt/meshcentral/meshcentral-data/config.json
+  sed -i 's/"TLSOffload": false/"TLSOffload": true/g' /opt/meshcentral/meshcentral-data/config.json
 fi
 EOT
           ]
