@@ -79,6 +79,9 @@ module "viktor" {
   dab_session        = lookup(local.credentials["viktor"], "dab_session", null)
   dab_visitor_id     = lookup(local.credentials["viktor"], "dab_visitor_id", null)
   gemini_api_key     = lookup(local.credentials["viktor"], "gemini_api_key", null)
+  navidrome_scan_url = data.kubernetes_secret.eso_secrets.data["navidrome_scan_url"]
+  ha_sofia_url       = lookup(data.kubernetes_secret.eso_secrets.data, "ha_sofia_url", "")
+  ha_sofia_token     = lookup(data.kubernetes_secret.eso_secrets.data, "ha_sofia_token", "")
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Freedify (Viktor)"
@@ -99,7 +102,10 @@ module "emo" {
   tier            = local.tiers.aux
   protected       = true
   genius_token    = lookup(local.credentials["emo"], "genius_token", null)
-  gemini_api_key  = lookup(local.credentials["emo"], "gemini_api_key", null)
+  gemini_api_key     = lookup(local.credentials["emo"], "gemini_api_key", null)
+  navidrome_scan_url = data.kubernetes_secret.eso_secrets.data["navidrome_scan_url"]
+  ha_sofia_url       = lookup(data.kubernetes_secret.eso_secrets.data, "ha_sofia_url", "")
+  ha_sofia_token     = lookup(data.kubernetes_secret.eso_secrets.data, "ha_sofia_token", "")
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Freedify (Emo)"
