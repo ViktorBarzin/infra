@@ -1,5 +1,7 @@
 # Restore Vault (Raft)
 
+Last updated: 2026-04-06
+
 ## Prerequisites
 - `kubectl` access to the cluster
 - Vault root token (from `vault-root-token` secret in `vault` namespace — manually created, independent of automation)
@@ -8,8 +10,9 @@
 
 ## Backup Location
 - NFS: `/mnt/main/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db`
-- Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
-- Retention: 30 days
+- Mirrored to sda: `/mnt/backup/nfs-mirror/vault-backup/` (PVE host 192.168.1.127)
+- Replicated to Synology NAS: `Synology/Backup/Viki/pve-backup/nfs-mirror/vault-backup/`
+- Retention: 30 days (on NFS), latest only (on sda), unlimited (on Synology)
 - Schedule: Weekly on Sundays at 02:00 (`0 2 * * 0`)
 
 ## CRITICAL: Vault is a dependency for many services
@@ -86,6 +89,45 @@ kubectl rollout restart deployment -n external-secrets
 
 # Check ExternalSecret status
 kubectl get externalsecrets -A | grep -v "SecretSynced"
+```
+
+## Alternative: Restore from sda Backup
+
+If TrueNAS NFS is unavailable but the PVE host is accessible:
+
+```bash
+# 1. SSH to PVE host
+ssh root@192.168.1.127
+
+# 2. Find the latest snapshot
+ls -lt /mnt/backup/nfs-mirror/vault-backup/
+
+# 3. Copy snapshot to a location accessible from cluster
+# Port-forward to Vault and restore
+kubectl port-forward svc/vault-active -n vault 8200:8200 &
+export VAULT_ADDR=http://127.0.0.1:8200
+export VAULT_TOKEN=$(kubectl get secret vault-root-token -n vault -o jsonpath='{.data.vault-root-token}' | base64 -d)
+
+# Copy snapshot from PVE host to local workstation, then restore
+scp root@192.168.1.127:/mnt/backup/nfs-mirror/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db ./
+vault operator raft snapshot restore -force ./vault-raft-YYYYMMDD-HHMMSS.db
+```
+
+## Alternative: Restore from Synology (if PVE host is down)
+
+If both TrueNAS and PVE host are unavailable:
+
+```bash
+# 1. SSH to Synology NAS
+ssh Administrator@192.168.1.13
+
+# 2. Navigate to backup directory
+cd /volume1/Backup/Viki/pve-backup/nfs-mirror/vault-backup/
+
+# 3. Copy snapshot to local workstation
+scp Administrator@192.168.1.13:/volume1/Backup/Viki/pve-backup/nfs-mirror/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db ./
+
+# 4. Restore via port-forward (same as above)
 ```
 
 ## Full Vault Rebuild (from zero)

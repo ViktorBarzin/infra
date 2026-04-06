@@ -1,14 +1,16 @@
 # Storage Architecture
 
-Last updated: 2026-04-03
+Last updated: 2026-04-06
 
 ## Overview
 
 The cluster uses two storage backends: **Proxmox CSI** for database block storage and **TrueNAS NFS** for application data.
 
-**Block storage (Proxmox CSI)**: 13 PVCs for databases (CNPG PostgreSQL, MySQL InnoDB, Redis, Vaultwarden, Prometheus, Nextcloud, Calibre-Web) use `StorageClass: proxmox-lvm`, which provisions thin LVs directly from the Proxmox host's `local-lvm` storage. This eliminates the previous double-CoW (ZFS + LVM-thin) path that caused 56 ZFS checksum errors.
+**Block storage (Proxmox CSI)**: 65 PVCs for databases and stateful apps (CNPG PostgreSQL, MySQL InnoDB, Redis, Vaultwarden, Prometheus, Nextcloud, Calibre-Web, Forgejo, FreshRSS, ActualBudget, NovelApp, Headscale, Uptime Kuma, etc.) use `StorageClass: proxmox-lvm`, which provisions thin LVs directly from the Proxmox host's `local-lvm` storage (sdc, 10.7TB RAID1 HDD thin pool). This eliminates the previous double-CoW (ZFS + LVM-thin) path that caused 56 ZFS checksum errors.
 
-**NFS storage (TrueNAS)**: ~100 NFS shares for application data, media, configs, and backup targets continue to use TrueNAS ZFS at `10.0.10.15` via `StorageClass: nfs-truenas`.
+**NFS storage (TrueNAS)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and legacy app data continue to use TrueNAS ZFS at `10.0.10.15` via `StorageClass: nfs-truenas`.
+
+**Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, NFS mirrors, pfSense backups, and PVE config. Independent of live storage (sdc).
 
 **Migration (2026-04-02)**: All iSCSI block volumes were migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver is deprecated and pending removal.
 
@@ -16,17 +18,20 @@ The cluster uses two storage backends: **Proxmox CSI** for database block storag
 
 ```mermaid
 graph TB
+    subgraph Proxmox["Proxmox Host (192.168.1.127)"]
+        sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>65 proxmox-lvm PVCs"]
+        sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
+    end
+
     subgraph TrueNAS["TrueNAS (10.0.10.15)<br/>VMID 9000, 16c/16GB"]
         ZFS_Main["ZFS Pool: main<br/>1.64 TiB<br/>32G + 7x256G + 1T disks"]
         ZFS_SSD["ZFS Pool: ssd<br/>~256GB SSD<br/>Immich ML, PostgreSQL hot data"]
 
-        ZFS_Main --> NFS_Datasets["NFS Datasets<br/>~100 shares<br/>main/&lt;service&gt;"]
-        ZFS_Main --> iSCSI_Datasets["iSCSI Datasets<br/>main/iscsi (zvols)<br/>main/iscsi-snaps"]
+        ZFS_Main --> NFS_Datasets["NFS Datasets<br/>~100 shares<br/>main/&lt;service&gt;<br/>Media + backup targets"]
 
         NFS_Datasets --> NFS_Exports["NFS Exports<br/>managed by secrets/nfs_exports.sh"]
-        iSCSI_Datasets --> iSCSI_Targets["iSCSI Targets<br/>SSH-managed via democratic-csi"]
 
-        ZFS_SSD --> SSD_Data["Immich ML models<br/>PostgreSQL CNPG"]
+        ZFS_SSD --> SSD_Data["Immich ML models"]
     end
 
     subgraph K8s["Kubernetes Cluster"]

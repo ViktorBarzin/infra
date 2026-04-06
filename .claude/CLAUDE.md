@@ -174,17 +174,30 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 - Autoresizer annotations are **required** on all proxmox-lvm PVCs
 - Every proxmox-lvm app **MUST** add a backup CronJob writing to NFS `/mnt/main/<app>-backup/`
 
-### Cloud Sync (TrueNAS → Synology NAS)
-- **Task 1**: Weekly push (Monday 09:00) of `/mnt/main` NFS data to `nas.viktorbarzin.lan:/Backup/Viki/truenas`
-- **zfs diff optimization**: Pre-script diffs `main@cloudsync-prev` vs `main@cloudsync-new`, writes changed files to `/tmp/cloudsync_files.txt`. Args: `--files-from /tmp/cloudsync_files.txt --no-traverse`. Post-script rotates snapshots. Falls back to full `find` if no prev snapshot or >100k changes.
-- **Excludes**: ytldp, prometheus, logs, post, crowdsec, servarr/downloads, iscsi, iscsi-snaps, frigate, audiblez, ebook2audiobook, ollama, real-estate-crawler
+### 3-2-1 Backup Strategy
+**Copy 1**: Live data on sdc thin pool (65 PVCs + VMs)
+**Copy 2**: sda backup disk (`/mnt/backup`, 1.1TB ext4, VG `backup`)
+**Copy 3**: Synology NAS offsite (two paths)
 
-### Proxmox-LVM Backup Architecture
-- proxmox-lvm volumes are thin LVs on the Proxmox host — opaque to TrueNAS
-- **Offsite protection**: Application-level backup CronJobs dump data to NFS paths, which Cloud Sync Task 1 syncs to Synology
-- **Current CronJob coverage**: MySQL (mysqldump), PostgreSQL (pg_dumpall), Vault (raft snapshot), Redis (BGSAVE), Vaultwarden (sqlite3 .backup), Headscale (sqlite3 .backup)
-- **Convention**: Any new proxmox-lvm app MUST add a backup CronJob to its Terraform stack that writes to `/mnt/main/<app>-backup/`
-- **Uncovered (acceptable)**: Prometheus (disposable metrics), Loki (disposable logs), plotting-book and novelapp (small, low-priority)
+**PVE host scripts** (source: `infra/scripts/`):
+- `/usr/local/bin/weekly-backup` — Sunday 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Also mirrors NFS backup dirs, pfsense (config.xml + tar), PVE config. Prunes snapshots >7d.
+- `/usr/local/bin/offsite-sync-backup` — Sunday 08:00 (After=weekly-backup). `rsync --files-from` manifest to `Administrator@192.168.1.13:/volume1/Backup/Viki/pve-backup/`. Monthly full `--delete` on 1st Sunday.
+- `/usr/local/bin/lvm-pvc-snapshot` — Daily 03:00. Thin snapshots of all PVCs except dbaas+monitoring. 7-day retention. Instant restore: `lvm-pvc-snapshot restore <lv> <snap>`.
+
+**Offsite sync (two paths)**:
+- `Synology/Backup/Viki/pve-backup/` — structured data from PVE host (PVC files, DB dumps, pfsense, PVE config)
+- `Synology/Backup/Viki/truenas/` — NFS media from TrueNAS Cloud Sync (Immich, audiobookshelf, servarr — narrowed, excludes backup dirs)
+
+**App-level CronJobs** (write to TrueNAS NFS, mirrored to sda weekly):
+- MySQL (daily), PostgreSQL (daily), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
+- **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
+
+**Restore paths**:
+- Accidental delete: `lvm-pvc-snapshot restore` (instant, 7 daily snapshots)
+- Older data: Browse `/mnt/backup/pvc-data/<week>/<ns>/<pvc>/`, rsync back
+- Database: Restore from dump at `/mnt/backup/nfs-mirror/<db>-backup/`
+- pfsense: Upload config.xml via web UI, or extract tar for custom scripts
+- Full disaster: Restore from Synology
 
 ## Known Issues
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
