@@ -213,13 +213,16 @@ resource "helm_release" "mysql_cluster" {
       EOT
     }
 
+    # Top-level resources apply to SIDECAR container
+    # VPA shows sidecar needs only 248Mi target / 334Mi upper bound
+    # Setting to 350Mi (was 2Gi/4Gi - 17× over-provisioned)
     resources = {
       requests = {
         cpu    = "250m"
-        memory = "2Gi"
+        memory = "350Mi"
       }
       limits = {
-        memory = "4Gi"
+        memory = "350Mi"
       }
     }
 
@@ -251,15 +254,18 @@ resource "helm_release" "mysql_cluster" {
           }]
         }
       }
+      # Container-specific resources for MYSQL container
+      # VPA shows 2.98Gi target / 5.26Gi upper bound
+      # Current usage ~1.8Gi peak. Reducing limit from 4Gi to 3Gi
       containers = [{
         name = "mysql"
         resources = {
           requests = {
-            memory = "3Gi"
+            memory = "2Gi"
             cpu    = "250m"
           }
           limits = {
-            memory = "6Gi"
+            memory = "3Gi"
           }
         }
       }]
@@ -287,6 +293,15 @@ resource "helm_release" "mysql_cluster" {
         }
       ]
     }
+
+# MySQL Router - explicitly set resources (chart does not expose router.resources)
+# VPA shows 100Mi upper bound, setting to 128Mi
+# Note: This requires manual kubectl patch after helm release:
+#   kubectl patch deployment mysql-cluster-router -n dbaas --type=json -p='[
+#     {"op": "replace", "path": "/spec/template/spec/containers/0/resources",
+#      "value": {"requests": {"cpu": "25m", "memory": "128Mi"}, "limits": {"memory": "128Mi"}}}]'
+# TODO: migrate to mysql-operator fork or wait for upstream router.resources support
+
   })]
 
   depends_on = [helm_release.mysql_operator]
@@ -637,10 +652,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "128Mi"
+              memory = "100Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "100Mi"
             }
           }
         }
@@ -1076,10 +1091,10 @@ resource "kubernetes_deployment" "pgadmin" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "450Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "450Mi"
             }
           }
 
