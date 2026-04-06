@@ -224,9 +224,10 @@ resource "kubernetes_service" "meshcentral" {
       app = "meshcentral"
     }
     port {
-      name     = "http"
-      port     = 443
-      protocol = "TCP"
+      name        = "http"
+      port        = 80
+      target_port = 443
+      protocol    = "TCP"
     }
   }
 }
@@ -236,7 +237,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.meshcentral.metadata[0].name
   name            = "meshcentral"
   tls_secret_name = var.tls_secret_name
-  port            = 443
+  port            = 80
   protected         = true
   anti_ai_scraping  = false
   extra_annotations = {
