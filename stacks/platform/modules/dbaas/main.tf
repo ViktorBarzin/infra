@@ -175,6 +175,13 @@ resource "helm_release" "mysql_cluster" {
         innodb_log_buffer_size=16777216
         # Limit connections (peak usage ~40, no need for 151)
         max_connections=80
+        # Reduce disk write amplification (defaults were SSD-tuned, we're on HDD/LVM thin)
+        innodb_io_capacity=200
+        innodb_io_capacity_max=400
+        innodb_flush_log_at_trx_commit=2
+        sync_binlog=0
+        innodb_buffer_pool_size=1073741824
+        innodb_redo_log_capacity=536870912
       EOT
     }
 

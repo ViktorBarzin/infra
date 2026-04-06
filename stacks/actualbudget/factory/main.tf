@@ -89,10 +89,10 @@ resource "kubernetes_deployment" "actualbudget" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "160Mi"
+              memory = "320Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "400Mi"
             }
           }
           volume_mount {

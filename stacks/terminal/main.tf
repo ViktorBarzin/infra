@@ -70,3 +70,55 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# Read-only terminal session at terminal-ro.viktorbarzin.me
+resource "kubernetes_service" "terminal_ro" {
+  metadata {
+    name      = "terminal-ro"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+    labels = {
+      app = "terminal-ro"
+    }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 7682
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "terminal_ro" {
+  metadata {
+    name      = "terminal-ro"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 7682
+    }
+  }
+}
+
+module "ingress_ro" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.terminal.metadata[0].name
+  name            = "terminal-ro"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Terminal (Read-Only)"
+    "gethomepage.dev/description"  = "Read-only web terminal (ttyd)"
+    "gethomepage.dev/icon"         = "mdi-console"
+    "gethomepage.dev/group"        = "Infrastructure"
+    "gethomepage.dev/pod-selector" = ""
+  }
+}

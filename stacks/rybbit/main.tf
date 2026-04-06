@@ -101,6 +101,17 @@ resource "kubernetes_config_map" "clickhouse_memory" {
     "memory.xml" = <<-EOF
       <clickhouse>
           <max_server_memory_usage>1258291200</max_server_memory_usage>
+          <!-- Disable high-churn system logs to reduce disk writes -->
+          <trace_log remove="1"/>
+          <text_log remove="1"/>
+          <metric_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <query_log remove="1"/>
+          <part_log remove="1"/>
+          <processors_profile_log remove="1"/>
+          <query_metric_log remove="1"/>
+          <error_log remove="1"/>
+          <latency_log remove="1"/>
       </clickhouse>
     EOF
   }
@@ -135,6 +146,11 @@ resource "kubernetes_deployment" "clickhouse" {
         }
       }
       spec {
+        security_context {
+          run_as_user  = 101
+          run_as_group = 101
+          fs_group     = 101
+        }
         container {
           name  = "clickhouse"
           image = "clickhouse/clickhouse-server:25.4.2"
