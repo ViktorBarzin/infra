@@ -481,7 +481,8 @@ resource "kubernetes_config_map" "auth_proxy_config" {
               auth_basic_user_file /etc/nginx/htpasswd;
               add_header X-authentik-username $remote_user always;
               add_header X-Auth-Fallback "true" always;
-              return 200;
+              root /usr/share/nginx/fallback;
+              try_files /ok =403;
           }
 
           location /outpost.goauthentik.io/ {
@@ -500,6 +501,17 @@ resource "kubernetes_config_map" "auth_proxy_config" {
           }
       }
     EOT
+  }
+}
+
+resource "kubernetes_config_map" "auth_proxy_fallback" {
+  metadata {
+    name      = "auth-proxy-fallback"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+
+  data = {
+    "ok" = "authenticated"
   }
 }
 
@@ -562,6 +574,11 @@ resource "kubernetes_deployment" "auth_proxy" {
             sub_path   = "htpasswd"
             read_only  = true
           }
+          volume_mount {
+            name       = "fallback"
+            mount_path = "/usr/share/nginx/fallback"
+            read_only  = true
+          }
 
           liveness_probe {
             http_get {
@@ -601,6 +618,12 @@ resource "kubernetes_deployment" "auth_proxy" {
           name = "htpasswd"
           secret {
             secret_name = kubernetes_secret.auth_proxy_htpasswd.metadata[0].name
+          }
+        }
+        volume {
+          name = "fallback"
+          config_map {
+            name = kubernetes_config_map.auth_proxy_fallback.metadata[0].name
           }
         }
       }
