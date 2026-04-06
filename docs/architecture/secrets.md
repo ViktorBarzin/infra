@@ -10,7 +10,7 @@ Secrets management is centralized in HashiCorp Vault as the single source of tru
 graph TB
     subgraph "Secret Sources"
         VAULT_KV[Vault KV<br/>secret/viktor<br/>135+ keys]
-        VAULT_DB[Vault DB Engine<br/>24h rotation]
+        VAULT_DB[Vault DB Engine<br/>7-day rotation]
         VAULT_K8S[Vault K8s Engine<br/>Dynamic SA tokens]
         USER[User-managed<br/>sealed-*.yaml]
     end
@@ -46,7 +46,7 @@ graph TB
 graph LR
     subgraph "Database Credential Rotation"
         VAULT_ROOT[Vault Root Creds] --> VAULT_DB_ENGINE[Vault DB Engine]
-        VAULT_DB_ENGINE -->|Create role| DB_ROLE[DB Role: 24h TTL]
+        VAULT_DB_ENGINE -->|Create role| DB_ROLE[DB Role: 7-day TTL]
         DB_ROLE -->|ESO syncs| K8S_SECRET[K8s Secret]
         K8S_SECRET -->|App reads| APP[Application Pod]
         APP -->|Uses rotated creds| DATABASE[(MySQL/PostgreSQL)]
@@ -63,7 +63,7 @@ graph LR
 | Sealed Secrets | Latest | `stacks/platform/` | User-managed encrypted secrets |
 | SOPS | Latest | `scripts/state-sync`, `scripts/tg` | Terraform state encryption (Vault Transit + age) |
 | Vault K8s Auth | Enabled | `stacks/vault/` | CI/CD authentication via service account tokens |
-| Vault DB Engine | Enabled | `stacks/vault/` | Dynamic DB credentials for 6 MySQL + 8 PostgreSQL databases |
+| Vault DB Engine | Enabled | `stacks/vault/` | Dynamic DB credentials for 7 MySQL + 5 PostgreSQL databases |
 
 ## How It Works
 
@@ -108,37 +108,34 @@ ESO creates/updates K8s Secrets automatically when Vault values change. Applicat
 
 ### Database Credential Rotation
 
-Vault DB engine provides automatic 24h credential rotation for:
+Vault DB engine provides automatic 7 days credential rotation for:
 
-**MySQL databases** (6):
+**MySQL databases** (7):
 - speedtest
 - wrongmove
 - codimd
 - nextcloud
 - shlink
 - grafana
+- technitium
 
-**PostgreSQL databases** (8):
-- trading
+**PostgreSQL databases** (5):
 - health
 - linkwarden
 - affine
 - woodpecker
 - claude_memory
-- (2 others)
 
 **Excluded from rotation**:
 - authentik (uses PgBouncer, incompatible with rotation)
-- technitium, crowdsec (Helm charts bake credentials at install time)
+- crowdsec (Helm chart bakes credentials at install time)
 - Root user accounts (used for Vault itself to create rotated users)
 
 Workflow:
-1. ESO requests credentials from Vault DB engine
-2. Vault creates new DB user with 24h TTL
-3. ESO writes credentials to K8s Secret
-4. Application reads credentials from secret
-5. Vault automatically revokes user after 24h
-6. ESO requests new credentials, cycle repeats
+1. Vault rotates the database user's password (static role, 7-day period)
+2. ExternalSecrets Operator syncs new password to K8s Secret (15-min refresh)
+3. Apps read from K8s Secret via `secret_key_ref` env vars
+4. Special case: Technitium uses a CronJob to push password to its app config via API
 
 ### Kubernetes Credential Management
 
@@ -225,13 +222,13 @@ metadata:
 spec:
   provider:
     vault:
-      server: "https://vault.viktorbarzin.me"
+      server: "http://vault-active.vault.svc.cluster.local:8200"
       path: secret
       version: v2
       auth:
         kubernetes:
           mountPath: kubernetes
-          role: external-secrets
+          role: eso
 ```
 
 **ExternalSecret example**:
@@ -318,7 +315,7 @@ provider "vault" {
 
 ### Why Vault DB engine over static credentials?
 
-**Automatic rotation**: 24h TTL reduces credential exposure window.
+**Automatic rotation**: 7-day TTL reduces credential exposure window.
 
 **Audit trail**: Every credential generation logged in Vault.
 

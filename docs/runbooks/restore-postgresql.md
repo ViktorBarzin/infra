@@ -7,7 +7,7 @@
 - PostgreSQL superuser password (from `pg-cluster-superuser` secret in `dbaas` namespace)
 
 ## Backup Location
-- NFS: `/mnt/main/postgresql-backup/dump_YYYY_MM_DD_HH_MM.sql`
+- NFS: `/mnt/main/postgresql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz`
 - Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
 - Retention: 14 days
 
@@ -34,9 +34,9 @@ kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' 
 # Port-forward to the CNPG primary
 kubectl port-forward svc/pg-cluster-rw -n dbaas 5433:5432 &
 
-# Restore (this will overwrite existing data)
+# Restore (decompress and pipe to psql — this will overwrite existing data)
 PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d) \
-  psql -h 127.0.0.1 -p 5433 -U postgres -f /path/to/dump_YYYY_MM_DD_HH_MM.sql
+  zcat /path/to/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h 127.0.0.1 -p 5433 -U postgres
 ```
 
 ### 3. Option B: Rebuild CNPG cluster from scratch
@@ -56,7 +56,7 @@ kubectl wait --for=condition=Ready cluster/pg-cluster -n dbaas --timeout=300s
 # 5. Restore the dump
 PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d) \
   kubectl run pg-restore --rm -it --image=postgres:16.4-bullseye \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["psql","-h","pg-cluster-rw.dbaas","-U","postgres","-f","/backup/dump_YYYY_MM_DD_HH_MM.sql"]}]}}' \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}]}}' \
   -n dbaas
 ```
 
@@ -66,7 +66,7 @@ PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.dat
 PGPASSWORD=$PGPASSWORD psql -h 127.0.0.1 -p 5433 -U postgres -c "\l"
 
 # Check table counts for critical databases
-for db in trading health linkwarden affine woodpecker claude_memory; do
+for db in health linkwarden affine woodpecker claude_memory; do
   echo "=== $db ==="
   PGPASSWORD=$PGPASSWORD psql -h 127.0.0.1 -p 5433 -U postgres -d $db -c \
     "SELECT schemaname, tablename, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 5;"
@@ -76,10 +76,9 @@ done
 ### 5. Restart dependent services
 After restore, restart services that connect to PostgreSQL to pick up fresh connections:
 ```bash
-kubectl rollout restart deployment -n trading
 kubectl rollout restart deployment -n health
 kubectl rollout restart deployment -n linkwarden
-# ... repeat for all 12 PG-dependent services
+# ... repeat for all PG-dependent services (excluding trading — disabled)
 ```
 
 ## Restore from Synology (if TrueNAS is down)

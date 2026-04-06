@@ -10,7 +10,7 @@
 - NFS: `/mnt/main/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db`
 - Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
 - Retention: 30 days
-- Schedule: Daily at 02:00
+- Schedule: Weekly on Sundays at 02:00 (`0 2 * * 0`)
 
 ## CRITICAL: Vault is a dependency for many services
 Vault provides secrets to the entire cluster via ESO (External Secrets Operator). A Vault outage affects:
@@ -44,6 +44,11 @@ vault operator raft snapshot restore -force /path/to/vault-raft-YYYYMMDD-HHMMSS.
 ```
 
 ### 3. Unseal Vault (if sealed after restore)
+
+> **Note:** Vault now has an auto-unseal sidecar that automatically unseals pods
+> using the `vault-unseal-key` K8s Secret. The manual procedure below is a
+> fallback if auto-unseal fails.
+
 ```bash
 # Check seal status
 vault status

@@ -54,7 +54,7 @@ Violations cause state drift, which causes future applies to break or silently r
 - **ESO (External Secrets Operator)**: `stacks/external-secrets/` — 43 ExternalSecrets + 9 DB-creds ExternalSecrets. API version `v1beta1`. Two ClusterSecretStores: `vault-kv` and `vault-database`.
 - **Plan-time pattern**: Former plan-time stacks use `data "kubernetes_secret"` to read ESO-created K8s Secrets at plan time (no Vault dependency). First-apply gotcha: must `terragrunt apply -target=kubernetes_manifest.external_secret` first, then full apply. `count` on resources using secret values fails — remove conditional counts.
 - **14 hybrid stacks** still keep `data "vault_kv_secret_v2"` for plan-time needs (job commands, Helm templatefile, module inputs). Platform has 48 plan-time refs — no migration possible without restructuring modules.
-- **Database rotation**: Vault DB engine rotates passwords every 24h. MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, technitium. PostgreSQL: trading, health, linkwarden, affine, woodpecker, claude_memory. Excluded: authentik (PgBouncer), crowdsec (Helm-baked), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API.
+- **Database rotation**: Vault DB engine rotates passwords every 7 days (604800s). MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, technitium. PostgreSQL: health, linkwarden, affine, woodpecker, claude_memory. Excluded: authentik (PgBouncer), crowdsec (Helm-baked), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API.
 - **K8s credentials**: Vault K8s secrets engine. Roles: `dashboard-admin`, `ci-deployer`, `openclaw`, `local-admin`. Use `vault write kubernetes/creds/ROLE kubernetes_namespace=NS`. Helper: `scripts/vault-kubeconfig`.
 - **CI/CD (GHA + Woodpecker)**: Docker builds run on **GitHub Actions** (free on public repos). Woodpecker is **deploy-only** — receives image tag via API POST, runs `kubectl set image`. Woodpecker authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
 - **Platform cannot depend on vault** (circular). Apply order: vault first, then platform. Platform has 48 vault refs, all in module inputs — no ESO migration possible.
@@ -79,7 +79,7 @@ Violations cause state drift, which causes future applies to break or silently r
 
 **Flow**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
 
-**Migrated to GHA** (7): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book
+**Migrated to GHA** (9): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search
 **Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
 
 **Per-project files**:
@@ -97,7 +97,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 
 **GitHub repo secrets** (set on all repos): `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `WOODPECKER_TOKEN`
 
-**Infra pipelines unchanged**: `default.yml` (terragrunt apply), `renew-tls.yml` (certbot cron), `build-cli.yml` (dual registry push), `k8s-portal.yml` (path-filtered build) — all stay on Woodpecker.
+**Infra pipelines unchanged**: `default.yml` (terragrunt apply), `renew-tls.yml` (certbot cron), `build-cli.yml` (dual registry push), `k8s-portal.yml` (path-filtered build), `provision-user.yml` — all stay on Woodpecker.
 
 ## Database Host
 
@@ -121,7 +121,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 | Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
 | Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
-| MySQL InnoDB | Enable auto-recovery, anti-affinity excludes node2 (SIGBUS), 4.4Gi req but ~1Gi used |
+| MySQL InnoDB | Enable auto-recovery, anti-affinity excludes k8s-node1 (GPU), 2Gi req / 3Gi limit |
 
 ## Monitoring & Alerting
 - Alert cascade inhibitions: if node is down, suppress pod alerts on that node.

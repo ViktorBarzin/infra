@@ -17,11 +17,11 @@ graph TB
 
     subgraph Proxmox["Proxmox VE"]
         direction TB
-        MASTER["VM 200: k8s-master<br/>8c / 16GB<br/>10.0.20.100"]
+        MASTER["VM 200: k8s-master<br/>8c / 32GB<br/>10.0.20.100"]
         NODE1["VM 201: k8s-node1<br/>16c / 32GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:NoSchedule"]
-        NODE2["VM 202: k8s-node2<br/>8c / 24GB"]
-        NODE3["VM 203: k8s-node3<br/>8c / 24GB"]
-        NODE4["VM 204: k8s-node4<br/>8c / 24GB"]
+        NODE2["VM 202: k8s-node2<br/>8c / 32GB"]
+        NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
+        NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
     end
 
     subgraph K8s["Kubernetes Cluster v1.34.2"]
@@ -62,7 +62,7 @@ graph TB
 | Model | Dell PowerEdge R730 |
 | CPU | 1x Intel Xeon E5-2699 v4 (22 cores / 44 threads, CPU2 unpopulated) |
 | Total Cores/Threads | 22 cores / 44 threads |
-| RAM | 272GB DDR4-2400 ECC RDIMM (10 DIMMs: 8x32G Samsung + 2x8G Hynix) |
+| RAM | 272GB DDR4-2400 ECC RDIMM physical (10 DIMMs: 8x32G Samsung + 2x8G Hynix). VMs use ~160GB total (5 K8s VMs x 32GB) |
 | GPU | NVIDIA Tesla T4 (16GB GDDR6, PCIe 0000:06:00.0) |
 | Storage | 1.1TB SSD + 931GB SSD + 10.7TB HDD |
 | Hypervisor | Proxmox VE |
@@ -71,13 +71,13 @@ graph TB
 
 | VM | VMID | vCPUs | RAM | Network | Role | Taints |
 |----|------|-------|-----|---------|------|--------|
-| k8s-master | 200 | 8 | 16GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
+| k8s-master | 200 | 8 | 32GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
 | k8s-node1 | 201 | 16 | 32GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:NoSchedule` |
-| k8s-node2 | 202 | 8 | 24GB | vmbr1:vlan20 | Worker | None |
-| k8s-node3 | 203 | 8 | 24GB | vmbr1:vlan20 | Worker | None |
-| k8s-node4 | 204 | 8 | 24GB | vmbr1:vlan20 | Worker | None |
+| k8s-node2 | 202 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
+| k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
+| k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 
-**Total Cluster Resources**: 48 vCPUs, 120GB RAM (excluding control plane)
+**Total Cluster Resources**: 48 vCPUs, ~160GB RAM (5 nodes x 32GB)
 
 ### GPU Passthrough
 
@@ -443,7 +443,7 @@ spec:
 **Rationale**:
 - **CFS Throttling**: Linux Completely Fair Scheduler throttles containers to their exact CPU limit, even when CPU is idle. This causes artificial performance degradation.
 - **Burstability**: Services can burst to unused CPU during low-load periods, improving response times.
-- **Memory-bound**: With 272GB host RAM (180GB allocated to VMs), memory is no longer the primary constraint. 92GB headroom available for new VMs.
+- **Memory-bound**: With 272GB physical host RAM (~160GB allocated to K8s VMs), memory is no longer the primary constraint. ~112GB headroom available for new VMs.
 
 **Tradeoff**: A runaway process could monopolize CPU. Mitigated by CPU requests reserving capacity and PriorityClass preemption.
 

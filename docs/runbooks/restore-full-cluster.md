@@ -23,7 +23,8 @@ cd infra
 scripts/tg apply stacks/infra
 
 # 2. Wait for VMs to boot and be reachable
-# k8s-master, k8s-node3, k8s-node4, k8s-node5 (node1/2 excluded)
+# k8s-master, k8s-node3, k8s-node4, k8s-node5
+# (node1 has GPU workloads, node2 excluded from MySQL anti-affinity only — both are active cluster members)
 ```
 
 ### Phase 2: Kubernetes Control Plane
@@ -84,7 +85,7 @@ kubectl wait --for=condition=Ready cluster/pg-cluster -n dbaas --timeout=600s
 ### Phase 7: Application Services
 ```bash
 # 17. Deploy remaining stacks in any order
-for stack in vaultwarden immich nextcloud linkwarden trading health; do
+for stack in vaultwarden immich nextcloud linkwarden health; do
   scripts/tg apply stacks/$stack
 done
 

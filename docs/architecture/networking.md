@@ -36,7 +36,7 @@ graph TB
         subgraph "VLAN 20 - Kubernetes<br/>10.0.20.0/24"
             pfSense[pfSense<br/>10.0.20.1<br/>Gateway/NAT/DHCP]
             Tech[Technitium DNS<br/>10.0.20.101<br/>viktorbarzin.lan]
-            MLB[MetalLB Pool<br/>10.0.20.102-200]
+            MLB[MetalLB Pool<br/>10.0.20.200-10.0.20.220]
 
             subgraph "K8s Nodes"
                 Master[k8s-master]
@@ -85,7 +85,7 @@ graph TB
 | Traefik | Helm chart | K8s (3 replicas + PDB) | Ingress controller, HTTP/3 enabled |
 | CrowdSec | Helm chart | K8s (LAPI: 3 replicas) | Bot protection, fail-open bouncer |
 | Authentik | Helm chart | K8s (3 replicas + PDB) | SSO, forward-auth middleware |
-| MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.102-200), all services on 10.0.20.200 |
+| MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
 
 ## How It Works
@@ -165,7 +165,7 @@ Additional middleware:
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from the range 10.0.20.102-200 in **Layer 2 mode**. All 11 LoadBalancer services share a single IP (**10.0.20.200**) using the `metallb.io/allow-shared-ip: shared` annotation. Services sharing an IP must use the same `externalTrafficPolicy` (standardized to `Cluster`).
+MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. All 11 LoadBalancer services share a single IP (**10.0.20.200**) using the `metallb.io/allow-shared-ip: shared` annotation. Services sharing an IP must use the same `externalTrafficPolicy` (standardized to `Cluster`).
 
 | Service | Namespace | Ports |
 |---------|-----------|-------|
@@ -236,7 +236,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **MetalLB**:
 - Helm values: `stacks/platform/metallb-values.yaml`
-- IPAddressPool CRD: `10.0.20.102-10.0.20.200`
+- IPAddressPool CRD: `10.0.20.200-10.0.20.220`
 - All 11 LB services consolidated on `10.0.20.200` with `metallb.io/allow-shared-ip: shared`
 - Requires matching `externalTrafficPolicy` (all use `Cluster`) for IP sharing
 
@@ -327,7 +327,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 **Diagnosis**: Check MetalLB logs: `kubectl logs -n metallb-system deploy/controller`
 
 **Common causes**:
-1. **IP pool exhausted**: 98 IPs available (10.0.20.102-200), check `kubectl get svc -A | grep LoadBalancer`
+1. **IP pool exhausted**: 21 IPs available (10.0.20.200-10.0.20.220), check `kubectl get svc -A | grep LoadBalancer`
 2. **Missing allow-shared-ip annotation**: Services must have `metallb.io/allow-shared-ip: shared` and `metallb.io/loadBalancerIPs: 10.0.20.200`
 3. **Mismatched externalTrafficPolicy**: All services sharing an IP must use the same ETP (currently `Cluster`). Error: "can't change sharing key"
 4. **MetalLB controller crash-looping**: Resource limits too low

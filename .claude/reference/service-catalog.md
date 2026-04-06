@@ -5,33 +5,33 @@
 ## Critical - Network & Auth (Tier: core)
 | Service | Description | Stack |
 |---------|-------------|-------|
-| wireguard | VPN server | platform |
-| technitium | DNS server (10.0.20.101) | platform |
-| headscale | Tailscale control server | platform |
-| traefik | Ingress controller (Helm) | platform |
+| wireguard | VPN server | wireguard |
+| technitium | DNS server (10.0.20.101) | technitium |
+| headscale | Tailscale control server | headscale |
+| traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |
-| authentik | Identity provider (SSO) | platform |
-| cloudflared | Cloudflare tunnel | platform |
-| authelia | Auth middleware | platform |
-| monitoring | Prometheus/Grafana/Loki stack | platform |
+| authentik | Identity provider (SSO) | authentik |
+| cloudflared | Cloudflare tunnel | cloudflared |
+| authelia | Auth middleware (may be merged into ebooks or removed) | platform |
+| monitoring | Prometheus/Grafana/Loki stack | monitoring |
 
 ## Storage & Security (Tier: cluster)
 | Service | Description | Stack |
 |---------|-------------|-------|
 | vaultwarden | Bitwarden-compatible password manager | platform |
-| redis | Shared Redis at `redis.redis.svc.cluster.local` | platform |
+| redis | Shared Redis at `redis.redis.svc.cluster.local` | redis |
 | immich | Photo management (GPU) | immich |
-| nvidia | GPU device plugin | platform |
-| metrics-server | K8s metrics | platform |
-| uptime-kuma | Status monitoring | platform |
-| crowdsec | Security/WAF | platform |
-| kyverno | Policy engine | platform |
+| nvidia | GPU device plugin | nvidia |
+| metrics-server | K8s metrics | metrics-server |
+| uptime-kuma | Status monitoring | uptime-kuma |
+| crowdsec | Security/WAF | crowdsec |
+| kyverno | Policy engine | kyverno |
 
 ## Admin
 | Service | Description | Stack |
 |---------|-------------|-------|
-| k8s-dashboard | Kubernetes dashboard | platform |
-| reverse-proxy | Generic reverse proxy | platform |
+| k8s-dashboard | Kubernetes dashboard | k8s-dashboard |
+| reverse-proxy | Generic reverse proxy | reverse-proxy |
 
 ## Active Use
 | Service | Description | Stack |
@@ -43,12 +43,15 @@
 | dawarich | Location history | dawarich |
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
-| calibre | E-book management | calibre |
+| calibre | E-book management (may be merged into ebooks stack) | calibre |
 | onlyoffice | Document editing | onlyoffice |
 | f1-stream | F1 streaming | f1-stream |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
 | actualbudget | Budgeting (factory pattern) | actualbudget |
+| insta2spotify | Instagram reel song ID to Spotify playlist | insta2spotify |
+| trading-bot | Event-driven trading with sentiment analysis | trading-bot |
+| claude-memory | Persistent memory MCP server | claude-memory |
 
 ## Optional
 | Service | Description | Stack |
@@ -69,7 +72,7 @@
 | send | Firefox Send | send |
 | ytdlp | YouTube downloader | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
-| audiobookshelf | Audiobook server | audiobookshelf |
+| audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
 | paperless-ngx | Document management | paperless-ngx |
 | jsoncrack | JSON visualizer | jsoncrack |
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
@@ -103,6 +106,9 @@
 | grampsweb | Genealogy web app (Gramps Web) | grampsweb |
 | openclaw | AI agent gateway (OpenClaw) | openclaw |
 | poison-fountain | Anti-AI scraping (tarpit + poison) | poison-fountain |
+| priority-pass | Boarding pass color transformer | priority-pass |
+| status-page | Status page | status-page |
+| plotting-book | Book plotting/world-building app | plotting-book |
 
 ## Cloudflare Domains
 
