@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly offsite sync: rsync /mnt/backup to Synology NAS
+
+[Timer]
+OnCalendar=Sun *-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

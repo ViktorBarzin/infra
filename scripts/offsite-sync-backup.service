@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly offsite sync: rsync /mnt/backup to Synology NAS
+After=network-online.target weekly-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/offsite-sync-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=offsite-sync-backup
+TimeoutStartSec=7200
