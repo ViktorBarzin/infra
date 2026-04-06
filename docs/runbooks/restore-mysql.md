@@ -62,7 +62,26 @@ for db in speedtest wrongmove codimd nextcloud shlink grafana; do
 done
 ```
 
-### 5. InnoDB Cluster Recovery
+### 5. Verify application MySQL users exist
+
+After any cluster rebuild or PVC recreation, the MySQL operator only recreates its own system users. Application users may be lost.
+
+```bash
+ROOT_PWD=$(kubectl get secret cluster-secret -n dbaas -o jsonpath='{.data.ROOT_PASSWORD}' | base64 -d)
+
+# Check all expected application users exist
+kubectl exec -n dbaas mysql-cluster-0 -c mysql -- mysql -u root -p"$ROOT_PWD" \
+  -e "SELECT user, host FROM mysql.user WHERE user IN ('nextcloud','forgejo','crowdsec','grafana','speedtest','wrongmove','codimd','shlink','technitium','uptimekuma');"
+
+# If users are missing, force Vault to re-rotate their credentials:
+# vault write -f database/rotate-role/mysql-<app>
+# This will recreate the user with the correct password.
+#
+# For technitium specifically, also run the password sync CronJob:
+# kubectl create job --from=cronjob/technitium-password-sync technitium-pw-resync -n technitium
+```
+
+### 6. InnoDB Cluster Recovery
 If the InnoDB Cluster itself is broken (not just data loss):
 ```bash
 # Check cluster status via MySQL Shell

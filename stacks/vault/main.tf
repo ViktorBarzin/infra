@@ -465,7 +465,8 @@ resource "vault_database_secret_backend_connection" "mysql" {
   name          = "mysql"
   allowed_roles = [
     "mysql-speedtest", "mysql-wrongmove", "mysql-codimd",
-    "mysql-nextcloud", "mysql-shlink", "mysql-grafana"
+    "mysql-nextcloud", "mysql-shlink", "mysql-grafana",
+    "mysql-technitium"
   ]
 
   mysql {
@@ -541,6 +542,14 @@ resource "vault_database_secret_backend_static_role" "mysql_grafana" {
   db_name         = vault_database_secret_backend_connection.mysql.name
   name            = "mysql-grafana"
   username        = "grafana"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "mysql_technitium" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.mysql.name
+  name            = "mysql-technitium"
+  username        = "technitium"
   rotation_period = 604800
 }
 

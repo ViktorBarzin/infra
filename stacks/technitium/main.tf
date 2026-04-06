@@ -12,13 +12,12 @@ locals {
 }
 
 module "technitium" {
-  source                 = "./modules/technitium"
-  tls_secret_name        = var.tls_secret_name
-  nfs_server             = var.nfs_server
-  mysql_host             = var.mysql_host
-  homepage_token         = local.homepage_credentials["technitium"]["token"]
-  technitium_db_password = data.vault_kv_secret_v2.secrets.data["technitium_db_password"]
-  technitium_username    = data.vault_kv_secret_v2.secrets.data["technitium_username"]
-  technitium_password    = data.vault_kv_secret_v2.secrets.data["technitium_password"]
-  tier                   = local.tiers.core
+  source              = "./modules/technitium"
+  tls_secret_name     = var.tls_secret_name
+  nfs_server          = var.nfs_server
+  mysql_host          = var.mysql_host
+  homepage_token      = local.homepage_credentials["technitium"]["token"]
+  technitium_username = data.vault_kv_secret_v2.secrets.data["technitium_username"]
+  technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
+  tier                = local.tiers.core
 }

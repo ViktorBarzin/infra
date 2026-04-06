@@ -1,7 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "homepage_token" {}
-variable "technitium_db_password" {}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 variable "technitium_username" { type = string }
@@ -330,6 +329,44 @@ module "ingress-doh" {
   service_name    = "technitium-web"
 }
 
+# ExternalSecret for Technitium MySQL password (Vault auto-rotation)
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "technitium-db-creds"
+      namespace = kubernetes_namespace.technitium.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "technitium-db-creds"
+      }
+      data = [{
+        secretKey = "db_password"
+        remoteRef = {
+          key      = "static-creds/mysql-technitium"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.technitium]
+}
+
+data "kubernetes_secret" "technitium_db_creds" {
+  metadata {
+    name      = "technitium-db-creds"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
 # Grafana datasource for Technitium DNS query logs in MySQL
 resource "kubernetes_config_map" "grafana_technitium_datasource" {
   metadata {
@@ -351,7 +388,7 @@ resource "kubernetes_config_map" "grafana_technitium_datasource" {
         user     = "technitium"
         uid      = "technitium-mysql"
         secureJsonData = {
-          password = var.technitium_db_password
+          password = data.kubernetes_secret.technitium_db_creds.data["db_password"]
         }
       }]
     })
@@ -372,6 +409,70 @@ resource "kubernetes_config_map" "grafana_technitium_dashboard" {
   }
   data = {
     "technitium-dns.json" = file("${path.module}/dashboards/technitium-dns.json")
+  }
+}
+
+# CronJob to sync Vault-rotated MySQL password into Technitium's app config
+resource "kubernetes_cron_job_v1" "technitium_password_sync" {
+  metadata {
+    name      = "technitium-password-sync"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 */6 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "sync"
+              image = "curlimages/curl:latest"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "32Mi"
+                }
+              }
+              env {
+                name = "DB_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "technitium-db-creds"
+                    key  = "db_password"
+                  }
+                }
+              }
+              env {
+                name  = "TECH_USER"
+                value = var.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = var.technitium_password
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
+                CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":0,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
+                APP_NAME="Query Logs (MySQL)"
+                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=$$APP_NAME" --data-urlencode "config=$$CONFIG"
+                echo "Password sync complete"
+              EOT
+              ]
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
   }
 }
 

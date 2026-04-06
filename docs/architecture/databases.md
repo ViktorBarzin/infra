@@ -117,6 +117,7 @@ graph TB
 - nextcloud
 - shlink
 - grafana
+- technitium (DNS query logs via QueryLogsMySqlApp plugin)
 
 ### Redis
 
@@ -157,17 +158,18 @@ graph TB
 - nextcloud
 - shlink
 - grafana
+- technitium (password synced to Technitium DNS app via CronJob every 6h)
 
 **Excluded from Rotation**:
 - authentik (uses PgBouncer, incompatible)
-- technitium, crowdsec (Helm-baked credentials)
+- crowdsec (Helm-baked credentials)
 - Root users (manual management)
 
 **How Rotation Works**:
-1. Vault creates new user with same permissions
-2. App fetches new credentials on next Vault lease renewal
-3. Old credentials revoked after grace period
-4. Zero-downtime rotation
+1. Vault rotates the MySQL user's password (static role, 7-day period)
+2. ExternalSecrets Operator syncs new password to K8s Secret (15-min refresh)
+3. Apps read from K8s Secret via `secret_key_ref` env vars
+4. Special case: Technitium stores its MySQL connection in internal app config, so a CronJob pushes the rotated password to the Technitium API every 6 hours
 
 ## Configuration
 
