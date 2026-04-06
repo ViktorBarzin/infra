@@ -380,16 +380,184 @@
       ]
     },
     {
-      "title": "Active Backup Alerts",
+      "title": "LVM Thin Snapshots",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Time Since Last LVM Snapshot",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50400 },
+              { "color": "red", "value": 90000 }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": { "match": "null", "result": { "text": "No data", "color": "red" } }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "time() - lvm_snapshot_last_run_timestamp{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "LVM Snapshots",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "LVM Snapshot Status",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "OK", "color": "green" },
+                "1": { "text": "PARTIAL", "color": "yellow" },
+                "2": { "text": "ABORTED", "color": "red" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "lvm_snapshot_last_status{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "Status",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Thin Pool Free Space",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 15 },
+              { "color": "green", "value": 30 }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": { "match": "null", "result": { "text": "No data", "color": "red" } }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "lvm_snapshot_thinpool_free_pct{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "Free %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Snapshots Created / Pruned (Last Run)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "lvm_snapshot_created_total{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "Created",
+          "refId": "A"
+        },
+        {
+          "expr": "lvm_snapshot_pruned_total{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "Pruned",
+          "refId": "B"
+        },
+        {
+          "expr": "lvm_snapshot_failed_total{job=\"lvm-pvc-snapshot\"}",
+          "legendFormat": "Failed",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Active Backup & Snapshot Alerts",
       "type": "alertlist",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 42 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 55 },
       "datasource": { "type": "datasource", "uid": "grafana" },
       "options": {
         "showOptions": "current",
         "maxItems": 20,
         "sortOrder": 1,
         "dashboardAlerts": false,
-        "alertName": "backup",
+        "alertName": "",
         "stateFilter": {
           "firing": true,
           "pending": true,
@@ -397,6 +565,7 @@
           "normal": false,
           "error": true
         },
+        "alertInstanceLabelFilter": "{__alert_rule_title__=~\".*[Bb]ackup.*|.*[Ss]napshot.*|.*CloudSync.*|.*ThinPool.*\"}",
         "folder": { "id": null, "title": "" },
         "folderId": null
       }
@@ -404,7 +573,7 @@
     {
       "title": "CronJob Last Schedule",
       "type": "table",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 61 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": {
         "defaults": {},
