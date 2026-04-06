@@ -79,7 +79,7 @@ resource "kubernetes_deployment" "prowlarr" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/prowlarr:1.31.1"
+          image = "lscr.io/linuxserver/prowlarr:2.3.5"
           name  = "prowlarr"
 
           resources {
