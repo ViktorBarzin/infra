@@ -58,8 +58,8 @@ resource "kubernetes_resource_quota" "dbaas" {
   spec {
     hard = {
       "requests.cpu"    = "8"
-      "requests.memory" = "32Gi"
-      "limits.memory"   = "32Gi"
+      "requests.memory" = "40Gi"
+      "limits.memory"   = "40Gi"
       pods              = "30"
     }
   }
@@ -257,18 +257,34 @@ resource "helm_release" "mysql_cluster" {
       # Container-specific resources for MYSQL container
       # VPA shows 2.98Gi target / 5.26Gi upper bound
       # Current usage ~1.8Gi peak. Reducing limit from 4Gi to 3Gi
-      containers = [{
-        name = "mysql"
-        resources = {
-          requests = {
-            memory = "2Gi"
-            cpu    = "250m"
+      containers = [
+        {
+          name = "mysql"
+          resources = {
+            requests = {
+              memory = "2Gi"
+              cpu    = "250m"
+            }
+            limits = {
+              memory = "3Gi"
+            }
           }
-          limits = {
-            memory = "3Gi"
+        },
+        {
+          # MySQL operator sidecar (kopf Python control loop)
+          # VPA upper bound: 334Mi. Was 6Gi limit — 17× over-provisioned.
+          name = "sidecar"
+          resources = {
+            requests = {
+              memory = "350Mi"
+              cpu    = "50m"
+            }
+            limits = {
+              memory = "512Mi"
+            }
           }
         }
-      }]
+      ]
       initContainers = [
         {
           name = "fixdatadir"
