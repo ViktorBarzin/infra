@@ -192,7 +192,7 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
           }
           env {
             name  = "ACTUAL_SERVER_URL"
-            value = "https://budget-${var.name}.viktorbarzin.me"
+            value = "http://budget-${var.name}.actualbudget.svc.cluster.local"
           }
           env {
             name  = "ACTUAL_SERVER_PASSWORD"
