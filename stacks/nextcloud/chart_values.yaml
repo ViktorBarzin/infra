@@ -27,6 +27,40 @@ nextcloud:
     # - name: loglevel
     #   value: "0"
   configs:
+    zzz-redis.config.php: |
+      <?php
+      // Redis with Sentinel-based master discovery
+      // Queries Sentinel at startup to find the current master, falls back to direct host
+      $sentinels = [
+        ['redis-node-0.redis-headless.redis.svc.cluster.local', 26379],
+        ['redis-node-1.redis-headless.redis.svc.cluster.local', 26379],
+      ];
+      $redisHost = 'redis-node-0.redis-headless.redis.svc.cluster.local';
+      $redisPort = 6379;
+      foreach ($sentinels as [$sHost, $sPort]) {
+        try {
+          $s = new Redis();
+          if ($s->connect($sHost, $sPort, 0.5)) {
+            $master = $s->rawCommand('SENTINEL', 'get-master-addr-by-name', 'mymaster');
+            if ($master) {
+              $redisHost = $master[0];
+              $redisPort = (int)$master[1];
+              break;
+            }
+          }
+        } catch (\Exception $e) {}
+      }
+      $CONFIG = array(
+        'memcache.distributed' => '\\OC\\Memcache\\Redis',
+        'memcache.locking' => '\\OC\\Memcache\\Redis',
+        'redis' => array(
+          'host' => $redisHost,
+          'port' => $redisPort,
+          'password' => '',
+          'timeout' => 1.5,
+          'read_timeout' => 1.5,
+        ),
+      );
     performance.config.php: |
       <?php
       $CONFIG = array(
@@ -53,8 +87,7 @@ internalDatabase:
   enabled: false
 
 externalRedis:
-  enabled: true
-  host: ${redis_host}
+  enabled: false
 
 externalDatabase:
   enabled: true
