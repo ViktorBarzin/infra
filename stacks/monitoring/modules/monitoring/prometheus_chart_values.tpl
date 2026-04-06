@@ -1074,12 +1074,12 @@ serverFiles:
             annotations:
               summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
           - alert: LVMSnapshotStale
-            expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 86400
+            expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 172800
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "LVM PVC snapshots are {{ $value | humanizeDuration }} old (expected every 12h)"
+              summary: "LVM PVC snapshots are {{ $value | humanizeDuration }} old (expected daily)"
           - alert: LVMSnapshotNeverRun
             expr: absent(lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"})
             for: 48h
@@ -1101,6 +1101,42 @@ serverFiles:
               severity: warning
             annotations:
               summary: "LVM thin pool has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
+          # --- 3-2-1 Backup Pipeline Alerts ---
+          - alert: WeeklyBackupStale
+            expr: (time() - weekly_backup_last_run_timestamp{job="weekly-backup"}) > 777600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Weekly backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: WeeklyBackupFailing
+            expr: weekly_backup_last_status{job="weekly-backup"} != 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Weekly backup completed with errors (status={{ $value }})"
+          - alert: PfsenseBackupStale
+            expr: (time() - backup_last_success_timestamp{job="pfsense-backup"}) > 777600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "pfsense backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: OffsiteBackupSyncStale
+            expr: (time() - backup_last_success_timestamp{job="offsite-backup-sync"}) > 777600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Offsite backup sync is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: BackupDiskFull
+            expr: (1 - node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"} / node_filesystem_size_bytes{job="proxmox-host", mountpoint="/mnt/backup"}) > 0.85
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Backup disk /mnt/backup is {{ $value | humanizePercentage }} full"
           - alert: NewTailscaleClient
             expr: irate(headscale_machine_registrations_total{action="reauth"}[5m]) > 0
             for: 5m

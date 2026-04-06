@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly backup: rsync NFS to sda + prune snapshots
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/weekly-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=weekly-backup
+TimeoutStartSec=3600
