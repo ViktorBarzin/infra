@@ -97,7 +97,21 @@ alertmanager:
       - source_matchers:
           - alertname = PowerOutage
         target_matchers:
-          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown|UPSMetricsMissing|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|ATSMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown|UPSMetricsMissing|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|ATSMetricsMissing|HomeAssistantMetricsMissing|FuseMainMetricsMissing|FuseGarageMetricsMissing|ProxmoxMetricsMissing|iDRACSystemUnhealthy|iDRACServerPoweredOff|ProxmoxExporterDown"
+      # iDRAC system-level unhealthy suppresses component-level alerts
+      - source_matchers:
+          - alertname = iDRACSystemUnhealthy
+        target_matchers:
+          - alertname =~ "iDRACPowerSupplyUnhealthy|iDRACMemoryUnhealthy|iDRACStorageDriveUnhealthy|FanFailure"
+      # Fuse panel fault suppresses overcurrent/temp alerts for that panel
+      - source_matchers:
+          - alertname = FuseMainFault
+        target_matchers:
+          - alertname = FuseMainMetricsMissing
+      - source_matchers:
+          - alertname = FuseGarageFault
+        target_matchers:
+          - alertname = FuseGarageMetricsMissing
       # Containerd broken suppresses downstream pod alerts
       - source_matchers:
           - alertname = KubeletImagePullErrors
@@ -755,6 +769,134 @@ serverFiles:
               severity: info
             annotations:
               summary: "On inverter for >24h - check grid switchover"
+          - alert: UPSAlarmsActive
+            expr: ups_upsAlarmsPresent > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "UPS has {{ $value }} active alarm(s)"
+          - alert: UPSBatteryDegraded
+            expr: ups_upsBatteryStatus != 2
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "UPS battery status abnormal ({{ $value }}, expected 2=normal)"
+          - alert: UPSOverloaded
+            expr: ups_upsOutputPercentLoad{upsOutputLineIndex="1"} > 80
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "UPS load: {{ $value }}% (threshold: 80%)"
+          - alert: UPSOutputVoltageAbnormal
+            expr: ups_upsOutputVoltage{upsOutputLineIndex="1"} < 210 or ups_upsOutputVoltage{upsOutputLineIndex="1"} > 250
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "UPS output voltage: {{ $value }}V (expected 210-250V)"
+          - alert: ATSFault
+            expr: automatic_transfer_switch_fault != 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "ATS fault detected (value: {{ $value }})"
+          - alert: ATSPowerFault
+            expr: automatic_transfer_switch_power_fault != 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "ATS power fault detected (value: {{ $value }})"
+          - alert: ATSOverload
+            expr: automatic_transfer_switch_load_power_watts > 3000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 3000W)"
+          - alert: ATSInputVoltageAbnormal
+            expr: automatic_transfer_switch_voltage_l1_volts < 200 or automatic_transfer_switch_voltage_l1_volts > 260
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "ATS input voltage: {{ $value | printf \"%.0f\" }}V (expected 200-260V)"
+      - name: Server Health
+        rules:
+          - alert: iDRACSystemUnhealthy
+            expr: r730_idrac_redfish_system_health_state != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC system health state: {{ $value }} (expected 1=OK)"
+          - alert: iDRACPowerSupplyUnhealthy
+            expr: r730_idrac_redfish_chassis_power_powersupply_health != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC PSU {{ $labels.member_id }} unhealthy (state: {{ $value }})"
+          - alert: iDRACMemoryUnhealthy
+            expr: r730_idrac_redfish_system_memory_health_state != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC memory subsystem unhealthy (state: {{ $value }})"
+          - alert: iDRACStorageDriveUnhealthy
+            expr: r730_idrac_redfish_system_storage_drive_health_state != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "iDRAC storage drive {{ $labels.member_id }} unhealthy (state: {{ $value }})"
+          - alert: iDRACSSDWearCritical
+            expr: r730_idrac_idrac_storage_drive_life_left_percent > 0 and r730_idrac_idrac_storage_drive_life_left_percent < 10
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "SSD {{ $labels.id }} has {{ $value }}% life remaining"
+          - alert: iDRACSSDWearWarning
+            expr: r730_idrac_idrac_storage_drive_life_left_percent > 0 and r730_idrac_idrac_storage_drive_life_left_percent < 20
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "SSD {{ $labels.id }} has {{ $value }}% life remaining"
+          - alert: iDRACServerPoweredOff
+            expr: r730_idrac_redfish_system_power_state != 2
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "R730 server is not powered on (state: {{ $value }}, expected 2=On)"
+          - alert: ProxmoxExporterDown
+            expr: pve_up{id="node/pve"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Proxmox exporter cannot reach PVE host"
+          - alert: FuseMainFault
+            expr: fuse_main_fault != 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Main fuse panel fault detected"
+          - alert: FuseGarageFault
+            expr: fuse_garage_fault != 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Garage fuse panel fault detected"
       - name: Metric Staleness
         rules:
           - alert: UPSMetricsMissing
@@ -785,6 +927,27 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ATS metrics missing for 15m - check tuya-bridge pod"
+          - alert: FuseMainMetricsMissing
+            expr: absent(fuse_main_voltage)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Fuse main panel metrics missing for 15m - check tuya-bridge pod"
+          - alert: FuseGarageMetricsMissing
+            expr: absent(fuse_garage_voltage)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Fuse garage panel metrics missing for 15m - check tuya-bridge pod"
+          - alert: ProxmoxMetricsMissing
+            expr: absent(pve_up)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Proxmox metrics missing for 10m - check proxmox-exporter pod"
           - alert: HomeAssistantMetricsMissing
             expr: absent(up{job="haos"})
             for: 10m
