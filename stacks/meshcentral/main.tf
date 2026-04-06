@@ -108,6 +108,24 @@ resource "kubernetes_deployment" "meshcentral" {
       }
       spec {
 
+        init_container {
+          name              = "fix-config"
+          image             = "alpine:latest"
+          image_pull_policy = "IfNotPresent"
+          command           = ["/bin/sh"]
+          args = ["-c", <<-EOT
+if [ -f /opt/meshcentral/meshcentral-data/config.json ]; then
+  # Replace "certUrl" with "_certUrl" to disable it when using TLSOffload
+  sed -i 's/"certUrl":/"_certUrl":/g' /opt/meshcentral/meshcentral-data/config.json
+fi
+EOT
+          ]
+          volume_mount {
+            name       = "data"
+            mount_path = "/opt/meshcentral/meshcentral-data"
+          }
+        }
+
         container {
           image = "typhonragewind/meshcentral:latest"
           name  = "meshcentral"
@@ -211,11 +229,11 @@ module "ingress" {
   port            = 443
   protected       = true
   extra_annotations = {
-    "gethomepage.dev/enabled"                           = "true"
-    "gethomepage.dev/name"                              = "MeshCentral"
-    "gethomepage.dev/description"                       = "Remote management"
-    "gethomepage.dev/icon"                              = "meshcentral.png"
-    "gethomepage.dev/group"                             = "Infrastructure"
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "MeshCentral"
+    "gethomepage.dev/description"  = "Remote management"
+    "gethomepage.dev/icon"         = "meshcentral.png"
+    "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
   }
 }
