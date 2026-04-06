@@ -108,3 +108,14 @@ The target group (e.g. "Headscale Users") is auto-assigned on enrollment via the
 
 ### Deleted Roles
 - `authentik Read-only` -- no group assignment
+
+## Policy Fix (2026-04-06)
+### Unbound brute-force-protection Policy
+The `brute-force-protection` ReputationPolicy (PK: `ac98cb11-31d3-46ab-8883-bf51e6b09a60`, `check_username=True`, `check_ip=True`, `threshold=-5`) was bound to 3 authentication flows, causing "Flow does not apply to current user" for all unauthenticated users (no username to evaluate → failure_result=false → flow denied).
+
+Removed bindings from:
+- `default-authentication-flow` (PK: `34618cf3`) — username/password login
+- `webauthn` (PK: `0b60c2a5`) — passkey login
+- `default-source-authentication` (PK: via policybindingmodel `1a779f24`) — Google/GitHub/Facebook OAuth
+
+Policy still exists with 0 bindings. If brute-force protection is needed, bind to the **password stage** (not the flow level).

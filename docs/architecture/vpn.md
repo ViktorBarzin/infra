@@ -1,6 +1,6 @@
 # VPN & Remote Access Architecture
 
-Last updated: 2026-03-24
+Last updated: 2026-04-06
 
 ## Overview
 
@@ -12,14 +12,13 @@ Remote access to the homelab is provided through a hybrid VPN architecture: Wire
 
 ```mermaid
 graph TB
-    subgraph "Site-to-Site WireGuard"
-        Sofia[Sofia pfSense<br/>10.0.20.1]
-        London[London pfSense<br/>10.0.30.1]
-        Valchedrym[Valchedrym pfSense<br/>10.0.40.1]
+    subgraph "Site-to-Site WireGuard (Hub-and-Spoke)"
+        Sofia[Sofia pfSense<br/>10.3.2.1<br/>tun_wg0]
+        London[London GL-iNet Flint 2<br/>10.3.2.6<br/>192.168.8.0/24]
+        Valchedrym[Valchedrym OpenWRT<br/>10.3.2.5<br/>192.168.0.0/24]
 
         Sofia ---|WireGuard Tunnel| London
         Sofia ---|WireGuard Tunnel| Valchedrym
-        London ---|WireGuard Tunnel| Valchedrym
     end
 
     subgraph "Headscale Mesh Overlay"
@@ -81,7 +80,7 @@ sequenceDiagram
 
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
-| WireGuard | Built-in (pfSense) | Sofia/London/Valchedrym | Site-to-site encrypted tunnels |
+| WireGuard | Built-in (pfSense/OpenWRT) | Sofia (pfSense), London (GL-iNet Flint 2), Valchedrym (OpenWRT) | Site-to-site encrypted tunnels (hub-and-spoke) |
 | Headscale | v0.23.x (container) | K8s (headscale.viktorbarzin.me) | Tailscale control server, mesh coordinator |
 | Tailscale | Client v1.x | User devices | Mesh VPN client |
 | Authentik | OIDC provider | K8s | SSO authentication for Headscale |
@@ -93,12 +92,13 @@ sequenceDiagram
 
 ### WireGuard Site-to-Site
 
-Three physical locations are permanently connected via WireGuard tunnels configured on pfSense:
-- **Sofia** (primary): 10.0.20.0/24 (main K8s cluster)
-- **London**: 10.0.30.0/24 (secondary services)
-- **Valchedrym**: 10.0.40.0/24 (backup location)
+Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries both peers on the `10.3.2.0/24` tunnel subnet:
 
-Each pfSense instance maintains two WireGuard tunnels, forming a full mesh. Routes are automatically injected into each location's routing table. This allows services in Sofia to communicate with services in London without additional client configuration.
+- **Sofia** (hub): `10.3.2.1` — pfSense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
+- **London** (spoke): `10.3.2.6` — GL-iNet Flint 2 (GL-MT6000), LAN `192.168.8.0/24`, guest `192.168.9.0/24`
+- **Valchedrym** (spoke): `10.3.2.5` — OpenWRT router, LAN `192.168.0.0/24`
+
+Routes are configured as static routes on pfSense. London and Valchedrym route Sofia-bound traffic through their WireGuard tunnels. London ↔ Valchedrym traffic transits through Sofia (no direct tunnel).
 
 **Use cases**:
 - Replication of Vault data between Sofia and London
@@ -172,7 +172,7 @@ Removing a user from the group revokes VPN access on next re-authentication (eve
 | Headscale | `stacks/headscale/` | Deployment, Service, Ingress, ConfigMap |
 | AdGuard | `stacks/adguard/` | Deployment, Service, PVC |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
-| pfSense (Sofia) | `stacks/pfsense/` | WireGuard tunnel configs |
+| pfSense (Sofia) | Not in Terraform | WireGuard tunnel configs (managed via pfSense UI) |
 
 ### Headscale Configuration
 
@@ -233,21 +233,45 @@ dns_config:
 
 **Custom rules**: Block telemetry for Windows, macOS, and smart TVs.
 
-### WireGuard (pfSense)
+### WireGuard (pfSense — Hub)
 
-**Sofia → London tunnel**:
-- Interface: `wg0`
-- Local IP: `10.99.1.1/24`
-- Remote endpoint: `<public-ip>:51820`
-- Allowed IPs: `10.0.30.0/24`
-- Keepalive: 25 seconds
+**Single interface `tun_wg0`** (OPT2) with two peers on subnet `10.3.2.0/24`:
 
-**Sofia → Valchedrym tunnel**:
-- Interface: `wg1`
-- Local IP: `10.99.2.1/24`
-- Remote endpoint: `<public-ip>:51821`
-- Allowed IPs: `10.0.40.0/24`
+**Peer: London Flint 2**:
+- WireGuard IP: `10.3.2.6`
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (dynamic, London public IP)
+- Allowed IPs: `192.168.8.0/24, 192.168.9.0/24, 192.168.10.0/24, 10.3.2.6/32`
+- Keepalive: 25 seconds (configured on London side)
+
+**Peer: Valchedrym**:
+- WireGuard IP: `10.3.2.5`
+- Remote endpoint: `85.130.41.28:51820`
+- Allowed IPs: `10.3.2.5/32, 192.168.0.0/24`
+- Keepalive: none (should be added)
+
+**Static routes on pfSense**:
+- `192.168.0.0/24` → gateway `valchedrym` (10.3.2.5)
+- `192.168.8.0/24` → gateway `london_flint_2` (10.3.2.6)
+- `192.168.9.0/24` → gateway `london_flint_2` (10.3.2.6)
+- `192.168.10.0/24` → gateway `london_flint_2` (10.3.2.6)
+
+**Note**: WireGuard on pfSense is NOT managed by Terraform — configured via pfSense UI/shell.
+
+### WireGuard (London — GL-iNet Flint 2)
+
+- Interface: `wgclient1`
+- Local IP: `10.3.2.6/32`
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (176.12.22.76:51821)
+- Allowed IPs: `10.0.0.0/8, 192.168.1.0/24`
 - Keepalive: 25 seconds
+- Policy routing: GL-iNet marks traffic via iptables mangle → routing table 1001
+- Persistence: `/etc/firewall.user` injects mangle rules (GL-iNet framework unreliable)
+
+### WireGuard (Valchedrym — OpenWRT)
+
+- WireGuard IP: `10.3.2.5`
+- Remote endpoint: Sofia public IP
+- LAN: `192.168.0.0/24`
 
 ### Vault Secrets
 
@@ -389,7 +413,7 @@ dns_config:
 
 ### WireGuard Site-to-Site Tunnel Disconnects
 
-**Symptoms**: Can't reach services in London from Sofia. `ping 10.0.30.1` fails.
+**Symptoms**: Can't reach services in London from Sofia. `ping 192.168.8.1` fails.
 
 **Diagnosis**: Check pfSense WireGuard status: Dashboard → VPN → WireGuard → Status
 
