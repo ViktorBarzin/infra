@@ -71,7 +71,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "backend"
-          image = "registry.viktorbarzin.me/priority-pass-backend:v1"
+          image = "registry.viktorbarzin.me/priority-pass-backend:v2"
           port {
             container_port = 8000
           }
