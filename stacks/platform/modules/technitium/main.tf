@@ -30,7 +30,7 @@ module "tls_secret" {
 }
 
 # CoreDNS Corefile - manages cluster DNS resolution
-# The viktorbarzin.lan block forwards to Technitium via LoadBalancer.
+# The viktorbarzin.lan block forwards to Technitium via ClusterIP (stable, LB-independent).
 # A template regex in the viktorbarzin.lan block short-circuits junk queries
 # caused by ndots:5 search domain expansion (e.g. www.cloudflare.com.viktorbarzin.lan,
 # redis.redis.svc.cluster.local.viktorbarzin.lan) by returning NXDOMAIN for any
@@ -74,7 +74,7 @@ resource "kubernetes_config_map" "coredns" {
           rcode NXDOMAIN
           fallthrough
         }
-        forward . 10.0.20.200 # Technitium LoadBalancer
+        forward . 10.96.0.53 # Technitium ClusterIP (technitium-dns-internal)
         cache {
           success 10000 300 6
           denial 10000 300 60

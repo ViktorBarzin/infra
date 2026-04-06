@@ -23,6 +23,9 @@ resource "helm_release" "nfs_csi_driver" {
   values = [yamlencode({
     controller = {
       replicas = 2
+      livenessProbe = {
+        httpPort = 29653
+      }
       resources = {
         csiProvisioner = {
           requests = { cpu = "10m", memory = "128Mi" }

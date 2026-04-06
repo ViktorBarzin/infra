@@ -189,7 +189,7 @@ resource "vault_policy" "sops_admin" {
   policy = <<-EOT
     path "transit/encrypt/sops-state-*" { capabilities = ["update"] }
     path "transit/decrypt/sops-state-*" { capabilities = ["update"] }
-    path "transit/keys/sops-state-*"    { capabilities = ["read"] }
+    path "transit/keys/sops-state-*"    { capabilities = ["create", "read", "update"] }
   EOT
 }
 
@@ -481,7 +481,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
   backend       = vault_mount.database.path
   name          = "postgresql"
   allowed_roles = [
-    "pg-trading", "pg-health", "pg-linkwarden",
+    # "pg-trading",  # Commented out 2026-04-06 - trading-bot disabled
+    "pg-health", "pg-linkwarden",
     "pg-affine", "pg-woodpecker", "pg-claude-memory"
   ]
 
@@ -545,6 +546,8 @@ resource "vault_database_secret_backend_static_role" "mysql_grafana" {
 
 # --- PostgreSQL Static Roles ---
 
+/*
+# Commented out 2026-04-06 - trading-bot disabled
 resource "vault_database_secret_backend_static_role" "pg_trading" {
   backend         = vault_mount.database.path
   db_name         = vault_database_secret_backend_connection.postgresql.name
@@ -552,6 +555,7 @@ resource "vault_database_secret_backend_static_role" "pg_trading" {
   username        = "trading"
   rotation_period = 604800
 }
+*/
 
 resource "vault_database_secret_backend_static_role" "pg_health" {
   backend         = vault_mount.database.path

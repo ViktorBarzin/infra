@@ -236,6 +236,36 @@ resource "kubernetes_deployment" "haproxy" {
   depends_on = [helm_release.redis]
 }
 
+# Dedicated service for HAProxy master-only routing.
+# Clients should use redis-master.redis.svc.cluster.local for write-safe connections.
+# HAProxy health-checks Redis nodes and only routes to the current master.
+resource "kubernetes_service" "redis_master" {
+  metadata {
+    name      = "redis-master"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+    labels = {
+      app = "redis-haproxy"
+    }
+  }
+  spec {
+    selector = {
+      app = "redis-haproxy"
+    }
+    port {
+      name        = "redis"
+      port        = 6379
+      target_port = 6379
+    }
+    port {
+      name        = "sentinel"
+      port        = 26379
+      target_port = 26379
+    }
+  }
+
+  depends_on = [kubernetes_deployment.haproxy]
+}
+
 # The Helm chart creates a `redis` Service that selects all nodes (master + replica),
 # causing READONLY errors when clients hit the replica. We patch it post-Helm to
 # route through HAProxy instead, which health-checks and routes only to the master.

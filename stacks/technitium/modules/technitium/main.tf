@@ -30,7 +30,7 @@ module "tls_secret" {
 }
 
 # CoreDNS Corefile - manages cluster DNS resolution
-# The viktorbarzin.lan block forwards to Technitium via LoadBalancer.
+# The viktorbarzin.lan block forwards to Technitium via ClusterIP (stable, LB-independent).
 # A template regex in the viktorbarzin.lan block short-circuits junk queries
 # caused by ndots:5 search domain expansion (e.g. www.cloudflare.com.viktorbarzin.lan,
 # redis.redis.svc.cluster.local.viktorbarzin.lan) by returning NXDOMAIN for any
@@ -74,7 +74,7 @@ resource "kubernetes_config_map" "coredns" {
           rcode NXDOMAIN
           fallthrough
         }
-        forward . 10.0.20.200 # Technitium LoadBalancer
+        forward . 10.96.0.53 # Technitium ClusterIP (technitium-dns-internal)
         cache {
           success 10000 300 6
           denial 10000 300 60
@@ -148,22 +148,6 @@ resource "kubernetes_deployment" "technitium" {
       }
       spec {
         affinity {
-          # Prefer nodes running Traefik for network locality
-          pod_affinity {
-            preferred_during_scheduling_ignored_during_execution {
-              weight = 100
-              pod_affinity_term {
-                label_selector {
-                  match_expressions {
-                    key      = "app.kubernetes.io/name"
-                    operator = "In"
-                    values   = ["traefik"]
-                  }
-                }
-                topology_key = "kubernetes.io/hostname"
-              }
-            }
-          }
           # Spread DNS pods across nodes for HA
           pod_anti_affinity {
             required_during_scheduling_ignored_during_execution {
@@ -225,7 +209,7 @@ resource "kubernetes_deployment" "technitium" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.config_proxmox.metadata[0].name
+            claim_name = module.nfs_config.claim_name
           }
         }
         volume {
@@ -284,24 +268,58 @@ resource "kubernetes_service" "technitium-dns" {
       "app" = "technitium"
     }
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.201"
     }
   }
 
   spec {
     type = "LoadBalancer"
     port {
-      name     = "technitium-dns"
+      name     = "dns-udp"
       port     = 53
       protocol = "UDP"
     }
-    external_traffic_policy = "Cluster"
+    port {
+      name     = "dns-tcp"
+      port     = 53
+      protocol = "TCP"
+    }
+    external_traffic_policy = "Local"
     selector = {
       "dns-server" = "true"
     }
   }
 }
+
+# Fixed ClusterIP for CoreDNS forwarding — bypasses MetalLB entirely.
+# IP 10.96.0.53 is pinned so it survives Service recreation.
+resource "kubernetes_service" "technitium_dns_internal" {
+  metadata {
+    name      = "technitium-dns-internal"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    labels = {
+      app = "technitium"
+    }
+  }
+  spec {
+    type       = "ClusterIP"
+    cluster_ip = "10.96.0.53"
+    selector = {
+      "dns-server" = "true"
+    }
+    port {
+      name     = "dns-udp"
+      port     = 53
+      protocol = "UDP"
+    }
+    port {
+      name     = "dns-tcp"
+      port     = 53
+      protocol = "TCP"
+    }
+  }
+}
+
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.technitium.metadata[0].name

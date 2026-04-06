@@ -1,3 +1,8 @@
+/*
+# TRADING-BOT STACK COMMENTED OUT - 2026-04-06
+# Deployments scaled to 0, infrastructure disabled to prevent re-creation on apply
+# To re-enable: uncomment this entire block
+
 variable "tls_secret_name" {
   type      = string
   sensitive = true
@@ -620,3 +625,4 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+*/
