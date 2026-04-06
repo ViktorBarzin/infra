@@ -137,6 +137,7 @@ graph TB
 | Redis Backup | Weekly Sunday 03:00, 30d | CronJob in `redis` | BGSAVE + copy |
 | Prometheus Backup | Monthly 1st Sunday, 2 copies | CronJob in `monitoring` | TSDB snapshot → tar.gz |
 | plotting-book Backup | Weekly Sunday 03:00, 30d | CronJob in `plotting-book` | sqlite3 .backup |
+| LVM Thin Snapshots | Twice daily (00:00, 12:00), 7d | PVE host: `lvm-pvc-snapshot` | CoW snapshots of 13 proxmox-lvm PVCs |
 | Incremental Sync | Every 6h (cron) | TrueNAS: `/root/cloudsync-copy.sh` | ZFS diff → rclone copy |
 | Full Sync | Weekly Sunday 09:00 | TrueNAS Cloud Sync Task 1 | rclone sync with deletions |
 | CloudSync Monitor | Every 6h (cron) | CronJob in `monitoring` | Query TrueNAS API → Pushgateway |
@@ -169,6 +170,27 @@ zfs rollback main/<service>@auto-2026-03-23_00-00
 # Clone snapshot (non-destructive)
 zfs clone main/<service>@auto-2026-03-23_00-00 main/<service>-recovered
 ```
+
+### Layer 1b: LVM Thin Snapshots (Proxmox CSI PVCs)
+
+Native LVM thin snapshots provide crash-consistent point-in-time recovery for all 13 Proxmox CSI PVCs (~340Gi). These are CoW snapshots — instant creation, minimal overhead, sharing the thin pool's free space.
+
+**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot`)
+**Schedule**: Twice daily (00:00, 12:00) via systemd timer, 7-day retention (max 14 snapshots per LV)
+**Discovery**: Auto-discovers PVC LVs matching `vm-*-pvc-*` pattern in VG `pve` thin pool `data`
+
+**Coverage**: All proxmox-lvm PVCs **except** `dbaas` and `monitoring` namespaces. These are excluded because:
+- MySQL InnoDB, PostgreSQL, and Prometheus are high-churn (50%+ CoW divergence/hour)
+- They already have app-level dumps (Layer 2)
+- Including them causes ~36% write amplification; excluding them reduces overhead to ~0%
+
+Snapshotted PVCs include: Redis, Vaultwarden, Calibre, Nextcloud, Forgejo, FreshRSS, ActualBudget, NovelApp, Headscale, Uptime Kuma, etc. (~20 low-churn LVs)
+
+**Exclusion config**: `EXCLUDE_NAMESPACES` variable in script (default: `dbaas,monitoring`). Uses kubectl to resolve LV names dynamically.
+
+**Monitoring**: Pushes metrics to Pushgateway via NodePort (30091). Alerts: `LVMSnapshotStale` (>24h), `LVMSnapshotFailing`, `LVMThinPoolLow` (<15% free).
+
+**Restore**: `lvm-pvc-snapshot restore <pvc-lv> <snapshot-lv>` — auto-discovers K8s workload, scales down, swaps LVs, scales back up. See `docs/runbooks/restore-lvm-snapshot.md`.
 
 ### Layer 2: Application-Level Backups
 
