@@ -128,3 +128,15 @@ module "snmp-exporter-ingress" {
   ssl_redirect            = false
   port                    = 9116
 }
+module "snmp-exporter-ingress-external" {
+  source                  = "../../../../modules/kubernetes/ingress_factory"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
+  name                    = "snmp-exporter-external"
+  service_name            = "snmp-exporter"
+  root_domain             = "viktorbarzin.me"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = false
+  ssl_redirect            = false
+  port                    = 9116
+  protected               = false
+}
