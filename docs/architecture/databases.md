@@ -21,13 +21,12 @@ graph TB
         A4 --> PGB
         PGB --> CNPG_RW[CNPG Primary<br/>pg-cluster-rw.dbaas]
         CNPG_RW --> CNPG_R1[CNPG Replica 1]
-        CNPG_RW --> CNPG_R2[CNPG Replica 2]
     end
 
     subgraph MySQL
         A3 --> MYC[MySQL InnoDB Cluster<br/>3 instances]
-        MYC --> ISCSI1[iSCSI Storage]
-        MYC -.anti-affinity.-> NODE2[Exclude node2<br/>SIGBUS bug]
+        MYC --> LVM1[Proxmox-LVM Storage]
+        MYC -.anti-affinity.-> NODE1[Exclude k8s-node1<br/>GPU node]
     end
 
     subgraph Redis
@@ -36,8 +35,8 @@ graph TB
 
     subgraph Vault
         V[Vault DB Engine]
-        V -.24h rotation.-> PGB
-        V -.24h rotation.-> MYC
+        V -.7-day rotation.-> PGB
+        V -.7-day rotation.-> MYC
     end
 
     style CNPG_RW fill:#2088ff
@@ -50,9 +49,9 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| PostgreSQL (CNPG) | CloudNativePG | `dbaas` namespace | Primary/replica cluster, auto-failover |
+| PostgreSQL (CNPG) | CloudNativePG (PostGIS 16: `postgis:16`) | `dbaas` namespace | Primary/replica cluster, auto-failover |
 | PgBouncer | 3 replicas | `dbaas` namespace | Connection pooling for PostgreSQL |
-| MySQL InnoDB Cluster | 8.x | `dbaas` namespace | Multi-master MySQL cluster |
+| MySQL InnoDB Cluster | 8.4.4 | `dbaas` namespace | Multi-master MySQL cluster |
 | Redis | Latest | `redis` namespace | Shared cache layer |
 | Vault DB Engine | - | `vault` namespace | Automated credential rotation |
 
@@ -64,7 +63,7 @@ graph TB
 | PgBouncer | `pgbouncer.dbaas.svc.cluster.local` | Connection pool (3 replicas) |
 | MySQL | `mysql.dbaas.svc.cluster.local` | InnoDB Cluster VIP |
 | Redis | `redis.redis.svc.cluster.local` | Shared instance |
-| **NEVER USE** | `postgresql.dbaas.svc.cluster.local` | Legacy service, no endpoints |
+| PostgreSQL (compat) | `postgresql.dbaas.svc.cluster.local` | Compatibility service, selects CNPG primary |
 
 ## How It Works
 
@@ -80,7 +79,7 @@ graph TB
    - Reduces connection overhead
    - Load balances across PgBouncer instances
 
-3. **Credential Rotation**: Vault DB engine rotates credentials every 24h
+3. **Credential Rotation**: Vault DB engine rotates credentials every 7 days
    - Apps fetch credentials from Vault on startup
    - Vault manages rotation lifecycle
 
@@ -91,7 +90,7 @@ graph TB
 - affine
 - woodpecker
 - claude-memory-mcp
-- ~12 stacks total
+- 5 active PG roles
 
 ### MySQL InnoDB Cluster
 
@@ -99,16 +98,16 @@ graph TB
    - Multi-master replication
    - Automatic split-brain resolution
 
-2. **Storage**: iSCSI-backed persistent volumes
-   - Low-latency block storage
-   - Better performance than NFS
+2. **Storage**: Proxmox-LVM persistent volumes
+   - Thin-provisioned LVM on Proxmox hosts
+   - Block-level storage with proper write guarantees
 
-3. **Anti-Affinity**: Excludes node2 due to SIGBUS bug
-   - Pods scheduled to node1, node3, node4, etc.
-   - Prevents kernel panic crashes
+3. **Anti-Affinity**: Excludes k8s-node1 (GPU node)
+   - Pods scheduled to node2, node3, node4, etc.
+   - Keeps database workloads off the GPU-dedicated node
 
-4. **Resource Allocation**: 4.4Gi memory request, ~1Gi actual usage
-   - Over-provisioned for safety
+4. **Resource Allocation**: 2Gi request / 3Gi limit
+   - Right-sized based on VPA recommendations
 
 **Used by**:
 - wrongmove (realestate-crawler)
@@ -137,14 +136,13 @@ graph TB
 **Critical**: SQLite on NFS is unreliable
 - NFS lacks proper `fsync()` support
 - Causes database corruption under load
-- **Solution**: Use iSCSI-backed volumes for SQLite apps
+- **Solution**: Use Proxmox-LVM volumes for SQLite apps
 
 ### Vault Database Engine
 
-**Rotation Schedule**: 24 hours
+**Rotation Schedule**: 7 days (604800s)
 
 **PostgreSQL Rotation**:
-- trading
 - health (apple-health-data)
 - linkwarden
 - affine
@@ -229,8 +227,8 @@ resource "vault_database_secret_backend_role" "app" {
     "CREATE USER \"{{name}}\" WITH PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';",
     "GRANT ALL PRIVILEGES ON DATABASE myapp TO \"{{name}}\";"
   ]
-  default_ttl         = 86400  # 24 hours
-  max_ttl             = 86400
+  default_ttl         = 604800  # 7 days
+  max_ttl             = 604800
 }
 
 resource "kubernetes_secret" "db_creds" {
@@ -281,17 +279,17 @@ resource "kubernetes_secret" "db_creds" {
 - Automatic split-brain resolution
 - Simpler than Galera
 
-### Why iSCSI Storage for Databases?
+### Why Block Storage for Databases?
 
 - NFS lacks proper `fsync()` support (causes SQLite corruption)
-- iSCSI provides block-level storage with proper write guarantees
+- Proxmox-LVM provides block-level storage with proper write guarantees
 - Lower latency than NFS for database workloads
 
-### Why 24h Credential Rotation?
+### Why 7-Day Credential Rotation?
 
 - Balance between security (shorter is better) and operational overhead
-- 24h allows time to debug issues before next rotation
-- Aligns with daily ops cycle
+- 7 days allows ample time to debug issues before next rotation
+- Reduces rotation-related disruptions while maintaining security hygiene
 
 ### Why Shared Redis (Not Per-App)?
 
@@ -331,9 +329,9 @@ kubectl get cluster -n dbaas
 kubectl cnpg promote pg-cluster-2 -n dbaas
 ```
 
-### MySQL: Pod Stuck on node2
+### MySQL: Pod Stuck on Excluded Node
 
-**Cause**: Anti-affinity rule not applied
+**Cause**: Anti-affinity rule not applied (should exclude k8s-node1)
 
 **Fix**:
 ```bash
@@ -344,17 +342,17 @@ kubectl get pod <mysql-pod> -n dbaas -o yaml | grep -A 10 affinity
 kubectl delete pod <mysql-pod> -n dbaas
 ```
 
-### MySQL: SIGBUS Crash on node2
+### MySQL: Pod Scheduled on GPU Node
 
-**Cause**: Known kernel bug on node2 with iSCSI storage
+**Cause**: Anti-affinity rule not preventing scheduling on k8s-node1
 
 **Fix**:
 ```bash
-# Cordon node2 to prevent scheduling
-kubectl cordon node2
+# Check pod affinity rules
+kubectl get pod <mysql-pod> -n dbaas -o yaml | grep -A 10 affinity
 
-# Delete MySQL pods on node2
-kubectl delete pod -n dbaas -l app=mysql --field-selector spec.nodeName=node2
+# Delete pod to reschedule away from node1
+kubectl delete pod <mysql-pod> -n dbaas
 ```
 
 ### SQLite: Database Corruption
@@ -366,10 +364,10 @@ kubectl delete pod -n dbaas -l app=mysql --field-selector spec.nodeName=node2
 # Check volume type
 kubectl get pv | grep <app>
 
-# If NFS, migrate to iSCSI:
-# 1. Create iSCSI PVC
+# If NFS, migrate to proxmox-lvm:
+# 1. Create proxmox-lvm PVC
 # 2. Backup SQLite database
-# 3. Restore to iSCSI volume
+# 3. Restore to proxmox-lvm volume
 # 4. Update app to use new volume
 ```
 
@@ -410,15 +408,15 @@ CONFIG REWRITE
 
 ### App Can't Connect: "Connection refused"
 
-**Cause**: Using legacy `postgresql.dbaas` service (no endpoints)
+**Cause**: Service endpoint not reachable or PgBouncer not running
 
 **Fix**:
 ```bash
 # Check service endpoints
+kubectl get endpoints pgbouncer -n dbaas
 kubectl get endpoints postgresql -n dbaas
-# Output: No endpoints (this is the problem)
 
-# Update app to use pg-cluster-rw or pgbouncer
+# Update app to use pgbouncer
 kubectl set env deployment/<app> DB_HOST=pgbouncer.dbaas.svc.cluster.local
 ```
 

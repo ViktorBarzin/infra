@@ -42,11 +42,11 @@ For secrets that users manage themselves (no SOPS/git-crypt access needed):
 
 ## Architecture
 Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Proxmox VMs.
-- **70+ services**, each in `stacks/<service>/` with its own Terraform state
-- **Core platform**: `stacks/platform/modules/` (~22 modules: Traefik, Kyverno, monitoring, dbaas, sealed-secrets, etc.)
+- **100+ stacks**, each in `stacks/<service>/` with its own Terraform state
+- **Core platform**: `stacks/platform/` is now an empty shell — all modules have been extracted to independent stacks under `stacks/`
 - **Public domain**: `viktorbarzin.me` (Cloudflare) | **Internal**: `viktorbarzin.lan` (Technitium DNS)
 - **Onboarding portal**: `https://k8s-portal.viktorbarzin.me` — self-service kubectl setup + docs
-- **CI/CD**: Woodpecker CI — PRs run plan, merges to master auto-apply platform stack
+- **CI/CD**: Woodpecker CI — PRs run plan, merges to master auto-apply all stacks
 
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
@@ -60,9 +60,9 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 
 ## Storage
 - **NFS** (`nfs-truenas` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
-- **iSCSI** (`iscsi-truenas` StorageClass): For databases (PostgreSQL, MySQL). democratic-csi driver.
+- **proxmox-lvm** (`proxmox-lvm` StorageClass): For databases (PostgreSQL, MySQL). TopoLVM driver.
 - **TrueNAS**: 10.0.10.15. NFS exports managed via `secrets/nfs_exports.sh`.
-- **SQLite on NFS is unreliable** (fsync issues) — always use iSCSI or local disk for databases.
+- **SQLite on NFS is unreliable** (fsync issues) — always use proxmox-lvm or local disk for databases.
 - **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
 - **NFS export directory must exist** on TrueNAS before Terraform can create the PV.
 
@@ -81,7 +81,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **GPU**: `node_selector = { "gpu": "true" }` + toleration `nvidia.com/gpu`
 - **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only. Caches stale manifests for :latest tags — use versioned tags or pre-pull with `ctr --hosts-dir ''` to bypass.
 - **pfSense**: 10.0.20.1 (gateway, firewall, DNS forwarding)
-- **MySQL InnoDB Cluster**: 3 instances on iSCSI, anti-affinity excludes node2 (SIGBUS bug)
+- **MySQL InnoDB Cluster**: 3 instances on proxmox-lvm, anti-affinity excludes k8s-node1 (GPU node)
 - **SMTP**: `var.mail_host` port 587 STARTTLS (not internal svc address — cert mismatch)
 
 ## Contributor Onboarding

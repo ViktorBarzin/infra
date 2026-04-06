@@ -58,7 +58,7 @@ graph LR
 
 ### Project Migration Status
 
-**Migrated to GHA (7 projects)**:
+**Migrated to GHA (9 projects)**:
 - Website
 - k8s-portal
 - f1-stream
@@ -66,9 +66,11 @@ graph LR
 - apple-health-data
 - audiblez-web
 - plotting-book
+- insta2spotify
+- book-search (audiobook-search)
 
 **Woodpecker-only (infra + large apps)**:
-- `travel_blog`: 1.4GB content directory exceeds GHA limits
+- `travel_blog`: 5.7GB content directory exceeds GHA limits
 - Infra pipelines: require cluster access (terragrunt apply, certbot, build-cli)
 
 ### Woodpecker Pipeline Files
@@ -265,7 +267,7 @@ commands:
 
 ### travel_blog Build Times Out on GHA
 
-**Cause**: 1.4GB content directory exceeds GHA disk/time limits
+**Cause**: 5.7GB content directory exceeds GHA disk/time limits
 
 **Fix**: Keep on Woodpecker (no migration). Build uses cluster storage and resources.
 

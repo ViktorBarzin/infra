@@ -41,7 +41,7 @@ kubectl scale deployment vaultwarden -n vaultwarden --replicas=0
 BACKUP_DIR="YYYY_MM_DD_HH_MM"  # Set to desired backup
 
 kubectl run vw-restore --rm -it --image=alpine \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"vaultwarden-backup"}},{"name":"data","persistentVolumeClaim":{"claimName":"vaultwarden-data-iscsi"}}],"containers":[{"name":"vw-restore","image":"alpine","volumeMounts":[{"name":"backup","mountPath":"/backup"},{"name":"data","mountPath":"/data"}],"command":["/bin/sh","-c","cp /backup/'$BACKUP_DIR'/db.sqlite3 /data/db.sqlite3 && cp /backup/'$BACKUP_DIR'/rsa_key.pem /data/ && cp /backup/'$BACKUP_DIR'/rsa_key.pub.pem /data/ && cp -a /backup/'$BACKUP_DIR'/attachments /data/ 2>/dev/null; echo Restore complete"]}]}}' \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"vaultwarden-backup"}},{"name":"data","persistentVolumeClaim":{"claimName":"vaultwarden-data-proxmox"}}],"containers":[{"name":"vw-restore","image":"alpine","volumeMounts":[{"name":"backup","mountPath":"/backup"},{"name":"data","mountPath":"/data"}],"command":["/bin/sh","-c","cp /backup/'$BACKUP_DIR'/db.sqlite3 /data/db.sqlite3 && cp /backup/'$BACKUP_DIR'/rsa_key.pem /data/ && cp /backup/'$BACKUP_DIR'/rsa_key.pub.pem /data/ && cp -a /backup/'$BACKUP_DIR'/attachments /data/ 2>/dev/null; echo Restore complete"]}]}}' \
   -n vaultwarden
 ```
 

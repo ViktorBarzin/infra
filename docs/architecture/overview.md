@@ -9,7 +9,7 @@ This homelab infrastructure runs a production-grade Kubernetes cluster on Proxmo
 ```mermaid
 graph TB
     subgraph Physical["Physical Hardware"]
-        R730["Dell R730<br/>22c/44t Xeon E5-2699 v4<br/>142GB RAM<br/>NVIDIA Tesla T4<br/>1.1TB + 931GB + 10.7TB"]
+        R730["Dell R730<br/>22c/44t Xeon E5-2699 v4<br/>~160GB RAM<br/>NVIDIA Tesla T4<br/>1.1TB + 931GB + 10.7TB"]
     end
 
     subgraph Proxmox["Proxmox VE"]
@@ -67,8 +67,8 @@ graph TB
 | Component | Specification |
 |-----------|---------------|
 | Server | Dell PowerEdge R730 |
-| CPU | 2x Intel Xeon E5-2699 v4 (22 cores / 44 threads each, 44c/88t total) |
-| RAM | 142GB DDR4 ECC |
+| CPU | 1x Intel Xeon E5-2699 v4 (22 cores / 44 threads, CPU2 unpopulated) |
+| RAM | ~160GB DDR4 ECC |
 | GPU | NVIDIA Tesla T4 (16GB, PCIe 0000:06:00.0) |
 | Storage | 1.1TB SSD + 931GB SSD + 10.7TB HDD |
 | Network | eno1 (physical), vmbr0 (physical bridge), vmbr1 (VLAN-aware internal) |
@@ -88,11 +88,11 @@ graph TB
 | 101 | pfsense | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | - | Gateway/firewall routing between VLANs |
 | 102 | devvm | 16 | 8GB | vmbr1:vlan10 | - | Development VM |
 | 103 | home-assistant | 8 | 8GB | vmbr0 | - | Home Assistant Sofia instance |
-| 200 | k8s-master | 8 | 8GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
-| 201 | k8s-node1 | 16 | 16GB | vmbr1:vlan20 | - | GPU worker node (Tesla T4 passthrough) |
-| 202 | k8s-node2 | 8 | 24GB | vmbr1:vlan20 | - | Worker node |
-| 203 | k8s-node3 | 8 | 24GB | vmbr1:vlan20 | - | Worker node |
-| 204 | k8s-node4 | 8 | 24GB | vmbr1:vlan20 | - | Worker node |
+| 200 | k8s-master | 8 | 32GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
+| 201 | k8s-node1 | 16 | 32GB | vmbr1:vlan20 | - | GPU worker node (Tesla T4 passthrough) |
+| 202 | k8s-node2 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
+| 203 | k8s-node3 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
+| 204 | k8s-node4 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 220 | docker-registry | 4 | 4GB | vmbr1:vlan20 | 10.0.20.10 | Private Docker registry |
 | 9000 | truenas | 16 | 16GB | vmbr1:vlan10 | 10.0.10.15 | NFS storage server |
 
@@ -103,7 +103,7 @@ graph TB
 | Version | v1.34.2 |
 | Nodes | 5 (1 control plane, 4 workers) |
 | CNI | Calico |
-| Storage | democratic-csi (NFS) + local-path-provisioner |
+| Storage | NFS (democratic-csi) + Proxmox-LVM (Proxmox CSI) |
 | Ingress | Traefik v3 |
 | Total Services | 70+ services across 5 tiers |
 
@@ -123,7 +123,7 @@ The cluster uses a five-tier namespace system managed by Kyverno, which automati
 
 ### Physical Layer
 
-The infrastructure runs on a single Dell R730 server with dual Xeon CPUs and 142GB RAM. Proxmox VE provides hypervisor capabilities with hardware passthrough support for the Tesla T4 GPU. The physical network interface (eno1) bridges to vmbr0 for physical network access, while vmbr1 provides VLAN-aware internal networking.
+The infrastructure runs on a single Dell R730 server with a Xeon E5-2699 v4 CPU and ~160GB RAM. Proxmox VE provides hypervisor capabilities with hardware passthrough support for the Tesla T4 GPU. The physical network interface (eno1) bridges to vmbr0 for physical network access, while vmbr1 provides VLAN-aware internal networking.
 
 ### Network Layer
 
@@ -137,9 +137,9 @@ This three-tier network design isolates Kubernetes workloads from management inf
 ### Compute Layer
 
 The Kubernetes cluster consists of 5 nodes:
-- **k8s-master (200)**: 8c/8GB control plane running kube-apiserver, etcd, controller-manager
-- **k8s-node1 (201)**: 16c/16GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
-- **k8s-node2-4 (202-204)**: 8c/24GB workers running general-purpose workloads
+- **k8s-master (200)**: 8c/32GB control plane running kube-apiserver, etcd, controller-manager
+- **k8s-node1 (201)**: 16c/32GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
+- **k8s-node2-4 (202-204)**: 8c/32GB workers running general-purpose workloads
 
 GPU passthrough on node1 uses PCIe device 0000:06:00.0, with Kubernetes taint `nvidia.com/gpu=true:NoSchedule` and label `gpu=true` to ensure only GPU-requesting pods schedule there.
 
@@ -201,11 +201,11 @@ Each service lives in `stacks/<service>/` with its own Terragrunt configuration.
 
 ### Vault Paths
 
-Secrets are stored in HashiCorp Vault under `kv/`:
-- `kv/<service>/*` - Service-specific secrets
-- `kv/cloudflare` - Cloudflare API tokens
-- `kv/authentik` - OIDC client credentials
-- `kv/backup` - Backup encryption keys
+Secrets are stored in HashiCorp Vault under `secret/`:
+- `secret/<service>/*` - Service-specific secrets
+- `secret/cloudflare` - Cloudflare API tokens
+- `secret/authentik` - OIDC client credentials
+- `secret/backup` - Backup encryption keys
 
 ## Decisions & Rationale
 
@@ -240,7 +240,7 @@ Secrets are stored in HashiCorp Vault under `kv/`:
 **Rationale**:
 - **CFS throttling**: Linux CFS throttles containers to exact CPU limit even when CPU is idle, causing artificial slowdowns
 - **Burstability**: Services can burst to unused CPU during idle periods
-- **Memory is the constraint**: With 142GB RAM, memory exhaustion occurs before CPU saturation
+- **Memory is the constraint**: With ~160GB RAM across VMs, memory exhaustion occurs before CPU saturation
 
 **Tradeoff**: A runaway process could monopolize CPU (mitigated by CPU requests reserving capacity).
 

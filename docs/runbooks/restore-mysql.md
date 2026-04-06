@@ -6,7 +6,7 @@
 - Backup dump available on NFS at `/mnt/main/mysql-backup/`
 
 ## Backup Location
-- NFS: `/mnt/main/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql`
+- NFS: `/mnt/main/mysql-backup/dump_YYYY_MM_DD_HH_MM.sql.gz`
 - Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
 - Retention: 14 days
 - Size: ~11MB per dump
@@ -34,8 +34,8 @@ kubectl port-forward svc/mysql -n dbaas 3307:3306 &
 # Get root password
 ROOT_PWD=$(kubectl get secret cluster-secret -n dbaas -o jsonpath='{.data.ROOT_PASSWORD}' | base64 -d)
 
-# Restore (use --host to avoid unix socket, specify non-default port)
-mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 < /path/to/dump_YYYY_MM_DD_HH_MM.sql
+# Restore (decompress and pipe to mysql, use --host to avoid unix socket, specify non-default port)
+zcat /path/to/dump_YYYY_MM_DD_HH_MM.sql.gz | mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307
 ```
 
 ### 3. Option B: Restore via in-cluster pod
@@ -43,7 +43,7 @@ mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 < /path/to/dump_YYYY_MM
 ROOT_PWD=$(kubectl get secret cluster-secret -n dbaas -o jsonpath='{.data.ROOT_PASSWORD}' | base64 -d)
 
 kubectl run mysql-restore --rm -it --image=mysql \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-mysql-backup"}}],"containers":[{"name":"mysql-restore","image":"mysql","env":[{"name":"MYSQL_PWD","value":"'$ROOT_PWD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["mysql","-u","root","--host","mysql.dbaas.svc.cluster.local","<","/backup/dump_YYYY_MM_DD_HH_MM.sql"]}]}}' \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-mysql-backup"}}],"containers":[{"name":"mysql-restore","image":"mysql","env":[{"name":"MYSQL_PWD","value":"'$ROOT_PWD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | mysql -u root --host mysql.dbaas.svc.cluster.local"]}]}}' \
   -n dbaas
 ```
 
@@ -56,7 +56,7 @@ mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 -e "SHOW DATABASES;"
 mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 -e "SELECT * FROM performance_schema.replication_group_members;"
 
 # Check table counts for key databases
-for db in speedtest wrongmove codimd nextcloud shlink grafana; do
+for db in speedtest wrongmove codimd nextcloud shlink grafana technitium; do
   echo "=== $db ==="
   mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 -e "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA='$db' ORDER BY TABLE_ROWS DESC LIMIT 5;"
 done
@@ -79,6 +79,8 @@ kubectl exec -n dbaas mysql-cluster-0 -c mysql -- mysql -u root -p"$ROOT_PWD" \
 #
 # For technitium specifically, also run the password sync CronJob:
 # kubectl create job --from=cronjob/technitium-password-sync technitium-pw-resync -n technitium
+#
+# Note: forgejo and uptimekuma may be legacy users not managed by Vault rotation.
 ```
 
 ### 6. InnoDB Cluster Recovery
