@@ -16,6 +16,13 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# The embedded outpost auto-creates an ingress expecting this secret name
+module "tls_secret_outpost" {
+  source          = "../../../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.authentik.metadata[0].name
+  tls_secret_name = "authentik-outpost-tls"
+}
+
 resource "kubernetes_namespace" "authentik" {
   metadata {
     name = "authentik"

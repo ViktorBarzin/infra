@@ -349,7 +349,7 @@ module "ingress-ui" {
   name            = "headscale-ui"
   host            = "headscale"
   service_name    = "headscale"
-  port            = 8081
+  port            = 80
   ingress_path    = ["/web"]
   tls_secret_name = var.tls_secret_name
 }
