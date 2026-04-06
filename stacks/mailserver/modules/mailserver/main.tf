@@ -610,12 +610,16 @@ try:
             if msg_ids[0]:
                 found = True
                 print(f"Found test email after {attempt+1} attempts")
-                # Delete the test email
+            # Delete ALL e2e probe emails (current + any leftovers from previous runs)
+            if found:
                 try:
-                    for mid in msg_ids[0].split():
-                        imap.store(mid, "+FLAGS", "\\Deleted")
-                    imap.expunge()
-                    print("Deleted test email")
+                    _, all_e2e = imap.search(None, "SUBJECT", "e2e-probe")
+                    if all_e2e[0]:
+                        e2e_ids = all_e2e[0].split()
+                        for mid in e2e_ids:
+                            imap.store(mid, "+FLAGS", "(\\Deleted)")
+                        imap.expunge()
+                        print(f"Deleted {len(e2e_ids)} e2e probe email(s)")
                 except Exception as de:
                     print(f"Delete failed (non-critical): {de}")
             imap.logout()
