@@ -26,7 +26,7 @@ JSON=false
 KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=29
+TOTAL_CHECKS=30
 
 # --- Helpers ---
 info()  { [[ "$JSON" == true ]] && return 0; echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -1626,6 +1626,100 @@ PYEOF
     fi
 }
 
+# --- 30. Hardware Exporters ---
+check_hardware_exporters() {
+    section 30 "Hardware Exporters"
+    local detail="" had_issue=false status="PASS"
+
+    # Check exporter pods are Running
+    local exporters=(
+        "monitoring:snmp-exporter"
+        "monitoring:idrac-redfish-exporter"
+        "monitoring:proxmox-exporter"
+        "tuya-bridge:tuya-bridge"
+    )
+
+    for entry in "${exporters[@]}"; do
+        local ns="${entry%%:*}"
+        local name="${entry##*:}"
+        local pods
+        pods=$($KUBECTL get pods -n "$ns" -l "app=$name" --no-headers 2>/dev/null || true)
+
+        # If label selector returns nothing, try matching by deployment name prefix
+        if [[ -z "$pods" ]]; then
+            pods=$($KUBECTL get pods -n "$ns" --no-headers 2>/dev/null | grep "^${name}-" || true)
+        fi
+
+        if [[ -z "$pods" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 30 "Hardware Exporters"
+            fail "$ns/$name: no pods found"
+            detail+="$ns/$name=missing; "
+            had_issue=true
+            status="FAIL"
+            continue
+        fi
+
+        local not_running
+        not_running=$(echo "$pods" | awk '$3 != "Running" && $3 != "Completed" {print $1 ": " $3}' || true)
+        if [[ -n "$not_running" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 30 "Hardware Exporters"
+            fail "$ns/$name pod not running: $not_running"
+            detail+="$ns/$name=not-running; "
+            had_issue=true
+            status="FAIL"
+        fi
+    done
+
+    # Check Prometheus scrape targets for hardware exporters
+    local prom_jobs=("snmp-idrac" "snmp-ups" "redfish-idrac" "proxmox-host")
+    local up_result
+    up_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -q -O- 'http://localhost:9090/api/v1/query?query=up' 2>/dev/null || true)
+
+    if [[ -n "$up_result" ]]; then
+        for job in "${prom_jobs[@]}"; do
+            local job_up
+            job_up=$(echo "$up_result" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('data', {}).get('result', []):
+    if r.get('metric', {}).get('job') == '$job':
+        print(r.get('value', [0, '0'])[1])
+        break
+else:
+    print('missing')
+" 2>/dev/null) || job_up="error"
+
+            if [[ "$job_up" == "1" ]]; then
+                detail+="$job=up; "
+            elif [[ "$job_up" == "missing" ]]; then
+                [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 30 "Hardware Exporters"
+                warn "Prometheus target '$job' not found"
+                detail+="$job=missing; "
+                had_issue=true
+                [[ "$status" != "FAIL" ]] && status="WARN"
+            else
+                [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 30 "Hardware Exporters"
+                fail "Prometheus target '$job' is down (up=$job_up)"
+                detail+="$job=down; "
+                had_issue=true
+                status="FAIL"
+            fi
+        done
+    else
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 30 "Hardware Exporters"
+        warn "Cannot query Prometheus for exporter targets"
+        detail+="prometheus-query-failed; "
+        had_issue=true
+        [[ "$status" != "FAIL" ]] && status="WARN"
+    fi
+
+    if [[ "$had_issue" == false ]]; then
+        pass "All hardware exporters running and scraped by Prometheus"
+    fi
+    json_add "hardware_exporters" "$status" "${detail:-All healthy}"
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -1707,6 +1801,7 @@ main() {
     check_ha_integrations
     check_ha_automations
     check_ha_system
+    check_hardware_exporters
     print_summary
 
     # Exit code: 2 for failures, 1 for warnings, 0 for clean
