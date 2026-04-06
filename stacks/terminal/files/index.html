@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+        #terminal { height: 100%; width: 100%; }
+        #toast {
+            position: fixed; top: 16px; right: 16px; z-index: 9999;
+            background: #1a1a2e; color: #a29bfe; border: 1px solid #333;
+            border-radius: 8px; padding: 10px 18px; font-family: monospace;
+            font-size: 14px; opacity: 0; transition: opacity 0.3s;
+            pointer-events: none; max-width: 500px; word-break: break-all;
+        }
+        #toast.visible { opacity: 1; }
+        #toast.error { color: #e74c3c; border-color: #e74c3c; }
+        #toast.success { color: #2ecc71; border-color: #2ecc71; }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+    <div id="toast"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script>
+    (function() {
+        // ttyd binary protocol: first byte is message type
+        const MSG_OUTPUT = 0x30; // '0' - terminal output
+        const MSG_SET_PREFS = 0x31; // '1' - JSON preferences
+        const MSG_SET_TITLE = 0x32; // '2' - window title
+
+        const MSG_INPUT = '0';   // client sends: '0' + data
+        const MSG_RESIZE = '1';  // client sends: '1' + JSON {columns, rows}
+
+        let ws = null;
+        const textEncoder = new TextEncoder();
+        const textDecoder = new TextDecoder();
+
+        function showToast(msg, type, duration) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.className = 'visible' + (type ? ' ' + type : '');
+            clearTimeout(el._timer);
+            el._timer = setTimeout(() => { el.className = ''; }, duration || 3000);
+        }
+
+        const term = new Terminal({
+            cursorBlink: true,
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+            fontSize: 15,
+            theme: {
+                background: '#1a1a2e',
+                foreground: '#eee',
+                cursor: '#a29bfe',
+                selectionBackground: 'rgba(162, 155, 254, 0.3)'
+            },
+            allowProposedApi: true
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
+
+        try {
+            const webglAddon = new WebglAddon.WebglAddon();
+            webglAddon.onContextLoss(() => { webglAddon.dispose(); });
+            term.loadAddon(webglAddon);
+        } catch (e) {
+            console.warn('WebGL addon failed:', e);
+        }
+
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+
+        // Send binary input to ttyd
+        function sendInput(data) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const payload = textEncoder.encode(data);
+            const buf = new Uint8Array(payload.length + 1);
+            buf[0] = MSG_INPUT.charCodeAt(0);
+            buf.set(payload, 1);
+            ws.send(buf.buffer);
+        }
+
+        // Send resize
+        function sendResize() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const json = JSON.stringify({ columns: term.cols, rows: term.rows });
+            const payload = textEncoder.encode(json);
+            const buf = new Uint8Array(payload.length + 1);
+            buf[0] = MSG_RESIZE.charCodeAt(0);
+            buf.set(payload, 1);
+            ws.send(buf.buffer);
+        }
+
+        // Terminal input
+        term.onData(sendInput);
+        term.onBinary((data) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const bytes = new Uint8Array(data.length + 1);
+            bytes[0] = MSG_INPUT.charCodeAt(0);
+            for (let i = 0; i < data.length; i++) bytes[i + 1] = data.charCodeAt(i);
+            ws.send(bytes.buffer);
+        });
+
+        // Resize handling
+        term.onResize(() => sendResize());
+        window.addEventListener('resize', () => fitAddon.fit());
+
+        // Clipboard: Ctrl+V / Cmd+V
+        term.attachCustomKeyEventHandler((e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
+                navigator.clipboard.writeText(term.getSelection());
+                return false;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                return false; // let browser paste event fire
+            }
+            return true;
+        });
+
+        // Image + text paste
+        document.addEventListener('paste', async (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const blob = item.getAsFile();
+                    if (!blob) { showToast('Failed to read image', 'error'); return; }
+
+                    showToast('Uploading image...', '');
+                    try {
+                        const formData = new FormData();
+                        formData.append('image', blob);
+                        const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
+                        if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
+                        const { path } = await resp.json();
+                        sendInput(path);
+                        showToast('Pasted: ' + path, 'success', 4000);
+                    } catch (err) {
+                        showToast('Upload error: ' + err.message, 'error', 5000);
+                    }
+                    return;
+                }
+            }
+
+            const text = e.clipboardData.getData('text');
+            if (text) {
+                e.preventDefault();
+                sendInput(text);
+            }
+        }, true);
+
+        // Connect
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = proto + '//' + location.host + location.pathname.replace(/\/+$/, '') + '/ws';
+
+            fetch(location.pathname.replace(/\/+$/, '') + '/token', { credentials: 'same-origin' })
+                .then(r => r.json())
+                .then(tokenData => {
+                    const token = tokenData.token || '';
+                    ws = new WebSocket(wsUrl, ['tty']);
+                    ws.binaryType = 'arraybuffer';
+
+                    ws.onopen = () => {
+                        console.log('Connected to ttyd');
+                        // Send auth + initial size as JSON
+                        const initMsg = JSON.stringify({
+                            AuthToken: token,
+                            columns: term.cols,
+                            rows: term.rows
+                        });
+                        ws.send(initMsg);
+                    };
+
+                    ws.onmessage = (event) => {
+                        const data = event.data;
+                        if (data instanceof ArrayBuffer) {
+                            const view = new Uint8Array(data);
+                            if (view.length < 1) return;
+                            const msgType = view[0];
+                            const payload = view.slice(1);
+
+                            switch (msgType) {
+                                case MSG_OUTPUT:
+                                    term.write(payload);
+                                    break;
+                                case MSG_SET_PREFS:
+                                    try {
+                                        const prefs = JSON.parse(textDecoder.decode(payload));
+                                        console.log('ttyd prefs:', prefs);
+                                    } catch (e) {}
+                                    break;
+                                case MSG_SET_TITLE:
+                                    document.title = textDecoder.decode(payload);
+                                    break;
+                            }
+                        }
+                    };
+
+                    ws.onclose = () => {
+                        term.write('\r\n\x1b[31mDisconnected. Reconnecting...\x1b[0m\r\n');
+                        setTimeout(connect, 3000);
+                    };
+
+                    ws.onerror = (e) => console.error('WebSocket error:', e);
+                })
+                .catch(err => {
+                    console.error('Token fetch failed:', err);
+                    term.write('\r\n\x1b[31mFailed to connect. Retrying...\x1b[0m\r\n');
+                    setTimeout(connect, 3000);
+                });
+        }
+
+        connect();
+    })();
+    </script>
+</body>
+</html>
