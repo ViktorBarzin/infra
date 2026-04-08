@@ -1,6 +1,6 @@
 # Networking Architecture
 
-Last updated: 2026-03-24
+Last updated: 2026-04-08
 
 ## Overview
 
@@ -35,7 +35,7 @@ graph TB
 
         subgraph "VLAN 20 - Kubernetes<br/>10.0.20.0/24"
             pfSense[pfSense<br/>10.0.20.1<br/>Gateway/NAT/DHCP]
-            Tech[Technitium DNS<br/>10.0.20.101<br/>viktorbarzin.lan]
+            Tech[Technitium DNS<br/>10.0.20.201 LB / 10.96.0.53 ClusterIP<br/>viktorbarzin.lan]
             MLB[MetalLB Pool<br/>10.0.20.200-10.0.20.220]
 
             subgraph "K8s Nodes"
@@ -79,7 +79,7 @@ graph TB
 | pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, DHCP for VLAN 20 |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
-| Technitium DNS | Container | 10.0.20.101 | Internal DNS (viktorbarzin.lan) |
+| Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
 | Traefik | Helm chart | K8s (3 replicas + PDB) | Ingress controller, HTTP/3 enabled |
@@ -103,9 +103,27 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 ### DNS Resolution
 
 **Internal (Technitium)**:
-- Runs at 10.0.20.101, serves `.viktorbarzin.lan` zone
-- Handles internal service discovery (k8s-master.viktorbarzin.lan, truenas.viktorbarzin.lan, etc.)
-- All K8s nodes and cluster services use this as primary DNS
+- K8s LoadBalancer at **10.0.20.201** (dedicated MetalLB IP), ClusterIP at **10.96.0.53**
+- Serves `.viktorbarzin.lan` zone with 30+ internal A/CNAME records
+- Also acts as full recursive resolver for public domains
+- `externalTrafficPolicy: Local` preserves client source IPs for query logging
+- HA: primary + secondary + tertiary pods with anti-affinity, PDB minAvailable=1
+
+**LAN client DNS path (192.168.1.0/24)**:
+- TP-Link DHCP gives DNS=192.168.1.2 (pfSense WAN)
+- pfSense NAT redirect (`rdr`) forwards UDP 53 on WAN directly to Technitium (10.0.20.201)
+- Client source IPs are preserved (no SNAT on 192.168.1.x → 10.0.20.x path)
+- Technitium logs show real per-device IPs for analytics
+
+**K8s cluster DNS path**:
+- CoreDNS forwards `.viktorbarzin.lan` to Technitium ClusterIP (10.96.0.53)
+- CoreDNS forwards public queries to pfSense (10.0.20.1), 8.8.8.8, 1.1.1.1
+
+**pfSense dnsmasq (DNS Forwarder)**:
+- Listens on LAN (10.0.10.1), OPT1 (10.0.20.1), localhost only — NOT on WAN (192.168.1.2)
+- Forwards `.viktorbarzin.lan` to Technitium (10.0.20.201), public queries to 1.1.1.1
+- Serves K8s VLAN clients and pfSense's own DNS needs
+- Aliases: `technitium_dns` (10.0.20.201), `k8s_shared_lb` (10.0.20.200)
 
 **External (Cloudflare)**:
 - Manages ~50 public domains, all under `viktorbarzin.me`
@@ -165,21 +183,23 @@ Additional middleware:
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. All 11 LoadBalancer services share a single IP (**10.0.20.200**) using the `metallb.io/allow-shared-ip: shared` annotation. Services sharing an IP must use the same `externalTrafficPolicy` (standardized to `Cluster`).
+MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. Most LoadBalancer services share **10.0.20.200** using the `metallb.io/allow-shared-ip: shared` annotation. Technitium DNS has a **dedicated IP (10.0.20.201)** with `externalTrafficPolicy: Local` to preserve client source IPs for query logging.
 
-| Service | Namespace | Ports |
-|---------|-----------|-------|
-| coturn | coturn | 3478/UDP (STUN/TURN), 49152-49252/UDP (relay) |
-| headscale | headscale | 41641/UDP, 3479/UDP |
-| windows-kms | kms | 1688/TCP |
-| qbittorrent | servarr | 6881/TCP+UDP |
-| shadowsocks | shadowsocks | 8388/TCP+UDP |
-| torrserver-bt | tor-proxy | 5665/TCP |
-| wireguard | wireguard | 51820/UDP |
-| mailserver | mailserver | 25, 465, 587, 993/TCP |
-| traefik | traefik | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
-| xray-reality | xray | 7443/TCP |
-| technitium-dns | technitium | 53/UDP |
+| Service | Namespace | IP | Ports |
+|---------|-----------|-----|-------|
+| traefik | traefik | 10.0.20.200 (shared) | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
+| coturn | coturn | 10.0.20.200 (shared) | 3478/UDP (STUN/TURN), 49152-49252/UDP (relay) |
+| headscale | headscale | 10.0.20.200 (shared) | 41641/UDP, 3479/UDP |
+| windows-kms | kms | 10.0.20.200 (shared) | 1688/TCP |
+| qbittorrent | servarr | 10.0.20.200 (shared) | 50000/TCP+UDP |
+| shadowsocks | shadowsocks | 10.0.20.200 (shared) | 8388/TCP+UDP |
+| torrserver-bt | tor-proxy | 10.0.20.200 (shared) | 5665/TCP |
+| wireguard | wireguard | 10.0.20.200 (shared) | 51820/UDP |
+| mailserver | mailserver | 10.0.20.200 (shared) | 25, 465, 587, 993/TCP |
+| xray-reality | xray | 10.0.20.200 (shared) | 7443/TCP |
+| **technitium-dns** | **technitium** | **10.0.20.201 (dedicated)** | **53/UDP+TCP** |
+
+pfSense aliases reference these IPs: `k8s_shared_lb` (10.0.20.200), `technitium_dns` (10.0.20.201). NAT rules use aliases for maintainability.
 
 Critical services are scaled to **3 replicas**:
 - Traefik (PDB: minAvailable=2)
