@@ -18,11 +18,39 @@
         #toast.visible { opacity: 1; }
         #toast.error { color: #e74c3c; border-color: #e74c3c; }
         #toast.success { color: #2ecc71; border-color: #2ecc71; }
+        #paste-btn {
+            position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+            width: 48px; height: 48px; border-radius: 12px;
+            background: rgba(108, 92, 231, 0.6); border: 1px solid rgba(162, 155, 254, 0.4);
+            color: #eee; font-size: 22px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            transition: background 0.2s, transform 0.1s;
+            touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+        }
+        #paste-btn:hover { background: rgba(108, 92, 231, 0.85); }
+        #paste-btn:active { transform: scale(0.92); }
+        #img-btn {
+            position: fixed; bottom: 24px; right: 80px; z-index: 9999;
+            width: 48px; height: 48px; border-radius: 12px;
+            background: rgba(108, 92, 231, 0.6); border: 1px solid rgba(162, 155, 254, 0.4);
+            color: #eee; font-size: 22px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            transition: background 0.2s, transform 0.1s;
+            touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+        }
+        #img-btn:hover { background: rgba(108, 92, 231, 0.85); }
+        #img-btn:active { transform: scale(0.92); }
+        #img-input { display: none; }
     </style>
 </head>
 <body>
     <div id="terminal"></div>
     <div id="toast"></div>
+    <button id="img-btn" title="Upload image">&#128247;</button>
+    <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
+    <input type="file" id="img-input" accept="image/*">
 
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
@@ -161,6 +189,69 @@
                 sendInput(text);
             }
         }, true);
+
+        // Paste button (iOS + universal)
+        document.getElementById('paste-btn').addEventListener('click', async () => {
+            try {
+                if (navigator.clipboard.read) {
+                    const items = await navigator.clipboard.read();
+                    for (const item of items) {
+                        // Check for image types
+                        const imageType = item.types.find(t => t.startsWith('image/'));
+                        if (imageType) {
+                            const blob = await item.getType(imageType);
+                            showToast('Uploading image...', '');
+                            const formData = new FormData();
+                            formData.append('image', blob);
+                            const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
+                            if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
+                            const { path } = await resp.json();
+                            sendInput(path);
+                            showToast('Pasted: ' + path, 'success', 4000);
+                            return;
+                        }
+                        // Text
+                        if (item.types.includes('text/plain')) {
+                            const blob = await item.getType('text/plain');
+                            const text = await blob.text();
+                            if (text) { sendInput(text); return; }
+                        }
+                    }
+                } else {
+                    // Fallback for older browsers
+                    const text = await navigator.clipboard.readText();
+                    if (text) sendInput(text);
+                }
+            } catch (err) {
+                showToast('Clipboard access denied', 'error', 3000);
+                console.error('Clipboard read failed:', err);
+            }
+            term.focus();
+        });
+
+        // Image upload button (works on iOS + all browsers)
+        document.getElementById('img-btn').addEventListener('click', () => {
+            document.getElementById('img-input').click();
+        });
+        document.getElementById('img-input').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            e.target.value = ''; // reset so same file can be re-selected
+
+            showToast('Uploading image...', '');
+            try {
+                const formData = new FormData();
+                formData.append('image', file);
+                const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
+                if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
+                const { path } = await resp.json();
+                sendInput(path);
+                showToast('Pasted: ' + path, 'success', 4000);
+            } catch (err) {
+                showToast('Upload error: ' + err.message, 'error', 5000);
+            }
+            term.focus();
+        });
 
         // Connect
         function connect() {
