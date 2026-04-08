@@ -284,10 +284,10 @@ resource "kubernetes_deployment" "immich_server" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1700Mi"
+              memory = "2000Mi"
             }
             limits = {
-              memory = "2500Mi"
+              memory = "3500Mi"
             }
           }
         }
@@ -422,20 +422,54 @@ resource "kubernetes_deployment" "immich-postgres" {
           }
           env {
             name  = "DB_STORAGE_TYPE"
-            value = "HDD"
+            value = "SSD"
           }
           volume_mount {
             name       = "postgresql-persistent-storage"
             mount_path = "/var/lib/postgresql/data"
           }
+          lifecycle {
+            post_start {
+              exec {
+                command = ["/bin/sh", "-c", <<-EOT
+                  # Wait for PG to accept connections, then prewarm vector search tables
+                  for i in $(seq 1 60); do
+                    if pg_isready -U postgres > /dev/null 2>&1; then
+                      psql -U postgres -d immich -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm; SELECT pg_prewarm('smart_search'); SELECT pg_prewarm('clip_index');" > /dev/null 2>&1
+                      break
+                    fi
+                    sleep 1
+                  done
+                EOT
+                ]
+              }
+            }
+          }
           resources {
             requests = {
-              cpu    = "50m"
-              memory = "1Gi"
+              cpu    = "100m"
+              memory = "2Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
+          }
+        }
+        init_container {
+          name  = "write-pg-override-conf"
+          image = "busybox:1.36"
+          command = ["sh", "-c", <<-EOT
+            cat > /data/postgresql.override.conf <<'PGCONF'
+            # Immich vector search performance tuning
+            shared_buffers = 1024MB
+            effective_cache_size = 1536MB
+            work_mem = 64MB
+            PGCONF
+          EOT
+          ]
+          volume_mount {
+            name       = "postgresql-persistent-storage"
+            mount_path = "/data"
           }
         }
         volume {
@@ -646,6 +680,7 @@ module "ingress-immich" {
   rybbit_site_id          = "35eedb7a3d2b"
   skip_default_rate_limit = true
   extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
+  anti_ai_scraping        = false
   extra_annotations = {
     "gethomepage.dev/enabled"        = "true"
     "gethomepage.dev/description"    = "Photos library"

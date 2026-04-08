@@ -64,7 +64,7 @@ resource "kubernetes_deployment" "immich-frame" {
       }
       spec {
         container {
-          image = "ghcr.io/immichframe/immichframe:1.7.4"
+          image = "ghcr.io/immichframe/immichframe:v1.0.32.0"
           name  = "immich-frame"
           resources {
             requests = {
