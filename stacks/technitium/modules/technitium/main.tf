@@ -475,3 +475,76 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
   }
 }
 
+# CronJob to configure Split Horizon AddressTranslation on all Technitium instances.
+# Translates 176.12.22.76 (public IP) → 10.0.20.200 (Traefik LB) in DNS responses
+# for 192.168.1.x clients, fixing hairpin NAT on the TP-Link router.
+# Also configures DNS Rebinding Protection to allow viktorbarzin.me to return private IPs
+# (otherwise the translated 10.0.20.200 gets stripped as a rebinding attack).
+resource "kubernetes_cron_job_v1" "technitium_split_horizon_sync" {
+  metadata {
+    name      = "technitium-split-horizon-sync"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    schedule                      = "15 */6 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "sync"
+              image = "curlimages/curl:latest"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "32Mi"
+                }
+              }
+              env {
+                name  = "TECH_USER"
+                value = var.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = var.technitium_password
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                SPLIT_CONFIG='{"networks":{},"enableAddressTranslation":true,"domainGroupMap":{},"networkGroupMap":{"192.168.1.0/24":"sofia-lan"},"groups":[{"name":"sofia-lan","enabled":true,"translateReverseLookups":false,"externalToInternalTranslation":{"176.12.22.76":"10.0.20.200"}}]}'
+                REBINDING_CONFIG='{"enableProtection":true,"bypassNetworks":[],"privateNetworks":["10.0.0.0/8","127.0.0.0/8","172.16.0.0/12","192.168.0.0/16","169.254.0.0/16","fc00::/7","fe80::/10"],"privateDomains":["home.arpa","viktorbarzin.me"]}'
+                SPLIT_URL="https://download.technitium.com/dns/apps/SplitHorizonApp-v10.zip"
+                REBINDING_URL="https://download.technitium.com/dns/apps/DnsRebindingProtectionApp-v4.zip"
+                INSTANCES="http://technitium-web:5380 http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380"
+
+                for INST in $$INSTANCES; do
+                  echo "=== Configuring $$INST ==="
+                  TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                  if [ -z "$$TOKEN" ]; then echo "Login failed for $$INST, skipping"; continue; fi
+
+                  curl -sf -X POST "$$INST/api/apps/downloadAndInstall?token=$$TOKEN&name=Split%20Horizon&url=$$SPLIT_URL" || true
+                  curl -sf -X POST "$$INST/api/apps/downloadAndInstall?token=$$TOKEN&name=DNS%20Rebinding%20Protection&url=$$REBINDING_URL" || true
+
+                  curl -sf -X POST "$$INST/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Split Horizon" --data-urlencode "config=$$SPLIT_CONFIG"
+                  curl -sf -X POST "$$INST/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=DNS Rebinding Protection" --data-urlencode "config=$$REBINDING_CONFIG"
+
+                  echo "Done with $$INST"
+                done
+                echo "Split Horizon sync complete"
+              EOT
+              ]
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+}
+
