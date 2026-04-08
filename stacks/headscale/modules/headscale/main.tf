@@ -409,40 +409,70 @@ resource "kubernetes_config_map" "headscale-config" {
   }
 }
 
-# Backup CronJob — sqlite3 .backup to NFS for cloud sync pickup
+# Backup CronJob — sqlite3 .backup from proxmox-lvm to NFS for cloud sync pickup
+# Uses pod_affinity to co-locate with headscale pod (required for RWO PVC access)
 resource "kubernetes_cron_job_v1" "headscale_backup" {
   metadata {
     name      = "headscale-backup"
     namespace = kubernetes_namespace.headscale.metadata[0].name
   }
   spec {
+    concurrency_policy            = "Replace"
     schedule                      = "0 */6 * * *"
     successful_jobs_history_limit = 1
-    failed_jobs_history_limit     = 1
+    failed_jobs_history_limit     = 3
     job_template {
       metadata {}
       spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
         template {
           metadata {}
           spec {
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "headscale"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
             container {
-              name    = "backup"
-              image   = "keinos/sqlite3:latest"
+              name  = "backup"
+              image = "docker.io/library/alpine"
               command = ["/bin/sh", "-c", <<-EOT
-                mkdir -p /mnt/headscale-backup && \
-                sqlite3 /mnt/db.sqlite ".backup /mnt/headscale-backup/db.sqlite.bak" && \
+                set -euxo pipefail
+                apk add --no-cache sqlite
+                now=$(date +"%Y_%m_%d_%H_%M")
+                mkdir -p /backup
+                sqlite3 /data/db.sqlite ".backup /backup/db.sqlite.bak"
                 echo "Backup completed at $(date)"
               EOT
               ]
               volume_mount {
-                name       = "nfs-data"
-                mount_path = "/mnt"
+                name       = "data"
+                mount_path = "/data"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
               }
             }
             volume {
-              name = "nfs-data"
+              name = "data"
               persistent_volume_claim {
                 claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_data.claim_name
               }
             }
             restart_policy = "OnFailure"
