@@ -194,6 +194,7 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
           disk {
             storage  = "local-lvm"
             size     = var.vm_disk_size
+            discard  = true # Enable TRIM passthrough to LVM thin pool — reduces CoW overhead
           }
         }
       }
@@ -203,6 +204,7 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
           disk {
             storage  = "local-lvm"
             size     = var.vm_disk_size
+            discard  = true
           }
         }
       }

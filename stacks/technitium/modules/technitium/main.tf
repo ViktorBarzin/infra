@@ -460,7 +460,7 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 set -e
                 TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                 if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
-                CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":0,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
+                CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":30,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
                 APP_NAME="Query Logs (MySQL)"
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=$$APP_NAME" --data-urlencode "config=$$CONFIG"
                 echo "Password sync complete"
