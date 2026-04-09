@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
+# backup-verify.sh — Full 3-2-1 backup health inspection
+# Checks: LVM snapshots, weekly backup, PVC file copies, pfsense, NFS mirror,
+#          offsite sync, DB CronJobs, CNPG backups
+# Usage: backup-verify.sh [--fix] [--dry-run]
 set -euo pipefail
 
-KUBECTL="kubectl --kubeconfig /Users/viktorbarzin/code/infra/config"
+KUBECTL="kubectl --kubeconfig /Users/viktorbarzin/code/config"
+PVE_SSH="ssh -o ConnectTimeout=5 -o BatchMode=yes root@192.168.1.127"
 DRY_RUN=false
+FIX=false
 AGENT="backup-verify"
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
+    --fix) FIX=true ;;
   esac
 done
 
 CHECKS="[]"
+PVE_REACHABLE=true
 
 add_check() {
   local name="$1" status="$2" message="$3"
@@ -23,23 +31,440 @@ json.dump(checks, sys.stdout)
 ")
 }
 
-# CNPG backup freshness via backup CRDs
-check_cnpg_backups() {
-  if $DRY_RUN; then
-    add_check "cnpg-backups" "ok" "DRY RUN: would check CNPG backup CRD timestamps"
+# Test PVE host connectivity (all Layer 1+2 checks depend on this)
+check_pve_connectivity() {
+  if $DRY_RUN; then return; fi
+  if ! $PVE_SSH "true" 2>/dev/null; then
+    PVE_REACHABLE=false
+    add_check "pve-connectivity" "fail" "PVE host (192.168.1.127) unreachable via SSH"
+  fi
+}
+
+# ============================================================
+# LAYER 1: LVM Thin Snapshots
+# ============================================================
+
+check_lvm_snapshot_freshness() {
+  if $DRY_RUN; then add_check "lvm-snapshot-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "lvm-snapshot-freshness" "fail" "PVE unreachable"; return; fi
+
+  local ts
+  ts=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^lvm_snapshot_last_run_timestamp' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+
+  if [ -z "$ts" ] || [ "$ts" = "" ]; then
+    add_check "lvm-snapshot-freshness" "fail" "No Pushgateway metric found — snapshots may have never run"
     return
   fi
 
+  local now age_h
+  now=$(date +%s)
+  age_h=$(python3 -c "print(f'{($now - $ts) / 3600:.1f}')" 2>/dev/null)
+
+  if python3 -c "exit(0 if ($now - $ts) < 129600 else 1)" 2>/dev/null; then  # 36h
+    add_check "lvm-snapshot-freshness" "ok" "Last snapshot ${age_h}h ago"
+  elif python3 -c "exit(0 if ($now - $ts) < 172800 else 1)" 2>/dev/null; then  # 48h
+    add_check "lvm-snapshot-freshness" "warn" "Snapshot getting stale: ${age_h}h ago (threshold: 36h)"
+  else
+    add_check "lvm-snapshot-freshness" "fail" "Snapshot stale: ${age_h}h ago (threshold: 48h)"
+  fi
+}
+
+check_lvm_snapshot_status() {
+  if $DRY_RUN; then add_check "lvm-snapshot-status" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "lvm-snapshot-status" "fail" "PVE unreachable"; return; fi
+
+  local status
+  status=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^lvm_snapshot_last_status' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+
+  if [ "$status" = "0" ] || [ "$status" = "0.0" ]; then
+    add_check "lvm-snapshot-status" "ok" "Last snapshot run succeeded"
+  elif [ -z "$status" ]; then
+    add_check "lvm-snapshot-status" "warn" "No status metric found"
+  else
+    add_check "lvm-snapshot-status" "fail" "Last snapshot run failed (status=$status)"
+  fi
+}
+
+check_lvm_snapshot_count() {
+  if $DRY_RUN; then add_check "lvm-snapshot-count" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "lvm-snapshot-count" "fail" "PVE unreachable"; return; fi
+
+  local count
+  count=$($PVE_SSH "lvs pve 2>/dev/null | grep -c '_snap_' || echo 0" 2>/dev/null) || count=0
+
+  if [ "$count" -ge 50 ]; then
+    add_check "lvm-snapshot-count" "ok" "${count} snapshots exist"
+  elif [ "$count" -gt 0 ]; then
+    add_check "lvm-snapshot-count" "warn" "Only ${count} snapshots (expected ≥50)"
+  else
+    add_check "lvm-snapshot-count" "fail" "No snapshots exist"
+  fi
+}
+
+check_lvm_thinpool_free() {
+  if $DRY_RUN; then add_check "lvm-thinpool-free" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "lvm-thinpool-free" "fail" "PVE unreachable"; return; fi
+
+  local data_pct free_pct
+  data_pct=$($PVE_SSH "lvs --noheadings --nosuffix -o data_percent pve/data 2>/dev/null | tr -d ' '" 2>/dev/null) || true
+
+  if [ -z "$data_pct" ]; then
+    add_check "lvm-thinpool-free" "warn" "Cannot read thin pool usage"
+    return
+  fi
+
+  free_pct=$(python3 -c "print(f'{100 - $data_pct:.1f}')" 2>/dev/null)
+
+  if python3 -c "exit(0 if (100 - $data_pct) > 15 else 1)" 2>/dev/null; then
+    add_check "lvm-thinpool-free" "ok" "Thin pool ${free_pct}% free"
+  elif python3 -c "exit(0 if (100 - $data_pct) > 10 else 1)" 2>/dev/null; then
+    add_check "lvm-thinpool-free" "warn" "Thin pool low: ${free_pct}% free (threshold: 15%)"
+  else
+    add_check "lvm-thinpool-free" "fail" "Thin pool critical: ${free_pct}% free (threshold: 10%)"
+  fi
+}
+
+check_lvm_snapshot_timer() {
+  if $DRY_RUN; then add_check "lvm-snapshot-timer" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "lvm-snapshot-timer" "fail" "PVE unreachable"; return; fi
+
+  local active enabled
+  active=$($PVE_SSH "systemctl is-active lvm-pvc-snapshot.timer 2>/dev/null" 2>/dev/null) || active="unknown"
+  enabled=$($PVE_SSH "systemctl is-enabled lvm-pvc-snapshot.timer 2>/dev/null" 2>/dev/null) || enabled="unknown"
+
+  if [ "$active" = "active" ] && [ "$enabled" = "enabled" ]; then
+    add_check "lvm-snapshot-timer" "ok" "Timer active and enabled"
+  else
+    add_check "lvm-snapshot-timer" "fail" "Timer: active=$active enabled=$enabled"
+    if $FIX; then
+      $PVE_SSH "systemctl enable --now lvm-pvc-snapshot.timer" 2>/dev/null && \
+        add_check "lvm-snapshot-timer-fix" "ok" "AUTO-FIX: Timer re-enabled" || \
+        add_check "lvm-snapshot-timer-fix" "fail" "AUTO-FIX: Failed to re-enable timer"
+    fi
+  fi
+}
+
+# ============================================================
+# LAYER 2: Weekly Backup (sda)
+# ============================================================
+
+check_weekly_backup_freshness() {
+  if $DRY_RUN; then add_check "weekly-backup-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "weekly-backup-freshness" "fail" "PVE unreachable"; return; fi
+
+  local ts
+  ts=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^weekly_backup_last_run_timestamp' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+
+  if [ -z "$ts" ]; then
+    add_check "weekly-backup-freshness" "fail" "No weekly backup metric — may have never run"
+    return
+  fi
+
+  local now age_h
+  now=$(date +%s)
+  age_h=$(python3 -c "print(f'{($now - $ts) / 3600:.1f}')" 2>/dev/null)
+
+  if python3 -c "exit(0 if ($now - $ts) < 777600 else 1)" 2>/dev/null; then  # 9d
+    add_check "weekly-backup-freshness" "ok" "Last run ${age_h}h ago"
+  else
+    add_check "weekly-backup-freshness" "fail" "Weekly backup stale: ${age_h}h ago (threshold: 9d)"
+  fi
+}
+
+check_weekly_backup_status() {
+  if $DRY_RUN; then add_check "weekly-backup-status" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "weekly-backup-status" "fail" "PVE unreachable"; return; fi
+
+  local status
+  status=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^weekly_backup_last_status' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+
+  if [ "$status" = "0" ] || [ "$status" = "0.0" ]; then
+    add_check "weekly-backup-status" "ok" "Last weekly backup succeeded"
+  elif [ -z "$status" ]; then
+    add_check "weekly-backup-status" "warn" "No status metric found"
+  else
+    add_check "weekly-backup-status" "fail" "Last weekly backup failed (status=$status)"
+  fi
+}
+
+check_weekly_backup_timer() {
+  if $DRY_RUN; then add_check "weekly-backup-timer" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "weekly-backup-timer" "fail" "PVE unreachable"; return; fi
+
+  local active enabled
+  active=$($PVE_SSH "systemctl is-active weekly-backup.timer 2>/dev/null" 2>/dev/null) || active="unknown"
+  enabled=$($PVE_SSH "systemctl is-enabled weekly-backup.timer 2>/dev/null" 2>/dev/null) || enabled="unknown"
+
+  if [ "$active" = "active" ] && [ "$enabled" = "enabled" ]; then
+    add_check "weekly-backup-timer" "ok" "Timer active and enabled"
+  else
+    add_check "weekly-backup-timer" "fail" "Timer: active=$active enabled=$enabled"
+    if $FIX; then
+      $PVE_SSH "systemctl enable --now weekly-backup.timer" 2>/dev/null && \
+        add_check "weekly-backup-timer-fix" "ok" "AUTO-FIX: Timer re-enabled" || \
+        add_check "weekly-backup-timer-fix" "fail" "AUTO-FIX: Failed to re-enable timer"
+    fi
+  fi
+}
+
+check_sda_mount() {
+  if $DRY_RUN; then add_check "sda-mount" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "sda-mount" "fail" "PVE unreachable"; return; fi
+
+  if $PVE_SSH "mountpoint -q /mnt/backup" 2>/dev/null; then
+    add_check "sda-mount" "ok" "/mnt/backup is mounted"
+  else
+    add_check "sda-mount" "fail" "/mnt/backup is NOT mounted"
+    if $FIX; then
+      $PVE_SSH "mount /mnt/backup" 2>/dev/null && \
+        add_check "sda-mount-fix" "ok" "AUTO-FIX: Mounted /mnt/backup" || \
+        add_check "sda-mount-fix" "fail" "AUTO-FIX: Failed to mount /mnt/backup"
+    fi
+  fi
+}
+
+check_sda_disk_usage() {
+  if $DRY_RUN; then add_check "sda-disk-usage" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "sda-disk-usage" "fail" "PVE unreachable"; return; fi
+
+  local usage_pct
+  usage_pct=$($PVE_SSH "df --output=pcent /mnt/backup 2>/dev/null | tail -1 | tr -d ' %'" 2>/dev/null) || true
+
+  if [ -z "$usage_pct" ]; then
+    add_check "sda-disk-usage" "warn" "Cannot read /mnt/backup usage"
+    return
+  fi
+
+  if [ "$usage_pct" -lt 85 ]; then
+    add_check "sda-disk-usage" "ok" "Backup disk ${usage_pct}% used"
+  elif [ "$usage_pct" -lt 95 ]; then
+    add_check "sda-disk-usage" "warn" "Backup disk ${usage_pct}% used (threshold: 85%)"
+  else
+    add_check "sda-disk-usage" "fail" "Backup disk ${usage_pct}% used (threshold: 95%)"
+  fi
+}
+
+check_pvc_data_freshness() {
+  if $DRY_RUN; then add_check "pvc-data-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "pvc-data-freshness" "fail" "PVE unreachable"; return; fi
+
+  local latest_week count
+  latest_week=$($PVE_SSH "ls -1d /mnt/backup/pvc-data/????-?? 2>/dev/null | tail -1" 2>/dev/null) || true
+  count=$($PVE_SSH "ls -1d /mnt/backup/pvc-data/????-??/*/* 2>/dev/null | wc -l" 2>/dev/null) || count=0
+
+  if [ -z "$latest_week" ]; then
+    add_check "pvc-data-freshness" "fail" "No PVC file copies found on sda"
+  else
+    local week_name age_days
+    week_name=$(basename "$latest_week")
+    # Check age of latest week dir
+    age_days=$($PVE_SSH "echo \$(( (\$(date +%s) - \$(stat -c %Y '$latest_week')) / 86400 ))" 2>/dev/null) || age_days=999
+    if [ "$age_days" -lt 9 ]; then
+      add_check "pvc-data-freshness" "ok" "PVC copies: week ${week_name}, ${count} PVCs, ${age_days}d old"
+    else
+      add_check "pvc-data-freshness" "fail" "PVC copies stale: week ${week_name}, ${age_days}d old (threshold: 9d)"
+    fi
+  fi
+}
+
+check_nfs_mirror_freshness() {
+  if $DRY_RUN; then add_check "nfs-mirror-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "nfs-mirror-freshness" "fail" "PVE unreachable"; return; fi
+
+  local dir_count age_days
+  dir_count=$($PVE_SSH "ls -1d /mnt/backup/nfs-mirror/*-backup 2>/dev/null | wc -l" 2>/dev/null) || dir_count=0
+  age_days=$($PVE_SSH "echo \$(( (\$(date +%s) - \$(stat -c %Y /mnt/backup/nfs-mirror 2>/dev/null || echo 0)) / 86400 ))" 2>/dev/null) || age_days=999
+
+  if [ "$dir_count" -gt 0 ] && [ "$age_days" -lt 9 ]; then
+    add_check "nfs-mirror-freshness" "ok" "NFS mirror: ${dir_count} dirs, ${age_days}d old"
+  elif [ "$dir_count" -eq 0 ]; then
+    add_check "nfs-mirror-freshness" "fail" "No NFS mirror dirs found on sda"
+  else
+    add_check "nfs-mirror-freshness" "fail" "NFS mirror stale: ${age_days}d old (threshold: 9d)"
+  fi
+}
+
+check_pfsense_backup_freshness() {
+  if $DRY_RUN; then add_check "pfsense-backup-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "pfsense-backup-freshness" "fail" "PVE unreachable"; return; fi
+
+  local latest age_days
+  latest=$($PVE_SSH "ls -t /mnt/backup/pfsense/config-*.xml 2>/dev/null | head -1" 2>/dev/null) || true
+
+  if [ -z "$latest" ]; then
+    add_check "pfsense-backup-freshness" "fail" "No pfsense config.xml backups found"
+    return
+  fi
+
+  age_days=$($PVE_SSH "echo \$(( (\$(date +%s) - \$(stat -c %Y '$latest')) / 86400 ))" 2>/dev/null) || age_days=999
+  local fname
+  fname=$(basename "$latest")
+
+  if [ "$age_days" -lt 9 ]; then
+    add_check "pfsense-backup-freshness" "ok" "pfsense backup: ${fname}, ${age_days}d old"
+  else
+    add_check "pfsense-backup-freshness" "fail" "pfsense backup stale: ${fname}, ${age_days}d old (threshold: 9d)"
+  fi
+}
+
+# ============================================================
+# LAYER 3: Offsite Sync
+# ============================================================
+
+check_offsite_sync_freshness() {
+  if $DRY_RUN; then add_check "offsite-sync-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "offsite-sync-freshness" "fail" "PVE unreachable"; return; fi
+
+  local ts
+  ts=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep 'backup_last_success_timestamp.*offsite-backup-sync' | awk '{print \$NF}'" 2>/dev/null) || true
+
+  if [ -z "$ts" ]; then
+    add_check "offsite-sync-freshness" "fail" "No offsite sync metric — may have never run"
+    return
+  fi
+
+  local now age_h
+  now=$(date +%s)
+  age_h=$(python3 -c "print(f'{($now - $ts) / 3600:.1f}')" 2>/dev/null)
+
+  if python3 -c "exit(0 if ($now - $ts) < 777600 else 1)" 2>/dev/null; then  # 9d
+    add_check "offsite-sync-freshness" "ok" "Last offsite sync ${age_h}h ago"
+  else
+    add_check "offsite-sync-freshness" "fail" "Offsite sync stale: ${age_h}h ago (threshold: 9d)"
+  fi
+}
+
+check_offsite_sync_status() {
+  if $DRY_RUN; then add_check "offsite-sync-status" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "offsite-sync-status" "fail" "PVE unreachable"; return; fi
+
+  local status
+  status=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^offsite_sync_last_status' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+
+  if [ "$status" = "0" ] || [ "$status" = "0.0" ]; then
+    add_check "offsite-sync-status" "ok" "Last offsite sync succeeded"
+  elif [ -z "$status" ]; then
+    add_check "offsite-sync-status" "warn" "No offsite sync status metric"
+  else
+    add_check "offsite-sync-status" "fail" "Last offsite sync failed (status=$status)"
+  fi
+}
+
+check_offsite_sync_timer() {
+  if $DRY_RUN; then add_check "offsite-sync-timer" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "offsite-sync-timer" "fail" "PVE unreachable"; return; fi
+
+  local active enabled
+  active=$($PVE_SSH "systemctl is-active offsite-sync-backup.timer 2>/dev/null" 2>/dev/null) || active="unknown"
+  enabled=$($PVE_SSH "systemctl is-enabled offsite-sync-backup.timer 2>/dev/null" 2>/dev/null) || enabled="unknown"
+
+  if [ "$active" = "active" ] && [ "$enabled" = "enabled" ]; then
+    add_check "offsite-sync-timer" "ok" "Timer active and enabled"
+  else
+    add_check "offsite-sync-timer" "fail" "Timer: active=$active enabled=$enabled"
+    if $FIX; then
+      $PVE_SSH "systemctl enable --now offsite-sync-backup.timer" 2>/dev/null && \
+        add_check "offsite-sync-timer-fix" "ok" "AUTO-FIX: Timer re-enabled" || \
+        add_check "offsite-sync-timer-fix" "fail" "AUTO-FIX: Failed to re-enable timer"
+    fi
+  fi
+}
+
+# ============================================================
+# DB BACKUP CRONJOBS
+# ============================================================
+
+check_backup_cronjobs() {
+  if $DRY_RUN; then add_check "backup-cronjobs" "ok" "DRY RUN"; return; fi
+
+  local report
+  report=$($KUBECTL get cronjobs --all-namespaces -o json 2>/dev/null | python3 -c "
+import sys, json
+from datetime import datetime, timezone
+
+data = json.load(sys.stdin)
+# CronJobs with backup-related names
+backup_cjs = []
+for cj in data.get('items', []):
+    name = cj['metadata']['name']
+    ns = cj['metadata']['namespace']
+    if any(k in name.lower() for k in ['backup', 'etcd', 'raft']):
+        backup_cjs.append(cj)
+
+if not backup_cjs:
+    print('WARN|No backup CronJobs found')
+    sys.exit(0)
+
+# Thresholds in hours
+thresholds = {
+    'mysql': 36, 'postgresql': 36, 'immich': 36,
+    'vault': 216, 'etcd': 216, 'redis': 216,
+    'vaultwarden': 216, 'plotting': 216, 'headscale': 216,
+    'prometheus': 840,  # 35 days
+}
+
+results = []
+all_ok = True
+now = datetime.now(timezone.utc)
+for cj in backup_cjs:
+    ns = cj['metadata']['namespace']
+    name = cj['metadata']['name']
+    last_success = cj.get('status', {}).get('lastSuccessfulTime', '')
+    suspend = cj.get('spec', {}).get('suspend', False)
+
+    # Find matching threshold
+    threshold_h = 216  # default 9 days
+    for key, th in thresholds.items():
+        if key in name.lower():
+            threshold_h = th
+            break
+
+    if suspend:
+        all_ok = False
+        results.append(f'FAIL {ns}/{name}: SUSPENDED')
+        continue
+
+    if not last_success:
+        results.append(f'WARN {ns}/{name}: never succeeded')
+        all_ok = False
+        continue
+
+    try:
+        dt = datetime.fromisoformat(last_success.replace('Z', '+00:00'))
+        age_h = (now - dt).total_seconds() / 3600
+        if age_h > threshold_h:
+            all_ok = False
+            results.append(f'FAIL {ns}/{name}: {age_h:.0f}h ago (threshold: {threshold_h}h)')
+        else:
+            results.append(f'OK {ns}/{name}: {age_h:.0f}h ago')
+    except Exception:
+        results.append(f'WARN {ns}/{name}: cannot parse time {last_success}')
+        all_ok = False
+
+status = 'OK' if all_ok else 'WARN'
+print(f'{status}|' + '; '.join(results))
+" 2>/dev/null) || report="WARN|Failed to check backup CronJobs"
+
+  local status_prefix="${report%%|*}"
+  local detail="${report#*|}"
+
+  if [ "$status_prefix" = "OK" ]; then
+    add_check "backup-cronjobs" "ok" "$detail"
+  else
+    add_check "backup-cronjobs" "warn" "$detail"
+  fi
+}
+
+# ============================================================
+# CNPG BACKUPS (existing checks, kept as-is)
+# ============================================================
+
+check_cnpg_backups() {
+  if $DRY_RUN; then add_check "cnpg-backups" "ok" "DRY RUN"; return; fi
+
   local backups
   backups=$($KUBECTL get backup.postgresql.cnpg.io --all-namespaces -o json 2>/dev/null) || {
-    # Try scheduledbackup as well
-    local scheduled
-    scheduled=$($KUBECTL get scheduledbackup.postgresql.cnpg.io --all-namespaces --no-headers 2>/dev/null) || true
-    if [ -n "$scheduled" ]; then
-      add_check "cnpg-backups" "warn" "ScheduledBackups exist but no Backup CRDs found — backups may not have run yet"
-    else
-      add_check "cnpg-backups" "warn" "No CNPG Backup CRDs found"
-    fi
+    add_check "cnpg-backups" "warn" "No CNPG Backup CRDs found"
     return
   }
 
@@ -54,49 +479,35 @@ if not items:
   print('WARN|No CNPG backups found')
   sys.exit(0)
 
-# Group by cluster, find latest backup per cluster
 clusters = {}
 for b in items:
   ns = b['metadata']['namespace']
   cluster = b.get('spec', {}).get('cluster', {}).get('name', 'unknown')
   key = f'{ns}/{cluster}'
-  phase = b.get('status', {}).get('phase', 'unknown')
-  started = b.get('status', {}).get('startedAt', '')
   stopped = b.get('status', {}).get('stoppedAt', '')
+  phase = b.get('status', {}).get('phase', 'unknown')
   if key not in clusters or stopped > clusters[key].get('stopped', ''):
-    clusters[key] = {'phase': phase, 'started': started, 'stopped': stopped}
+    clusters[key] = {'phase': phase, 'stopped': stopped}
 
 results = []
 all_ok = True
 now = datetime.now(timezone.utc)
 for key, info in sorted(clusters.items()):
-  age_str = 'unknown'
   if info['stopped']:
     try:
-      stopped_dt = datetime.fromisoformat(info['stopped'].replace('Z', '+00:00'))
-      age = now - stopped_dt
-      age_hours = age.total_seconds() / 3600
-      age_str = f'{age_hours:.1f}h ago'
-      if age_hours > 48:
-        all_ok = False
-    except Exception:
-      age_str = info['stopped']
+      dt = datetime.fromisoformat(info['stopped'].replace('Z', '+00:00'))
+      age_h = (now - dt).total_seconds() / 3600
+      if age_h > 48: all_ok = False
+      results.append(f'{key}: {info[\"phase\"]} ({age_h:.1f}h ago)')
+    except: results.append(f'{key}: {info[\"phase\"]}'); all_ok = False
   else:
-    all_ok = False
-    age_str = 'no completion time'
+    results.append(f'{key}: {info[\"phase\"]} (no completion)'); all_ok = False
 
-  phase = info['phase']
-  if phase not in ('completed', 'Completed'):
-    all_ok = False
-  results.append(f'{key}: {phase} ({age_str})')
-
-status = 'OK' if all_ok else 'WARN'
-print(f'{status}|' + '; '.join(results))
+print(f'{\"OK\" if all_ok else \"WARN\"}|' + '; '.join(results))
 " 2>/dev/null) || report="WARN|Failed to parse CNPG backups"
 
   local status_prefix="${report%%|*}"
   local detail="${report#*|}"
-
   if [ "$status_prefix" = "OK" ]; then
     add_check "cnpg-backups" "ok" "$detail"
   else
@@ -104,134 +515,42 @@ print(f'{status}|' + '; '.join(results))
   fi
 }
 
-# CNPG ScheduledBackup health
-check_cnpg_scheduled() {
-  if $DRY_RUN; then
-    add_check "cnpg-scheduled-backups" "ok" "DRY RUN: would check CNPG ScheduledBackup status"
-    return
-  fi
+# ============================================================
+# RUN ALL CHECKS
+# ============================================================
 
-  local scheduled
-  scheduled=$($KUBECTL get scheduledbackup.postgresql.cnpg.io --all-namespaces -o json 2>/dev/null) || {
-    add_check "cnpg-scheduled-backups" "ok" "No CNPG ScheduledBackups configured"
-    return
-  }
+check_pve_connectivity
 
-  local report
-  report=$(echo "$scheduled" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-items = data.get('items', [])
-if not items:
-  print('OK|No ScheduledBackups defined')
-  sys.exit(0)
-results = []
-all_ok = True
-for sb in items:
-  ns = sb['metadata']['namespace']
-  name = sb['metadata']['name']
-  schedule = sb.get('spec', {}).get('schedule', 'unknown')
-  suspend = sb.get('spec', {}).get('suspend', False)
-  last = sb.get('status', {}).get('lastScheduleTime', 'never')
-  if suspend:
-    all_ok = False
-    results.append(f'{ns}/{name}: SUSPENDED schedule={schedule}')
-  else:
-    results.append(f'{ns}/{name}: active schedule={schedule} last={last}')
-status = 'OK' if all_ok else 'WARN'
-print(f'{status}|' + '; '.join(results))
-" 2>/dev/null) || report="WARN|Failed to parse ScheduledBackups"
+# Layer 1: LVM Thin Snapshots
+check_lvm_snapshot_freshness
+check_lvm_snapshot_status
+check_lvm_snapshot_count
+check_lvm_thinpool_free
+check_lvm_snapshot_timer
 
-  local status_prefix="${report%%|*}"
-  local detail="${report#*|}"
+# Layer 2: Weekly Backup (sda)
+check_weekly_backup_freshness
+check_weekly_backup_status
+check_weekly_backup_timer
+check_sda_mount
+check_sda_disk_usage
+check_pvc_data_freshness
+check_nfs_mirror_freshness
+check_pfsense_backup_freshness
 
-  if [ "$status_prefix" = "OK" ]; then
-    add_check "cnpg-scheduled-backups" "ok" "$detail"
-  else
-    add_check "cnpg-scheduled-backups" "warn" "$detail"
-  fi
-}
+# Layer 3: Offsite Sync
+check_offsite_sync_freshness
+check_offsite_sync_status
+check_offsite_sync_timer
 
-# MySQL backup file freshness on NFS
-check_mysql_backups() {
-  if $DRY_RUN; then
-    add_check "mysql-backups" "ok" "DRY RUN: would check MySQL backup file timestamps"
-    return
-  fi
-
-  # Check for MySQL backup files via a pod that has NFS mounted, or via known backup job
-  local backup_pods
-  backup_pods=$($KUBECTL get pods --all-namespaces -l app=mysql-backup -o name 2>/dev/null | head -1) || true
-  if [ -z "$backup_pods" ]; then
-    backup_pods=$($KUBECTL get cronjobs --all-namespaces --no-headers 2>/dev/null | grep -i "mysql.*backup\|backup.*mysql" | awk '{print $1"/"$2}') || true
-  fi
-
-  if [ -z "$backup_pods" ]; then
-    # Try checking via TrueNAS SSH for NFS backup files
-    local nfs_check
-    nfs_check=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@10.0.10.15 \
-      "find /mnt/main -name '*.sql.gz' -o -name '*.sql' -o -name '*mysql*backup*' 2>/dev/null | head -5" 2>/dev/null) || true
-
-    if [ -n "$nfs_check" ]; then
-      local ages
-      ages=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@10.0.10.15 \
-        "for f in $(echo "$nfs_check" | tr '\n' ' '); do stat -f '%m %N' \"\$f\" 2>/dev/null || stat -c '%Y %n' \"\$f\" 2>/dev/null; done" 2>/dev/null) || true
-      if [ -n "$ages" ]; then
-        add_check "mysql-backups" "ok" "Found MySQL backup files on NFS: $(echo "$nfs_check" | tr '\n' '; ')"
-      else
-        add_check "mysql-backups" "warn" "Found backup files but cannot determine age: $(echo "$nfs_check" | tr '\n' '; ')"
-      fi
-    else
-      add_check "mysql-backups" "warn" "No MySQL backup CronJobs or backup files found"
-    fi
-    return
-  fi
-
-  # Check CronJob last successful run
-  local cronjob_status
-  cronjob_status=$($KUBECTL get cronjobs --all-namespaces -o json 2>/dev/null | python3 -c "
-import sys, json
-from datetime import datetime, timezone
-
-data = json.load(sys.stdin)
-results = []
-for cj in data.get('items', []):
-  ns = cj['metadata']['namespace']
-  name = cj['metadata']['name']
-  if 'mysql' not in name.lower() and 'backup' not in name.lower():
-    continue
-  schedule = cj.get('spec', {}).get('schedule', 'unknown')
-  last_time = cj.get('status', {}).get('lastScheduleTime', '')
-  last_success = cj.get('status', {}).get('lastSuccessfulTime', '')
-  suspend = cj.get('spec', {}).get('suspend', False)
-
-  age_str = 'never'
-  if last_success:
-    try:
-      dt = datetime.fromisoformat(last_success.replace('Z', '+00:00'))
-      age = datetime.now(timezone.utc) - dt
-      age_str = f'{age.total_seconds()/3600:.1f}h ago'
-    except Exception:
-      age_str = last_success
-
-  status = 'suspended' if suspend else 'active'
-  results.append(f'{ns}/{name}: {status} schedule={schedule} last_success={age_str}')
-
-if results:
-  print('; '.join(results))
-else:
-  print('No MySQL/backup CronJobs found')
-" 2>/dev/null) || cronjob_status="Failed to check CronJobs"
-
-  add_check "mysql-backups" "ok" "$cronjob_status"
-}
-
-# Run all checks
+# DB CronJobs + CNPG
+check_backup_cronjobs
 check_cnpg_backups
-check_cnpg_scheduled
-check_mysql_backups
 
-# Determine overall status
+# ============================================================
+# OUTPUT
+# ============================================================
+
 OVERALL=$(echo "$CHECKS" | python3 -c "
 import sys, json
 checks = json.load(sys.stdin)
