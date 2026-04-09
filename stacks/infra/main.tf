@@ -149,6 +149,9 @@ with open('/var/lib/kubelet/config.yaml') as f:
 cfg.pop('shutdownGracePeriod', None)
 cfg.pop('shutdownGracePeriodCriticalPods', None)
 cfg.pop('shutdownGracePeriodByPodPriority', None)
+# Container log rotation limits — reduces root disk writes (~20-30 GB/day savings)
+cfg['containerLogMaxSize'] = '10Mi'
+cfg['containerLogMaxFiles'] = 3
 cfg['shutdownGracePeriodByPodPriority'] = [
     {'priority': 0,          'shutdownGracePeriodSeconds': 20},
     {'priority': 200000,     'shutdownGracePeriodSeconds': 20},

@@ -175,13 +175,30 @@ resource "helm_release" "mysql_cluster" {
         innodb_log_buffer_size=16777216
         # Limit connections (peak usage ~40, no need for 151)
         max_connections=80
-        # Reduce disk write amplification (defaults were SSD-tuned, we're on HDD/LVM thin)
-        innodb_io_capacity=200
-        innodb_io_capacity_max=400
-        innodb_flush_log_at_trx_commit=2
+        # --- Disk write reduction (HDD/LVM thin) ---
+        # Flush redo log once per second, not per commit. Up to 1s data loss on MySQL crash,
+        # but group replication provides redundancy across 3 nodes.
+        innodb_flush_log_at_trx_commit=0
+        # OS decides when to flush binlog (not per commit)
         sync_binlog=0
+        # HDD-tuned I/O capacity
+        innodb_io_capacity=100
+        innodb_io_capacity_max=200
+        # 1GB redo log capacity — larger log means less frequent checkpoint flushes
+        innodb_redo_log_capacity=1073741824
+        # 1GB buffer pool
         innodb_buffer_pool_size=1073741824
-        innodb_redo_log_capacity=536870912
+        # Disable doublewrite — halves write amplification. Safe with group replication
+        innodb_doublewrite=OFF
+        # Flush neighbors on HDD (coalesce adjacent dirty pages into single I/O)
+        innodb_flush_neighbors=1
+        # Reduce page cleaner aggressiveness
+        innodb_lru_scan_depth=256
+        innodb_page_cleaners=1
+        # Reduce adaptive flushing — let dirty pages accumulate longer before background flush
+        innodb_adaptive_flushing_lwm=10
+        innodb_max_dirty_pages_pct=90
+        innodb_max_dirty_pages_pct_lwm=10
       EOT
     }
 
