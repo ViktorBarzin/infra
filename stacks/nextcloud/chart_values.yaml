@@ -83,10 +83,16 @@ nextcloud:
     - name: apache-tuning
       configMap:
         name: nextcloud-apache-tuning
+    - name: db-password-sync
+      configMap:
+        name: nextcloud-db-password-sync
+        defaultMode: 0755
   extraVolumeMounts:
     - name: apache-tuning
       mountPath: /etc/apache2/mods-available/mpm_prefork.conf
       subPath: mpm_prefork.conf
+    - name: db-password-sync
+      mountPath: /docker-entrypoint-hooks.d/before-starting
 
 internalDatabase:
   enabled: false
@@ -107,7 +113,7 @@ externalDatabase:
 
 persistence:
   enabled: true
-  existingClaim: nextcloud-data-iscsi
+  existingClaim: nextcloud-data-proxmox
 
   accessMode: ReadWriteOnce
   size: 20Gi
@@ -140,6 +146,7 @@ podAnnotations:
   diun.enable: "true"
   diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
   dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis.redis:6379"
+  secret.reloader.stakater.com/reload: "nextcloud-db-creds"
 
 collabora:
   enabled: false # Using onlyoffice instead
