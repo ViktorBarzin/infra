@@ -51,6 +51,35 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.phpipam]
 }
 
+resource "kubernetes_manifest" "external_secret_pfsense_ssh" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "phpipam-pfsense-ssh"
+      namespace = "phpipam"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "phpipam-pfsense-ssh"
+      }
+      data = [{
+        secretKey = "ssh_key"
+        remoteRef = {
+          key      = "viktor"
+          property = "phpipam_pfsense_ssh_key"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.phpipam]
+}
+
 resource "kubernetes_manifest" "external_secret_admin" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -236,7 +265,7 @@ resource "kubernetes_deployment" "phpipam_cron" {
           }
           env {
             name  = "SCAN_INTERVAL"
-            value = "15m"
+            value = "24h"
           }
           resources {
             requests = {
@@ -417,6 +446,200 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
                 limits = {
                   memory = "128Mi"
                 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# CronJob: Import devices from pfSense (Kea DHCP leases + ARP table) into phpIPAM
+# Replaces active fping scanning with passive data from pfSense
+resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
+  metadata {
+    name      = "phpipam-pfsense-import"
+    namespace = kubernetes_namespace.phpipam.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/5 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name  = "import"
+              image = "alpine:3.21"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                apk add --no-cache -q openssh-client mysql-client python3 > /dev/null 2>&1
+
+                # Setup SSH key
+                mkdir -p /root/.ssh
+                cp /ssh/ssh_key /root/.ssh/id_ed25519
+                chmod 600 /root/.ssh/id_ed25519
+                echo "StrictHostKeyChecking no" > /root/.ssh/config
+
+                # 1. Get Kea DHCP leases via control socket
+                echo "=== Fetching Kea leases ==="
+                LEASES=$$(ssh admin@10.0.20.1 'echo "{\"command\": \"lease4-get-all\"}" | /usr/bin/nc -U /tmp/kea4-ctrl-socket 2>/dev/null')
+
+                # 2. Get ARP table
+                echo "=== Fetching ARP table ==="
+                ARP=$$(ssh admin@10.0.20.1 'arp -an' 2>/dev/null)
+
+                # 3. Parse and import into phpIPAM MySQL
+                echo "=== Importing into phpIPAM ==="
+                export LEASES_DATA="$$LEASES"
+                export ARP_DATA="$$ARP"
+                python3 << 'PYEOF'
+import json, subprocess, sys, re, os
+
+db_host = os.environ["DB_HOST"]
+db_user = os.environ["DB_USER"]
+db_pass = os.environ["DB_PASS"]
+db_name = os.environ["DB_NAME"]
+
+def mysql_exec(sql):
+    r = subprocess.run(
+        ["mysql", "-h", db_host, "-u", db_user, f"-p{db_pass}", db_name, "-N", "-B", "-e", sql],
+        capture_output=True, text=True
+    )
+    return r.stdout.strip()
+
+# Get existing phpIPAM entries (subnetId >= 7 = our subnets)
+existing = {}
+rows = mysql_exec("SELECT INET_NTOA(ip_addr), hostname, mac, subnetId FROM ipaddresses WHERE subnetId >= 7")
+for line in rows.split("\n"):
+    if not line: continue
+    parts = line.split("\t")
+    existing[parts[0]] = {"hostname": parts[1] if parts[1] != "NULL" else "", "mac": parts[2] if parts[2] != "NULL" else "", "subnetId": parts[3]}
+
+# Subnet mapping
+def get_subnet_id(ip):
+    if ip.startswith("10.0.10."): return 7
+    if ip.startswith("10.0.20."): return 8
+    if ip.startswith("192.168.1."): return 9
+    if ip.startswith("10.3.2."): return 10
+    if ip.startswith("192.168.8."): return 11
+    if ip.startswith("192.168.0."): return 12
+    return None
+
+# Parse Kea leases
+leases_raw = os.environ.get("LEASES_DATA", "{}")
+try:
+    leases_json = json.loads(leases_raw)
+    leases = leases_json.get("arguments", {}).get("leases", []) if isinstance(leases_json, dict) else leases_json[0].get("arguments", {}).get("leases", [])
+except:
+    leases = []
+
+imported = 0
+updated_mac = 0
+updated_hostname = 0
+
+for lease in leases:
+    ip = lease["ip-address"]
+    mac = lease.get("hw-address", "")
+    hostname = lease.get("hostname", "").split(".")[0]  # strip .viktorbarzin.lan
+    subnet_id = get_subnet_id(ip)
+    if not subnet_id: continue
+
+    if ip not in existing:
+        # New host — insert
+        mac_sql = f"'{mac}'" if mac else "NULL"
+        host_sql = f"'{hostname}'" if hostname else "''"
+        mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, hostname, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, {host_sql}, {mac_sql}, '-- kea lease --', NOW())")
+        imported += 1
+        print(f"  NEW {ip} -> {hostname} mac={mac}")
+    else:
+        # Existing — update MAC if missing, hostname if missing, lastSeen always
+        updates = ["lastSeen=NOW()"]
+        if mac and not existing[ip]["mac"]:
+            updates.append(f"mac='{mac}'")
+            updated_mac += 1
+        if hostname and not existing[ip]["hostname"]:
+            updates.append(f"hostname='{hostname}'")
+            updated_hostname += 1
+        mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
+
+# Parse ARP table for devices not in Kea (static IPs)
+arp_raw = os.environ.get("ARP_DATA", "")
+lease_ips = {l["ip-address"] for l in leases}
+
+for line in arp_raw.split("\n"):
+    m = re.match(r'\? \((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-f:]+) on', line)
+    if not m: continue
+    ip, mac = m.group(1), m.group(2)
+    if mac == "(incomplete)": continue
+    subnet_id = get_subnet_id(ip)
+    if not subnet_id: continue
+    if ip in lease_ips: continue  # already handled by Kea
+
+    if ip not in existing:
+        mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, '{mac}', '-- arp discovered --', NOW())")
+        imported += 1
+        print(f"  NEW (arp) {ip} mac={mac}")
+    else:
+        updates = ["lastSeen=NOW()"]
+        if mac and not existing[ip]["mac"]:
+            updates.append(f"mac='{mac}'")
+            updated_mac += 1
+        mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
+
+print(f"\nImported: {imported} new, Updated: {updated_mac} MACs, {updated_hostname} hostnames")
+PYEOF
+                echo "Import complete"
+              EOT
+              ]
+              env {
+                name  = "DB_HOST"
+                value = var.mysql_host
+              }
+              env {
+                name  = "DB_USER"
+                value = "phpipam"
+              }
+              env {
+                name = "DB_PASS"
+                value_from {
+                  secret_key_ref {
+                    name = "phpipam-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              env {
+                name  = "DB_NAME"
+                value = "phpipam"
+              }
+              volume_mount {
+                name       = "ssh-key"
+                mount_path = "/ssh"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+            volume {
+              name = "ssh-key"
+              secret {
+                secret_name  = "phpipam-pfsense-ssh"
+                default_mode = "0400"
               }
             }
           }
