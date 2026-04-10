@@ -235,6 +235,50 @@ module "ingress" {
 }
 
 
+# Hook script: sync DB password from env var into config.php on every pod start.
+# Closes the Vault rotation gap: Vault rotates MySQL password → ESO syncs to K8s Secret →
+# Reloader restarts pod → this hook patches config.php with the current MYSQL_PASSWORD.
+resource "kubernetes_config_map" "db_password_sync_hook" {
+  metadata {
+    name      = "nextcloud-db-password-sync"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  data = {
+    "sync-db-password.sh" = <<-EOF
+      #!/bin/bash
+      set -e
+      CONFIG="/var/www/html/config/config.php"
+      if [ -z "$MYSQL_PASSWORD" ]; then
+        echo "MYSQL_PASSWORD not set, skipping config.php sync"
+        exit 0
+      fi
+      if [ ! -f "$CONFIG" ]; then
+        echo "config.php not found, skipping (first install)"
+        exit 0
+      fi
+      CURRENT_PW=$(php -r "include '$CONFIG'; echo \$CONFIG['dbpassword'] ?? '';")
+      if [ "$CURRENT_PW" = "$MYSQL_PASSWORD" ]; then
+        echo "DB password in config.php already matches MYSQL_PASSWORD"
+        exit 0
+      fi
+      echo "Updating DB password in config.php to match MYSQL_PASSWORD..."
+      php /docker-entrypoint-hooks.d/before-starting/patch-db-pw.php "$CONFIG" "$MYSQL_PASSWORD"
+      echo "DB password updated successfully"
+    EOF
+
+    "patch-db-pw.php" = <<-EOF
+      <?php
+      $file = $argv[1];
+      $newPw = $argv[2];
+      $content = file_get_contents($file);
+      $escaped = str_replace(["'", "\\"], ["\\'", "\\\\"], $newPw);
+      $content = preg_replace("/'dbpassword'\\s*=>\\s*'[^']*'/", "'dbpassword' => '" . $escaped . "'", $content);
+      file_put_contents($file, $content);
+    EOF
+  }
+}
+
 resource "kubernetes_config_map" "backup-script" {
   metadata {
     name      = "nextcloud-backup-script"
