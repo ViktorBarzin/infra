@@ -297,8 +297,9 @@ module "ingress" {
   }
 }
 
-# CronJob: Sync phpIPAM discovered hosts → Technitium DNS (A + PTR records)
-# Covers subnets not managed by Kea DDNS (e.g., 192.168.1.0/24 from TP-Link DHCP)
+# CronJob: Bidirectional sync between phpIPAM and Technitium DNS
+# 1. Push: named phpIPAM hosts → Technitium A + PTR records
+# 2. Pull: Technitium reverse DNS → phpIPAM hostnames for unnamed entries
 resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
   metadata {
     name      = "phpipam-dns-sync"
@@ -352,7 +353,35 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
                   SYNCED=$$((SYNCED + 1))
                   echo "  $$IP -> $$FQDN"
                 done
-                echo "Sync complete"
+                echo "Push sync complete"
+
+                # Reverse sync: pull hostnames from DNS into phpIPAM for unnamed entries
+                echo ""
+                echo "=== Reverse sync: DNS -> phpIPAM ==="
+                UNNAMED=$$(mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
+                  "SELECT id, INET_NTOA(ip_addr) FROM ipaddresses WHERE (hostname IS NULL OR hostname = '') AND subnetId >= 7")
+
+                echo "$$UNNAMED" | while IFS=$$'\t' read -r ID IP; do
+                  [ -z "$$ID" ] || [ -z "$$IP" ] && continue
+                  # Query Technitium for PTR record
+                  O1=$$(echo $$IP | cut -d. -f1); O2=$$(echo $$IP | cut -d. -f2)
+                  O3=$$(echo $$IP | cut -d. -f3); O4=$$(echo $$IP | cut -d. -f4)
+                  PTR_NAME="$$O4.$$O3.$$O2.$$O1.in-addr.arpa"
+                  REV_ZONE="$$O3.$$O2.$$O1.in-addr.arpa"
+                  RESULT=$$(curl -sf "$$TECH_URL/api/zones/records/get?token=$$TECH_TOKEN&domain=$$PTR_NAME&zone=$$REV_ZONE&type=PTR" 2>/dev/null)
+                  HOSTNAME=$$(echo "$$RESULT" | sed -n 's/.*"ptrName":"\([^"]*\)".*/\1/p' | head -1)
+                  [ -z "$$HOSTNAME" ] && continue
+
+                  # Extract short name
+                  SHORT=$$(echo "$$HOSTNAME" | cut -d. -f1)
+                  [ -z "$$SHORT" ] && continue
+
+                  # Update phpIPAM
+                  mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -e \
+                    "UPDATE ipaddresses SET hostname='$$SHORT' WHERE id=$$ID AND (hostname IS NULL OR hostname = '')"
+                  echo "  $$IP -> $$SHORT (from DNS)"
+                done
+                echo "Bidirectional sync complete"
               EOT
               ]
               env {
