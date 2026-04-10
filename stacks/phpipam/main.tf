@@ -4,6 +4,15 @@ variable "tls_secret_name" {
 }
 variable "mysql_host" { type = string }
 
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "platform"
+}
+
+locals {
+  technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
+}
+
 resource "kubernetes_namespace" "phpipam" {
   metadata {
     name = "phpipam"
@@ -35,6 +44,35 @@ resource "kubernetes_manifest" "external_secret" {
         remoteRef = {
           key      = "static-creds/mysql-phpipam"
           property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.phpipam]
+}
+
+resource "kubernetes_manifest" "external_secret_admin" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "phpipam-admin-password"
+      namespace = "phpipam"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "phpipam-admin-password"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "viktor"
+          property = "phpipam_admin_password"
         }
       }]
     }
@@ -256,5 +294,105 @@ module "ingress" {
     "gethomepage.dev/icon"         = "phpipam.png"
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# CronJob: Sync phpIPAM discovered hosts → Technitium DNS (A + PTR records)
+# Covers subnets not managed by Kea DDNS (e.g., 192.168.1.0/24 from TP-Link DHCP)
+resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
+  metadata {
+    name      = "phpipam-dns-sync"
+    namespace = kubernetes_namespace.phpipam.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/15 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name  = "sync"
+              image = "mysql:8.0"
+              command = ["/bin/bash", "-c", <<-EOT
+                set -e
+                TECH_URL="http://technitium-web.technitium.svc.cluster.local:5380"
+
+                # Login to Technitium
+                TECH_TOKEN=$$(curl -sf "$$TECH_URL/api/user/login?user=admin&pass=$$TECH_PASS" | sed 's/.*"token":"\([^"]*\)".*/\1/')
+                if [ -z "$$TECH_TOKEN" ]; then echo "Technitium login failed"; exit 1; fi
+                echo "Technitium auth OK"
+
+                # Query phpIPAM MySQL directly for hosts with hostnames
+                HOSTS=$$(mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
+                  "SELECT INET_NTOA(ip_addr), hostname FROM ipaddresses WHERE hostname != '' AND hostname IS NOT NULL AND subnetId >= 7")
+
+                SYNCED=0
+                echo "$$HOSTS" | while IFS=$$'\t' read -r IP HOSTNAME; do
+                  [ -z "$$IP" ] || [ -z "$$HOSTNAME" ] && continue
+                  SHORT=$$(echo "$$HOSTNAME" | cut -d. -f1)
+                  FQDN="$$SHORT.viktorbarzin.lan"
+
+                  # A record
+                  curl -sf -o /dev/null -X POST "$$TECH_URL/api/zones/records/add?token=$$TECH_TOKEN" \
+                    -d "domain=$$FQDN&zone=viktorbarzin.lan&type=A&ipAddress=$$IP&overwrite=true&ttl=300"
+
+                  # PTR record
+                  O1=$$(echo $$IP | cut -d. -f1); O2=$$(echo $$IP | cut -d. -f2)
+                  O3=$$(echo $$IP | cut -d. -f3); O4=$$(echo $$IP | cut -d. -f4)
+                  curl -sf -o /dev/null -X POST "$$TECH_URL/api/zones/records/add?token=$$TECH_TOKEN" \
+                    -d "domain=$$O4.$$O3.$$O2.$$O1.in-addr.arpa&zone=$$O3.$$O2.$$O1.in-addr.arpa&type=PTR&ptrName=$$FQDN&overwrite=true&ttl=300" 2>/dev/null || true
+
+                  SYNCED=$$((SYNCED + 1))
+                  echo "  $$IP -> $$FQDN"
+                done
+                echo "Sync complete"
+              EOT
+              ]
+              env {
+                name  = "TECH_PASS"
+                value = local.technitium_password
+              }
+              env {
+                name  = "DB_HOST"
+                value = var.mysql_host
+              }
+              env {
+                name  = "DB_USER"
+                value = "phpipam"
+              }
+              env {
+                name = "DB_PASS"
+                value_from {
+                  secret_key_ref {
+                    name = "phpipam-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              env {
+                name  = "DB_NAME"
+                value = "phpipam"
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
