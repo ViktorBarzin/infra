@@ -67,6 +67,11 @@ nextcloud:
         'loglevel' => 2,
         'mail_smtpdebug' => false,
       );
+    zzz-mysql.config.php: |
+      <?php
+      $CONFIG = array(
+        'mysql.utf8mb4' => true,
+      );
   phpConfigs:
     zzz-custom.ini: |
       max_execution_time = 300
