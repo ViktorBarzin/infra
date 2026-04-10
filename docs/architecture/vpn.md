@@ -1,6 +1,6 @@
 # VPN & Remote Access Architecture
 
-Last updated: 2026-04-06
+Last updated: 2026-04-10
 
 ## Overview
 
@@ -235,11 +235,11 @@ dns_config:
 
 ### WireGuard (pfSense — Hub)
 
-**Single interface `tun_wg0`** (OPT2) with two peers on subnet `10.3.2.0/24`:
+**Single interface `tun_wg0`** (OPT2) with two peers on subnet `10.3.2.0/24`. Listens on `*:51821` for both IPv4 and IPv6. IPv6 access via HE tunnel (`gif0`, `2001:470:6e:43d::2`) requires a `pass in` pf rule on the `HE_IPv6` interface (interface name `opt3` in config.xml):
 
 **Peer: London Flint 2**:
 - WireGuard IP: `10.3.2.6`
-- Remote endpoint: `vpn.viktorbarzin.me:51821` (dynamic, London public IP)
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (dual-stack: A=176.12.22.76, AAAA=2001:470:6e:43d::2)
 - Allowed IPs: `192.168.8.0/24, 192.168.9.0/24, 192.168.10.0/24, 10.3.2.6/32`
 - Keepalive: 25 seconds (configured on London side)
 
@@ -259,13 +259,17 @@ dns_config:
 
 ### WireGuard (London — GL-iNet Flint 2)
 
-- Interface: `wgclient1`
+- Interface: `wgclient1` (proto `wgclient`, config `peer_855`)
 - Local IP: `10.3.2.6/32`
-- Remote endpoint: `vpn.viktorbarzin.me:51821` (176.12.22.76:51821)
-- Allowed IPs: `10.0.0.0/8, 192.168.1.0/24`
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (dual-stack — resolves to IPv4 or IPv6)
+- Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.0.0/24`
 - Keepalive: 25 seconds
-- Policy routing: GL-iNet marks traffic via iptables mangle → routing table 1001
-- Persistence: `/etc/firewall.user` injects mangle rules (GL-iNet framework unreliable)
+- Policy routing: GL-iNet marks traffic via iptables mangle → routing table 1001 (ipset `dst_net10`)
+- Persistence: `/etc/firewall.user` injects LOCAL_POLICY mangle rule (GL-iNet's `gl-tertf` creates TUNNEL10_ROUTE_POLICY but not the LOCAL_POLICY rule for router-originated traffic)
+
+**GL-iNet AllowedIPs format**: UCI `list allowed_ips` entries are concatenated by the `wgclient` protocol handler. Use a **single comma-separated entry** (`'10.0.0.0/8,192.168.1.0/24,192.168.0.0/24'`), NOT multiple list entries. Multiple entries cause a parse error like `10.0.0.0/8192.168.1.0/24` (no separator).
+
+**DNS**: AdGuardHome runs on the router. Upstream DNS should NOT include `1.1.1.1` — it creates conntrack conflicts with ICMP and GL-iNet's `carrier-monitor` health check floods Cloudflare, triggering ICMP rate limits. Use `9.9.9.9`, `8.8.4.4` instead. Health check IPs (`glconfig.general.track_ip`) should use `1.0.0.1` not `1.1.1.1`.
 
 ### WireGuard (Valchedrym — OpenWRT)
 
@@ -415,14 +419,17 @@ dns_config:
 
 **Symptoms**: Can't reach services in London from Sofia. `ping 192.168.8.1` fails.
 
-**Diagnosis**: Check pfSense WireGuard status: Dashboard → VPN → WireGuard → Status
+**Diagnosis**: Check pfSense WireGuard status via `pfsense.py wireguard` or Dashboard → VPN → WireGuard → Status
 
 **Common causes**:
-1. **Keepalive packets dropped**: Firewall or ISP blocking UDP 51820.
-2. **Public IP changed**: Dynamic IP on remote site changed, config still has old IP.
-3. **Routing conflict**: Overlapping subnet on both sides.
+1. **AllowedIPs parse error on GL-iNet**: If `wg show wgclient1` shows no peers and interface is DOWN with `qdisc noop`, check `/etc/config/wireguard` peer config. AllowedIPs must be a single comma-separated entry, not multiple `list` entries (see London section above).
+2. **IPv6 endpoint resolution**: If IPv4 is down, DNS resolves to IPv6 (AAAA record). Ensure the pfSense `HE_IPv6` (gif0) interface has a `pass in` rule for UDP 51821.
+3. **Keepalive packets dropped**: Firewall or ISP blocking UDP 51821.
+4. **Public IP changed**: Dynamic IP on remote site changed, config still has old IP.
+5. **GL-iNet policy routing lost**: After firewall reload, check if `TUNNEL10_ROUTE_POLICY` and `LOCAL_POLICY` mangle rules exist. If not, run `/etc/init.d/firewall restart` and check `/etc/firewall.user` execution.
+6. **Kill switch active**: If WG interface is DOWN, table 1001 only has blackhole routes → all marked traffic dropped → IPv4 internet broken.
 
-**Fix**: Increase keepalive interval (25s → 60s). Update remote endpoint if IP changed. Verify subnet uniqueness.
+**Fix**: Check `wg show wgclient1` on London router. If no peers, fix AllowedIPs format and `ifdown/ifup wgclient1`. Verify handshake with `ping 10.3.2.1`.
 
 ## Related
 
