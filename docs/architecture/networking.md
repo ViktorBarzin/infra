@@ -76,7 +76,8 @@ graph TB
 
 | Component | Version/Type | Location | Purpose |
 |-----------|-------------|----------|---------|
-| pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, DHCP for VLAN 20 |
+| pfSense | 2.7.x | 10.0.20.1 | Gateway, NAT, firewall, Kea DHCP for all subnets, Kea DDNS |
+| phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
@@ -87,6 +88,70 @@ graph TB
 | Authentik | Helm chart | K8s (3 replicas + PDB) | SSO, forward-auth middleware |
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
+
+## IPAM & DNS Auto-Registration
+
+Devices are automatically discovered, named, and registered in DNS without manual intervention.
+
+```mermaid
+flowchart LR
+    subgraph "Device Connects"
+        Device[New Device<br/>joins WiFi/wired]
+    end
+
+    subgraph pfSense["pfSense (10.0.20.1)"]
+        Kea[Kea DHCP4<br/>3 subnets<br/>42 reservations]
+        DDNS[Kea DHCP-DDNS]
+        ARP[ARP Table]
+    end
+
+    subgraph K8s["Kubernetes"]
+        Import[CronJob<br/>pfsense-import<br/>every 5min]
+        Sync[CronJob<br/>dns-sync<br/>every 15min]
+        IPAM[phpIPAM<br/>Web UI + API]
+        MySQL[(MySQL<br/>InnoDB)]
+    end
+
+    subgraph DNS["Technitium DNS"]
+        Forward[viktorbarzin.lan<br/>A records]
+        Reverse[*.in-addr.arpa<br/>PTR records]
+    end
+
+    Device -->|DHCP request| Kea
+    Kea -->|IP + hostname| Device
+    Kea -->|lease event| DDNS
+    DDNS -->|RFC 2136<br/>A + PTR| Forward
+    DDNS -->|RFC 2136<br/>A + PTR| Reverse
+    Device -.->|traffic| ARP
+
+    Import -->|SSH: Kea leases<br/>+ ARP table| pfSense
+    Import -->|insert/update<br/>IP + MAC + hostname| MySQL
+    IPAM --- MySQL
+    Sync -->|push named hosts| Forward
+    Sync -->|push named hosts| Reverse
+    Sync -->|pull PTR hostnames<br/>for unnamed entries| MySQL
+```
+
+### Data Flow
+
+| Step | Trigger | Source | Destination | Data | Latency |
+|------|---------|--------|-------------|------|---------|
+| 1. DHCP lease | Device connects | Kea DHCP4 | Device | IP + gateway + DNS | Immediate |
+| 2. DNS registration | Lease granted | Kea DDNS | Technitium | A + PTR records | Immediate |
+| 3. Device import | CronJob (5min) | Kea leases + ARP | phpIPAM MySQL | IP + MAC + hostname | ≤5 min |
+| 4. DNS sync (push) | CronJob (15min) | phpIPAM MySQL | Technitium | A + PTR for named hosts | ≤15 min |
+| 5. DNS sync (pull) | CronJob (15min) | Technitium PTR | phpIPAM MySQL | Hostname for unnamed entries | ≤15 min |
+
+### DHCP Coverage
+
+| Subnet | DHCP Server | Reservations | DDNS | Notes |
+|--------|------------|--------------|------|-------|
+| 10.0.10.0/24 (Mgmt) | Kea on pfSense | 4 (devvm, truenas, pxe, ha) | Yes | VMs with static MACs |
+| 10.0.20.0/24 (K8s) | Kea on pfSense | 7 (master, nodes 1-5, registry) | Yes | K8s cluster nodes |
+| 192.168.1.0/24 (LAN) | Kea on pfSense | 42 (all home devices) | Yes | TP-Link is dumb AP only |
+| 10.3.2.0/24 (VPN) | Static | — | No | WireGuard peers |
+| 192.168.0.0/24 (Valchedrym) | OpenWRT | — | No | Remote site |
+| 192.168.8.0/24 (London) | GL-iNet | — | No | Remote site |
 
 ## How It Works
 
@@ -249,24 +314,25 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **pfSense**:
 - Config: Not Terraform-managed (pfSense web UI / config.xml)
-- DHCP: Kea DHCP4 on VLAN 10 (10.0.10.0/24) and VLAN 20 (10.0.20.0/24)
-- DHCP DDNS: Kea DHCP-DDNS sends RFC 2136 updates to Technitium on lease grant
+- DHCP: Kea DHCP4 on all 3 subnets (VLAN 10, VLAN 20, WAN/LAN 192.168.1.0/24)
+- 42 MAC→IP reservations for 192.168.1.0/24 (all known home devices)
+- DHCP DDNS: Kea DHCP-DDNS sends RFC 2136 updates to Technitium on every lease grant (forward A + reverse PTR)
 - Firewall rules: Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:
 - Config: Stored in PVC `technitium-data`
 - Zone file: `viktorbarzin.lan` (A records for all internal hosts)
 - Reverse zones: `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`, `2.3.10.in-addr.arpa`, `0.168.192.in-addr.arpa`
-- Dynamic updates: Enabled (UseSpecifiedNetworkACL) from pfSense IPs (10.0.20.1, 10.0.10.1)
+- Dynamic updates: Enabled (UseSpecifiedNetworkACL) from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2)
 - Forwarders: Cloudflare 1.1.1.1, Google 8.8.8.8
 
 **phpIPAM (IP Address Management)**:
 - Stack: `stacks/phpipam/`
 - Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
 - Database: MySQL InnoDB cluster (`mysql.dbaas.svc.cluster.local`)
-- Auto-discovery: fping scan every 15min via `phpipam-cron` container
+- Device import: CronJob `phpipam-pfsense-import` every 5min — queries Kea DHCP leases + pfSense ARP table via SSH (no active scanning)
+- DNS sync: CronJob `phpipam-dns-sync` every 15min — bidirectional sync between phpIPAM and Technitium DNS (push named hosts → A+PTR, pull DNS hostnames → unnamed phpIPAM entries)
 - Subnets tracked: 10.0.10.0/24, 10.0.20.0/24, 192.168.1.0/24, 10.3.2.0/24, 192.168.8.0/24, 192.168.0.0/24
-- DNS sync: CronJob `phpipam-dns-sync` pushes named hosts → Technitium A+PTR records every 15min
 - API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access
 
 **Traefik Middleware**:
