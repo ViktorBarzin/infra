@@ -95,7 +95,8 @@
 | stirling-pdf | PDF tools | stirling-pdf |
 | speedtest | Speed testing | speedtest |
 | freedify | Music streaming (factory pattern) | freedify |
-| netbox | Network documentation | netbox |
+| phpipam | IP Address Management (IPAM) + auto-discovery | phpipam |
+| ~~netbox~~ | ~~Network documentation~~ (disabled, replaced by phpipam) | netbox |
 | infra-maintenance | Maintenance jobs | infra-maintenance |
 | ollama | LLM server (GPU) | ollama |
 | frigate | NVR/camera (GPU) | frigate |
@@ -117,7 +118,7 @@
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox
+travel, netbox, phpipam
 ```
 
 ### Non-Proxied (Direct DNS)

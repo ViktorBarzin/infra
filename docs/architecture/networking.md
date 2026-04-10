@@ -1,6 +1,6 @@
 # Networking Architecture
 
-Last updated: 2026-04-08
+Last updated: 2026-04-10
 
 ## Overview
 
@@ -248,14 +248,26 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 ### Key Configuration Files
 
 **pfSense**:
-- Terraform: `stacks/pfsense/main.tf`
-- DHCP scope: 10.0.20.50-250 (VLAN 20)
+- Config: Not Terraform-managed (pfSense web UI / config.xml)
+- DHCP: Kea DHCP4 on VLAN 10 (10.0.10.0/24) and VLAN 20 (10.0.20.0/24)
+- DHCP DDNS: Kea DHCP-DDNS sends RFC 2136 updates to Technitium on lease grant
 - Firewall rules: Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:
 - Config: Stored in PVC `technitium-data`
 - Zone file: `viktorbarzin.lan` (A records for all internal hosts)
+- Reverse zones: `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`, `2.3.10.in-addr.arpa`, `0.168.192.in-addr.arpa`
+- Dynamic updates: Enabled (UseSpecifiedNetworkACL) from pfSense IPs (10.0.20.1, 10.0.10.1)
 - Forwarders: Cloudflare 1.1.1.1, Google 8.8.8.8
+
+**phpIPAM (IP Address Management)**:
+- Stack: `stacks/phpipam/`
+- Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
+- Database: MySQL InnoDB cluster (`mysql.dbaas.svc.cluster.local`)
+- Auto-discovery: fping scan every 15min via `phpipam-cron` container
+- Subnets tracked: 10.0.10.0/24, 10.0.20.0/24, 192.168.1.0/24, 10.3.2.0/24, 192.168.8.0/24, 192.168.0.0/24
+- DNS sync: CronJob `phpipam-dns-sync` pushes named hosts → Technitium A+PTR records every 15min
+- API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access
 
 **Traefik Middleware**:
 - Helm values: `stacks/platform/traefik-values.yaml`
