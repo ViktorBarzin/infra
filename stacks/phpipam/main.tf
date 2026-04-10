@@ -410,9 +410,22 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
                 echo "=== Fetching ARP table ==="
                 ARP=$$(ssh admin@10.0.20.1 'arp -an' 2>/dev/null)
 
+                # 2b. Scan remote subnets via pfSense WireGuard tunnel (no ARP for L3 routed)
+                echo "=== Scanning remote subnets via WG tunnel ==="
+                REMOTE_HOSTS=$$(ssh admin@10.0.20.1 '
+                  for subnet in "192.168.8" "192.168.0"; do
+                    for i in $(seq 1 254); do
+                      ping -c 1 -t 1 $${subnet}.$${i} >/dev/null 2>&1 && echo "$${subnet}.$${i}" &
+                    done
+                  done
+                  wait
+                ' 2>/dev/null)
+                echo "$$REMOTE_HOSTS" | grep -c . | xargs -I{} echo "  Found {} remote hosts"
+
                 # 3. Parse and import into phpIPAM MySQL
                 echo "=== Importing into phpIPAM ==="
                 export LEASES_DATA="$$LEASES"
+                export REMOTE_HOSTS_DATA="$$REMOTE_HOSTS"
                 export ARP_DATA="$$ARP"
                 python3 << 'PYEOF'
 import json, subprocess, sys, re, os
@@ -507,6 +520,20 @@ for line in arp_raw.split("\n"):
             updates.append(f"mac='{mac}'")
             updated_mac += 1
         mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
+
+# Import remote hosts (scanned via WG tunnel, no MAC available)
+remote_raw = os.environ.get("REMOTE_HOSTS_DATA", "")
+for line in remote_raw.split("\n"):
+    ip = line.strip()
+    if not ip or not re.match(r'\d+\.\d+\.\d+\.\d+', ip): continue
+    subnet_id = get_subnet_id(ip)
+    if not subnet_id: continue
+    if ip in existing: continue
+    if ip in {l["ip-address"] for l in leases}: continue
+
+    mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, '-- wg tunnel scan --', NOW())")
+    imported += 1
+    print(f"  NEW (wg) {ip}")
 
 print(f"\nImported: {imported} new, Updated: {updated_mac} MACs, {updated_hostname} hostnames")
 PYEOF
