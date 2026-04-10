@@ -112,7 +112,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - **Rate limiting**: Return 429 (not 503). Per-service tuning: Immich/Nextcloud need higher limits.
 - **Retry middleware**: 2 attempts, 100ms — in default ingress chain.
 - **HTTP/3 (QUIC)**: Enabled cluster-wide via Traefik.
-- **IPAM & DNS auto-registration**: phpIPAM discovers hosts (fping every 15min). Kea DDNS on pfSense auto-registers VLAN 10/20 hosts in Technitium (RFC 2136). CronJob `phpipam-dns-sync` syncs remaining named hosts (192.168.1.x, VPN) → Technitium A+PTR records every 15min. Technitium zones accept dynamic updates from pfSense IPs.
+- **IPAM & DNS auto-registration**: pfSense Kea DHCP serves all 3 subnets (VLAN 10, VLAN 20, 192.168.1.x). Kea DDNS auto-registers every DHCP client in Technitium (RFC 2136, A+PTR). CronJob `phpipam-pfsense-import` (5min) pulls Kea leases + ARP into phpIPAM via SSH (passive, no scanning). CronJob `phpipam-dns-sync` (15min) bidirectional sync phpIPAM ↔ Technitium. 42 MAC reservations for 192.168.1.x.
 
 ## Service-Specific Notes
 | Service | Key Operational Knowledge |
@@ -124,7 +124,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
 | Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
 | MySQL InnoDB | Enable auto-recovery, anti-affinity excludes k8s-node1 (GPU), 2Gi req / 3Gi limit |
-| phpIPAM | IPAM with auto-discovery (fping every 15min). DNS sync CronJob pushes named hosts → Technitium. Kea DDNS handles VLAN 10/20; CronJob handles 192.168.1.x. API app `claude` (ssl_token). Cron container needs NET_RAW + 512Mi. |
+| phpIPAM | IPAM — no active scanning. `pfsense-import` CronJob (5min) pulls Kea leases + ARP via SSH. `dns-sync` CronJob (15min) bidirectional sync with Technitium. Kea DDNS on pfSense handles all 3 subnets. API app `claude` (ssl_token). |
 
 ## Monitoring & Alerting
 - Alert cascade inhibitions: if node is down, suppress pod alerts on that node.
