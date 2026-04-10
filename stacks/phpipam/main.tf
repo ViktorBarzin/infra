@@ -410,22 +410,25 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
                 echo "=== Fetching ARP table ==="
                 ARP=$$(ssh admin@10.0.20.1 'arp -an' 2>/dev/null)
 
-                # 2b. Scan remote subnets via pfSense WireGuard tunnel (no ARP for L3 routed)
-                echo "=== Scanning remote subnets via WG tunnel ==="
+                # 2b. Pull DHCP/ARP from Valchedrym OpenWRT router via SSH
+                echo "=== Fetching Valchedrym router data ==="
+                VALCHEDRYM_DATA=$$(ssh -o ConnectTimeout=5 root@192.168.0.1 'cat /tmp/dhcp.leases 2>/dev/null; echo "---ARP---"; cat /proc/net/arp 2>/dev/null' 2>/dev/null || echo "")
+
+                # 2c. Scan London subnet via pfSense WireGuard tunnel (no SSH to GL-iNet)
+                echo "=== Scanning London via WG tunnel ==="
                 REMOTE_HOSTS=$$(ssh admin@10.0.20.1 '
-                  for subnet in "192.168.8" "192.168.0"; do
-                    for i in $(seq 1 254); do
-                      ping -c 1 -t 1 $${subnet}.$${i} >/dev/null 2>&1 && echo "$${subnet}.$${i}" &
-                    done
+                  for i in $(seq 1 254); do
+                    ping -c 1 -t 1 192.168.8.$${i} >/dev/null 2>&1 && echo "192.168.8.$${i}" &
                   done
                   wait
                 ' 2>/dev/null)
-                echo "$$REMOTE_HOSTS" | grep -c . | xargs -I{} echo "  Found {} remote hosts"
+                echo "$$REMOTE_HOSTS" | grep -c . | xargs -I{} echo "  Found {} London hosts"
 
                 # 3. Parse and import into phpIPAM MySQL
                 echo "=== Importing into phpIPAM ==="
                 export LEASES_DATA="$$LEASES"
                 export REMOTE_HOSTS_DATA="$$REMOTE_HOSTS"
+                export VALCHEDRYM_DATA
                 export ARP_DATA="$$ARP"
                 python3 << 'PYEOF'
 import json, subprocess, sys, re, os
@@ -520,6 +523,44 @@ for line in arp_raw.split("\n"):
             updates.append(f"mac='{mac}'")
             updated_mac += 1
         mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
+
+# Import Valchedrym devices from OpenWRT DHCP leases + ARP
+valchedrym_raw = os.environ.get("VALCHEDRYM_DATA", "")
+if valchedrym_raw and "---ARP---" in valchedrym_raw:
+    dhcp_part, arp_part = valchedrym_raw.split("---ARP---", 1)
+    # Parse DHCP leases: timestamp mac ip hostname client_id
+    for line in dhcp_part.strip().split("\n"):
+        parts = line.split()
+        if len(parts) >= 4:
+            mac, ip, hostname = parts[1], parts[2], parts[3]
+            if not ip.startswith("192.168.0."): continue
+            subnet_id = 12
+            short = hostname.split(".")[0] if hostname != "*" else ""
+            if ip not in existing:
+                mac_sql = f"'{mac}'" if mac else "NULL"
+                host_sql = f"'{short}'" if short else "''"
+                mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, hostname, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), {subnet_id}, {host_sql}, {mac_sql}, '-- valchedrym dhcp --', NOW())")
+                imported += 1
+                print(f"  NEW (valchedrym) {ip} -> {short} mac={mac}")
+            else:
+                updates = ["lastSeen=NOW()"]
+                if mac and not existing[ip]["mac"]:
+                    updates.append(f"mac='{mac}'")
+                    updated_mac += 1
+                if short and not existing[ip]["hostname"]:
+                    updates.append(f"hostname='{short}'")
+                    updated_hostname += 1
+                mysql_exec(f"UPDATE ipaddresses SET {','.join(updates)} WHERE ip_addr=INET_ATON('{ip}')")
+    # Parse ARP for additional devices
+    for line in arp_part.strip().split("\n"):
+        m = re.match(r'(\d+\.\d+\.\d+\.\d+)\s+\S+\s+\S+\s+([0-9a-f:]+)\s+', line)
+        if not m: continue
+        ip, mac = m.group(1), m.group(2)
+        if not ip.startswith("192.168.0.") or mac == "00:00:00:00:00:00": continue
+        if ip in existing: continue
+        mysql_exec(f"INSERT INTO ipaddresses (ip_addr, subnetId, mac, description, lastSeen) VALUES (INET_ATON('{ip}'), 12, '{mac}', '-- valchedrym arp --', NOW())")
+        imported += 1
+        print(f"  NEW (valchedrym arp) {ip} mac={mac}")
 
 # Import remote hosts (scanned via WG tunnel, no MAC available)
 remote_raw = os.environ.get("REMOTE_HOSTS_DATA", "")
