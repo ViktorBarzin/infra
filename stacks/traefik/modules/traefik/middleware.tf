@@ -244,8 +244,8 @@ resource "kubernetes_manifest" "middleware_immich_rate_limit" {
     }
     spec = {
       rateLimit = {
-        average = 200
-        burst   = 2000
+        average = 500
+        burst   = 5000
       }
     }
   }
