@@ -448,10 +448,10 @@ resource "kubernetes_deployment" "immich-postgres" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "2Gi"
+              memory = "3Gi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "3Gi"
             }
           }
         }
@@ -461,9 +461,12 @@ resource "kubernetes_deployment" "immich-postgres" {
           command = ["sh", "-c", <<-EOT
             cat > /data/postgresql.override.conf <<'PGCONF'
             # Immich vector search performance tuning
-            shared_buffers = 1024MB
-            effective_cache_size = 1536MB
+            shared_buffers = 2048MB
+            effective_cache_size = 2560MB
             work_mem = 64MB
+            shared_preload_libraries = 'vchord.so, vectors.so, pg_prewarm'
+            pg_prewarm.autoprewarm = on
+            pg_prewarm.autoprewarm_interval = 300
             PGCONF
           EOT
           ]
