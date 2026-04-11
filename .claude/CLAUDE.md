@@ -139,15 +139,21 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 
 Choose storage class based on workload type:
 
-| Use **proxmox-lvm** when | Use **NFS** (`nfs_volume` module) when |
-|--------------------------|----------------------------------------|
-| Database files (SQLite, embedded DBs) | Shared data across multiple pods (RWX) |
-| Write-heavy / fsync-heavy workloads | Media libraries (music, ebooks, photos) |
-| Single-pod app state (RWO is fine) | Backup destinations (cloud sync picks up from NFS) |
-| Latency-sensitive data | Large datasets (>10Gi) where snapshots matter |
-| Any new service by default | Data you want to browse/inspect from outside k8s |
+| Use **proxmox-lvm** when | Use **NFS** (`nfs_volume` module) when | Use **nfs-proxmox** SC when |
+|--------------------------|----------------------------------------|-----------------------------|
+| Database files (SQLite, embedded DBs) | Shared data across multiple pods (RWX) | Dynamic provisioning on Proxmox host NFS |
+| Write-heavy / fsync-heavy workloads | Media libraries (music, ebooks, photos) | Vault (dynamic PVC creation) |
+| Single-pod app state (RWO is fine) | Backup destinations (cloud sync picks up from NFS) | |
+| Latency-sensitive data | Large datasets (>10Gi) where snapshots matter | |
+| Any new service by default | Data you want to browse/inspect from outside k8s | |
 
 **Default is proxmox-lvm.** Only use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
+
+**NFS servers:**
+- **Proxmox host** (192.168.1.127): Primary NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `insecure` option (required — pfSense NATs source ports >1024 between VLANs).
+- **TrueNAS** (10.0.10.15): **Immich only** (8 PVCs). `nfs-truenas` StorageClass retained exclusively for Immich.
+
+**Migration note**: CSI PV `volumeAttributes` are immutable — cannot update NFS server in place. New PV/PVC pairs required (convention: append `-host` to PV name).
 
 **proxmox-lvm PVC template** (Terraform):
 ```hcl
@@ -188,9 +194,9 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 
 **Offsite sync (two paths)**:
 - `Synology/Backup/Viki/pve-backup/` — structured data from PVE host (PVC files, DB dumps, pfsense, PVE config)
-- `Synology/Backup/Viki/truenas/` — NFS media from TrueNAS Cloud Sync (Immich, audiobookshelf, servarr — narrowed, excludes backup dirs)
+- `Synology/Backup/Viki/truenas/` — NFS media from TrueNAS Cloud Sync (Immich only — audiobookshelf and servarr migrated to Proxmox host NFS)
 
-**App-level CronJobs** (write to TrueNAS NFS, mirrored to sda weekly):
+**App-level CronJobs** (write to Proxmox host NFS, mirrored to sda weekly):
 - MySQL (daily), PostgreSQL (daily), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
 - **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
 

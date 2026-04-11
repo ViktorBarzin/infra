@@ -3,7 +3,7 @@
 ## Critical Rules (MUST FOLLOW)
 - **ALL changes through Terraform/Terragrunt** — NEVER `kubectl apply/edit/patch/delete` for persistent changes. Read-only kubectl is fine.
 - **NEVER put secrets in plaintext** — use `secrets.sops.json` (SOPS-encrypted) or `terraform.tfvars` (git-crypt, legacy)
-- **NEVER restart NFS on TrueNAS** — causes cluster-wide mount failures across all pods
+- **NEVER restart NFS on Proxmox host or TrueNAS** — causes cluster-wide mount failures across all pods
 - **NEVER commit secrets** — triple-check before every commit
 - **`[ci skip]` in commit messages** when changes were already applied locally
 - **Ask before `git push`** — always confirm with the user first
@@ -59,15 +59,19 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - `scripts/cluster_healthcheck.sh` — 25-check cluster health script
 
 ## Storage
-- **NFS** (`nfs-truenas` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
+- **NFS — Proxmox host** (primary): HDD pool at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB) and SSD pool at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB) on 192.168.1.127. Serves all workloads except Immich.
+  - `nfs-proxmox` StorageClass: Dynamic provisioning (Vault uses this).
+  - `nfs_volume` module: Static PVs for most services. Use this, never inline `nfs {}` blocks.
+- **NFS — TrueNAS** (10.0.10.15): Now **only serves Immich** (8 PVCs). `nfs-truenas` StorageClass retained for Immich only.
 - **proxmox-lvm** (`proxmox-lvm` StorageClass): For databases (PostgreSQL, MySQL). TopoLVM driver.
-- **TrueNAS**: 10.0.10.15. NFS exports managed via `secrets/nfs_exports.sh`.
 - **SQLite on NFS is unreliable** (fsync issues) — always use proxmox-lvm or local disk for databases.
 - **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
-- **NFS export directory must exist** on TrueNAS before Terraform can create the PV.
+- **NFS export directory must exist** on the NFS server before Terraform can create the PV.
+- **NFS `insecure` option**: Required on Proxmox host exports — pfSense NATs source ports >1024 when routing between VLANs, which NFS `secure` mode rejects.
+- **CSI PV volumeAttributes are immutable**: Can't update NFS server in place. Must create new PV/PVC pairs (pattern: append `-host` to PV name).
 
 ## Shared Variables (never hardcode)
-`var.nfs_server` (10.0.10.15), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
+`var.nfs_server` (192.168.1.127 — Proxmox host), `var.nfs_server_truenas` (10.0.10.15 — Immich only), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
 ## Tier System
 `0-core` | `1-cluster` | `2-gpu` | `3-edge` | `4-aux` — Kyverno auto-generates LimitRange + ResourceQuota per namespace based on tier label.
@@ -96,7 +100,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
 - **OOMKilled**: Check `kubectl describe limitrange tier-defaults -n <ns>`. Increase `resources.limits.memory` in the stack's main.tf.
 - **Add a secret**: `sops set secrets.sops.json '["key"]' '"value"'` then commit.
-- **NFS exports**: Create dir on TrueNAS first, add to `secrets/nfs_directories.txt`, run `secrets/nfs_exports.sh`.
+- **NFS exports**: Create dir on Proxmox host (`/srv/nfs/<dir>` or `/srv/nfs-ssd/<dir>`). For Immich (TrueNAS only): add to `secrets/nfs_directories.txt`, run `secrets/nfs_exports.sh`.
 
 ## Detailed Reference
 See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure, archived troubleshooting runbooks index.
