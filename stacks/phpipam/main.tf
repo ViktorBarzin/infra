@@ -601,9 +601,8 @@ resource "kubernetes_cron_job_v1" "phpipam_remote_import" {
                 echo "=== Valchedrym (192.168.0.1 via pfSense) ==="
                 VALCHEDRYM=$$(ssh -o ConnectTimeout=10 admin@10.0.20.1 'timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@192.168.0.1 "cat /tmp/dhcp.leases 2>/dev/null; echo ---ARP---; cat /proc/net/arp 2>/dev/null" 2>/dev/null' 2>/dev/null || echo "")
 
-                # London: dropbear SSH kex too slow for automated use; skip for now
-                # TODO: install lightweight agent on London GL-iNet to push data
-                LONDON=""
+                echo "=== London (192.168.8.1 via pfSense) ==="
+                LONDON=$$(ssh -o ConnectTimeout=10 admin@10.0.20.1 'timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@192.168.8.1 "cat /tmp/dhcp.leases 2>/dev/null; echo ---ARP---; cat /proc/net/arp 2>/dev/null" 2>/dev/null' 2>/dev/null || echo "")
 
                 echo "=== Importing ==="
                 export LONDON_DATA="$$LONDON"
