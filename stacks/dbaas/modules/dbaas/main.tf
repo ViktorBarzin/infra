@@ -265,17 +265,16 @@ resource "helm_release" "mysql_cluster" {
           }
         }
         podAntiAffinity = {
-          # Required anti-affinity: MySQL pods MUST be on different nodes.
-          # During node loss, one pod will be Pending — this is acceptable because
-          # InnoDB Cluster operates with 2/3 members (OK_NO_TOLERANCE).
-          # The descheduler (every 5 min) handles violations if any occur.
-          requiredDuringSchedulingIgnoredDuringExecution = [{
-            labelSelector = {
-              matchLabels = {
-                "component" = "mysqld"
+          preferredDuringSchedulingIgnoredDuringExecution = [{
+            weight = 100
+            podAffinityTerm = {
+              labelSelector = {
+                matchLabels = {
+                  "component" = "mysqld"
+                }
               }
+              topologyKey = "kubernetes.io/hostname"
             }
-            topologyKey = "kubernetes.io/hostname"
           }]
         }
       }
