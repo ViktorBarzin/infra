@@ -1,6 +1,6 @@
 # Networking Architecture
 
-Last updated: 2026-04-10
+Last updated: 2026-04-12
 
 ## Overview
 
@@ -172,7 +172,7 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - Serves `.viktorbarzin.lan` zone with 30+ internal A/CNAME records
 - Also acts as full recursive resolver for public domains
 - `externalTrafficPolicy: Local` preserves client source IPs for query logging
-- HA: primary + secondary + tertiary pods with anti-affinity, PDB minAvailable=1
+- HA: primary + secondary + tertiary pods with anti-affinity, PDB minAvailable=2
 
 **LAN client DNS path (192.168.1.0/24)**:
 - TP-Link DHCP gives DNS=192.168.1.2 (pfSense WAN)
@@ -320,11 +320,16 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - Firewall rules: Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:
-- Config: Stored in PVC `technitium-data`
+- Config: Stored on NFS PVC (`/srv/nfs/technitium` on 192.168.1.127)
 - Zone file: `viktorbarzin.lan` (A records for all internal hosts)
 - Reverse zones: `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`, `2.3.10.in-addr.arpa`, `0.168.192.in-addr.arpa`
+- Stub zone: `emrsn.org` (returns NXDOMAIN locally for corporate domain queries, avoids upstream forwarding)
 - Dynamic updates: Enabled (UseSpecifiedNetworkACL) from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2)
-- Forwarders: Cloudflare 1.1.1.1, Google 8.8.8.8
+- Forwarders: Cloudflare DNS-over-HTTPS (1.1.1.1, 1.0.0.1)
+- Cache: 100K max entries, min TTL 60s, max TTL 7 days, serve stale enabled (3 days)
+- Query logging: PostgreSQL (`technitium` database on `pg-cluster-rw.dbaas.svc.cluster.local`)
+- Blocking: OISD Big List + StevenBlack hosts (~486K domains)
+- CronJobs: `technitium-password-sync` (6h, Vault password rotation), `technitium-split-horizon-sync` (6h, hairpin NAT fix), `technitium-dns-optimization` (6h, cache TTL + stub zones)
 
 **phpIPAM (IP Address Management)**:
 - Stack: `stacks/phpipam/`

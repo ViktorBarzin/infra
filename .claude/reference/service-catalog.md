@@ -6,7 +6,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | wireguard | VPN server | wireguard |
-| technitium | DNS server (10.0.20.101) | technitium |
+| technitium | DNS server (10.0.20.201) | technitium |
 | headscale | Tailscale control server | headscale |
 | traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |
