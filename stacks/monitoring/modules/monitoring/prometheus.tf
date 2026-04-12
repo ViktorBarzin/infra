@@ -22,12 +22,12 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
   }
 }
 
-module "nfs_prometheus_backup" {
+module "nfs_prometheus_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "monitoring-prometheus-backup"
+  name       = "monitoring-prometheus-backup-host"
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/prometheus-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/prometheus-backup"
 }
 
 resource "helm_release" "prometheus" {

@@ -6,14 +6,6 @@
 # Both pods share the `dns-server=true` label so the DNS LoadBalancer
 # in main.tf routes queries to whichever pod is healthy.
 
-module "nfs_secondary_config" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "technitium-secondary-config"
-  namespace  = kubernetes_namespace.technitium.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/technitium-secondary"
-}
-
 resource "kubernetes_persistent_volume_claim" "secondary_config_proxmox" {
   wait_until_bound = false
   metadata {

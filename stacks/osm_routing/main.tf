@@ -32,20 +32,20 @@ resource "kubernetes_resource_quota_v1" "osm_routing" {
   }
 }
 
-module "nfs_osrm_data" {
+module "nfs_osrm_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "osm-routing-osrm-data"
+  name       = "osm-routing-osrm-data-host"
   namespace  = kubernetes_namespace.osm-routing.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/osm-routing/osrm-data"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/osm-routing/osrm"
 }
 
-module "nfs_otp_data" {
+module "nfs_otp_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "osm-routing-otp-data"
+  name       = "osm-routing-otp-data-host"
   namespace  = kubernetes_namespace.osm-routing.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/osm-routing/otp-data"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/osm-routing/otp"
 }
 
 # --- OSRM Foot ---
@@ -102,7 +102,7 @@ resource "kubernetes_deployment" "osrm-foot" {
         volume {
           name = "osrm-data"
           persistent_volume_claim {
-            claim_name = module.nfs_osrm_data.claim_name
+            claim_name = module.nfs_osrm_data_host.claim_name
           }
         }
       }
@@ -183,7 +183,7 @@ resource "kubernetes_deployment" "osrm-bicycle" {
         volume {
           name = "osrm-data"
           persistent_volume_claim {
-            claim_name = module.nfs_osrm_data.claim_name
+            claim_name = module.nfs_osrm_data_host.claim_name
           }
         }
       }
@@ -268,7 +268,7 @@ resource "kubernetes_deployment" "otp" {
         volume {
           name = "otp-data"
           persistent_volume_claim {
-            claim_name = module.nfs_otp_data.claim_name
+            claim_name = module.nfs_otp_data_host.claim_name
           }
         }
       }

@@ -207,12 +207,12 @@ module "ingress" {
 # Backup — Every 6h SQLite + data files to NFS
 # -----------------------------------------------------------------------------
 
-module "nfs_vaultwarden_backup" {
+module "nfs_vaultwarden_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "vaultwarden-backup"
+  name       = "vaultwarden-backup-host"
   namespace  = kubernetes_namespace.vaultwarden.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/vaultwarden-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/vaultwarden-backup"
 }
 
 resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
@@ -316,7 +316,7 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
             volume {
               name = "backup"
               persistent_volume_claim {
-                claim_name = module.nfs_vaultwarden_backup.claim_name
+                claim_name = module.nfs_vaultwarden_backup_host.claim_name
               }
             }
             dns_config {

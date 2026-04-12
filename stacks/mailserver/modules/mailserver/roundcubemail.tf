@@ -4,22 +4,6 @@ variable "roundcube_db_password" {
 }
 variable "mysql_host" { type = string }
 
-module "nfs_roundcube_html" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "roundcubemail-html"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/roundcubemail/html"
-}
-
-module "nfs_roundcube_enigma" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "roundcubemail-enigma"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/roundcubemail/enigma"
-}
-
 resource "kubernetes_config_map" "roundcubemail_config" {
   metadata {
     name      = "roundcubemail.config"

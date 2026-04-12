@@ -52,20 +52,20 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
+module "nfs_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-data"
+  name       = "ytdlp-data-host"
   namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/ytdlp"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/ytdlp"
 }
 
-module "nfs_highlights_data" {
+module "nfs_highlights_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-highlights-data"
+  name       = "ytdlp-highlights-data-host"
   namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/ytdlp-highlights"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/ytdlp-highlights"
 }
 
 resource "kubernetes_deployment" "ytdlp" {
@@ -137,7 +137,7 @@ resource "kubernetes_deployment" "ytdlp" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
         # }
@@ -316,7 +316,7 @@ resource "kubernetes_deployment" "yt_highlights" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_highlights_data.claim_name
+            claim_name = module.nfs_highlights_data_host.claim_name
           }
         }
       }

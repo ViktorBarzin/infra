@@ -145,14 +145,6 @@ locals {
   ]
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "affine-data"
-  namespace  = kubernetes_namespace.affine.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/affine"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

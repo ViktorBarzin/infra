@@ -173,35 +173,9 @@ resource "kubernetes_job" "db_init" {
   }
 }
 
-# NFS PV for Woodpecker server data (Helm chart creates PVC via StatefulSet VCT)
-resource "kubernetes_persistent_volume" "woodpecker_server_data" {
-  metadata {
-    name = "woodpecker-server-data"
-  }
-  spec {
-    capacity = {
-      storage = "10Gi"
-    }
-    access_modes                     = ["ReadWriteOnce"]
-    persistent_volume_reclaim_policy = "Retain"
-    storage_class_name               = "nfs-truenas"
-    volume_mode                      = "Filesystem"
-    persistent_volume_source {
-      csi {
-        driver        = "nfs.csi.k8s.io"
-        volume_handle = "woodpecker-server-data"
-        volume_attributes = {
-          server = var.nfs_server
-          share  = "/mnt/main/woodpecker"
-        }
-      }
-    }
-    claim_ref {
-      name      = "data-woodpecker-server-0"
-      namespace = kubernetes_namespace.woodpecker.metadata[0].name
-    }
-  }
-}
+# Woodpecker server data is on local-path (node-local storage), NOT NFS.
+# The old NFS PV was unused — PVC was already bound to local-path PV.
+# No PV management needed here.
 
 # Helm release for Woodpecker CI
 # Database datasource is now injected from ExternalSecret via envFrom
@@ -225,7 +199,7 @@ resource "helm_release" "woodpecker" {
   ]
 
   timeout    = 600
-  depends_on = [kubernetes_job.db_init, kubernetes_persistent_volume.woodpecker_server_data, kubernetes_manifest.db_external_secret]
+  depends_on = [kubernetes_job.db_init, kubernetes_manifest.db_external_secret]
 }
 
 # ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces

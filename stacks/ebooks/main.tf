@@ -132,12 +132,12 @@ module "tls_secret" {
 }
 
 # NFS Volumes - Calibre (prefixed with ebooks- to avoid PV name clash with old stacks)
-module "nfs_calibre_library" {
+module "nfs_calibre_library_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-library"
+  name       = "ebooks-calibre-library-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/calibre-web-automated/calibre-library"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/calibre-web-automated/calibre-library"
 }
 
 # iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
@@ -162,45 +162,37 @@ resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
   }
 }
 
-module "nfs_calibre_ingest" {
+module "nfs_calibre_ingest_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-ingest"
+  name       = "ebooks-calibre-ingest-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/calibre-web-automated/cwa-book-ingest"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
 }
 
-module "nfs_calibre_stacks_config" {
+module "nfs_calibre_stacks_config_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-stacks-config"
+  name       = "ebooks-calibre-stacks-config-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/calibre-web-automated/stacks"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/calibre-web-automated/stacks"
 }
 
 # NFS Volumes - Audiobookshelf (prefixed with ebooks- to avoid PV name clash)
-module "nfs_audiobookshelf_audiobooks" {
+module "nfs_audiobookshelf_audiobooks_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-audiobooks"
+  name       = "ebooks-abs-audiobooks-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiobookshelf/audiobooks"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
 }
 
-module "nfs_audiobookshelf_podcasts" {
+module "nfs_audiobookshelf_podcasts_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-podcasts"
+  name       = "ebooks-abs-podcasts-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiobookshelf/podcasts"
-}
-
-module "nfs_audiobookshelf_config" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-config"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiobookshelf/config"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/audiobookshelf/podcasts"
 }
 
 resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
@@ -225,12 +217,12 @@ resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
   }
 }
 
-module "nfs_audiobookshelf_metadata" {
+module "nfs_audiobookshelf_metadata_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-metadata"
+  name       = "ebooks-abs-metadata-host"
   namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiobookshelf/metadata"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/audiobookshelf/metadata"
 }
 
 # Calibre-Web-Automated Deployment
@@ -335,7 +327,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         volume {
           name = "library"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_library.claim_name
+            claim_name = module.nfs_calibre_library_host.claim_name
           }
         }
         volume {
@@ -347,7 +339,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         volume {
           name = "ingest"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_ingest.claim_name
+            claim_name = module.nfs_calibre_ingest_host.claim_name
           }
         }
       }
@@ -462,13 +454,13 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_stacks_config.claim_name
+            claim_name = module.nfs_calibre_stacks_config_host.claim_name
           }
         }
         volume {
           name = "ingest"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_ingest.claim_name
+            claim_name = module.nfs_calibre_ingest_host.claim_name
           }
         }
       }
@@ -599,13 +591,13 @@ resource "kubernetes_deployment" "audiobookshelf" {
         volume {
           name = "audiobooks"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobookshelf_audiobooks.claim_name
+            claim_name = module.nfs_audiobookshelf_audiobooks_host.claim_name
           }
         }
         volume {
           name = "podcasts"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobookshelf_podcasts.claim_name
+            claim_name = module.nfs_audiobookshelf_podcasts_host.claim_name
           }
         }
         volume {
@@ -617,7 +609,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
         volume {
           name = "metadata"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobookshelf_metadata.claim_name
+            claim_name = module.nfs_audiobookshelf_metadata_host.claim_name
           }
         }
       }
@@ -860,25 +852,25 @@ resource "kubernetes_deployment" "book_search" {
         volume {
           name = "cwa-ingest"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_ingest.claim_name
+            claim_name = module.nfs_calibre_ingest_host.claim_name
           }
         }
         volume {
           name = "audiobooks"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobookshelf_audiobooks.claim_name
+            claim_name = module.nfs_audiobookshelf_audiobooks_host.claim_name
           }
         }
         volume {
           name = "calibre-library"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_library.claim_name
+            claim_name = module.nfs_calibre_library_host.claim_name
           }
         }
         volume {
           name = "stacks-config"
           persistent_volume_claim {
-            claim_name = module.nfs_calibre_stacks_config.claim_name
+            claim_name = module.nfs_calibre_stacks_config_host.claim_name
           }
         }
       }

@@ -17,20 +17,20 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
+module "nfs_data_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "readarr-data"
+  name       = "readarr-data-host"
   namespace  = "readarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/readarr"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/readarr"
 }
 
-module "nfs_qbittorrent" {
+module "nfs_qbittorrent_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "readarr-qbittorrent"
+  name       = "readarr-qbittorrent-host"
   namespace  = "readarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/qbittorrent"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/qbittorrent"
 }
 
 resource "kubernetes_deployment" "readarr" {
@@ -99,13 +99,13 @@ resource "kubernetes_deployment" "readarr" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
         volume {
           name = "qbittorrent"
           persistent_volume_claim {
-            claim_name = module.nfs_qbittorrent.claim_name
+            claim_name = module.nfs_qbittorrent_host.claim_name
           }
         }
       }

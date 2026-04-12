@@ -23,14 +23,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_config" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "frigate-config"
-  namespace  = kubernetes_namespace.frigate.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/frigate/config"
-}
-
 resource "kubernetes_persistent_volume_claim" "config_proxmox" {
   wait_until_bound = false
   metadata {
@@ -53,12 +45,12 @@ resource "kubernetes_persistent_volume_claim" "config_proxmox" {
   }
 }
 
-module "nfs_media" {
+module "nfs_media_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "frigate-media"
+  name       = "frigate-media-host"
   namespace  = kubernetes_namespace.frigate.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/frigate/media"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/frigate/media"
 }
 
 resource "kubernetes_deployment" "frigate" {
@@ -207,7 +199,7 @@ for name, det in stats.get('detectors', {}).items():
         volume {
           name = "media"
           persistent_volume_claim {
-            claim_name = module.nfs_media.claim_name
+            claim_name = module.nfs_media_host.claim_name
           }
         }
         volume {

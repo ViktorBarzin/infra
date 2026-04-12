@@ -58,14 +58,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-data"
-  namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/navidrome"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -96,20 +88,20 @@ module "nfs_music" {
   nfs_path   = "/volume1/music"
 }
 
-module "nfs_lidarr" {
+module "nfs_lidarr_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-lidarr"
+  name       = "navidrome-lidarr-host"
   namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/lidarr"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/lidarr"
 }
 
-module "nfs_freedify" {
+module "nfs_freedify_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-freedify"
+  name       = "navidrome-freedify-host"
   namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/freedify-music"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/freedify-music"
 }
 
 resource "kubernetes_deployment" "navidrome" {
@@ -194,13 +186,13 @@ resource "kubernetes_deployment" "navidrome" {
         volume {
           name = "lidarr"
           persistent_volume_claim {
-            claim_name = module.nfs_lidarr.claim_name
+            claim_name = module.nfs_lidarr_host.claim_name
           }
         }
         volume {
           name = "freedify"
           persistent_volume_claim {
-            claim_name = module.nfs_freedify.claim_name
+            claim_name = module.nfs_freedify_host.claim_name
           }
         }
       }

@@ -34,7 +34,8 @@ server:
   ingress:
     enabled: false
   # Disable PVC (using PostgreSQL instead of SQLite)
-  persistence:
+  # Note: the correct key is persistentVolume, not persistence
+  persistentVolume:
     enabled: false
 
 agent:

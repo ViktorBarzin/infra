@@ -7,14 +7,6 @@ variable "homepage_credentials" {
 }
 
 
-module "nfs_data" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-prowlarr-data"
-  namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/prowlarr"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -37,12 +29,12 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
-module "nfs_downloads" {
+module "nfs_downloads_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-prowlarr-downloads"
+  name       = "servarr-prowlarr-downloads-host"
   namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/downloads"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/downloads"
 }
 
 resource "kubernetes_deployment" "prowlarr" {
@@ -128,7 +120,7 @@ resource "kubernetes_deployment" "prowlarr" {
         volume {
           name = "downloads"
           persistent_volume_claim {
-            claim_name = module.nfs_downloads.claim_name
+            claim_name = module.nfs_downloads_host.claim_name
           }
         }
       }

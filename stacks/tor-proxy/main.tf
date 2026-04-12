@@ -129,14 +129,6 @@ resource "kubernetes_service" "tor-proxy" {
 
 # --- TorrServer ---
 
-module "nfs_torrserver_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "tor-proxy-torrserver-data"
-  namespace  = kubernetes_namespace.tor-proxy.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/tor-proxy/torrserver"
-}
-
 resource "kubernetes_persistent_volume_claim" "torrserver_data_proxmox" {
   wait_until_bound = false
   metadata {

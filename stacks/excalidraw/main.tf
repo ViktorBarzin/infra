@@ -22,14 +22,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "excalidraw-data"
-  namespace  = kubernetes_namespace.excalidraw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/excalidraw"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

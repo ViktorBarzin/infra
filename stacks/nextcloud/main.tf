@@ -205,12 +205,12 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
   }
 }
 
-module "nfs_nextcloud_backup" {
+module "nfs_nextcloud_backup_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-backup"
+  name       = "nextcloud-backup-host"
   namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/nextcloud-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/nextcloud-backup"
 }
 
 module "ingress" {
@@ -516,7 +516,7 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
             volume {
               name = "backup"
               persistent_volume_claim {
-                claim_name = module.nfs_nextcloud_backup.claim_name
+                claim_name = module.nfs_nextcloud_backup_host.claim_name
               }
             }
 

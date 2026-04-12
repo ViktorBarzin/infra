@@ -1725,21 +1725,21 @@ serverFiles:
               summary: "Bank sync has not succeeded in more than 48h. Check CronJob and account auth."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
-            for: 90m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Email round-trip probe failing. Check Mailgun relay, DNS, and IMAP."
-          - alert: EmailRoundtripStale
-            expr: (time() - email_roundtrip_last_success_timestamp{job="email-roundtrip-monitor"}) > 5400
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Email round-trip probe has not succeeded in >90 min"
+              summary: "Email round-trip probe failing. Check ForwardEmail relay, DNS, and IMAP."
+          - alert: EmailRoundtripStale
+            expr: (time() - email_roundtrip_last_success_timestamp{job="email-roundtrip-monitor"}) > 2400
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Email round-trip probe has not succeeded in >40 min"
           - alert: EmailRoundtripNeverRun
             expr: absent(email_roundtrip_success{job="email-roundtrip-monitor"})
-            for: 2h
+            for: 40m
             labels:
               severity: warning
             annotations:

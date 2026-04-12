@@ -113,13 +113,41 @@ resource "cloudflare_record" "non_proxied_dns_record_ipv6" {
   zone_id  = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "mail" {
-  content  = "mail.viktorbarzin.me"
+resource "cloudflare_record" "forwardemail_mx1" {
+  content  = "mx1.forwardemail.net"
   name     = "viktorbarzin.me"
   proxied  = false
   ttl      = 1
   type     = "MX"
-  priority = 1
+  priority = 10
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "forwardemail_mx2" {
+  content  = "mx2.forwardemail.net"
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "MX"
+  priority = 10
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "forwardemail_config" {
+  content  = "\"forward-email=mail.viktorbarzin.me\""
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "forwardemail_port" {
+  content  = "\"forward-email-port=266\""
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
   zone_id  = var.cloudflare_zone_id
 }
 

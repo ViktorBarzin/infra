@@ -43,14 +43,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.f1-stream]
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "f1-stream-data"
-  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/f1-stream"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
