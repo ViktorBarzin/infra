@@ -41,14 +41,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.insta2spotify]
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "insta2spotify-data"
-  namespace  = kubernetes_namespace.insta2spotify.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/insta2spotify"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

@@ -211,12 +211,12 @@ module "ingress" {
 # Backup — Weekly SQLite backup to NFS
 # -----------------------------------------------------------------------------
 
-module "nfs_plotting_book_backup" {
+module "nfs_plotting_book_backup_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "plotting-book-backup"
+  name       = "plotting-book-backup-host"
   namespace  = kubernetes_namespace.plotting-book.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/plotting-book-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/plotting-book-backup"
 }
 
 resource "kubernetes_cron_job_v1" "plotting_book_backup" {
@@ -292,7 +292,7 @@ resource "kubernetes_cron_job_v1" "plotting_book_backup" {
             volume {
               name = "backup"
               persistent_volume_claim {
-                claim_name = module.nfs_plotting_book_backup.claim_name
+                claim_name = module.nfs_plotting_book_backup_host.claim_name
               }
             }
             dns_config {

@@ -21,6 +21,22 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# NFS StorageClass pointing to Proxmox host (replaces nfs-truenas for vault)
+resource "kubernetes_storage_class" "nfs_proxmox" {
+  metadata {
+    name = "nfs-proxmox"
+  }
+  storage_provisioner    = "nfs.csi.k8s.io"
+  reclaim_policy         = "Retain"
+  volume_binding_mode    = "Immediate"
+  allow_volume_expansion = true
+  parameters = {
+    server = "192.168.1.127"
+    share  = "/srv/nfs"
+  }
+  mount_options = ["soft", "actimeo=5", "retrans=3", "timeo=30"]
+}
+
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault.metadata[0].name
@@ -52,13 +68,13 @@ resource "helm_release" "vault" {
       dataStorage = {
         enabled      = true
         size         = "2Gi"
-        storageClass = "nfs-truenas" # NFS — iSCSI CSI driver not available on all nodes
+        storageClass = "nfs-proxmox" # Proxmox host NFS (was nfs-truenas)
       }
 
       auditStorage = {
         enabled      = true
         size         = "2Gi"
-        storageClass = "nfs-truenas" # NFS fine for append-only audit logs
+        storageClass = "nfs-proxmox" # Proxmox host NFS (was nfs-truenas)
       }
 
       standalone = { enabled = false }
@@ -234,12 +250,12 @@ resource "vault_audit" "file" {
 
 # --- Raft Snapshot Backups ---
 
-module "vault_backup_nfs" {
+module "vault_backup_nfs_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "vault-backup"
+  name       = "vault-backup-host"
   namespace  = kubernetes_namespace.vault.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/vault-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/vault-backup"
   storage    = "5Gi"
 }
 
@@ -301,7 +317,7 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
             volume {
               name = "backup-storage"
               persistent_volume_claim {
-                claim_name = module.vault_backup_nfs.claim_name
+                claim_name = module.vault_backup_nfs_host.claim_name
               }
             }
             volume {

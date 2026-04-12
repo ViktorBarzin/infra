@@ -12,14 +12,6 @@ resource "kubernetes_namespace" "isponsorblocktv" {
 # Before running, setup config using 
 # docker run --rm -it -v ./youtube:/app/data -e TERM=$TERM -e COLORTERM=$COLORTERM ghcr.io/dmunozv04/isponsorblocktv --setup
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "isponsorblocktv-data"
-  namespace  = kubernetes_namespace.isponsorblocktv.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/isponsorblocktv/vermont"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

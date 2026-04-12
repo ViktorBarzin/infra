@@ -36,12 +36,12 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
+module "nfs_data_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "headscale-data"
+  name       = "headscale-data-host"
   namespace  = kubernetes_namespace.headscale.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/headscale"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/headscale"
 }
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
@@ -472,7 +472,7 @@ resource "kubernetes_cron_job_v1" "headscale_backup" {
             volume {
               name = "backup"
               persistent_volume_claim {
-                claim_name = module.nfs_data.claim_name
+                claim_name = module.nfs_data_host.claim_name
               }
             }
             restart_policy = "OnFailure"

@@ -154,14 +154,6 @@ resource "kubernetes_service" "printer" {
   }
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "resume-data"
-  namespace  = kubernetes_namespace.resume.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/resume"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

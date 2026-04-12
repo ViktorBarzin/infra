@@ -15,6 +15,7 @@ variable "crowdsec_dash_machine_password" {
 variable "tier" { type = string }
 variable "slack_webhook_url" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 
 module "tls_secret" {
   source          = "../../../../modules/kubernetes/setup_tls_secret"
@@ -127,7 +128,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host })]
+  values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
@@ -338,7 +339,7 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
 
                   # Run with native mode since we are inside the CrowdSec container
                   export MODE=native
-                  export DECISION_DURATION=24h
+                  export DECISION_DURATION=168h
                   export FETCH_TIMEOUT=60
                   export LOG_LEVEL=INFO
 

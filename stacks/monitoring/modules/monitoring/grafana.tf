@@ -38,8 +38,8 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
         driver        = "nfs.csi.k8s.io"
         volume_handle = "alertmanager-pv"
         volume_attributes = {
-          server = var.nfs_server
-          share  = "/mnt/main/alertmanager"
+          server = "192.168.1.127"
+          share  = "/srv/nfs/alertmanager"
         }
       }
     }
@@ -49,7 +49,8 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
       "retrans=3",
       "actimeo=5",
     ]
-    storage_class_name = "nfs-truenas"
+    storage_class_name               = "nfs-truenas"
+    persistent_volume_reclaim_policy = "Retain"
   }
 }
 # resource "kubernetes_persistent_volume_claim" "grafana_pvc" {

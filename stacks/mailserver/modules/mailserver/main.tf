@@ -167,14 +167,6 @@ resource "kubernetes_secret" "opendkim_key" {
 }
 
 
-module "nfs_data" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "mailserver-data"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/mailserver"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -534,6 +526,13 @@ resource "kubernetes_service" "mailserver" {
       port        = 993
       target_port = "imap-secure"
     }
+
+    port {
+      name        = "dovecot-metrics"
+      protocol    = "TCP"
+      port        = 9166
+      target_port = 9166
+    }
   }
 }
 
@@ -550,7 +549,7 @@ resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/30 * * * *"
+    schedule                      = "*/10 * * * *"
     job_template {
       metadata {}
       spec {

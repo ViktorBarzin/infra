@@ -151,6 +151,24 @@ resource "kubernetes_cluster_role_binding" "mysql_sidecar_extra" {
   }
 }
 
+# ConfigMap for MySQL extra config — mounted as subPath over 99-extra.cnf
+# This is the only reliable way to persist innodb_doublewrite=OFF because:
+# - spec.mycnf only applies on initial cluster creation
+# - The operator's initconf container overwrites 99-extra.cnf on every pod start
+# - SET PERSIST doesn't support innodb_doublewrite (static variable)
+resource "kubernetes_config_map" "mysql_extra_cnf" {
+  metadata {
+    name      = "mysql-extra-cnf"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  data = {
+    "99-extra.cnf" = <<-EOT
+      [mysqld]
+      innodb_doublewrite=OFF
+    EOT
+  }
+}
+
 resource "helm_release" "mysql_cluster" {
   namespace        = kubernetes_namespace.dbaas.metadata[0].name
   create_namespace = false
@@ -195,7 +213,7 @@ resource "helm_release" "mysql_cluster" {
     }
 
     serverConfig = {
-      "my.cnf" = <<-EOT
+      mycnf = <<-EOT
         [mysqld]
         skip-name-resolve
         # Auto-recovery after crashes: rejoin group without manual intervention
@@ -371,20 +389,12 @@ resource "kubernetes_service" "mysql" {
   depends_on = [helm_release.mysql_cluster]
 }
 
-module "nfs_mysql_backup" {
+module "nfs_mysql_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "dbaas-mysql-backup"
+  name       = "dbaas-mysql-backup-host"
   namespace  = kubernetes_namespace.dbaas.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/mysql-backup"
-}
-
-module "nfs_pgadmin" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "dbaas-pgadmin"
-  namespace  = kubernetes_namespace.dbaas.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/postgresql/pgadmin"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/mysql-backup"
 }
 
 resource "kubernetes_persistent_volume_claim" "pgadmin_proxmox" {
@@ -409,12 +419,12 @@ resource "kubernetes_persistent_volume_claim" "pgadmin_proxmox" {
   }
 }
 
-module "nfs_postgresql_backup" {
+module "nfs_postgresql_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "dbaas-postgresql-backup"
+  name       = "dbaas-postgresql-backup-host"
   namespace  = kubernetes_namespace.dbaas.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/postgresql-backup"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/postgresql-backup"
 }
 
 resource "kubernetes_cron_job_v1" "mysql-backup" {
@@ -495,7 +505,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
             volume {
               name = "mysql-backup"
               persistent_volume_claim {
-                claim_name = module.nfs_mysql_backup.claim_name
+                claim_name = module.nfs_mysql_backup_host.claim_name
               }
             }
           }
@@ -988,8 +998,8 @@ resource "null_resource" "pg_cluster" {
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm"
-    memory_limit  = "512Mi"
-
+    memory_limit  = "2Gi"
+    pg_params     = "v2-shared512-walcomp-workmem16"
   }
 
   provisioner "local-exec" {
@@ -1006,6 +1016,12 @@ resource "null_resource" "pg_cluster" {
         postgresql:
           parameters:
             search_path: '"$user", public'
+            shared_buffers: "512MB"
+            effective_cache_size: "1536MB"
+            work_mem: "16MB"
+            wal_compression: "on"
+            random_page_cost: "4"
+            checkpoint_completion_target: "0.9"
           enableAlterSystem: true
         enableSuperuserAccess: true
         inheritedMetadata:
@@ -1019,9 +1035,9 @@ resource "null_resource" "pg_cluster" {
         resources:
           requests:
             cpu: "50m"
-            memory: "512Mi"
+            memory: "2Gi"
           limits:
-            memory: "512Mi"
+            memory: "2Gi"
       EOF
     EOT
   }
@@ -1257,7 +1273,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             volume {
               name = "postgresql-backup"
               persistent_volume_claim {
-                claim_name = module.nfs_postgresql_backup.claim_name
+                claim_name = module.nfs_postgresql_backup_host.claim_name
               }
             }
           }

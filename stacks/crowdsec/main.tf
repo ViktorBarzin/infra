@@ -4,6 +4,7 @@
 
 variable "tls_secret_name" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -19,6 +20,7 @@ module "crowdsec" {
   tier                           = local.tiers.cluster
   tls_secret_name                = var.tls_secret_name
   mysql_host                     = var.mysql_host
+  postgresql_host                = var.postgresql_host
   homepage_username              = local.homepage_credentials["crowdsec"]["username"]
   homepage_password              = local.homepage_credentials["crowdsec"]["password"]
   enroll_key                     = data.vault_kv_secret_v2.secrets.data["crowdsec_enroll_key"]

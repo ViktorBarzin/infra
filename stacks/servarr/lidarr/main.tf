@@ -3,20 +3,20 @@ variable "tier" { type = string }
 variable "nfs_server" { type = string }
 
 
-module "nfs_data" {
+module "nfs_data_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-lidarr-data"
+  name       = "servarr-lidarr-data-host"
   namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/lidarr"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/lidarr"
 }
 
-module "nfs_downloads" {
+module "nfs_downloads_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-lidarr-downloads"
+  name       = "servarr-lidarr-downloads-host"
   namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/downloads"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/downloads"
 }
 
 resource "kubernetes_deployment" "lidarr" {
@@ -97,19 +97,19 @@ resource "kubernetes_deployment" "lidarr" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
         volume {
           name = "downloads"
           persistent_volume_claim {
-            claim_name = module.nfs_downloads.claim_name
+            claim_name = module.nfs_downloads_host.claim_name
           }
         }
         volume {
           name = "deemix-config"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
       }

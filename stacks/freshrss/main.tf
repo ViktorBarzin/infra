@@ -57,14 +57,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "freshrss-data"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/freshrss/data"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -85,14 +77,6 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
       }
     }
   }
-}
-
-module "nfs_extensions" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "freshrss-extensions"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/freshrss/extensions"
 }
 
 resource "kubernetes_persistent_volume_claim" "extensions_proxmox" {

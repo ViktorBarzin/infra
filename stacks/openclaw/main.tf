@@ -264,20 +264,12 @@ resource "random_password" "gateway_token" {
   special = false
 }
 
-module "nfs_tools" {
+module "nfs_tools_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-tools"
+  name       = "openclaw-tools-host"
   namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/tools"
-}
-
-module "nfs_openclaw_home" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-home"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/home"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/openclaw/tools"
 }
 
 resource "kubernetes_persistent_volume_claim" "home_proxmox" {
@@ -302,20 +294,12 @@ resource "kubernetes_persistent_volume_claim" "home_proxmox" {
   }
 }
 
-module "nfs_workspace" {
+module "nfs_workspace_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-workspace"
+  name       = "openclaw-workspace-host"
   namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/workspace"
-}
-
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-data"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/data"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/openclaw/workspace"
 }
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
@@ -594,7 +578,7 @@ resource "kubernetes_deployment" "openclaw" {
         volume {
           name = "tools"
           persistent_volume_claim {
-            claim_name = module.nfs_tools.claim_name
+            claim_name = module.nfs_tools_host.claim_name
           }
         }
         volume {
@@ -606,7 +590,7 @@ resource "kubernetes_deployment" "openclaw" {
         volume {
           name = "workspace"
           persistent_volume_claim {
-            claim_name = module.nfs_workspace.claim_name
+            claim_name = module.nfs_workspace_host.claim_name
           }
         }
         volume {
@@ -1063,14 +1047,6 @@ resource "kubernetes_cron_job_v1" "task_processor" {
 }
 
 # --- OpenLobster: Multi-user Telegram AI assistant (trial) ---
-
-module "nfs_openlobster_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openlobster-data"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/openclaw/openlobster-data"
-}
 
 resource "kubernetes_persistent_volume_claim" "openlobster_data_proxmox" {
   wait_until_bound = false

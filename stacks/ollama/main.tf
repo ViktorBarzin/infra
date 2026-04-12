@@ -60,20 +60,12 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-module "nfs_ollama_data" {
+module "nfs_ollama_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ollama-data"
+  name       = "ollama-data-host"
   namespace  = kubernetes_namespace.ollama.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/ssd/ollama"
-}
-
-module "nfs_ollama_ui_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ollama-ui-data"
-  namespace  = kubernetes_namespace.ollama.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/ollama"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs-ssd/ollama"
 }
 
 resource "kubernetes_persistent_volume_claim" "ollama_ui_data_proxmox" {
@@ -147,7 +139,7 @@ resource "kubernetes_deployment" "ollama" {
           effect = "NoSchedule"
         }
         container {
-          image = "ollama/ollama:0.6.10"
+          image = "ollama/ollama:0.6.8"
           name  = "ollama"
           env {
             name  = "OLLAMA_HOST"
@@ -183,7 +175,7 @@ resource "kubernetes_deployment" "ollama" {
         volume {
           name = "ollama-data"
           persistent_volume_claim {
-            claim_name = module.nfs_ollama_data.claim_name
+            claim_name = module.nfs_ollama_data_host.claim_name
           }
         }
       }

@@ -7,14 +7,6 @@ variable "homepage_credentials" {
 }
 
 
-module "nfs_data" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-data"
-  namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/qbittorrent"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -37,20 +29,20 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
-module "nfs_downloads" {
+module "nfs_downloads_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-downloads"
+  name       = "servarr-qbittorrent-downloads-host"
   namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/servarr/downloads"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/downloads"
 }
 
-module "nfs_audiobooks" {
+module "nfs_audiobooks_host" {
   source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-audiobooks"
+  name       = "servarr-qbittorrent-audiobooks-host"
   namespace  = "servarr"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiobookshelf/audiobooks"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
 }
 
 resource "kubernetes_deployment" "qbittorrent" {
@@ -131,13 +123,13 @@ resource "kubernetes_deployment" "qbittorrent" {
         volume {
           name = "downloads"
           persistent_volume_claim {
-            claim_name = module.nfs_downloads.claim_name
+            claim_name = module.nfs_downloads_host.claim_name
           }
         }
         volume {
           name = "audiobooks"
           persistent_volume_claim {
-            claim_name = module.nfs_audiobooks.claim_name
+            claim_name = module.nfs_audiobooks_host.claim_name
           }
         }
       }

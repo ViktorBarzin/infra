@@ -65,12 +65,12 @@ resource "kubernetes_persistent_volume_claim" "files_proxmox" {
   }
 }
 
-module "nfs_backups" {
+module "nfs_backups_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "meshcentral-backups"
+  name       = "meshcentral-backups-host"
   namespace  = kubernetes_namespace.meshcentral.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/meshcentral/meshcentral-backups"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/meshcentral/meshcentral-backups"
 }
 
 resource "kubernetes_deployment" "meshcentral" {
@@ -201,7 +201,7 @@ EOT
         volume {
           name = "backups"
           persistent_volume_claim {
-            claim_name = module.nfs_backups.claim_name
+            claim_name = module.nfs_backups_host.claim_name
           }
         }
       }

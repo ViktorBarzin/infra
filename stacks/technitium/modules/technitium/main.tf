@@ -3,6 +3,7 @@ variable "tier" { type = string }
 variable "homepage_token" {}
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 variable "technitium_username" { type = string }
 variable "technitium_password" {
   type      = string
@@ -83,12 +84,12 @@ resource "kubernetes_config_map" "coredns" {
   }
 }
 
-module "nfs_config" {
+module "nfs_config_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "technitium-config"
+  name       = "technitium-config-host"
   namespace  = kubernetes_namespace.technitium.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/technitium"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/technitium"
 }
 
 resource "kubernetes_deployment" "technitium" {
@@ -185,7 +186,7 @@ resource "kubernetes_deployment" "technitium" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = module.nfs_config.claim_name
+            claim_name = module.nfs_config_host.claim_name
           }
         }
         volume {
@@ -456,16 +457,41 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 name  = "TECH_PASS"
                 value = var.technitium_password
               }
+              volume_mount {
+                name       = "technitium-data"
+                mount_path = "/etc/dns"
+                read_only  = true
+              }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                 if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
-                CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":30,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
-                APP_NAME="Query Logs (MySQL)"
-                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=$$APP_NAME" --data-urlencode "config=$$CONFIG"
-                echo "Password sync complete"
+
+                # Disable MySQL query logging
+                MYSQL_CONFIG="{\"enableLogging\":false,\"maxQueueSize\":1000000,\"maxLogDays\":30,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
+                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (MySQL)" --data-urlencode "config=$$MYSQL_CONFIG"
+                echo "MySQL logging disabled"
+
+                # Install PG plugin if not already loaded (survives restarts via NFS, but not upgrades)
+                PG_LOADED=$$(curl -sf "http://technitium-web:5380/api/apps/list?token=$$TOKEN" | grep -c 'QueryLogsPostgres.App' || true)
+                if [ "$$PG_LOADED" = "0" ]; then
+                  echo "PG plugin not loaded, installing from NFS..."
+                  curl -sf -X POST "http://technitium-web:5380/api/apps/install?token=$$TOKEN&name=Query%20Logs%20(Postgres)" -F "fileData=@/etc/dns/QueryLogsPostgresApp.zip"
+                  echo "PG plugin installed"
+                fi
+
+                # Configure PG query logging
+                PG_CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":90,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Host=${var.postgresql_host}; Port=5432; Username=technitium; Password=$$DB_PASSWORD;\"}"
+                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
+                echo "PG logging configured"
               EOT
               ]
+            }
+            volume {
+              name = "technitium-data"
+              persistent_volume_claim {
+                claim_name = module.nfs_config_host.claim_name
+              }
             }
             restart_policy = "OnFailure"
           }
@@ -537,6 +563,71 @@ resource "kubernetes_cron_job_v1" "technitium_split_horizon_sync" {
                   echo "Done with $$INST"
                 done
                 echo "Split Horizon sync complete"
+              EOT
+              ]
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+}
+
+# CronJob to apply DNS performance optimizations:
+# 1. Set minimum cache TTL to 60s (avoids frequent re-queries for short-TTL domains like headscale's 18s)
+# 2. Create emrsn.org stub zone → NXDOMAIN (avoids forwarding 27K+ daily corporate domain queries to Cloudflare)
+resource "kubernetes_cron_job_v1" "technitium_dns_optimization" {
+  metadata {
+    name      = "technitium-dns-optimization"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    schedule                      = "30 */6 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "sync"
+              image = "curlimages/curl:latest"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "32Mi"
+                }
+              }
+              env {
+                name  = "TECH_USER"
+                value = var.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = var.technitium_password
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
+
+                # 1. Ensure minimum cache TTL is 60s (reduces re-queries for short-TTL domains)
+                curl -sf -X POST "http://technitium-web:5380/api/settings/set?token=$$TOKEN&cacheMinimumRecordTtl=60"
+                echo "Cache minimum TTL set to 60s"
+
+                # 2. Stub zone for emrsn.org corporate domains
+                # Returns NXDOMAIN immediately instead of forwarding to Cloudflare upstream
+                curl -sf "http://technitium-web:5380/api/zones/create?token=$$TOKEN&domain=emrsn.org&type=Primary" || true
+                curl -sf "http://technitium-web:5380/api/zones/options/set?token=$$TOKEN&zone=emrsn.org&zoneTransfer=Allow" || true
+                echo "emrsn.org stub zone configured"
+
+                echo "DNS optimization sync complete"
               EOT
               ]
             }

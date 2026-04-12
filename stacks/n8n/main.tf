@@ -47,14 +47,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "n8n-data"
-  namespace  = kubernetes_namespace.n8n.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/n8n"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

@@ -116,15 +116,17 @@ lapi:
     enabled: true
     env:
     - name: MB_DB_TYPE
-      value: "mysql"
+      value: "postgres"
     - name: MB_DB_DBNAME
-      value: crowdsec-metabase
+      value: crowdsec_metabase
     - name: MB_DB_USER
       value: "crowdsec"
     - name: MB_DB_PASS
       value: "${DB_PASSWORD}"
     - name: MB_DB_HOST
-      value: "${mysql_host}"
+      value: "${postgresql_host}"
+    - name: MB_DB_PORT
+      value: "5432"
 
     - name: MB_EMAIL_SMTP_USERNAME
       value: "info@viktorbarzin.me"
@@ -206,12 +208,20 @@ config:
 
   config.yaml.local: |
     db_config:
-      type:     mysql
+      type:     postgres
       user:     crowdsec
       password: ${DB_PASSWORD}
       db_name:  crowdsec
-      host:     ${mysql_host}
-      port:     3306
+      host:     ${postgresql_host}
+      port:     5432
+      flush:
+        max_items: 10000
+        max_age: "7d"
+        bouncers_autodelete:
+          api_key: "30d"
+        agents_autodelete:
+          login_password: "30d"
+      decision_bulk_size: 2000
     api:
       server:
         auto_registration: # Activate if not using TLS for authentication

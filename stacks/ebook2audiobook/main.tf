@@ -22,20 +22,20 @@ resource "kubernetes_namespace" "ebook2audiobook" {
 }
 
 
-module "nfs_data" {
+module "nfs_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebook2audiobook-data"
+  name       = "ebook2audiobook-data-host"
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/ebook2audiobook"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/ebook2audiobook"
 }
 
-module "nfs_audiblez_data" {
+module "nfs_audiblez_data_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebook2audiobook-audiblez-data"
+  name       = "ebook2audiobook-audiblez-data-host"
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/audiblez"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/audiblez"
 }
 
 resource "kubernetes_deployment" "ebook2audiobook" {
@@ -109,7 +109,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_data.claim_name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
       }
@@ -306,7 +306,7 @@ resource "kubernetes_deployment" "audiblez" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_audiblez_data.claim_name
+            claim_name = module.nfs_audiblez_data_host.claim_name
           }
         }
       }
@@ -392,7 +392,7 @@ resource "kubernetes_deployment" "audiblez-web" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = module.nfs_audiblez_data.claim_name
+            claim_name = module.nfs_audiblez_data_host.claim_name
           }
         }
       }

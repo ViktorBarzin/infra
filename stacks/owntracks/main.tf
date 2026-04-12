@@ -81,14 +81,6 @@ resource "kubernetes_secret" "basic_auth" {
   }
 }
 
-module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "owntracks-data"
-  namespace  = kubernetes_namespace.owntracks.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/owntracks"
-}
-
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {

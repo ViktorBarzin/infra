@@ -53,14 +53,6 @@ resource "random_id" "secret_key" {
   byte_length = 32 # 32 bytes × 2 hex chars = 64 hex characters
 }
 
-module "nfs_config" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "speedtest-config"
-  namespace  = kubernetes_namespace.speedtest.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/speedtest"
-}
-
 resource "kubernetes_persistent_volume_claim" "config_proxmox" {
   wait_until_bound = false
   metadata {

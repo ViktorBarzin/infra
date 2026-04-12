@@ -87,7 +87,7 @@ resource "kubernetes_storage_class" "nfs_truenas" {
   ]
 
   parameters = {
-    server = var.nfs_server
-    share  = "/mnt/main"
+    server = "192.168.1.127"
+    share  = "/srv/nfs"
   }
 }
