@@ -192,7 +192,7 @@ server:
           sizeLimit: 2Gi
       - name: prometheus-backup
         persistentVolumeClaim:
-          claimName: monitoring-prometheus-backup
+          claimName: monitoring-prometheus-backup-host
   extraVolumeMounts:
     - name: prometheus-wal-tmpfs
       mountPath: /data/wal
@@ -1017,12 +1017,12 @@ serverFiles:
       - name: K8s Health
         rules:
           - alert: PodCrashLooping
-            expr: increase(kube_pod_container_status_restarts_total[1h]) > 5 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
-            for: 15m
+            expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }}: {{ $value | printf \"%.0f\" }} restarts in 1h"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}: stuck in CrashLoopBackOff"
           - alert: ContainerOOMKilled
             expr: increase(container_oom_events_total{container!=""}[15m]) > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
