@@ -995,7 +995,7 @@ serverFiles:
             annotations:
               summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — auto-expansion may have failed"
           - alert: PVPredictedFull
-            expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes
+            expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes and kubelet_volume_stats_capacity_bytes < 1099511627776
             for: 1h
             labels:
               severity: warning
@@ -1725,21 +1725,21 @@ serverFiles:
               summary: "Bank sync has not succeeded in more than 48h. Check CronJob and account auth."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
-            for: 30m
+            for: 60m
             labels:
               severity: warning
             annotations:
-              summary: "Email round-trip probe failing. Check ForwardEmail relay, DNS, and IMAP."
+              summary: "Email round-trip probe failing. Check MX DNS, Postfix, Mailgun API, and IMAP."
           - alert: EmailRoundtripStale
-            expr: (time() - email_roundtrip_last_success_timestamp{job="email-roundtrip-monitor"}) > 2400
+            expr: (time() - email_roundtrip_last_success_timestamp{job="email-roundtrip-monitor"}) > 3600
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "Email round-trip probe has not succeeded in >40 min"
+              summary: "Email round-trip probe has not succeeded in >60 min"
           - alert: EmailRoundtripNeverRun
             expr: absent(email_roundtrip_success{job="email-roundtrip-monitor"})
-            for: 40m
+            for: 60m
             labels:
               severity: warning
             annotations:

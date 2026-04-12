@@ -113,46 +113,19 @@ resource "cloudflare_record" "non_proxied_dns_record_ipv6" {
   zone_id  = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "forwardemail_mx1" {
-  content  = "mx1.forwardemail.net"
+resource "cloudflare_record" "mail_mx" {
+  content  = "mail.viktorbarzin.me"
   name     = "viktorbarzin.me"
   proxied  = false
   ttl      = 1
   type     = "MX"
-  priority = 10
+  priority = 1
   zone_id  = var.cloudflare_zone_id
 }
 
-resource "cloudflare_record" "forwardemail_mx2" {
-  content  = "mx2.forwardemail.net"
-  name     = "viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "MX"
-  priority = 10
-  zone_id  = var.cloudflare_zone_id
-}
-
-resource "cloudflare_record" "forwardemail_config" {
-  content  = "\"forward-email=mail.viktorbarzin.me\""
-  name     = "viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
-}
-
-resource "cloudflare_record" "forwardemail_port" {
-  content  = "\"forward-email-port=266\""
-  name     = "viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
-}
 
 resource "cloudflare_record" "mail_domainkey" {
-  content  = "\"k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIDLB8mhAHNqs1s6GeZMQHOxWweoNKIrqo5tqRM3yFilgfPUX34aTIXNZg9xAmlK+2S/xXO1ymt127ZGMjnoFKOEP8/uZ54iHTCnioHaPZWMfJ7o6TYIXjr+9ShKfoJxZLv7lHJ2wKQK3yOw4lg4cvja5nxQ6fNoGRwo+mQ/mgJQIDAQAB\""
+  content  = "\"v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIDLB8mhAHNqs1s6GeZMQHOxWweoNKIrqo5tqRM3yFilgfPUX34aTIXNZg9xAmlK+2S/xXO1ymt127ZGMjnoFKOEP8/uZ54iHTCnioHaPZWMfJ7o6TYIXjr+9ShKfoJxZLv7lHJ2wKQK3yOw4lg4cvja5nxQ6fNoGRwo+mQ/mgJQIDAQAB\""
   name     = "s1._domainkey.viktorbarzin.me"
   proxied  = false
   ttl      = 1
@@ -162,12 +135,66 @@ resource "cloudflare_record" "mail_domainkey" {
 }
 
 resource "cloudflare_record" "mail_spf" {
-  content  = "\"v=spf1 include:mailgun.org ~all\""
+  content  = "\"v=spf1 include:mailgun.org -all\""
   name     = "viktorbarzin.me"
   proxied  = false
   ttl      = 1
   type     = "TXT"
   priority = 1
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "mail_domainkey_rspamd" {
+  content  = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
+  name     = "mail._domainkey.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "brevo_domainkey1" {
+  content  = "b1.viktorbarzin-me.dkim.brevo.com."
+  name     = "brevo1._domainkey.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "CNAME"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "brevo_domainkey2" {
+  content  = "b2.viktorbarzin-me.dkim.brevo.com."
+  name     = "brevo2._domainkey.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "CNAME"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "brevo_code" {
+  content  = "\"brevo-code:a6ef1dd91b248559900246eb4e7ceebd\""
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "mail_mta_sts" {
+  content  = "\"v=STSv1; id=20260412\""
+  name     = "_mta-sts.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
+  zone_id  = var.cloudflare_zone_id
+}
+
+resource "cloudflare_record" "mail_tlsrpt" {
+  content  = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
+  name     = "_smtp._tls.viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "TXT"
   zone_id  = var.cloudflare_zone_id
 }
 

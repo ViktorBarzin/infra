@@ -80,7 +80,7 @@ Violations cause state drift, which causes future applies to break or silently r
 
 **Flow**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
 
-**Migrated to GHA** (9): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search
+**Migrated to GHA** (10): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search, council-complaints
 **Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
 
 **Per-project files**:
@@ -89,7 +89,7 @@ Violations cause state drift, which causes future applies to break or silently r
 - `.woodpecker/build-fallback.yml` — Old full build pipeline preserved (event: `deployment` — never auto-fires)
 
 **Woodpecker API**: Uses **numeric repo IDs** (`/api/repos/2/pipelines`), NOT owner/name paths (those return HTML).
-Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handler=6, audiblez-web=9, f1-stream=10, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79
+Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handler=6, audiblez-web=9, f1-stream=10, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79, council-complaints=TBD
 
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
@@ -131,7 +131,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - Exclude completed CronJob pods from "pod not ready" alerts.
 - Every new service gets Prometheus scrape config + Uptime Kuma monitor.
 - Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable.
-- **E2E email monitoring**: CronJob `email-roundtrip-monitor` (every 30 min) sends test email via Mailgun API to `smoke-test@viktorbarzin.me` (catch-all → `spam@`), verifies IMAP delivery, deletes test email, pushes metrics to Pushgateway + Uptime Kuma. Alerts: `EmailRoundtripFailing` (90m), `EmailRoundtripStale` (90m), `EmailRoundtripNeverRun` (2h). Vault: `mailgun_api_key` in `secret/viktor`.
+- **E2E email monitoring**: CronJob `email-roundtrip-monitor` (every 20 min) sends test email via Mailgun API to `smoke-test@viktorbarzin.me` (catch-all → `spam@`), verifies IMAP delivery, deletes test email, pushes metrics to Pushgateway + Uptime Kuma. Alerts: `EmailRoundtripFailing` (60m), `EmailRoundtripStale` (60m), `EmailRoundtripNeverRun` (60m). Outbound relay: Brevo EU (`smtp-relay.brevo.com:587`, 300/day free — migrated from Mailgun). Mailserver on dedicated MetalLB IP `10.0.20.202` with `externalTrafficPolicy: Local` for CrowdSec real-IP detection. Vault: `mailgun_api_key` in `secret/viktor` (probe), `brevo_api_key` in `secret/viktor` (relay).
 
 ## Storage & Backup Architecture
 

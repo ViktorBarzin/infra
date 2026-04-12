@@ -4,6 +4,8 @@
 
 **Goal:** Harden the mail server with spam filtering (Rspamd), DMARC enforcement, rate limiting, monitoring alerts, and hygiene cleanup.
 
+**Status**: Completed. ForwardEmail references in this plan are historical — relay removed 2026-04-12. MX points directly to mail.viktorbarzin.me.
+
 **Architecture:** All changes are to the existing docker-mailserver 15.0.0 deployment managed by Terraform. Rspamd replaces OpenDKIM for DKIM signing and adds spam filtering. DMARC moves from `none` to `quarantine` in Cloudflare DNS. Postfix gets rate-limiting parameters. Prometheus gets a mailserver-down alert. Roundcubemail debug logging is disabled and image pinned.
 
 **Tech Stack:** Terraform/HCL, docker-mailserver, Rspamd, Cloudflare DNS, Prometheus
