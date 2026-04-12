@@ -147,7 +147,7 @@ Headscale is a self-hosted alternative to Tailscale's commercial control plane. 
 
 **Resolution flow**:
 1. Client queries AdGuard for any domain.
-2. If domain ends in `.lan`, AdGuard forwards to Technitium (10.0.20.101).
+2. If domain ends in `.lan`, AdGuard forwards to Technitium (10.0.20.201).
 3. For all other domains, AdGuard resolves directly via upstream (Cloudflare 1.1.1.1).
 4. AdGuard caches responses, reducing load on Technitium and upstream.
 
