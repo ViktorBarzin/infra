@@ -68,7 +68,7 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
     # TLS_LEVEL                              = "intermediate"
     # DEFAULT_RELAY_HOST = "[smtp.sendgrid.net]:587"
-    DEFAULT_RELAY_HOST = "[smtp.eu.mailgun.org]:587"
+    DEFAULT_RELAY_HOST = "[smtp-relay.brevo.com]:587"
     SPOOF_PROTECTION   = "1"
     SSL_TYPE           = "manual"
     SSL_CERT_PATH      = "/tmp/ssl/tls.crt"
@@ -487,14 +487,13 @@ resource "kubernetes_service" "mailserver" {
     }
 
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = "10.0.20.202"
     }
   }
 
   spec {
     type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "mailserver"
     }
@@ -549,7 +548,7 @@ resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/10 * * * *"
+    schedule                      = "*/20 * * * *"
     job_template {
       metadata {}
       spec {

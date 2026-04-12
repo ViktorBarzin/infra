@@ -2,6 +2,7 @@
 
 **Date**: 2026-02-23
 **Scope**: Security, reliability, and hygiene improvements to the docker-mailserver stack
+**Status**: Completed. ForwardEmail relay removed 2026-04-12 — MX now direct to mail.viktorbarzin.me on dedicated MetalLB IP with CrowdSec protection.
 
 ## Current State
 

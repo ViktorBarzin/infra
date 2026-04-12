@@ -15,7 +15,7 @@ graph TB
         GPU[NVIDIA GPU via dcgm-exporter]
         UPS[UPS Exporter]
         NFS[NFS Exporter]
-        EMAIL[Email Roundtrip Probe<br/>CronJob every 30m]
+        EMAIL[Email Roundtrip Probe<br/>CronJob every 10m]
     end
 
     subgraph "Monitoring Stack (platform stack)"
@@ -148,11 +148,11 @@ spec:
 - **4xx/5xx Error Rates**: HTTP error rate threshold exceeded
 
 #### Email Monitoring Alerts
-- **EmailRoundtripFailing**: E2E email probe returning failure for >90m
-- **EmailRoundtripStale**: No successful email round-trip in >90m
-- **EmailRoundtripNeverRun**: Email probe has never reported (CronJob not running)
+- **EmailRoundtripFailing**: E2E email probe returning failure for >30m
+- **EmailRoundtripStale**: No successful email round-trip in >40m
+- **EmailRoundtripNeverRun**: Email probe has never reported (40m)
 
-The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 30 min) in the `mailserver` namespace that:
+The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 min) in the `mailserver` namespace that:
 1. Sends a test email via Mailgun HTTP API to `smoke-test@viktorbarzin.me`
 2. Email lands in the `spam@` catch-all mailbox via MX delivery
 3. Verifies delivery via IMAP (searches by UUID marker in subject)
@@ -160,7 +160,7 @@ The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 30 
 5. Pushes metrics (`email_roundtrip_success`, `email_roundtrip_duration_seconds`, `email_roundtrip_last_success_timestamp`) to Prometheus Pushgateway
 6. Pushes status to Uptime Kuma E2E Push monitor
 
-Uptime Kuma also has TCP monitors for SMTP (port 25) and IMAP (port 993) on `10.0.20.200`.
+Uptime Kuma monitors: TCP SMTP (port 25) on `176.12.22.76` (external), IMAP (port 993) on `10.0.20.202`, and Dovecot exporter metrics on port 9166.
 
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup

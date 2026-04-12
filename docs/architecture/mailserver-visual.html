@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<base target="_blank">
+<title>Mail Server Architecture — viktorbarzin.me</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f4f7f6;
+  --bg-hero: linear-gradient(135deg, #e0f2f1 0%, #f0fdf4 40%, #ecfeff 100%);
+  --surface: #ffffff;
+  --surface-hover: #f0fdfa;
+  --border: #d1ddd9;
+  --border-strong: #99b3ad;
+  --text-primary: #0f2b26;
+  --text-secondary: #4a6b63;
+  --text-muted: #7a998f;
+  --primary: #0d9488;
+  --primary-soft: #ccfbf1;
+  --primary-glow: rgba(13,148,136,0.15);
+  --accent: #f59e0b;
+  --accent-soft: #fef3c7;
+  --success: #059669;
+  --success-soft: #d1fae5;
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --warning: #d97706;
+  --warning-soft: #fef3c7;
+  --flow-line: #0d9488;
+  --node-bg: #f0fdfa;
+  --code-bg: #1e293b;
+}
+body.dark-mode {
+  --bg: #0a1612;
+  --bg-hero: linear-gradient(135deg, #0a1612 0%, #0f1f1a 40%, #0c1a17 100%);
+  --surface: #132420;
+  --surface-hover: #1a3330;
+  --border: #2a4a40;
+  --border-strong: #3d6b5f;
+  --text-primary: #e0f2ef;
+  --text-secondary: #9abfb5;
+  --text-muted: #6a9a8d;
+  --primary: #2dd4bf;
+  --primary-soft: #1a3330;
+  --primary-glow: rgba(45,212,191,0.12);
+  --accent: #fbbf24;
+  --accent-soft: #3d2e0a;
+  --success: #34d399;
+  --success-soft: #132e22;
+  --danger: #f87171;
+  --danger-soft: #3d1515;
+  --warning: #fbbf24;
+  --warning-soft: #3d2e0a;
+  --flow-line: #2dd4bf;
+  --node-bg: #1a3330;
+  --code-bg: #0c1a17;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: var(--bg-hero);
+  z-index: -1;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+/* Hero */
+.hero {
+  padding: 80px 0 48px;
+  text-align: center;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 100px;
+  padding: 6px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+.hero-badge .dot { width:8px; height:8px; border-radius:50%; background:var(--success); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.hero h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2.8rem;
+  font-weight: 700;
+  margin: 20px 0 12px;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--primary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero p { color: var(--text-secondary); font-size: 1.1rem; max-width: 600px; margin: 0 auto; }
+.hero-meta {
+  display: flex; gap: 24px; justify-content: center; margin-top: 20px;
+  font-size: 0.85rem; color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* KPI Row */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 32px 0;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  text-align: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.kpi:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--primary-glow); }
+.kpi-value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.kpi-value.accent { color: var(--accent); }
+.kpi-value.success { color: var(--success); }
+.kpi-label { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+
+/* Section */
+.section {
+  margin: 40px 0;
+}
+.section-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 24px;
+  background: var(--primary);
+  border-radius: 2px;
+}
+
+/* Flow Diagram */
+.flow-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  overflow-x: auto;
+}
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 900px;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+.flow-node {
+  background: var(--node-bg);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  text-align: center;
+  min-width: 120px;
+  position: relative;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.flow-node:hover { border-color: var(--primary); box-shadow: 0 0 20px var(--primary-glow); }
+.flow-node .icon { font-size: 1.4rem; margin-bottom: 4px; }
+.flow-node .label { font-size: 0.75rem; font-weight: 600; color: var(--text-primary); font-family: 'Space Grotesk', sans-serif; }
+.flow-node .sublabel { font-size: 0.65rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+.flow-node.security { border-color: var(--success); background: var(--success-soft); }
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--flow-line);
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  flex-direction: column;
+  gap: 2px;
+}
+.flow-arrow .line {
+  width: 40px;
+  height: 2px;
+  background: var(--flow-line);
+  position: relative;
+}
+.flow-arrow .line::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -4px;
+  border: 5px solid transparent;
+  border-left: 6px solid var(--flow-line);
+}
+.flow-arrow .port { color: var(--text-muted); white-space: nowrap; }
+
+/* DNS Table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+th {
+  background: var(--primary-soft);
+  text-align: left;
+  padding: 12px 16px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+  border-bottom: 2px solid var(--border);
+}
+td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface-hover); }
+.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.tag-green { background: var(--success-soft); color: var(--success); }
+.tag-amber { background: var(--warning-soft); color: var(--warning); }
+.tag-red { background: var(--danger-soft); color: var(--danger); }
+.tag-teal { background: var(--primary-soft); color: var(--primary); }
+
+/* Security Grid */
+.sec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.sec-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  border-left: 4px solid var(--success);
+}
+.sec-card h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sec-card p, .sec-card ul { font-size: 0.85rem; color: var(--text-secondary); }
+.sec-card ul { padding-left: 18px; margin-top: 6px; }
+.sec-card li { margin: 4px 0; }
+
+/* Alert Grid */
+.alert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+.alert-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.alert-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.alert-icon.warn { background: var(--warning-soft); }
+.alert-name { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; font-weight: 500; }
+.alert-thresh { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+
+/* Callout */
+.callout {
+  background: var(--warning-soft);
+  border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 24px 0;
+}
+.callout .icon { font-size: 1.2rem; flex-shrink: 0; }
+.callout .text { font-size: 0.88rem; color: var(--text-secondary); }
+.callout .text strong { color: var(--text-primary); }
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 40px 0 32px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 48px;
+}
+
+/* Entrance animations */
+@keyframes fadeInUp {
+  from { opacity:0; transform:translateY(20px); }
+  to { opacity:1; transform:translateY(0); }
+}
+.ani { animation: fadeInUp 0.6s cubic-bezier(0.22,1,0.36,1) both; }
+.d1{animation-delay:0.1s} .d2{animation-delay:0.2s} .d3{animation-delay:0.3s}
+.d4{animation-delay:0.4s} .d5{animation-delay:0.5s} .d6{animation-delay:0.6s}
+</style>
+
+<!-- INFRA-MENU-CSS + INFRA-MENU-HTML -->
+<nav class="viz-menu" id="vizMenu" aria-label="Visualization controls">
+    <button class="viz-menu-toggle" onclick="toggleMenu()" aria-label="Toggle menu" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="5" x2="15" y2="5"/>
+            <line x1="3" y1="9" x2="15" y2="9"/>
+            <line x1="3" y1="13" x2="15" y2="13"/>
+        </svg>
+    </button>
+    <div class="viz-menu-panel" id="vizMenuPanel">
+        <button onclick="toggleTheme()" class="viz-menu-item">
+            <span class="viz-menu-icon" id="themeIcon">◐</span>
+            <span id="themeLabel">Toggle dark mode</span>
+        </button>
+        <button onclick="window.print()" class="viz-menu-item">
+            <span class="viz-menu-icon">⎙</span>
+            <span>Print / Save as PDF</span>
+        </button>
+        <button onclick="toggleFullscreen()" class="viz-menu-item">
+            <span class="viz-menu-icon" id="fsIcon">⛶</span>
+            <span id="fsLabel">Fullscreen</span>
+        </button>
+        <hr style="border:none;border-top:1px solid var(--border,#e2e8f0);margin:2px 8px">
+        <button onclick="saveAsImage()" class="viz-menu-item" id="saveImgBtn">
+            <span class="viz-menu-icon">📷</span>
+            <span>Save as image</span>
+        </button>
+    </div>
+</nav>
+<style>
+.viz-menu{position:fixed;top:1rem;right:1rem;z-index:10000;font-family:inherit}
+.viz-menu-toggle{width:36px;height:36px;border-radius:8px;border:1px solid var(--border,#e2e8f0);background:var(--surface,#fff);color:var(--text-secondary,#64748b);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.viz-menu-toggle:hover{background:var(--surface-hover,#f8fafc);border-color:var(--border-strong,#cbd5e1);transform:scale(1.05)}
+.viz-menu-panel{position:absolute;top:calc(100% + 6px);right:0;min-width:200px;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.15);opacity:0;transform:translateY(-4px) scale(.97);pointer-events:none;transition:opacity .15s,transform .15s}
+.viz-menu.open .viz-menu-panel{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+.viz-menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 12px;border:none;border-radius:7px;background:transparent;color:var(--text-primary,#0f172a);font-size:.85rem;cursor:pointer;text-align:left;transition:background .1s;font-family:inherit}
+.viz-menu-item:hover{background:var(--surface-hover,#f1f5f9)}
+.viz-menu-icon{width:20px;text-align:center;font-size:1rem;flex-shrink:0}
+[data-animate]{opacity:0;transition-property:opacity,transform,filter;transition-duration:.6s;transition-timing-function:cubic-bezier(.22,1,.36,1)}
+[data-animate="fade-up"]{transform:translateY(20px)}
+[data-animate="fade-down"]{transform:translateY(-20px)}
+[data-animate="scale-up"]{transform:scale(.95)}
+[data-animate].is-visible{opacity:1;transform:none;filter:none}
+@media print{.viz-menu{display:none!important}body{background:#fff!important;color:#000!important}.dark-mode{all:unset}.ani,[data-animate]{opacity:1!important;transform:none!important;animation:none!important;transition:none!important}@page{margin:1.5cm}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}[data-animate]{opacity:1!important;transform:none!important}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Hero -->
+<header class="hero ani d1">
+  <div class="hero-badge"><span class="dot"></span> Operational</div>
+  <h1>Mail Server Architecture</h1>
+  <p>Self-hosted email infrastructure for viktorbarzin.me on Kubernetes with CrowdSec protection</p>
+  <div class="hero-meta">
+    <span>docker-mailserver 15.0.0</span>
+    <span>|</span>
+    <span>Updated 2026-04-12</span>
+  </div>
+</header>
+
+<!-- KPI Row -->
+<div class="kpi-row ani d2">
+  <div class="kpi">
+    <div class="kpi-value">9</div>
+    <div class="kpi-label">DNS Records</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value success">10m</div>
+    <div class="kpi-label">Probe Interval</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value accent">30m</div>
+    <div class="kpi-label">Alert Threshold</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value">5</div>
+    <div class="kpi-label">Security Layers</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-value success">Local</div>
+    <div class="kpi-label">Traffic Policy</div>
+  </div>
+</div>
+
+<!-- Inbound Flow -->
+<div class="section ani d3">
+  <div class="section-title">Inbound Mail Flow</div>
+  <div class="flow-container">
+    <div class="flow">
+      <div class="flow-node">
+        <div class="icon">📧</div>
+        <div class="label">Sender MTA</div>
+        <div class="sublabel">MX lookup</div>
+      </div>
+      <div class="flow-arrow"><div class="port">:25</div><div class="line"></div></div>
+      <div class="flow-node">
+        <div class="icon">🌐</div>
+        <div class="label">mail.viktorbarzin.me</div>
+        <div class="sublabel">176.12.22.76</div>
+      </div>
+      <div class="flow-arrow"><div class="port">NAT</div><div class="line"></div></div>
+      <div class="flow-node security">
+        <div class="icon">🛡</div>
+        <div class="label">pfSense</div>
+        <div class="sublabel">port 25 fwd</div>
+      </div>
+      <div class="flow-arrow"><div class="port">10.0.20.202</div><div class="line"></div></div>
+      <div class="flow-node">
+        <div class="icon">⚖</div>
+        <div class="label">MetalLB</div>
+        <div class="sublabel">ETP: Local</div>
+      </div>
+      <div class="flow-arrow"><div class="line"></div></div>
+      <div class="flow-node security">
+        <div class="icon">📬</div>
+        <div class="label">Postfix</div>
+        <div class="sublabel">+ CrowdSec</div>
+      </div>
+      <div class="flow-arrow"><div class="line"></div></div>
+      <div class="flow-node security">
+        <div class="icon">🔍</div>
+        <div class="label">Rspamd</div>
+        <div class="sublabel">spam/DKIM/DMARC</div>
+      </div>
+      <div class="flow-arrow"><div class="line"></div></div>
+      <div class="flow-node">
+        <div class="icon">📥</div>
+        <div class="label">Dovecot</div>
+        <div class="sublabel">IMAP :993</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Outbound Flow -->
+<div class="section" data-animate="fade-up">
+  <div class="section-title">Outbound Mail Flow</div>
+  <div class="flow-container">
+    <div class="flow" style="min-width:500px">
+      <div class="flow-node">
+        <div class="icon">📬</div>
+        <div class="label">Postfix</div>
+        <div class="sublabel">relayhost</div>
+      </div>
+      <div class="flow-arrow"><div class="port">SASL+TLS :587</div><div class="line"></div></div>
+      <div class="flow-node" style="border-color:var(--accent)">
+        <div class="icon">🚀</div>
+        <div class="label">Mailgun EU</div>
+        <div class="sublabel">smtp.eu.mailgun.org</div>
+      </div>
+      <div class="flow-arrow"><div class="line"></div></div>
+      <div class="flow-node">
+        <div class="icon">📧</div>
+        <div class="label">Recipient</div>
+        <div class="sublabel">IP reputation handled</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DNS Records -->
+<div class="section" data-animate="fade-up" data-delay="100">
+  <div class="section-title">DNS Records</div>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Name</th><th>Value</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="tag tag-teal">MX</span></td><td class="mono">viktorbarzin.me</td><td class="mono">mail.viktorbarzin.me (pri 1)</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">A</span></td><td class="mono">mail.viktorbarzin.me</td><td class="mono">176.12.22.76 (DNS-only)</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">AAAA</span></td><td class="mono">mail.viktorbarzin.me</td><td class="mono">2001:470:6e:43d::2</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">SPF</span></td><td class="mono">viktorbarzin.me</td><td class="mono">v=spf1 include:mailgun.org <strong>-all</strong></td><td><span class="tag tag-green">Hard Fail</span></td></tr>
+      <tr><td><span class="tag tag-teal">DKIM</span></td><td class="mono">s1._domainkey</td><td class="mono">RSA 1024-bit (Mailgun outbound)</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">DKIM</span></td><td class="mono">mail._domainkey</td><td class="mono">RSA 2048-bit (Rspamd signing)</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">DMARC</span></td><td class="mono">_dmarc</td><td class="mono">p=quarantine; pct=100</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">MTA-STS</span></td><td class="mono">_mta-sts</td><td class="mono">v=STSv1; id=20260412</td><td><span class="tag tag-green">OK</span></td></tr>
+      <tr><td><span class="tag tag-teal">TLSRPT</span></td><td class="mono">_smtp._tls</td><td class="mono">rua=mailto:postmaster@viktorbarzin.me</td><td><span class="tag tag-green">OK</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout" data-animate="fade-up" data-delay="200">
+    <div class="icon">⚠</div>
+    <div class="text"><strong>PTR Mismatch:</strong> Reverse DNS returns <code class="mono">176-12-22-76.pon.spectrumnet.bg</code> (ISP-assigned) instead of <code class="mono">mail.viktorbarzin.me</code>. ISP-controlled, cannot fix. Minimal impact — Gmail/Outlook rely on SPF/DKIM/DMARC.</div>
+  </div>
+</div>
+
+<!-- Security -->
+<div class="section" data-animate="fade-up" data-delay="100">
+  <div class="section-title">Security Layers</div>
+  <div class="sec-grid">
+    <div class="sec-card">
+      <h3>🛡 CrowdSec</h3>
+      <ul>
+        <li><code class="mono">crowdsecurity/postfix</code> + <code class="mono">dovecot</code> collections</li>
+        <li>Real client IPs via ETP: Local on <code class="mono">10.0.20.202</code></li>
+        <li>Automatic brute-force detection &amp; ban</li>
+      </ul>
+    </div>
+    <div class="sec-card">
+      <h3>🔍 Rspamd</h3>
+      <ul>
+        <li>Spam filtering + phishing detection</li>
+        <li>DKIM signing (selector: <code class="mono">mail</code>, 2048-bit)</li>
+        <li>DMARC verification on inbound</li>
+        <li>Auto-learns from Junk folder</li>
+      </ul>
+    </div>
+    <div class="sec-card">
+      <h3>🚦 Postfix Rate Limiting</h3>
+      <ul>
+        <li>10 connections/min per client</li>
+        <li>30 messages/min per client</li>
+        <li>Now effective with real IPs (ETP: Local)</li>
+      </ul>
+    </div>
+    <div class="sec-card">
+      <h3>🔒 TLS Enforcement</h3>
+      <ul>
+        <li>Let's Encrypt wildcard cert</li>
+        <li>MTA-STS enforces TLS for inbound</li>
+        <li>TLSRPT for failure reporting</li>
+        <li>STARTTLS on SMTP, SSL on IMAP</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Monitoring -->
+<div class="section" data-animate="fade-up" data-delay="100">
+  <div class="section-title">Monitoring &amp; Alerts</div>
+  <div class="alert-grid">
+    <div class="alert-card">
+      <div class="alert-icon warn">📊</div>
+      <div>
+        <div class="alert-name">MailServerDown</div>
+        <div class="alert-thresh">No replicas for 5m</div>
+      </div>
+    </div>
+    <div class="alert-card">
+      <div class="alert-icon warn">📧</div>
+      <div>
+        <div class="alert-name">EmailRoundtripFailing</div>
+        <div class="alert-thresh">Probe failing for 30m</div>
+      </div>
+    </div>
+    <div class="alert-card">
+      <div class="alert-icon warn">⏱</div>
+      <div>
+        <div class="alert-name">EmailRoundtripStale</div>
+        <div class="alert-thresh">No success in >40m</div>
+      </div>
+    </div>
+    <div class="alert-card">
+      <div class="alert-icon warn">❓</div>
+      <div>
+        <div class="alert-name">EmailRoundtripNeverRun</div>
+        <div class="alert-thresh">Metric absent for 40m</div>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:20px">
+    <table>
+      <thead><tr><th>Monitor</th><th>Type</th><th>Target</th><th>Interval</th></tr></thead>
+      <tbody>
+        <tr><td>E2E Roundtrip Probe</td><td><span class="tag tag-teal">CronJob</span></td><td class="mono">Mailgun API → MX → IMAP</td><td class="mono">*/10 * * * *</td></tr>
+        <tr><td>SMTP External</td><td><span class="tag tag-green">Uptime Kuma</span></td><td class="mono">176.12.22.76:25</td><td class="mono">60s</td></tr>
+        <tr><td>Dovecot Exporter</td><td><span class="tag tag-green">Prometheus</span></td><td class="mono">:9166/metrics</td><td class="mono">scrape</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Terraform -->
+<div class="section" data-animate="fade-up" data-delay="100">
+  <div class="section-title">Terraform Stacks</div>
+  <table>
+    <thead><tr><th>Stack</th><th>Path</th><th>Resources</th></tr></thead>
+    <tbody>
+      <tr><td>Mailserver</td><td class="mono">stacks/mailserver/</td><td>Namespace, Deployment, Service, CronJob, PVCs</td></tr>
+      <tr><td>DNS</td><td class="mono">stacks/cloudflared/</td><td>MX, SPF, DKIM x2, DMARC, MTA-STS, TLSRPT</td></tr>
+      <tr><td>Monitoring</td><td class="mono">stacks/monitoring/</td><td>Prometheus alert rules</td></tr>
+      <tr><td>CrowdSec</td><td class="mono">stacks/crowdsec/</td><td>postfix + dovecot collections, log acquisition</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer>
+  Viktor Barzin · 2026-04-12<br>
+  Generated by <a href="https://fburl.com/claude-templates/k5rd6ab0" style="color:var(--text-muted)">/visualize</a> claude skill
+</footer>
+
+</div>
+
+<!-- INFRA-MENU-JS -->
+<script>
+function toggleMenu(){const m=document.getElementById('vizMenu');const t=m.querySelector('.viz-menu-toggle');const o=m.classList.toggle('open');t.setAttribute('aria-expanded',o)}
+document.addEventListener('click',function(e){const m=document.getElementById('vizMenu');if(m&&!m.contains(e.target))m.classList.remove('open')});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){const m=document.getElementById('vizMenu');if(m)m.classList.remove('open')}});
+function toggleTheme(){const d=document.body.classList.toggle('dark-mode');localStorage.setItem('visualize-dark-mode',d);updateThemeLabel()}
+function updateThemeLabel(){const d=document.body.classList.contains('dark-mode');const i=document.getElementById('themeIcon');const l=document.getElementById('themeLabel');if(i)i.textContent=d?'☀':'◐';if(l)l.textContent=d?'Light mode':'Dark mode'}
+if(localStorage.getItem('visualize-dark-mode')==='true'||(!localStorage.getItem('visualize-dark-mode')&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.body.classList.add('dark-mode')}
+updateThemeLabel();
+function toggleFullscreen(){if(!document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{})}else{document.exitFullscreen()}}
+document.addEventListener('fullscreenchange',function(){const i=document.getElementById('fsIcon');const l=document.getElementById('fsLabel');const f=!!document.fullscreenElement;if(i)i.textContent='⛶';if(l)l.textContent=f?'Exit fullscreen':'Fullscreen'});
+(function initScrollReveal(){if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){document.querySelectorAll('[data-animate]').forEach(function(el){el.classList.add('is-visible')});return}var o=new IntersectionObserver(function(entries){entries.forEach(function(entry){if(entry.isIntersecting){var el=entry.target;var d=parseInt(el.getAttribute('data-delay')||'0',10);if(d>0){setTimeout(function(){el.classList.add('is-visible')},d)}else{el.classList.add('is-visible')}o.unobserve(el)}})},{threshold:0.15});document.querySelectorAll('[data-animate]').forEach(function(el){o.observe(el)})})();
+function loadHtml2Canvas(){if(typeof html2canvas!=='undefined')return Promise.resolve();return new Promise(function(r,j){var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';s.integrity='sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H';s.crossOrigin='anonymous';s.onload=r;s.onerror=function(){j(new Error('html2canvas load failed'))};document.head.appendChild(s)})}
+function saveAsImage(){var b=document.getElementById('saveImgBtn');var l=b.querySelector('span:last-child');var o=l.textContent;l.textContent='Loading...';b.style.pointerEvents='none';loadHtml2Canvas().then(function(){l.textContent='Capturing...';doCapture(b,l,o)}).catch(function(){l.textContent=o;b.style.pointerEvents='';alert('Could not load screenshot library.')})}
+function doCapture(b,l,o){var m=document.getElementById('vizMenu');m.style.display='none';var t=document.querySelector('.container')||document.body;var s=document.createElement('style');s.id='html2canvas-capture-overrides';s.textContent='*,*::before,*::after{animation-play-state:paused!important;animation-delay:0s!important;animation-duration:0s!important;transition-duration:0s!important}.ani,.animate-in,[class*="delay-"],[data-animate]{opacity:1!important;transform:none!important;filter:none!important}';document.head.appendChild(s);var bg=t.style.background;if(t!==document.body){t.style.background=getComputedStyle(document.body).backgroundColor||'#fff'}var sp=window.scrollY;window.scrollTo(0,0);var cap=function(){void t.offsetHeight;html2canvas(t,{scale:2,useCORS:true,allowTaint:true,logging:false}).then(function(c){var a=document.createElement('a');a.download=(document.title||'visualization')+'.png';a.href=c.toDataURL('image/png');a.click()}).catch(function(){alert('Screenshot failed.')}).finally(function(){s.remove();t.style.background=bg;m.style.display='';l.textContent=o;b.style.pointerEvents='';m.classList.remove('open');window.scrollTo(0,sp)})};if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){setTimeout(cap,50)})}else{setTimeout(cap,500)}}
+</script>
+</body>
+</html>
