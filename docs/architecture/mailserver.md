@@ -41,7 +41,7 @@ graph TB
     end
 
     subgraph "Monitoring"
-        PROBE[E2E Roundtrip Probe<br/>CronJob every 10m] -->|Mailgun API| SENDER
+        PROBE[E2E Roundtrip Probe<br/>CronJob every 20m] -->|Mailgun API| SENDER
         PROBE -->|IMAP check| DOVECOT
         PROBE --> PUSH[Pushgateway + Uptime Kuma]
         DEXP[Dovecot Exporter<br/>:9166] --> PROM[Prometheus]
