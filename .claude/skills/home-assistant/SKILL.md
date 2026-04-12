@@ -340,7 +340,20 @@ ssh vbarzin@ha-sofia.viktorbarzin.lan "cat /config/configuration.yaml"
 HACS, ESPHome, Frigate, Home Connect, Paradox (PAI), Solarman, Pax BLE, Hikvision, InfluxDB, Mosquitto MQTT, Node-RED, Music Assistant, Zigbee2MQTT, Spook, Xtend Tuya, MELCloud, Synology DSM, HP Printer (IPP)
 
 ### Add-ons
-Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client
+Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Frigate, PAI, Music Assistant, ESPHome, Ookla Speedtest, HA USB/IP Client, **Home Assistant Version Control**
+
+### Version Control (Git Config Tracking)
+- **Add-on**: Home Assistant Version Control v1.2.0 (slug: `4ab554b2_home-assistant-version-control`)
+- **Add-on repo**: `https://github.com/saihgupr/ha-addons`
+- **What it does**: Auto-tracks every config file change via git. File watcher (inotify) detects changes, debounces (5s default), commits automatically.
+- **Tracked files**: `.yaml`, `.yml`, `.json`, `.conf`, `.sh`, `.py` + `.storage/` (lovelace dashboards, entity/device registries, config entries)
+- **Excluded**: `secrets.yaml`, database files (`.db`), logs, `__pycache__`, binary files
+- **Git repo**: `/homeassistant/.git` (owned by root; SSH user needs `git config --global --add safe.directory /homeassistant`)
+- **GitHub remote**: `https://github.com/ViktorBarzin/ha-sofia-config` (private). Auth token from Vault `secret/viktor` key `github_pat`. Cloud sync pushes hourly.
+- **Web UI**: Sidebar → "Version Control", or Settings → Add-ons → HA Version Control → Open Web UI. Ingress URL: `/api/hassio_ingress/PYR_EdVzPtzZdRnGjrhI3qbGogCVJ18FrtOg6oaBf-w/`
+- **Features**: Browse commit history with diffs, restore individual files or full config to any point, delete recovery, smart reloads after restore
+- **API**: `POST /api/git/add-all-and-commit` (manual backup), `GET /api/git/history` (commit log), `POST /api/restore-file` (restore single file), `POST /api/restore-commit` (full rollback)
+- **SSH git access**: `ssh vbarzin@192.168.1.8 'git -C /homeassistant log --oneline -10'`
 
 ### Music Assistant (MASS)
 - **Addon slug**: `d5369777_music_assistant`
