@@ -1,5 +1,5 @@
 [Unit]
-Description=Weekly offsite sync: rsync /mnt/backup to Synology NAS
+Description=Daily offsite sync: sda + NFS changes to Synology
 After=network-online.target weekly-backup.service
 
 [Service]

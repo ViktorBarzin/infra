@@ -1,5 +1,5 @@
 [Unit]
-Description=Weekly backup: rsync NFS to sda + prune snapshots
+Description=Daily backup: PVC snapshots + SQLite + pfsense to sda
 After=network-online.target
 
 [Service]

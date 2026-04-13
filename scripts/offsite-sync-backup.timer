@@ -1,8 +1,8 @@
 [Unit]
-Description=Weekly offsite sync: rsync /mnt/backup to Synology NAS
+Description=Daily offsite sync: sda + NFS changes to Synology
 
 [Timer]
-OnCalendar=Sun *-*-* 08:00:00
+OnCalendar=*-*-* 06:00:00
 Persistent=true
 RandomizedDelaySec=300
 

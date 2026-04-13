@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# weekly-backup — 3-2-1 backup: NFS mirror + PVC file copy + pfsense + PVE config
+# weekly-backup — 3-2-1 backup: PVC file copy + SQLite + pfsense + PVE config to sda
 # Deploy to PVE host at /usr/local/bin/weekly-backup
-# Schedule: Weekly Sunday 05:00 via systemd timer
+# Schedule: Daily 05:00 via systemd timer
 set -euo pipefail
 
 # --- Configuration ---
