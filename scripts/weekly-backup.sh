@@ -6,9 +6,6 @@ set -euo pipefail
 
 # --- Configuration ---
 BACKUP_ROOT="/mnt/backup"
-NFS_SERVER="192.168.1.127"
-NFS_BASE="/srv/nfs"
-NFS_MOUNT="/mnt/nfs-proxmox"
 PVC_MOUNT="/tmp/pvc-mount"
 PUSHGATEWAY="${WEEKLY_BACKUP_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB="weekly-backup"
@@ -18,9 +15,6 @@ MAPPING_CACHE="${BACKUP_ROOT}/.lv-pvc-mapping.json"
 KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
 export KUBECONFIG
 
-# NFS backup directories — auto-discovered after NFS mount (all *-backup dirs)
-BACKUP_DIRS=()
-
 # --- Logging ---
 log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 warn() { log "WARN: $*" >&2; }
@@ -29,7 +23,6 @@ die()  { log "FATAL: $*" >&2; push_metrics 1 0; exit 1; }
 # --- Locking ---
 cleanup() {
     umount "${PVC_MOUNT}" 2>/dev/null || true
-    umount "${NFS_MOUNT}" 2>/dev/null || true
     rm -f "${LOCKFILE}"
 }
 trap cleanup EXIT
@@ -70,49 +63,11 @@ TOTAL_BYTES=0
 # Clear manifest for this run
 > "${MANIFEST}"
 
-# ============================================================
-# STEP 1: Mirror NFS backup directories from TrueNAS
-# ============================================================
-log "--- Step 1: NFS backup mirror ---"
-mkdir -p "${NFS_MOUNT}"
-if ! mountpoint -q "${NFS_MOUNT}"; then
-    if ! timeout 30 mount -t nfs -o soft,timeo=30,retrans=3,ro "${NFS_SERVER}:${NFS_BASE}" "${NFS_MOUNT}"; then
-        warn "Failed to mount NFS — skipping NFS mirror step"
-        STATUS=1
-    fi
-fi
-
-if mountpoint -q "${NFS_MOUNT}"; then
-    # Auto-discover all *-backup directories (no hardcoded list)
-    for d in "${NFS_MOUNT}"/*-backup/; do
-        [ -d "$d" ] && BACKUP_DIRS+=("$(basename "$d")")
-    done
-    log "  Discovered ${#BACKUP_DIRS[@]} backup dirs: ${BACKUP_DIRS[*]}"
-
-    mkdir -p "${BACKUP_ROOT}/nfs-mirror"
-    for dir in "${BACKUP_DIRS[@]}"; do
-        src="${NFS_MOUNT}/${dir}/"
-        dst="${BACKUP_ROOT}/nfs-mirror/${dir}/"
-        mkdir -p "${dst}"
-        if [ ! -d "${src}" ]; then
-            continue
-        fi
-        log "Syncing ${dir}..."
-        if rsync -az --delete --out-format='%n' "${src}" "${dst}" 2>/dev/null | \
-           sed "s|^|nfs-mirror/${dir}/|" >> "${MANIFEST}"; then
-            size=$(du -sb "${dst}" 2>/dev/null | cut -f1)
-            TOTAL_BYTES=$((TOTAL_BYTES + size))
-            log "  OK: ${dir} ($(du -sh "${dst}" | cut -f1))"
-        else
-            warn "Failed to sync ${dir}"
-            STATUS=1
-        fi
-    done
-    umount "${NFS_MOUNT}" 2>/dev/null || true
-fi
+# NFS data is synced directly to Synology via inotifywait + offsite-sync-backup.sh
+# No NFS mirror step on sda — saves 53GB and eliminates duplication.
 
 # ============================================================
-# STEP 2: PVC file-level copy from LVM thin snapshots
+# STEP 1: PVC file-level copy from LVM thin snapshots
 # ============================================================
 log "--- Step 2: PVC file copy from snapshots ---"
 WEEK=$(date +%Y-%W)
