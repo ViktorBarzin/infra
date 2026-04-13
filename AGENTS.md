@@ -59,9 +59,9 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - `scripts/cluster_healthcheck.sh` — 25-check cluster health script
 
 ## Storage
-- **NFS** (`nfs-truenas` / `nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
+- **NFS** (`nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
 - **proxmox-lvm** (`proxmox-lvm` StorageClass): For databases (PostgreSQL, MySQL). Proxmox CSI driver.
-- **NFS server**: Proxmox host at 192.168.1.127. HDD NFS at `/srv/nfs` (2TB ext4 LV `pve/nfs-data`), SSD NFS at `/srv/nfs-ssd` (100GB ext4 LV `ssd/nfs-ssd-data`). NFS exports managed via `/etc/exports` on the Proxmox host. TrueNAS (10.0.10.15) has been decommissioned.
+- **NFS server**: Proxmox host at 192.168.1.127. HDD NFS at `/srv/nfs` (2TB ext4 LV `pve/nfs-data`), SSD NFS at `/srv/nfs-ssd` (100GB ext4 LV `ssd/nfs-ssd-data`). Exports use `async` mode (safe with UPS + databases on block storage). TrueNAS (10.0.10.15) decommissioned.
 - **SQLite on NFS is unreliable** (fsync issues) — always use proxmox-lvm or local disk for databases.
 - **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
 - **NFS export directory must exist** on the Proxmox host before Terraform can create the PV.
@@ -86,7 +86,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **GPU**: `node_selector = { "gpu": "true" }` + toleration `nvidia.com/gpu`
 - **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only. Caches stale manifests for :latest tags — use versioned tags or pre-pull with `ctr --hosts-dir ''` to bypass.
 - **pfSense**: 10.0.20.1 (gateway, firewall, DNS forwarding)
-- **MySQL InnoDB Cluster**: 3 instances on proxmox-lvm, anti-affinity excludes k8s-node1 (GPU node)
+- **MySQL InnoDB Cluster**: 1 instance on proxmox-lvm (scaled from 3 — only Uptime Kuma + phpIPAM remain), PriorityClass `mysql-critical` + PDB, anti-affinity excludes k8s-node1 (GPU node)
 - **SMTP**: `var.mail_host` port 587 STARTTLS (not internal svc address — cert mismatch)
 
 ## Contributor Onboarding

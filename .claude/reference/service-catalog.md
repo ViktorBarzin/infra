@@ -6,7 +6,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | wireguard | VPN server | wireguard |
-| technitium | DNS server (10.0.20.201) | technitium |
+| technitium | DNS server (10.0.20.201, query logging on PostgreSQL via custom PG plugin) | technitium |
 | headscale | Tailscale control server | headscale |
 | traefik | Ingress controller (Helm) | traefik |
 | xray | Proxy/tunnel | platform |
@@ -24,7 +24,7 @@
 | nvidia | GPU device plugin | nvidia |
 | metrics-server | K8s metrics | metrics-server |
 | uptime-kuma | Status monitoring | uptime-kuma |
-| crowdsec | Security/WAF | crowdsec |
+| crowdsec | Security/WAF (PostgreSQL backend) | crowdsec |
 | kyverno | Policy engine | kyverno |
 
 ## Admin
@@ -52,6 +52,7 @@
 | insta2spotify | Instagram reel song ID to Spotify playlist | insta2spotify |
 | trading-bot | Event-driven trading with sentiment analysis | trading-bot |
 | claude-memory | Persistent memory MCP server | claude-memory |
+| council-complaints | Islington civic reporting pilot | council-complaints |
 
 ## Optional
 | Service | Description | Stack |
