@@ -1,6 +1,6 @@
 # Backup & Disaster Recovery Architecture
 
-Last updated: 2026-04-06
+Last updated: 2026-04-13
 
 ## Overview
 
@@ -9,9 +9,8 @@ The homelab uses a defense-in-depth 3-2-1 backup strategy: **3 copies** (live PV
 **3-2-1 Breakdown**:
 - **Copy 1** (live): All PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD)
 - **Copy 2** (local backup): Weekly file-level backup to sda `/mnt/backup` (1.1TB RAID1 SAS)
-- **Copy 3** (offsite): Synology NAS at 192.168.1.13 via two paths:
+- **Copy 3** (offsite): Synology NAS at 192.168.1.13:
   - `Synology/Backup/Viki/pve-backup/` — structured PVE host backups (rsync --files-from weekly)
-  - `Synology/Backup/Viki/truenas/` — TrueNAS NFS media (Cloud Sync, narrowed to media only)
 
 ## Architecture Diagram
 
@@ -42,9 +41,8 @@ graph TB
         PVEConfig --> sda
     end
 
-    subgraph TrueNAS["TrueNAS (10.0.10.15)"]
-        NFS_Backup["NFS-exported<br/>/mnt/main/*-backup/"]
-        Media["Media (NFS)<br/>Immich ~800GB<br/>audiobookshelf, servarr, navidrome"]
+    subgraph NFS_Storage["Proxmox NFS (/srv/nfs)"]
+        NFS_Backup["NFS dirs<br/>/srv/nfs/*-backup/"]
 
         subgraph AppBackups["App-Level Backup CronJobs"]
             CronDaily["Daily 00:00-00:30<br/>PostgreSQL, MySQL<br/>14d retention"]
@@ -57,16 +55,13 @@ graph TB
 
     subgraph Layer3["Layer 3: Offsite Sync"]
         PVEOffsite["PVE → Synology<br/>Sunday 08:00<br/>rsync --files-from<br/>/Backup/Viki/pve-backup/"]
-        CloudSync["TrueNAS → Synology<br/>Monday 09:00<br/>Cloud Sync (media only)<br/>/Backup/Viki/truenas/"]
     end
 
     sda --> PVEOffsite
-    Media --> CloudSync
 
     Synology["Synology NAS<br/>192.168.1.13<br/>Offsite protection"]
 
     PVEOffsite --> Synology
-    CloudSync --> Synology
 
     NFS_Backup -.->|mirrored to sda| NFSMirror
 
@@ -100,14 +95,7 @@ graph LR
 
     S01 --> S02 --> S03a --> S03b --> S05 --> S08
 
-    subgraph Monday["Monday"]
-        M09["09:00 TrueNAS Cloud Sync<br/>Media → Synology"]
-    end
-
-    S08 -.->|next day| M09
-
     style Sunday fill:#ffe0b2
-    style Monday fill:#e1f5ff
 ```
 
 ### Physical Disk Layout
@@ -159,7 +147,7 @@ graph TB
 
     Type -->|"Database"| AppBackup["Use app-level dump<br/>/mnt/backup/nfs-mirror/<service>-backup/<br/>OR Synology/pve-backup/nfs-mirror/<br/>RTO: <10 min"]
     Type -->|"PVC files"| Proceed["Proceed with<br/>selected restore method"]
-    Type -->|"Media (NFS)"| CloudSync["Use Synology backup<br/>Synology/truenas/<service>/<br/>RTO: varies by size"]
+    Type -->|"Media (NFS)"| OffsiteMedia["Use Synology backup<br/>Synology/pve-backup/nfs-mirror/<br/>RTO: varies by size"]
 
     style Start fill:#ffcdd2
     style LVM fill:#c8e6c9
@@ -213,7 +201,7 @@ graph LR
 | Vault Backup | Weekly Sunday 02:00, 30d | CronJob in `vault` | raft snapshot |
 | Redis Backup | Weekly Sunday 03:00, 30d | CronJob in `redis` | BGSAVE + copy |
 | Vaultwarden Integrity Check | Hourly | CronJob in `vaultwarden` | PRAGMA integrity_check → metric |
-| TrueNAS Cloud Sync | Monday 09:00 (weekly) | TrueNAS Cloud Sync Task 1 | Media → Synology NAS |
+| ~~TrueNAS Cloud Sync~~ | **DECOMMISSIONED** | Was TrueNAS Cloud Sync Task 1 | Replaced by offsite-sync-backup (Path 1) |
 
 ## How It Works
 
@@ -251,7 +239,7 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 - 4 weekly versions with `--link-dest` hardlink dedup (unchanged files share inodes)
 
 **2. NFS Backup Mirror** (`/mnt/backup/nfs-mirror/`):
-- Mount TrueNAS NFS ro → rsync DB dump dirs → unmount
+- Rsync DB dump dirs from Proxmox NFS (`/srv/nfs/*-backup/`)
 - Covers: `mysql-backup/`, `postgresql-backup/`, `vault-backup/`, `vaultwarden-backup/`, `redis-backup/`, `etcd-backup/`
 - Single copy (no rotation) — latest dump only
 
@@ -274,11 +262,11 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 ### Layer 2b: Application-Level Backups
 
-K8s CronJobs run inside the cluster, dumping database/state to NFS-exported backup directories. Each service writes to `/mnt/main/<service>-backup/`.
+K8s CronJobs run inside the cluster, dumping database/state to NFS-exported backup directories. Each service writes to `/srv/nfs/<service>-backup/` (some legacy paths still use `/mnt/main/<service>-backup/`).
 
 **Why needed**: LVM snapshots capture block-level state, but:
 - Cannot restore individual databases from a PostgreSQL snapshot
-- Proxmox CSI LVs are opaque to TrueNAS (raw block devices)
+- Proxmox CSI LVs are opaque raw block devices
 - Need point-in-time recovery for specific apps without full LVM rollback
 
 **Daily backups (00:00-00:30)**:
@@ -331,28 +319,9 @@ Two independent paths push backups offsite:
 
 **Monitoring**: Pushes `offsite_backup_sync_last_success_timestamp` to Pushgateway. Alerts: `OffsiteBackupSyncStale` (>8d), `OffsiteBackupSyncFailing`.
 
-#### Path 2: TrueNAS Media (Cloud Sync)
+#### ~~Path 2: TrueNAS Media (Cloud Sync)~~ — DECOMMISSIONED
 
-**Task**: TrueNAS Cloud Sync Task 1 runs `rclone sync` Monday 09:00
-**Source**: `/mnt/main/` (NFS pool on TrueNAS)
-**Destination**: `sftp://192.168.1.13/Backup/Viki/truenas`
-**Scope**: Media libraries only (Immich ~800GB, audiobookshelf, servarr, navidrome music)
-
-**Excludes** (Cloud Sync configured to skip):
-- `clickhouse/**` (2.47M files, regenerable)
-- `loki/**` (68K files, regenerable)
-- `prometheus/**` (covered by monthly app backup)
-- `frigate/**` (ephemeral recordings)
-- `audiblez/**`, `ebook2audiobook/**` (regenerable)
-- `ollama/**` (chat history, low value)
-- `real-estate-crawler/**` (regenerable)
-- `crowdsec/**` (regenerable)
-- `servarr/downloads/**` (transient)
-- `ytldp/**` (replaceable)
-- `iscsi/**`, `iscsi-snaps/**` (raw zvols, backed at app level)
-- `*-backup/**` (already mirrored via Path 1)
-
-**Monitoring**: Existing `CloudSyncStale`, `CloudSyncNeverRun`, `CloudSyncFailing` alerts still apply.
+> TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04). Media offsite backup is now handled by the Proxmox host `offsite-sync-backup` script (Path 1) which includes NFS media directories in its manifest. The `Synology/Backup/Viki/truenas/` directory on the Synology NAS contains the last Cloud Sync snapshot and is no longer updated.
 
 ## Configuration
 
@@ -488,12 +457,12 @@ df -h /mnt/backup
 **Common causes**:
 - Backup disk full (check `df -h /mnt/backup`, alert: `BackupDiskFull`)
 - LV mount failed (check `lvs pve`, `dmesg | grep backup`)
-- NFS mount failed (check `showmount -e 10.0.10.15`)
+- NFS mount failed (check `showmount -e 192.168.1.127`)
 
 **Fix**:
 1. If disk full: Clean up old weekly versions manually, adjust retention
 2. If LV mount failed: `lvchange -ay backup/data && mount /mnt/backup`
-3. If NFS failed: Check TrueNAS availability, verify exports
+3. If NFS failed: Check Proxmox NFS availability (`showmount -e 192.168.1.127`), verify exports
 4. Manually trigger: `systemctl start weekly-backup.service`
 
 ### Offsite Sync Failing
@@ -531,12 +500,12 @@ kubectl logs -n dbaas job/postgresql-backup-<timestamp>
 
 **Common causes**:
 - Pod OOMKilled (increase memory limit)
-- NFS mount unavailable (check TrueNAS)
+- NFS mount unavailable (check Proxmox NFS)
 - pg_dumpall command failed (check PostgreSQL connectivity)
 
 **Fix**:
 1. If OOM: Increase `resources.limits.memory` in `stacks/dbaas/backup.tf`
-2. If NFS: Verify mount on worker node, restart NFS server if needed
+2. If NFS: Verify mount on worker node, restart NFS server on Proxmox host if needed (`systemctl restart nfs-server`)
 3. Manually trigger: `kubectl create job --from=cronjob/postgresql-backup manual-backup -n dbaas`
 
 ### Vaultwarden Integrity Check Failing
@@ -662,7 +631,7 @@ module "nfs_backup" {
   name       = "${var.service_name}-backup"
   namespace  = kubernetes_namespace.service.metadata[0].name
   nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/${var.service_name}-backup"
+  nfs_path   = "/srv/nfs/${var.service_name}-backup"
 }
 ```
 
@@ -678,9 +647,9 @@ module "nfs_backup" {
 │  VaultBackupStale           > 8d  since last success            │
 │  VaultwardenBackupStale     > 8d  since last success            │
 │  RedisBackupStale           > 8d  since last success            │
-│  CloudSyncStale             > 8d  since last success            │
-│  CloudSyncNeverRun          task never completed                │
-│  CloudSyncFailing           task in error state                 │
+│  ~~CloudSyncStale~~         REMOVED (TrueNAS decommissioned)    │
+│  ~~CloudSyncNeverRun~~      REMOVED (TrueNAS decommissioned)    │
+│  ~~CloudSyncFailing~~       REMOVED (TrueNAS decommissioned)    │
 │  VaultwardenIntegrityFail   integrity_ok == 0                   │
 │  LVMSnapshotStale           > 24h since last snapshot           │
 │  LVMSnapshotFailing         snapshot creation failed            │
@@ -698,7 +667,7 @@ module "nfs_backup" {
 - LVM snapshot script: Pushes `lvm_snapshot_last_success_timestamp`, `lvm_snapshot_count`, `lvm_thin_pool_free_percent`
 - Weekly backup script: Pushes `backup_weekly_last_success_timestamp`, `backup_disk_usage_percent`
 - Offsite sync script: Pushes `offsite_backup_sync_last_success_timestamp`
-- CloudSync monitor: Queries TrueNAS API every 6h, pushes `cloudsync_last_success_timestamp`
+- ~~CloudSync monitor~~: Removed (TrueNAS decommissioned)
 - Vaultwarden integrity: Pushes `vaultwarden_sqlite_integrity_ok` hourly
 
 **Alert routing**:
@@ -738,7 +707,7 @@ module "nfs_backup" {
 - — = Not needed (other layers cover it, or data is regenerable/disposable)
 - excluded = Too large/regenerable, not worth offsite bandwidth
 
-**Note**: All 65 proxmox-lvm PVCs get LVM snapshots (except dbaas+monitoring = 3 PVCs) + file-level backup (except dbaas+monitoring). NFS-backed media relies on TrueNAS Cloud Sync for offsite.
+**Note**: All 65 proxmox-lvm PVCs get LVM snapshots (except dbaas+monitoring = 3 PVCs) + file-level backup (except dbaas+monitoring). NFS-backed media is included in the Proxmox host weekly-backup offsite sync.
 
 ## Recovery Procedures
 
@@ -761,7 +730,7 @@ Detailed runbooks in `docs/runbooks/`:
 - Vault: <10 min
 - Vaultwarden: <5 min
 - etcd: <20 min (requires cluster rebuild)
-- Full cluster from offsite: <4 hours (TrueNAS restore + K8s bootstrap + app deploys)
+- Full cluster from offsite: <4 hours (NFS restore + K8s bootstrap + app deploys)
 
 ## Related
 

@@ -938,15 +938,15 @@ check_kyverno() {
 check_nfs() {
     section 20 "NFS Connectivity"
 
-    if showmount -e 10.0.10.15 &>/dev/null; then
-        pass "NFS server 10.0.10.15 reachable (exports listed)"
+    if showmount -e 192.168.1.127 &>/dev/null; then
+        pass "NFS server 192.168.1.127 (Proxmox) reachable (exports listed)"
         json_add "nfs" "PASS" "NFS reachable"
-    elif nc -z -G 3 10.0.10.15 2049 &>/dev/null; then
-        pass "NFS server 10.0.10.15 port 2049 open"
+    elif nc -z -G 3 192.168.1.127 2049 &>/dev/null; then
+        pass "NFS server 192.168.1.127 port 2049 open"
         json_add "nfs" "PASS" "NFS port open"
     else
         [[ "$QUIET" == true ]] && section_always 20 "NFS Connectivity"
-        fail "NFS server 10.0.10.15 unreachable — 30+ services depend on NFS"
+        fail "NFS server 192.168.1.127 (Proxmox) unreachable — 30+ services depend on NFS"
         json_add "nfs" "FAIL" "NFS unreachable"
     fi
 }

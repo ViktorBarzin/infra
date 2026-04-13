@@ -1002,16 +1002,16 @@ check_nfs() {
 
     # Try native tools first (available locally), fall back to kubectl-based check (pod environment)
     if command -v showmount &>/dev/null; then
-        if showmount -e 10.0.10.15 &>/dev/null; then
-            pass "NFS server 10.0.10.15 reachable (exports listed)"
+        if showmount -e 192.168.1.127 &>/dev/null; then
+            pass "NFS server 192.168.1.127 reachable (exports listed)"
             json_add "nfs" "PASS" "NFS reachable"
             return 0
         fi
     fi
 
     if command -v nc &>/dev/null; then
-        if nc -z -G 3 10.0.10.15 2049 &>/dev/null; then
-            pass "NFS server 10.0.10.15 port 2049 open"
+        if nc -z -G 3 192.168.1.127 2049 &>/dev/null; then
+            pass "NFS server 192.168.1.127 port 2049 open"
             json_add "nfs" "PASS" "NFS port open"
             return 0
         fi

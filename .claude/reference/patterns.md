@@ -3,29 +3,28 @@
 Reference file for patterns, procedures, and tables. Read on demand when the specific topic comes up.
 
 ## NFS Volume Pattern
-Use the `nfs_volume` shared module for all NFS volumes (CSI-backed, `soft,timeo=30,retrans=3`):
+Use the `nfs_volume` shared module for all NFS volumes (creates static PVs, CSI-backed, `soft,timeo=30,retrans=3`):
 ```hcl
 module "nfs_data" {
   source     = "../../modules/kubernetes/nfs_volume"  # ../../../../ for platform modules, ../../../ for sub-stacks
   name       = "<service>-data"       # Must be globally unique (PV is cluster-scoped)
   namespace  = kubernetes_namespace.<service>.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/<service>"
+  nfs_server = var.nfs_server          # 192.168.1.127 (Proxmox host)
+  nfs_path   = "/srv/nfs/<service>"    # HDD NFS, or "/srv/nfs-ssd/<service>" for SSD
 }
 # In pod spec: persistent_volume_claim { claim_name = module.nfs_data.claim_name }
 ```
+**Note**: Some legacy PVs still reference `/mnt/main/<service>` paths (from the TrueNAS era). These work via compatibility on the Proxmox host. New PVs should use `/srv/nfs/` or `/srv/nfs-ssd/`.
 **DO NOT use inline `nfs {}` blocks** — they mount with `hard,timeo=600` defaults which hang forever.
 
 ## Adding NFS Exports
-1. Create dir on TrueNAS: `ssh root@10.0.10.15 "mkdir -p /mnt/main/<service> && chmod 777 /mnt/main/<service>"`
-2. Edit `secrets/nfs_directories.txt` — add path, keep sorted
-3. Run `secrets/nfs_exports.sh` from `secrets/`
-4. If any path doesn't exist on TrueNAS, the API rejects the entire update.
+1. Create dir on Proxmox host: `ssh root@192.168.1.127 "mkdir -p /srv/nfs/<service> && chmod 777 /srv/nfs/<service>"`
+2. Edit `/etc/exports` on the Proxmox host — add the export entry
+3. Reload exports: `ssh root@192.168.1.127 "exportfs -ra"`
+4. Verify: `showmount -e 192.168.1.127`
 
-## iSCSI Storage (Databases)
-**StorageClass**: `iscsi-truenas` (democratic-csi, `freenas-iscsi` SSH driver — NOT `freenas-api-iscsi`).
-Used by: PostgreSQL (CNPG), MySQL (InnoDB Cluster). ZFS: `main/iscsi` (zvols), `main/iscsi-snaps`.
-All K8s nodes have `open-iscsi` + `iscsid` running.
+## ~~iSCSI Storage~~ (REMOVED — replaced by proxmox-lvm)
+> iSCSI via democratic-csi and TrueNAS has been fully removed (2026-04). All database storage now uses `StorageClass: proxmox-lvm` (Proxmox CSI, LVM-thin hotplug). TrueNAS has been decommissioned.
 
 ## Anti-AI Scraping (5-Layer Defense)
 Default `anti_ai_scraping = true` in ingress_factory. Disable per-service: `anti_ai_scraping = false`.

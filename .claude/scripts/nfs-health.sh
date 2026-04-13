@@ -3,7 +3,7 @@ set -euo pipefail
 
 AGENT="nfs-health"
 KUBECTL="kubectl --kubeconfig /Users/viktorbarzin/code/infra/config"
-TRUENAS_HOST="10.0.10.15"
+NFS_HOST="192.168.1.127"
 NODES=("k8s-master:10.0.20.100" "k8s-node1:10.0.20.101" "k8s-node2:10.0.20.102" "k8s-node3:10.0.20.103" "k8s-node4:10.0.20.104")
 SSH_USER="wizard"
 DRY_RUN=false
@@ -21,33 +21,61 @@ add_check() {
   checks+=("{\"name\": \"$name\", \"status\": \"$status\", \"message\": \"$message\"}")
 }
 
-check_truenas_reachable() {
+check_nfs_reachable() {
   if $DRY_RUN; then
-    add_check "truenas-reachable" "ok" "dry-run: would ping $TRUENAS_HOST"
+    add_check "nfs-reachable" "ok" "dry-run: would ping $NFS_HOST"
     return
   fi
-  if timeout 5 ping -c 1 "$TRUENAS_HOST" &>/dev/null; then
-    add_check "truenas-reachable" "ok" "TrueNAS at $TRUENAS_HOST is reachable"
+  if timeout 5 ping -c 1 "$NFS_HOST" &>/dev/null; then
+    add_check "nfs-reachable" "ok" "Proxmox NFS at $NFS_HOST is reachable"
   else
-    add_check "truenas-reachable" "fail" "TrueNAS at $TRUENAS_HOST is unreachable"
+    add_check "nfs-reachable" "fail" "Proxmox NFS at $NFS_HOST is unreachable"
   fi
 }
 
-check_truenas_nfs_service() {
+check_nfs_exports() {
   if $DRY_RUN; then
-    add_check "truenas-nfs-service" "ok" "dry-run: would check NFS service on TrueNAS"
+    add_check "nfs-exports" "ok" "dry-run: would check NFS exports on Proxmox"
     return
   fi
   local result
-  if result=$(timeout 10 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "root@$TRUENAS_HOST" \
-    "service nfs-server status 2>/dev/null || systemctl is-active nfs-server 2>/dev/null || echo 'unknown'" 2>/dev/null); then
-    if echo "$result" | grep -qiE "running|active|is running"; then
-      add_check "truenas-nfs-service" "ok" "NFS service is running on TrueNAS"
+  if result=$(timeout 10 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "root@$NFS_HOST" \
+    "exportfs -v 2>/dev/null || cat /etc/exports 2>/dev/null" 2>/dev/null); then
+    local export_count
+    export_count=$(echo "$result" | grep -c '/' || echo 0)
+    if [ "$export_count" -gt 0 ]; then
+      add_check "nfs-exports" "ok" "$export_count NFS exports active on Proxmox"
     else
-      add_check "truenas-nfs-service" "warn" "NFS service status unclear: $(echo "$result" | head -1 | tr '"' "'")"
+      add_check "nfs-exports" "warn" "No NFS exports found on Proxmox"
     fi
   else
-    add_check "truenas-nfs-service" "fail" "Could not check NFS service on TrueNAS via SSH"
+    add_check "nfs-exports" "fail" "Could not check NFS exports on Proxmox via SSH"
+  fi
+}
+
+check_nfs_disk_usage() {
+  if $DRY_RUN; then
+    add_check "nfs-disk" "ok" "dry-run: would check NFS disk usage"
+    return
+  fi
+  local result
+  if result=$(timeout 10 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "root@$NFS_HOST" \
+    "df -h /srv/nfs /srv/nfs-ssd 2>/dev/null" 2>/dev/null); then
+    while IFS= read -r line; do
+      local mount pct
+      mount=$(echo "$line" | awk '{print $6}')
+      pct=$(echo "$line" | awk '{print $5}' | tr -d '%')
+      [ -z "$pct" ] || ! [[ "$pct" =~ ^[0-9]+$ ]] && continue
+      if [ "$pct" -ge 90 ]; then
+        add_check "nfs-disk-$mount" "fail" "$mount is ${pct}% full"
+      elif [ "$pct" -ge 80 ]; then
+        add_check "nfs-disk-$mount" "warn" "$mount is ${pct}% full"
+      else
+        add_check "nfs-disk-$mount" "ok" "$mount is ${pct}% full"
+      fi
+    done <<< "$result"
+  else
+    add_check "nfs-disk" "warn" "Could not check NFS disk usage"
   fi
 }
 
@@ -116,8 +144,9 @@ check_nfs_pvcs() {
 }
 
 # Run checks
-check_truenas_reachable
-check_truenas_nfs_service
+check_nfs_reachable
+check_nfs_exports
+check_nfs_disk_usage
 
 for node_entry in "${NODES[@]}"; do
   node_name="${node_entry%%:*}"

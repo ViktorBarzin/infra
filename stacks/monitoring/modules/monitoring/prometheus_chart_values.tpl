@@ -1013,7 +1013,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Only {{ $value | printf \"%.0f\" }} node(s) have NFS activity — TrueNAS (10.0.10.15) may be down (need ≥2)"
+              summary: "Only {{ $value | printf \"%.0f\" }} node(s) have NFS activity — Proxmox NFS (192.168.1.127) may be down (need ≥2)"
       - name: K8s Health
         rules:
           - alert: PodCrashLooping

@@ -95,8 +95,8 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
 }
 
 # -----------------------------------------------------------------------------
-# Cloud Sync Monitor — check TrueNAS Cloud Sync job status, push to Pushgateway
-# Runs every 6h. Alert fires if no successful sync in 8 days.
+# Cloud Sync Monitor — DEPRECATED: TrueNAS decommissioned 2026-04-13
+# TODO: Remove this resource entirely once TrueNAS VM is shut down
 # -----------------------------------------------------------------------------
 resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
   metadata {
@@ -123,11 +123,11 @@ resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
                 set -euo pipefail
                 apk add --no-cache curl jq
 
-                # Query TrueNAS Cloud Sync tasks
+                # Query TrueNAS Cloud Sync tasks (TrueNAS deprecated — this monitor should be removed)
                 RESPONSE=$(curl -sf -H "Authorization: Bearer $TRUENAS_API_KEY" \
                   "http://10.0.10.15/api/v2.0/cloudsync" 2>&1) || {
-                  echo "ERROR: Failed to query TrueNAS API"
-                  exit 1
+                  echo "WARN: TrueNAS API unreachable (VM deprecated)"
+                  exit 0
                 }
 
                 # Parse each task's last successful run

@@ -8,29 +8,9 @@
 - **RAM**: 272 GB DDR4-2400 ECC RDIMM (10 DIMMs, see Memory Layout below)
 - **GPU**: NVIDIA Tesla T4 (PCIe passthrough to k8s-node1)
 - **iDRAC**: 192.168.1.4 (root/calvin)
-- **Disks**: 1.1TB RAID1 SAS (unused) + 931GB Samsung SSD + 10.7TB RAID1 HDD
+- **Disks**: 1.1TB RAID1 SAS (backup) + 931GB Samsung SSD + 10.7TB RAID1 HDD
+- **NFS server**: Proxmox host serves NFS directly. HDD NFS: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB). SSD NFS: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB). TrueNAS (10.0.10.15) decommissioned.
 - **Proxmox access**: `ssh root@192.168.1.127`
-
-## NFS Exports (Proxmox Host)
-
-The Proxmox host serves NFS for all workloads except Immich (which remains on TrueNAS).
-
-### HDD NFS
-- **LV**: `pve/nfs-data` (thin LV, 1TB)
-- **Filesystem**: ext4 (chosen over btrfs — btrfs CoW on LVM thin = double-CoW problem)
-- **Mount**: `/srv/nfs` with `noatime,commit=30`
-- **Export**: `/srv/nfs *(rw,no_subtree_check,no_root_squash,insecure,fsid=0)`
-
-### SSD NFS
-- **LV**: `ssd/nfs-ssd-data` (100GB)
-- **Filesystem**: ext4
-- **Mount**: `/srv/nfs-ssd` with `noatime,commit=30`
-- **Export**: `/srv/nfs-ssd *(rw,no_subtree_check,no_root_squash,insecure,fsid=1)`
-- **Current users**: Ollama (migrated from TrueNAS SSD `/mnt/ssd/ollama`)
-
-### Notes
-- `insecure` option required: pfSense NATs source ports >1024 when routing between VLANs
-- 21 stacks migrated from TrueNAS, only Immich (8 PVCs) remains on TrueNAS
 
 ## Memory Layout (updated 2026-04-01)
 
@@ -97,10 +77,10 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 
 ## Network Topology
 ```
-10.0.10.0/24 - Management: Wizard (10.0.10.10), TrueNAS NFS (10.0.10.15)
+10.0.10.0/24 - Management: Wizard (10.0.10.10)
 10.0.20.0/24 - Kubernetes: pfSense GW (10.0.20.1), Registry (10.0.20.10),
                k8s-master (10.0.20.100), DNS (10.0.20.101), MetalLB (10.0.20.102-200)
-192.168.1.0/24 - Physical: Proxmox (192.168.1.127, NFS server for k8s)
+192.168.1.0/24 - Physical: Proxmox (192.168.1.127)
 ```
 
 ## Network Bridges
@@ -122,7 +102,7 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | 204 | k8s-node4 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
 | 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
 | 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM |
-| 9000 | truenas | running | 16 | 8GB | vmbr1:vlan10 | 32G+7x256G+1T | NFS (10.0.10.15) — Immich only |
+| ~~9000~~ | ~~truenas~~ | **stopped/decommissioned** | — | — | — | — | NFS migrated to Proxmox host (192.168.1.127) at `/srv/nfs` and `/srv/nfs-ssd` |
 
 **Total VM RAM allocated**: 180 GB of 272 GB (66%) — 92 GB free for future VMs
 

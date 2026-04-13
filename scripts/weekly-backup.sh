@@ -6,9 +6,9 @@ set -euo pipefail
 
 # --- Configuration ---
 BACKUP_ROOT="/mnt/backup"
-NFS_SERVER="10.0.10.15"
-NFS_BASE="/mnt/main"
-NFS_MOUNT="/mnt/nfs-truenas"
+NFS_SERVER="192.168.1.127"
+NFS_BASE="/srv/nfs"
+NFS_MOUNT="/mnt/nfs-proxmox"
 PVC_MOUNT="/tmp/pvc-mount"
 PUSHGATEWAY="${WEEKLY_BACKUP_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB="weekly-backup"
