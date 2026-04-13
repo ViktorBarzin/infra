@@ -18,18 +18,8 @@ MAPPING_CACHE="${BACKUP_ROOT}/.lv-pvc-mapping.json"
 KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
 export KUBECONFIG
 
-# NFS backup directories to mirror
-BACKUP_DIRS=(
-    mysql-backup
-    postgresql-backup
-    vault-backup
-    vaultwarden-backup
-    redis-backup
-    etcd-backup
-    headscale-backup
-    prometheus-backup
-    plotting-book-backup
-)
+# NFS backup directories — auto-discovered after NFS mount (all *-backup dirs)
+BACKUP_DIRS=()
 
 # --- Logging ---
 log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -93,6 +83,12 @@ if ! mountpoint -q "${NFS_MOUNT}"; then
 fi
 
 if mountpoint -q "${NFS_MOUNT}"; then
+    # Auto-discover all *-backup directories (no hardcoded list)
+    for d in "${NFS_MOUNT}"/*-backup/; do
+        [ -d "$d" ] && BACKUP_DIRS+=("$(basename "$d")")
+    done
+    log "  Discovered ${#BACKUP_DIRS[@]} backup dirs: ${BACKUP_DIRS[*]}"
+
     mkdir -p "${BACKUP_ROOT}/nfs-mirror"
     for dir in "${BACKUP_DIRS[@]}"; do
         src="${NFS_MOUNT}/${dir}/"
@@ -161,6 +157,26 @@ else
                 warn "rsync failed for ${ns_pvc}"
                 PVC_FAIL=$((PVC_FAIL + 1))
             fi
+
+            # Auto-detect and safely backup SQLite databases from snapshot
+            if command -v sqlite3 &>/dev/null; then
+                find "${PVC_MOUNT}" -maxdepth 3 \
+                    \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \) \
+                    -size +0 -type f 2>/dev/null | while read -r dbfile; do
+                    # Verify it's actually SQLite (magic number check)
+                    if head -c 15 "$dbfile" 2>/dev/null | grep -q 'SQLite format 3'; then
+                        relpath="${dbfile#${PVC_MOUNT}/}"
+                        dest_file="${BACKUP_ROOT}/sqlite-backup/${WEEK}/${ns_pvc}/${relpath}"
+                        mkdir -p "$(dirname "${dest_file}")"
+                        if sqlite3 "file://${dbfile}?mode=ro" ".backup '${dest_file}'" 2>/dev/null; then
+                            log "    SQLite: ${ns_pvc}/${relpath}"
+                        else
+                            cp "${dbfile}" "${dest_file}" 2>/dev/null || true
+                        fi
+                    fi
+                done
+            fi
+
             umount "${PVC_MOUNT}" 2>/dev/null || umount -l "${PVC_MOUNT}" 2>/dev/null || true
         else
             warn "Failed to mount snapshot ${snap}"
@@ -179,6 +195,7 @@ else
 
     # Prune old weekly versions (keep 4)
     ls -1d "${BACKUP_ROOT}/pvc-data"/????-?? 2>/dev/null | head -n -4 | xargs rm -rf 2>/dev/null || true
+    ls -1d "${BACKUP_ROOT}/sqlite-backup"/????-?? 2>/dev/null | head -n -4 | xargs rm -rf 2>/dev/null || true
 
     PVC_BYTES=$(du -sb "${BACKUP_ROOT}/pvc-data/${WEEK}" 2>/dev/null | cut -f1 || true)
     TOTAL_BYTES=$((TOTAL_BYTES + ${PVC_BYTES:-0}))
