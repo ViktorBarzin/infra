@@ -118,8 +118,8 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | Unit | Type | Schedule | Purpose |
 |------|------|----------|---------|
 | `lvm-pvc-snapshot.timer` | Timer | Daily 03:00 | LVM thin snapshots of all PVCs (7-day retention) |
-| `weekly-backup.timer` | Timer | Sunday 05:00 | PVC file backup, auto SQLite backup, pfSense, PVE config |
-| `offsite-sync-backup.timer` | Timer | Sunday 08:00 | Two-step rsync to Synology (sda + NFS via inotify) |
+| `daily-backup.timer` | Timer | Daily 05:00 | PVC file backup, auto SQLite backup, pfSense, PVE config |
+| `offsite-sync-backup.timer` | Timer | Daily 06:00 | Two-step rsync to Synology (sda + NFS via inotify) |
 | `nfs-change-tracker.service` | Service | Continuous | inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log` |
 
 ## GPU Node (k8s-node1)

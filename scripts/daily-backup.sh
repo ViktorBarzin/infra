@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# weekly-backup — 3-2-1 backup: PVC file copy + SQLite + pfsense + PVE config to sda
-# Deploy to PVE host at /usr/local/bin/weekly-backup
+# daily-backup — 3-2-1 backup: PVC file copy + SQLite + pfsense + PVE config to sda
+# Deploy to PVE host at /usr/local/bin/daily-backup
 # Schedule: Daily 05:00 via systemd timer
 set -euo pipefail
 
 # --- Configuration ---
 BACKUP_ROOT="/mnt/backup"
 PVC_MOUNT="/tmp/pvc-mount"
-PUSHGATEWAY="${WEEKLY_BACKUP_PUSHGATEWAY:-http://10.0.20.100:30091}"
-PUSHGATEWAY_JOB="weekly-backup"
-LOCKFILE="/run/weekly-backup.lock"
+PUSHGATEWAY="${DAILY_BACKUP_PUSHGATEWAY:-http://10.0.20.100:30091}"
+PUSHGATEWAY_JOB="daily-backup"
+LOCKFILE="/run/daily-backup.lock"
 MANIFEST="${BACKUP_ROOT}/.changed-files"
 MAPPING_CACHE="${BACKUP_ROOT}/.lv-pvc-mapping.json"
 KUBECONFIG="${KUBECONFIG:-/root/.kube/config}"
@@ -34,9 +34,9 @@ fi
 push_metrics() {
     local status="${1:-0}" bytes="${2:-0}"
     cat <<EOF | curl -s --connect-timeout 5 --max-time 10 --data-binary @- "${PUSHGATEWAY}/metrics/job/${PUSHGATEWAY_JOB}" 2>/dev/null || true
-weekly_backup_last_run_timestamp $(date +%s)
-weekly_backup_last_status ${status}
-weekly_backup_bytes_synced ${bytes}
+daily_backup_last_run_timestamp $(date +%s)
+daily_backup_last_status ${status}
+daily_backup_bytes_synced ${bytes}
 EOF
 }
 
@@ -204,7 +204,7 @@ fi
 log "--- Step 4: PVE host config ---"
 mkdir -p "${BACKUP_ROOT}/pve-config/scripts"
 rsync -az --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&1 || { warn "Failed to sync /etc/pve"; STATUS=1; }
-for script in /usr/local/bin/lvm-pvc-snapshot /usr/local/bin/weekly-backup /usr/local/bin/offsite-sync-backup; do
+for script in /usr/local/bin/lvm-pvc-snapshot /usr/local/bin/daily-backup /usr/local/bin/offsite-sync-backup; do
     [ -f "${script}" ] && cp "${script}" "${BACKUP_ROOT}/pve-config/scripts/" 2>/dev/null || true
 done
 find "${BACKUP_ROOT}/pve-config" -type f 2>/dev/null | sed "s|^${BACKUP_ROOT}/||" >> "${MANIFEST}"

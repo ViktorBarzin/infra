@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily offsite sync: sda + NFS changes to Synology
-After=network-online.target weekly-backup.service
+After=network-online.target daily-backup.service
 
 [Service]
 Type=oneshot

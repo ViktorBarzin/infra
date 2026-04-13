@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # offsite-sync-backup — Sync backups to Synology NAS
 # Deploy to PVE host at /usr/local/bin/offsite-sync-backup
-# Schedule: Daily 06:00 via systemd timer (After=weekly-backup.service)
+# Schedule: Daily 06:00 via systemd timer (After=daily-backup.service)
 #
 # Two sync paths:
 #   Step 1: sda (/mnt/backup) → Synology pve-backup/ (PVC snapshots, pfsense, pve-config, sqlite)

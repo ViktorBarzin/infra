@@ -4,8 +4,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/weekly-backup
+ExecStart=/usr/local/bin/daily-backup
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=weekly-backup
+SyslogIdentifier=daily-backup
 TimeoutStartSec=3600

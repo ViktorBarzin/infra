@@ -29,7 +29,7 @@ graph TB
         end
 
         subgraph Layer2["Layer 2: Weekly File Backup"]
-            PVCBackup["PVC File Copy<br/>Sunday 05:00<br/>4 weekly versions<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
+            PVCBackup["PVC File Copy<br/>Daily 05:00<br/>4 weekly versions<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
             SQLiteBackup["Auto SQLite Backup<br/>magic number check + ?mode=ro<br/>from PVC snapshots"]
             PfsenseBackup["pfSense Backup<br/>config.xml + full tar<br/>4 weekly versions"]
             PVEConfig["PVE Config<br/>/etc/pve + scripts"]
@@ -56,7 +56,7 @@ graph TB
     end
 
     subgraph Layer3["Layer 3: Offsite Sync"]
-        PVEOffsite["Step 1: sda → Synology<br/>Sunday 08:00<br/>pve-backup/ only"]
+        PVEOffsite["Step 1: sda → Synology<br/>Daily 06:00<br/>pve-backup/ only"]
         NFSOffsite["Step 2: NFS → Synology<br/>inotify change-tracked<br/>rsync --files-from<br/>nfs/ + nfs-ssd/"]
     end
 
@@ -94,7 +94,7 @@ graph LR
         S02["02:00 Vault backup<br/>(CronJob)"]
         S03a["03:00 Redis backup<br/>(CronJob)"]
         S03b["03:00 LVM snapshots<br/>(lvm-pvc-snapshot timer)"]
-        S05["05:00 Weekly backup<br/>(weekly-backup timer)<br/>1. PVC file copy (auto-discovered BACKUP_DIRS)<br/>2. Auto SQLite backup (magic number + ?mode=ro)<br/>3. pfSense backup<br/>4. PVE config<br/>5. Prune snapshots"]
+        S05["05:00 Daily backup<br/>(daily-backup timer)<br/>1. PVC file copy (auto-discovered BACKUP_DIRS)<br/>2. Auto SQLite backup (magic number + ?mode=ro)<br/>3. pfSense backup<br/>4. PVE config<br/>5. Prune snapshots"]
         S08["08:00 Offsite sync<br/>(offsite-sync-backup timer)<br/>Step 1: sda → Synology pve-backup/<br/>Step 2: NFS → Synology nfs/ + nfs-ssd/<br/>(inotify change-tracked)"]
     end
 
@@ -195,11 +195,11 @@ graph LR
 | Component | Version/Schedule | Location | Purpose |
 |-----------|-----------------|----------|---------|
 | LVM Thin Snapshots | Daily 03:00, 7d retention | PVE host: `lvm-pvc-snapshot` | CoW snapshots of 62 proxmox-lvm PVCs |
-| Weekly PVC Backup | Sunday 05:00, 4 weeks | PVE host: `weekly-backup` | File-level PVC copy to sda |
-| Auto SQLite Backup | Sunday 05:00 + weekly-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
+| Daily PVC Backup | Daily 05:00, 4 weeks | PVE host: `daily-backup` | File-level PVC copy to sda |
+| Auto SQLite Backup | Daily 05:00 + daily-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
-| pfSense Backup | Sunday 05:00 + weekly-backup | PVE host: SSH + API | config.xml + full filesystem tar |
-| Offsite Sync | Sunday 08:00 (after weekly-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
+| pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
+| Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | PostgreSQL Backup | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | MySQL Backup | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump for all databases |
 | etcd Backup | Weekly Sunday 01:00, 30d | CronJob in `kube-system` | etcdctl snapshot |
@@ -232,8 +232,8 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 **Backup disk**: sda (1.1TB RAID1 SAS) → VG `backup` → LV `data` → ext4 → mounted at `/mnt/backup` on PVE host. Dedicated backup disk, independent of live storage.
 
-**Script**: `/usr/local/bin/weekly-backup` on PVE host (source: `infra/scripts/weekly-backup`)
-**Schedule**: Sunday 05:00 via systemd timer
+**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup`)
+**Schedule**: Daily 05:00 via systemd timer
 **Retention**: 4 weekly versions (weeks 0-3 via `--link-dest` hardlink dedup)
 
 #### What Gets Backed Up
@@ -280,7 +280,7 @@ K8s CronJobs run inside the cluster, dumping database/state to NFS-exported back
 - **PostgreSQL** (`pg_dumpall`): Dumps all databases to `/mnt/main/postgresql-backup/`. Command: `pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > backup-$(date +%Y%m%d).sql.gz`. 14-day rotation via `find -mtime +14 -delete`.
 - **MySQL** (`mysqldump`): Dumps all databases. Command: `mysqldump -h mysql-primary.dbaas --all-databases --single-transaction | gzip -9 > backup-$(date +%Y%m%d).sql.gz`. 14-day rotation.
 
-**Weekly backups (Sunday 01:00-04:00)**:
+**Daily backups (Sunday 01:00-04:00)**:
 - **etcd**: `etcdctl snapshot save /mnt/main/etcd-backup/snapshot-$(date +%Y%m%d).db`. 30-day retention. Critical for cluster recovery.
 - **Vaultwarden**: See "Vaultwarden Enhanced Protection" below. 30-day retention.
 - **Vault**: `vault operator raft snapshot save /mnt/main/vault-backup/snapshot-$(date +%Y%m%d).snap`. 30-day retention.
@@ -308,7 +308,7 @@ This provides both frequent backups (every 6h) AND continuous integrity monitori
 ### Layer 3: Offsite Sync to Synology NAS
 
 **Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup`)
-**Schedule**: Sunday 08:00 via systemd timer (After=weekly-backup.service)
+**Schedule**: Daily 06:00 via systemd timer (After=daily-backup.service)
 
 Two-step offsite sync:
 
@@ -346,14 +346,14 @@ Two-step offsite sync:
 | Path | Purpose |
 |------|---------|
 | `/usr/local/bin/lvm-pvc-snapshot` | PVE host: LVM snapshot creation + restore |
-| `/usr/local/bin/weekly-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
+| `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
 | `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
-| `/etc/systemd/system/weekly-backup.timer` | Sunday 05:00 (file backup) |
-| `/etc/systemd/system/offsite-sync-backup.timer` | Sunday 08:00 (offsite sync) |
+| `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
+| `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
 | `stacks/dbaas/` | Terraform: PostgreSQL/MySQL backup CronJobs |
 | `stacks/vault/` | Terraform: Vault backup CronJob |
 | `stacks/vaultwarden/` | Terraform: Vaultwarden backup + integrity CronJobs |
@@ -466,8 +466,8 @@ See `docs/runbooks/restore-lvm-snapshot.md`.
 **Diagnosis**:
 ```bash
 ssh root@192.168.1.127
-systemctl status weekly-backup.service
-journalctl -u weekly-backup.service --since "7 days ago"
+systemctl status daily-backup.service
+journalctl -u daily-backup.service --since "7 days ago"
 df -h /mnt/backup
 ```
 
@@ -480,7 +480,7 @@ df -h /mnt/backup
 1. If disk full: Clean up old weekly versions manually, adjust retention
 2. If LV mount failed: `lvchange -ay backup/data && mount /mnt/backup`
 3. If NFS failed: Check Proxmox NFS availability (`showmount -e 192.168.1.127`), verify exports
-4. Manually trigger: `systemctl start weekly-backup.service`
+4. Manually trigger: `systemctl start daily-backup.service`
 
 ### Offsite Sync Failing
 
@@ -550,7 +550,7 @@ kubectl exec -n vaultwarden deployment/vaultwarden -- sqlite3 /data/db.sqlite3 "
 **Diagnosis**:
 ```bash
 ssh root@192.168.1.127
-systemctl status weekly-backup.service | grep -A5 pfsense
+systemctl status daily-backup.service | grep -A5 pfsense
 ```
 
 **Common causes**:
@@ -683,7 +683,7 @@ module "nfs_backup" {
 **Metrics sources**:
 - Backup CronJobs: Push `backup_last_success_timestamp` to Pushgateway on completion
 - LVM snapshot script: Pushes `lvm_snapshot_last_success_timestamp`, `lvm_snapshot_count`, `lvm_thin_pool_free_percent`
-- Weekly backup script: Pushes `backup_weekly_last_success_timestamp`, `backup_disk_usage_percent`
+- Daily backup script: Pushes `backup_weekly_last_success_timestamp`, `backup_disk_usage_percent`
 - Offsite sync script: Pushes `offsite_backup_sync_last_success_timestamp`
 - ~~CloudSync monitor~~: Removed (TrueNAS decommissioned)
 - Vaultwarden integrity: Pushes `vaultwarden_sqlite_integrity_ok` hourly

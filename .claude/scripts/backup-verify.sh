@@ -148,15 +148,15 @@ check_lvm_snapshot_timer() {
 # LAYER 2: Weekly Backup (sda)
 # ============================================================
 
-check_weekly_backup_freshness() {
-  if $DRY_RUN; then add_check "weekly-backup-freshness" "ok" "DRY RUN"; return; fi
-  if ! $PVE_REACHABLE; then add_check "weekly-backup-freshness" "fail" "PVE unreachable"; return; fi
+check_daily_backup_freshness() {
+  if $DRY_RUN; then add_check "daily-backup-freshness" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "daily-backup-freshness" "fail" "PVE unreachable"; return; fi
 
   local ts
-  ts=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^weekly_backup_last_run_timestamp' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+  ts=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^daily_backup_last_run_timestamp' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
 
   if [ -z "$ts" ]; then
-    add_check "weekly-backup-freshness" "fail" "No weekly backup metric — may have never run"
+    add_check "daily-backup-freshness" "fail" "No weekly backup metric — may have never run"
     return
   fi
 
@@ -165,44 +165,44 @@ check_weekly_backup_freshness() {
   age_h=$(python3 -c "print(f'{($now - $ts) / 3600:.1f}')" 2>/dev/null)
 
   if python3 -c "exit(0 if ($now - $ts) < 777600 else 1)" 2>/dev/null; then  # 9d
-    add_check "weekly-backup-freshness" "ok" "Last run ${age_h}h ago"
+    add_check "daily-backup-freshness" "ok" "Last run ${age_h}h ago"
   else
-    add_check "weekly-backup-freshness" "fail" "Weekly backup stale: ${age_h}h ago (threshold: 9d)"
+    add_check "daily-backup-freshness" "fail" "Daily backup stale: ${age_h}h ago (threshold: 9d)"
   fi
 }
 
-check_weekly_backup_status() {
-  if $DRY_RUN; then add_check "weekly-backup-status" "ok" "DRY RUN"; return; fi
-  if ! $PVE_REACHABLE; then add_check "weekly-backup-status" "fail" "PVE unreachable"; return; fi
+check_daily_backup_status() {
+  if $DRY_RUN; then add_check "daily-backup-status" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "daily-backup-status" "fail" "PVE unreachable"; return; fi
 
   local status
-  status=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^weekly_backup_last_status' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
+  status=$($PVE_SSH "curl -s http://10.0.20.100:30091/metrics 2>/dev/null | grep '^daily_backup_last_status' | head -1 | awk '{print \$2}'" 2>/dev/null) || true
 
   if [ "$status" = "0" ] || [ "$status" = "0.0" ]; then
-    add_check "weekly-backup-status" "ok" "Last weekly backup succeeded"
+    add_check "daily-backup-status" "ok" "Last weekly backup succeeded"
   elif [ -z "$status" ]; then
-    add_check "weekly-backup-status" "warn" "No status metric found"
+    add_check "daily-backup-status" "warn" "No status metric found"
   else
-    add_check "weekly-backup-status" "fail" "Last weekly backup failed (status=$status)"
+    add_check "daily-backup-status" "fail" "Last weekly backup failed (status=$status)"
   fi
 }
 
-check_weekly_backup_timer() {
-  if $DRY_RUN; then add_check "weekly-backup-timer" "ok" "DRY RUN"; return; fi
-  if ! $PVE_REACHABLE; then add_check "weekly-backup-timer" "fail" "PVE unreachable"; return; fi
+check_daily_backup_timer() {
+  if $DRY_RUN; then add_check "daily-backup-timer" "ok" "DRY RUN"; return; fi
+  if ! $PVE_REACHABLE; then add_check "daily-backup-timer" "fail" "PVE unreachable"; return; fi
 
   local active enabled
-  active=$($PVE_SSH "systemctl is-active weekly-backup.timer 2>/dev/null" 2>/dev/null) || active="unknown"
-  enabled=$($PVE_SSH "systemctl is-enabled weekly-backup.timer 2>/dev/null" 2>/dev/null) || enabled="unknown"
+  active=$($PVE_SSH "systemctl is-active daily-backup.timer 2>/dev/null" 2>/dev/null) || active="unknown"
+  enabled=$($PVE_SSH "systemctl is-enabled daily-backup.timer 2>/dev/null" 2>/dev/null) || enabled="unknown"
 
   if [ "$active" = "active" ] && [ "$enabled" = "enabled" ]; then
-    add_check "weekly-backup-timer" "ok" "Timer active and enabled"
+    add_check "daily-backup-timer" "ok" "Timer active and enabled"
   else
-    add_check "weekly-backup-timer" "fail" "Timer: active=$active enabled=$enabled"
+    add_check "daily-backup-timer" "fail" "Timer: active=$active enabled=$enabled"
     if $FIX; then
-      $PVE_SSH "systemctl enable --now weekly-backup.timer" 2>/dev/null && \
-        add_check "weekly-backup-timer-fix" "ok" "AUTO-FIX: Timer re-enabled" || \
-        add_check "weekly-backup-timer-fix" "fail" "AUTO-FIX: Failed to re-enable timer"
+      $PVE_SSH "systemctl enable --now daily-backup.timer" 2>/dev/null && \
+        add_check "daily-backup-timer-fix" "ok" "AUTO-FIX: Timer re-enabled" || \
+        add_check "daily-backup-timer-fix" "fail" "AUTO-FIX: Failed to re-enable timer"
     fi
   fi
 }
@@ -529,9 +529,9 @@ check_lvm_thinpool_free
 check_lvm_snapshot_timer
 
 # Layer 2: Weekly Backup (sda)
-check_weekly_backup_freshness
-check_weekly_backup_status
-check_weekly_backup_timer
+check_daily_backup_freshness
+check_daily_backup_status
+check_daily_backup_timer
 check_sda_mount
 check_sda_disk_usage
 check_pvc_data_freshness
