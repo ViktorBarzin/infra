@@ -1,8 +1,8 @@
 [Unit]
-Description=Weekly backup: rsync NFS to sda + prune snapshots
+Description=Daily backup: PVC snapshots + SQLite + pfsense to sda
 
 [Timer]
-OnCalendar=Sun *-*-* 05:00:00
+OnCalendar=*-*-* 05:00:00
 Persistent=true
 RandomizedDelaySec=300
 
