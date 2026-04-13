@@ -12,6 +12,11 @@ PUSHGATEWAY="${OFFSITE_SYNC_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB="offsite-backup-sync"
 LOCKFILE="/run/offsite-sync-backup.lock"
 
+# NFS media — synced directly to Synology (bypasses sda, too large to fit)
+NFS_BASE="/srv/nfs"
+NFS_SSD_BASE="/srv/nfs-ssd"
+SYNOLOGY_NFS_DEST="Administrator@192.168.1.13:/volume1/Backup/Viki/truenas"
+
 # --- Logging ---
 log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 warn() { log "WARN: $*" >&2; }
@@ -60,6 +65,55 @@ else
     log "No changed files in manifest, nothing to sync"
 fi
 
+# ============================================================
+# STEP 2: NFS media direct to Synology (bypasses sda — too large)
+# Reuses existing TrueNAS Cloud Sync paths on Synology
+# ============================================================
+log "--- Step 2: NFS media direct to Synology ---"
+
+# Immich (map Proxmox paths to existing Synology layout)
+for subdir in backups encoded-video library profile upload; do
+    if [ -d "${NFS_BASE}/immich/${subdir}" ]; then
+        rsync -rltz --delete \
+            "${NFS_BASE}/immich/${subdir}/" \
+            "${SYNOLOGY_NFS_DEST}/immich/immich/${subdir}/" 2>&1 \
+            && log "  OK: immich/${subdir}" \
+            || { warn "Failed: immich/${subdir}"; STATUS=1; }
+    fi
+done
+# Immich PG data + dumps
+if [ -d "${NFS_BASE}/immich/postgresql" ]; then
+    rsync -rltz --delete "${NFS_BASE}/immich/postgresql/" \
+        "${SYNOLOGY_NFS_DEST}/immich/data-immich-postgresql/" 2>&1 \
+        && log "  OK: immich/postgresql" \
+        || { warn "Failed: immich/postgresql"; STATUS=1; }
+fi
+# Immich SSD (thumbs, ML cache)
+if [ -d "${NFS_SSD_BASE}/immich/thumbs" ]; then
+    rsync -rltz --delete "${NFS_SSD_BASE}/immich/thumbs/" \
+        "${SYNOLOGY_NFS_DEST}/immich/immich/thumbs/" 2>&1 \
+        && log "  OK: immich/thumbs" \
+        || { warn "Failed: immich/thumbs"; STATUS=1; }
+fi
+if [ -d "${NFS_SSD_BASE}/immich/machine-learning" ]; then
+    rsync -rltz --delete "${NFS_SSD_BASE}/immich/machine-learning/" \
+        "${SYNOLOGY_NFS_DEST}/immich/machine-learning/" 2>&1 \
+        && log "  OK: immich/machine-learning" \
+        || { warn "Failed: immich/machine-learning"; STATUS=1; }
+fi
+# Calibre + Audiobookshelf
+for media_dir in calibre audiobookshelf; do
+    if [ -d "${NFS_BASE}/${media_dir}" ]; then
+        rsync -rltz --delete "${NFS_BASE}/${media_dir}/" \
+            "${SYNOLOGY_NFS_DEST}/${media_dir}/" 2>&1 \
+            && log "  OK: ${media_dir}" \
+            || { warn "Failed: ${media_dir}"; STATUS=1; }
+    fi
+done
+
+# ============================================================
+# Finish
+# ============================================================
 if [ "${STATUS}" -eq 0 ]; then
     # Only clear manifest + update timestamp on SUCCESS
     touch "${BACKUP_ROOT}/.last-offsite-sync"
