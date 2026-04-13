@@ -9,7 +9,7 @@
 - **GPU**: NVIDIA Tesla T4 (PCIe passthrough to k8s-node1)
 - **iDRAC**: 192.168.1.4 (root/calvin)
 - **Disks**: 1.1TB RAID1 SAS (backup) + 931GB Samsung SSD + 10.7TB RAID1 HDD
-- **NFS server**: Proxmox host serves NFS directly. HDD NFS: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB). SSD NFS: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB). TrueNAS (10.0.10.15) decommissioned.
+- **NFS server**: Proxmox host serves NFS directly. HDD NFS: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB). SSD NFS: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB). Exports use `async` mode (safe with UPS + databases on block storage). TrueNAS (10.0.10.15) decommissioned.
 - **Proxmox access**: `ssh root@192.168.1.127`
 
 ## Memory Layout (updated 2026-04-01)

@@ -33,6 +33,7 @@ Violations cause state drift, which causes future applies to break or silently r
 - **Private registry**: `registry.viktorbarzin.me` (htpasswd auth, credentials in Vault `secret/viktor`). Use `image: registry.viktorbarzin.me/<name>:<tag>` + `imagePullSecrets: [{name: registry-credentials}]`. Kyverno auto-syncs the secret to all namespaces. Build & push from registry VM (`10.0.20.10`). Containerd `hosts.toml` redirects pulls to LAN IP directly. Web UI at `docker.viktorbarzin.me` (Authentik-protected).
 - **LinuxServer.io containers**: `DOCKER_MODS` runs apt-get on every start — bake slow mods into a custom image (`RUN /docker-mods || true` then `ENV DOCKER_MODS=`). Set `NO_CHOWN=true` to skip recursive chown that hangs on NFS mounts.
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
+- **Node OS disk tuning** (in `stacks/infra/main.tf`): kubelet `imageGCHighThresholdPercent=70` (was 85), `imageGCLowThresholdPercent=60` (was 80), ext4 `commit=60` in fstab (was default 5s), journald `SystemMaxUse=200M` + `MaxRetentionSec=3day`.
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
 
@@ -55,7 +56,7 @@ Violations cause state drift, which causes future applies to break or silently r
 - **ESO (External Secrets Operator)**: `stacks/external-secrets/` — 43 ExternalSecrets + 9 DB-creds ExternalSecrets. API version `v1beta1`. Two ClusterSecretStores: `vault-kv` and `vault-database`.
 - **Plan-time pattern**: Former plan-time stacks use `data "kubernetes_secret"` to read ESO-created K8s Secrets at plan time (no Vault dependency). First-apply gotcha: must `terragrunt apply -target=kubernetes_manifest.external_secret` first, then full apply. `count` on resources using secret values fails — remove conditional counts.
 - **14 hybrid stacks** still keep `data "vault_kv_secret_v2"` for plan-time needs (job commands, Helm templatefile, module inputs). Platform has 48 plan-time refs — no migration possible without restructuring modules.
-- **Database rotation**: Vault DB engine rotates passwords every 7 days (604800s). MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, technitium, phpipam. PostgreSQL: health, linkwarden, affine, woodpecker, claude_memory. Excluded: authentik (PgBouncer), crowdsec (Helm-baked), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API.
+- **Database rotation**: Vault DB engine rotates passwords every 7 days (604800s). MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, phpipam. PostgreSQL: health, linkwarden, affine, woodpecker, claude_memory, crowdsec, technitium. Excluded: authentik (PgBouncer), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API, disable MySQL logging, install PG plugin if missing, and configure PG query logging (90-day retention).
 - **K8s credentials**: Vault K8s secrets engine. Roles: `dashboard-admin`, `ci-deployer`, `openclaw`, `local-admin`. Use `vault write kubernetes/creds/ROLE kubernetes_namespace=NS`. Helper: `scripts/vault-kubeconfig`.
 - **CI/CD (GHA + Woodpecker)**: Docker builds run on **GitHub Actions** (free on public repos). Woodpecker is **deploy-only** — receives image tag via API POST, runs `kubectl set image`. Woodpecker authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
 - **Platform cannot depend on vault** (circular). Apply order: vault first, then platform. Platform has 48 vault refs, all in module inputs — no ESO migration possible.
@@ -104,6 +105,8 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 
 **`postgresql_host`** in `config.tfvars` is `pg-cluster-rw.dbaas.svc.cluster.local` (the CNPG primary). The legacy `postgresql.dbaas` service has no endpoints — never use it. This variable is shared by ~12 stacks.
 
+**CNPG tuning** (in `stacks/dbaas/modules/dbaas/main.tf`): `shared_buffers=512MB`, `work_mem=16MB`, `wal_compression=on`, `effective_cache_size=1536MB`, pod memory 2Gi.
+
 ## Networking & Resilience
 - **Critical path services scaled to 3**: Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared.
 - **PDBs**: minAvailable=2 on Traefik and Authentik.
@@ -119,11 +122,11 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 |---------|--------------------------|
 | Nextcloud | MaxRequestWorkers=150, needs 8Gi limit (Apache transient memory spikes, see commit eb94144), very generous startup probe |
 | Immich | ML on SSD, disable ModSecurity (breaks streaming), CUDA for ML, frequent upgrades |
-| CrowdSec | Pin version, disable Metabase when not needed (CPU hog), LAPI scaled to 3 |
+| CrowdSec | Pin version, disable Metabase when not needed (CPU hog), LAPI scaled to 3, **DB on PostgreSQL** (migrated from MySQL), flush config: max_items=10000/max_age=7d/agents_autodelete=30d, DECISION_DURATION=168h in blocklist CronJob |
 | Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
 | Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
-| MySQL InnoDB | Enable auto-recovery, anti-affinity excludes k8s-node1 (GPU), 2Gi req / 3Gi limit |
+| MySQL InnoDB | 1 instance (was 3 — only Uptime Kuma 34MB + phpIPAM 1.4MB remain), PriorityClass `mysql-critical` + PDB, `innodb_doublewrite=OFF`, anti-affinity excludes k8s-node1 (GPU), 2Gi req / 3Gi limit |
 | phpIPAM | IPAM — no active scanning. `pfsense-import` CronJob (5min) pulls Kea leases + ARP via SSH. `dns-sync` CronJob (15min) bidirectional sync with Technitium. Kea DDNS on pfSense handles all 3 subnets. API app `claude` (ssl_token). |
 
 ## Monitoring & Alerting
@@ -150,7 +153,7 @@ Choose storage class based on workload type:
 **Default is proxmox-lvm.** Only use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
 
 **NFS servers:**
-- **Proxmox host** (192.168.1.127): Primary NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `insecure` option (required — pfSense NATs source ports >1024 between VLANs).
+- **Proxmox host** (192.168.1.127): Primary NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `async,insecure` options (`async` — safe with UPS + Vault Raft replication + databases on block storage; `insecure` — pfSense NATs source ports >1024 between VLANs).
 - **TrueNAS** (10.0.10.15): **Immich only** (8 PVCs). `nfs-truenas` StorageClass retained exclusively for Immich.
 
 **Migration note**: CSI PV `volumeAttributes` are immutable — cannot update NFS server in place. New PV/PVC pairs required (convention: append `-host` to PV name).
