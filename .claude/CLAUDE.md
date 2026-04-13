@@ -185,25 +185,27 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 ### 3-2-1 Backup Strategy
 **Copy 1**: Live data on sdc thin pool (65 PVCs + VMs)
 **Copy 2**: sda backup disk (`/mnt/backup`, 1.1TB ext4, VG `backup`)
-**Copy 3**: Synology NAS offsite (two paths)
+**Copy 3**: Synology NAS offsite (two-tier: sda + NFS)
 
 **PVE host scripts** (source: `infra/scripts/`):
-- `/usr/local/bin/weekly-backup` — Sunday 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Also mirrors NFS backup dirs, pfsense (config.xml + tar), PVE config. Prunes snapshots >7d.
-- `/usr/local/bin/offsite-sync-backup` — Sunday 08:00 (After=weekly-backup). `rsync --files-from` manifest to `Administrator@192.168.1.13:/volume1/Backup/Viki/pve-backup/`. Monthly full `--delete` on 1st Sunday.
+- `/usr/local/bin/weekly-backup` — Sunday 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Auto SQLite backup (magic number check, `?mode=ro`). Auto-discovered BACKUP_DIRS (glob, not hardcoded). Also backs up pfSense (config.xml + tar), PVE config. Prunes snapshots >7d.
+- `/usr/local/bin/offsite-sync-backup` — Sunday 08:00 (After=weekly-backup). Step 1: sda → Synology `pve-backup/` (PVC snapshots, pfSense, PVE config). Step 2: NFS → Synology `nfs/` + `nfs-ssd/` via inotify change-tracked `rsync --files-from`. Monthly full `rsync --delete` on 1st Sunday.
 - `/usr/local/bin/lvm-pvc-snapshot` — Daily 03:00. Thin snapshots of all PVCs except dbaas+monitoring. 7-day retention. Instant restore: `lvm-pvc-snapshot restore <lv> <snap>`.
+- `nfs-change-tracker.service` — Continuous inotifywait on `/srv/nfs` + `/srv/nfs-ssd`. Logs changed file paths to `/mnt/backup/.nfs-changes.log`. Consumed by offsite-sync-backup for incremental rsync (completes in seconds instead of 30+ minutes).
 
-**Offsite sync (two paths)**:
-- `Synology/Backup/Viki/pve-backup/` — structured data from PVE host (PVC files, DB dumps, pfsense, PVE config)
-- `Synology/Backup/Viki/truenas/` — NFS media from TrueNAS Cloud Sync (Immich only — audiobookshelf and servarr migrated to Proxmox host NFS)
+**Synology layout** (`192.168.1.13:/volume1/Backup/Viki/`):
+- `pve-backup/` — PVC file backups (`pvc-data/`), SQLite backups (`sqlite-backup/`), pfSense, PVE config (synced from sda)
+- `nfs/` — mirrors `/srv/nfs` on Proxmox (inotify change-tracked rsync, renamed from `truenas/`)
+- `nfs-ssd/` — mirrors `/srv/nfs-ssd` on Proxmox (inotify change-tracked rsync)
 
-**App-level CronJobs** (write to Proxmox host NFS, mirrored to sda weekly):
+**App-level CronJobs** (write to Proxmox host NFS, synced to Synology via inotify):
 - MySQL (daily), PostgreSQL (daily), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
 - **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
 
 **Restore paths**:
 - Accidental delete: `lvm-pvc-snapshot restore` (instant, 7 daily snapshots)
 - Older data: Browse `/mnt/backup/pvc-data/<week>/<ns>/<pvc>/`, rsync back
-- Database: Restore from dump at `/mnt/backup/nfs-mirror/<db>-backup/`
+- Database: Restore from dump at `/srv/nfs/<db>-backup/` or Synology `nfs/<db>-backup/`
 - pfsense: Upload config.xml via web UI, or extract tar for custom scripts
 - Full disaster: Restore from Synology
 

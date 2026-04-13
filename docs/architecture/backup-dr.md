@@ -10,7 +10,9 @@ The homelab uses a defense-in-depth 3-2-1 backup strategy: **3 copies** (live PV
 - **Copy 1** (live): All PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD)
 - **Copy 2** (local backup): Weekly file-level backup to sda `/mnt/backup` (1.1TB RAID1 SAS)
 - **Copy 3** (offsite): Synology NAS at 192.168.1.13:
-  - `Synology/Backup/Viki/pve-backup/` — structured PVE host backups (rsync --files-from weekly)
+  - `Synology/Backup/Viki/pve-backup/` — PVC snapshots, pfSense, PVE config (rsync from sda weekly)
+  - `Synology/Backup/Viki/nfs/` — NFS HDD data (inotify change-tracked rsync from `/srv/nfs`)
+  - `Synology/Backup/Viki/nfs-ssd/` — NFS SSD data (inotify change-tracked rsync from `/srv/nfs-ssd`)
 
 ## Architecture Diagram
 
@@ -28,7 +30,7 @@ graph TB
 
         subgraph Layer2["Layer 2: Weekly File Backup"]
             PVCBackup["PVC File Copy<br/>Sunday 05:00<br/>4 weekly versions<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
-            NFSMirror["NFS Mirror<br/>DB dumps + backup CronJob output<br/>/mnt/backup/nfs-mirror/"]
+            SQLiteBackup["Auto SQLite Backup<br/>magic number check + ?mode=ro<br/>from PVC snapshots"]
             PfsenseBackup["pfSense Backup<br/>config.xml + full tar<br/>4 weekly versions"]
             PVEConfig["PVE Config<br/>/etc/pve + scripts"]
         end
@@ -36,7 +38,7 @@ graph TB
         sdc --> Snap
         sdc --> PVCBackup
         PVCBackup --> sda
-        NFSMirror --> sda
+        SQLiteBackup --> sda
         PfsenseBackup --> sda
         PVEConfig --> sda
     end
@@ -54,16 +56,19 @@ graph TB
     end
 
     subgraph Layer3["Layer 3: Offsite Sync"]
-        PVEOffsite["PVE → Synology<br/>Sunday 08:00<br/>rsync --files-from<br/>/Backup/Viki/pve-backup/"]
+        PVEOffsite["Step 1: sda → Synology<br/>Sunday 08:00<br/>pve-backup/ only"]
+        NFSOffsite["Step 2: NFS → Synology<br/>inotify change-tracked<br/>rsync --files-from<br/>nfs/ + nfs-ssd/"]
     end
 
     sda --> PVEOffsite
+    NFS_Storage --> NFSOffsite
 
     Synology["Synology NAS<br/>192.168.1.13<br/>Offsite protection"]
 
     PVEOffsite --> Synology
+    NFSOffsite --> Synology
 
-    NFS_Backup -.->|mirrored to sda| NFSMirror
+    NFS_Backup -.->|app-level dumps| NFS_Storage
 
     subgraph Monitoring["Monitoring & Alerting"]
         Prometheus["Prometheus Alerts<br/>PostgreSQLBackupStale, MySQLBackupStale<br/>WeeklyBackupStale, OffsiteBackupSyncStale<br/>LVMSnapshotStale, BackupDiskFull<br/>VaultwardenIntegrityFail"]
@@ -89,8 +94,8 @@ graph LR
         S02["02:00 Vault backup<br/>(CronJob)"]
         S03a["03:00 Redis backup<br/>(CronJob)"]
         S03b["03:00 LVM snapshots<br/>(lvm-pvc-snapshot timer)"]
-        S05["05:00 Weekly backup<br/>(weekly-backup timer)<br/>1. NFS mirror<br/>2. PVC file copy<br/>3. pfSense backup<br/>4. PVE config<br/>5. Prune snapshots<br/>6. Generate manifest"]
-        S08["08:00 Offsite sync<br/>(offsite-sync-backup timer)<br/>rsync --files-from"]
+        S05["05:00 Weekly backup<br/>(weekly-backup timer)<br/>1. PVC file copy (auto-discovered BACKUP_DIRS)<br/>2. Auto SQLite backup (magic number + ?mode=ro)<br/>3. pfSense backup<br/>4. PVE config<br/>5. Prune snapshots"]
+        S08["08:00 Offsite sync<br/>(offsite-sync-backup timer)<br/>Step 1: sda → Synology pve-backup/<br/>Step 2: NFS → Synology nfs/ + nfs-ssd/<br/>(inotify change-tracked)"]
     end
 
     S01 --> S02 --> S03a --> S03b --> S05 --> S08
@@ -105,7 +110,7 @@ graph TB
     subgraph PVE["Proxmox Host (192.168.1.127)"]
         subgraph sda["sda: 1.1TB RAID1 SAS"]
             sda_vg["VG: backup<br/>LV: data (ext4)<br/>/mnt/backup"]
-            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>nfs-mirror/<service>-backup/<br/>pfsense/<YYYY-WW>/<br/>pve-config/"]
+            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/<br/>pfsense/<YYYY-WW>/<br/>pve-config/"]
         end
 
         subgraph sdb["sdb: 931GB SSD"]
@@ -120,7 +125,7 @@ graph TB
     end
 
     sdc -.->|weekly backup<br/>mount snapshot ro| sda
-    sda -.->|offsite sync<br/>rsync| Synology["Synology NAS<br/>192.168.1.13<br/>/Backup/Viki/pve-backup/"]
+    sda -.->|offsite sync<br/>rsync| Synology["Synology NAS<br/>192.168.1.13<br/>/Backup/Viki/{pve-backup,nfs,nfs-ssd}/"]
 
     style sda fill:#fff9c4
     style sdb fill:#c8e6c9
@@ -145,9 +150,9 @@ graph TB
     FileBackup --> Type
     Offsite --> Type
 
-    Type -->|"Database"| AppBackup["Use app-level dump<br/>/mnt/backup/nfs-mirror/<service>-backup/<br/>OR Synology/pve-backup/nfs-mirror/<br/>RTO: <10 min"]
+    Type -->|"Database"| AppBackup["Use app-level dump<br/>/srv/nfs/<service>-backup/<br/>OR Synology/nfs/<service>-backup/<br/>RTO: <10 min"]
     Type -->|"PVC files"| Proceed["Proceed with<br/>selected restore method"]
-    Type -->|"Media (NFS)"| OffsiteMedia["Use Synology backup<br/>Synology/pve-backup/nfs-mirror/<br/>RTO: varies by size"]
+    Type -->|"Media (NFS)"| OffsiteMedia["Use Synology backup<br/>Synology/nfs/ or nfs-ssd/<br/>RTO: varies by size"]
 
     style Start fill:#ffcdd2
     style LVM fill:#c8e6c9
@@ -191,9 +196,10 @@ graph LR
 |-----------|-----------------|----------|---------|
 | LVM Thin Snapshots | Daily 03:00, 7d retention | PVE host: `lvm-pvc-snapshot` | CoW snapshots of 62 proxmox-lvm PVCs |
 | Weekly PVC Backup | Sunday 05:00, 4 weeks | PVE host: `weekly-backup` | File-level PVC copy to sda |
-| NFS Mirror | Sunday 05:00 + weekly-backup | PVE host: mount NFS ro → rsync | Mirror DB dumps to sda |
+| Auto SQLite Backup | Sunday 05:00 + weekly-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
+| NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | pfSense Backup | Sunday 05:00 + weekly-backup | PVE host: SSH + API | config.xml + full filesystem tar |
-| Offsite Sync | Sunday 08:00 (after weekly-backup) | PVE host: `offsite-sync-backup` | rsync sda → Synology |
+| Offsite Sync | Sunday 08:00 (after weekly-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | PostgreSQL Backup | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | MySQL Backup | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump for all databases |
 | etcd Backup | Weekly Sunday 01:00, 30d | CronJob in `kube-system` | etcdctl snapshot |
@@ -201,7 +207,7 @@ graph LR
 | Vault Backup | Weekly Sunday 02:00, 30d | CronJob in `vault` | raft snapshot |
 | Redis Backup | Weekly Sunday 03:00, 30d | CronJob in `redis` | BGSAVE + copy |
 | Vaultwarden Integrity Check | Hourly | CronJob in `vaultwarden` | PRAGMA integrity_check → metric |
-| ~~TrueNAS Cloud Sync~~ | **DECOMMISSIONED** | Was TrueNAS Cloud Sync Task 1 | Replaced by offsite-sync-backup (Path 1) |
+| ~~TrueNAS Cloud Sync~~ | **DECOMMISSIONED** | Was TrueNAS Cloud Sync Task 1 | Replaced by offsite-sync-backup |
 
 ## How It Works
 
@@ -238,10 +244,11 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 - Organized as `/mnt/backup/pvc-data/<YYYY-WW>/<namespace>/<pvc-name>/`
 - 4 weekly versions with `--link-dest` hardlink dedup (unchanged files share inodes)
 
-**2. NFS Backup Mirror** (`/mnt/backup/nfs-mirror/`):
-- Rsync DB dump dirs from Proxmox NFS (`/srv/nfs/*-backup/`)
-- Covers: `mysql-backup/`, `postgresql-backup/`, `vault-backup/`, `vaultwarden-backup/`, `redis-backup/`, `etcd-backup/`
-- Single copy (no rotation) — latest dump only
+**2. Auto SQLite Backup** (`/mnt/backup/sqlite-backup/`):
+- Detects SQLite databases in PVC snapshots via magic number check (`SQLite format 3`)
+- Opens each database with `?mode=ro` (read-only, safe — no WAL replay)
+- Runs `.backup` to create a consistent copy
+- Covers all SQLite files across all PVC snapshots automatically
 
 **3. pfSense Backup** (`/mnt/backup/pfsense/<YYYY-WW>/`):
 - `config.xml` via API (base64 decode)
@@ -254,7 +261,7 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 - `/etc/systemd/system/` (timers)
 - Single copy (no rotation)
 
-**Manifest Generation**: After backup completes, generates `/mnt/backup/manifest.txt` with all file paths (relative to `/mnt/backup/`). Used by offsite sync `--files-from`.
+**Auto-discovered BACKUP_DIRS**: Uses glob-based discovery instead of a hardcoded list. Any new PVC LV matching `vm-*-pvc-*` is automatically included.
 
 **Snapshot Pruning**: Deletes LVM snapshots older than 7 days (safety net for snapshots that outlive `lvm-pvc-snapshot` timer).
 
@@ -300,28 +307,37 @@ This provides both frequent backups (every 6h) AND continuous integrity monitori
 
 ### Layer 3: Offsite Sync to Synology NAS
 
-Two independent paths push backups offsite:
-
-#### Path 1: PVE Host Backups (rsync)
-
 **Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup`)
 **Schedule**: Sunday 08:00 via systemd timer (After=weekly-backup.service)
-**Method**: `rsync --files-from /mnt/backup/manifest.txt` to `synology.viktorbarzin.lan:/Backup/Viki/pve-backup/`
-**Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` (full sync, removes deleted files)
 
-**Why fast**: Only changed files are transferred (manifest generated by weekly-backup). No directory traversal (`--no-implied-dirs`).
+Two-step offsite sync:
 
-**Destination**: `Synology/Backup/Viki/pve-backup/` mirrors sda `/mnt/backup/` structure:
+#### Step 1: sda to Synology pve-backup/
+
+**Method**: `rsync` from `/mnt/backup/` to `synology.viktorbarzin.lan:/Backup/Viki/pve-backup/`
+**Content**: PVC snapshots (`pvc-data/`), pfSense backups, PVE config, SQLite backups only. NFS data is no longer on sda.
+
+**Destination**: `Synology/Backup/Viki/pve-backup/`:
 - `pvc-data/<YYYY-WW>/` — 4 weekly PVC file backups
-- `nfs-mirror/` — latest DB dumps
+- `sqlite-backup/` — auto SQLite backups
 - `pfsense/<YYYY-WW>/` — 4 weekly pfSense backups
 - `pve-config/` — latest PVE config
 
+#### Step 2: NFS to Synology nfs/ + nfs-ssd/ (inotify change-tracked)
+
+**Method**: `rsync --files-from /mnt/backup/.nfs-changes.log` — two calls, one for `/srv/nfs` to `nfs/`, one for `/srv/nfs-ssd` to `nfs-ssd/`
+**Change tracking**: `nfs-change-tracker.service` (systemd, inotifywait) on PVE host watches `/srv/nfs` and `/srv/nfs-ssd` continuously. Changed file paths are logged to `/mnt/backup/.nfs-changes.log`. The offsite sync reads this log and transfers only changed files. Incremental syncs complete in seconds instead of 30+ minutes.
+**Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` for cleanup (removes orphaned files on Synology).
+
+**Destination**:
+- `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs` (renamed from `truenas/`)
+- `Synology/Backup/Viki/nfs-ssd/` — mirrors `/srv/nfs-ssd`
+
 **Monitoring**: Pushes `offsite_backup_sync_last_success_timestamp` to Pushgateway. Alerts: `OffsiteBackupSyncStale` (>8d), `OffsiteBackupSyncFailing`.
 
-#### ~~Path 2: TrueNAS Media (Cloud Sync)~~ — DECOMMISSIONED
+#### ~~TrueNAS Cloud Sync~~ — DECOMMISSIONED
 
-> TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04). Media offsite backup is now handled by the Proxmox host `offsite-sync-backup` script (Path 1) which includes NFS media directories in its manifest. The `Synology/Backup/Viki/truenas/` directory on the Synology NAS contains the last Cloud Sync snapshot and is no longer updated.
+> TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04). The `Synology/Backup/Viki/truenas/` directory was renamed to `nfs/` to reflect the new consolidated layout.
 
 ## Configuration
 
@@ -330,10 +346,11 @@ Two independent paths push backups offsite:
 | Path | Purpose |
 |------|---------|
 | `/usr/local/bin/lvm-pvc-snapshot` | PVE host: LVM snapshot creation + restore |
-| `/usr/local/bin/weekly-backup` | PVE host: PVC file copy + NFS mirror + pfSense + manifest |
-| `/usr/local/bin/offsite-sync-backup` | PVE host: rsync to Synology |
+| `/usr/local/bin/weekly-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
+| `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
-| `/mnt/backup/manifest.txt` | Generated by weekly-backup, consumed by offsite-sync |
+| `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
+| `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
 | `/etc/systemd/system/weekly-backup.timer` | Sunday 05:00 (file backup) |
 | `/etc/systemd/system/offsite-sync-backup.timer` | Sunday 08:00 (offsite sync) |
@@ -411,7 +428,7 @@ Evaluated K8s-native backup solutions (Velero, Longhorn):
 
 ### Why Hybrid Incremental + Full Sync?
 
-**Incremental alone** (rsync --files-from) is risky:
+**Incremental alone** (rsync --files-from via inotify change log) is risky:
 - Deleted files on source never deleted on destination
 - Renamed paths create duplicates
 - No cleanup of orphaned files
@@ -421,8 +438,8 @@ Evaluated K8s-native backup solutions (Velero, Longhorn):
 - 7d RPO → 14d if a sync fails
 
 **Hybrid approach**:
-- Fast incremental weekly (sub-5min runtime via manifest)
-- Monthly full sync for cleanup (tolerates longer runtime)
+- Fast incremental weekly via inotify change tracking (completes in seconds)
+- Monthly full `rsync --delete` for cleanup (tolerates longer runtime)
 
 ### Why 6h Vaultwarden Backup vs Daily for Others?
 
@@ -474,18 +491,19 @@ df -h /mnt/backup
 ssh root@192.168.1.127
 systemctl status offsite-sync-backup.service
 journalctl -u offsite-sync-backup.service --since "7 days ago"
-cat /mnt/backup/manifest.txt | wc -l  # verify manifest exists
+wc -l /mnt/backup/.nfs-changes.log  # verify change log exists
+systemctl status nfs-change-tracker.service  # verify inotify watcher
 ```
 
 **Common causes**:
 - Synology NAS unreachable (network, SFTP down)
 - SSH key auth failed (permissions, expired key)
-- Manifest missing (weekly-backup failed)
+- nfs-change-tracker.service stopped (no change log)
 
 **Fix**:
 1. Verify Synology: `ping 192.168.1.13`, `ssh root@192.168.1.13`
 2. Verify SSH key: `ssh -i /root/.ssh/synology_backup root@192.168.1.13`
-3. Verify manifest exists: `ls -lh /mnt/backup/manifest.txt`
+3. Verify change tracker running: `systemctl status nfs-change-tracker.service`
 4. Manually trigger: `systemctl start offsite-sync-backup.service`
 
 ### PostgreSQL Backup Stale Alert
@@ -556,7 +574,7 @@ ssh root@192.168.1.127
 # Check space usage by component
 du -sh /mnt/backup/pvc-data/*
 du -sh /mnt/backup/pfsense/*
-du -sh /mnt/backup/nfs-mirror
+du -sh /mnt/backup/sqlite-backup
 
 # Clean up old weekly versions (keep latest 2)
 find /mnt/backup/pvc-data -maxdepth 1 -type d -name "????-??" | sort | head -n -2 | xargs rm -rf
@@ -707,7 +725,7 @@ module "nfs_backup" {
 - — = Not needed (other layers cover it, or data is regenerable/disposable)
 - excluded = Too large/regenerable, not worth offsite bandwidth
 
-**Note**: All 65 proxmox-lvm PVCs get LVM snapshots (except dbaas+monitoring = 3 PVCs) + file-level backup (except dbaas+monitoring). NFS-backed media is included in the Proxmox host weekly-backup offsite sync.
+**Note**: All 65 proxmox-lvm PVCs get LVM snapshots (except dbaas+monitoring = 3 PVCs) + file-level backup (except dbaas+monitoring). NFS-backed media syncs directly to Synology `nfs/` and `nfs-ssd/` via inotify change tracking.
 
 ## Recovery Procedures
 

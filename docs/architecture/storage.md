@@ -14,7 +14,7 @@ The cluster uses two storage backends: **Proxmox CSI** for database block storag
 
 Both `StorageClass: nfs-truenas` (name kept for compatibility) and `StorageClass: nfs-proxmox` (identical) point to the Proxmox host. Migrated from TrueNAS (10.0.10.15) which has been fully decommissioned.
 
-**Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, NFS mirrors, pfSense backups, and PVE config. Independent of live storage (sdc).
+**Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, auto SQLite backups, pfSense backups, and PVE config. NFS data syncs directly to Synology via inotify change tracking (not stored on sda). Independent of live storage (sdc).
 
 **Migration (2026-04-02)**: All iSCSI block volumes were migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver has been removed.
 

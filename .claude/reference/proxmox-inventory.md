@@ -113,6 +113,15 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | 1001 | docker-registry-template | Docker registry VM |
 | 2000 | ubuntu-2404-cloudinit-k8s-template | Base for K8s nodes |
 
+## PVE Host Systemd Services (Custom)
+
+| Unit | Type | Schedule | Purpose |
+|------|------|----------|---------|
+| `lvm-pvc-snapshot.timer` | Timer | Daily 03:00 | LVM thin snapshots of all PVCs (7-day retention) |
+| `weekly-backup.timer` | Timer | Sunday 05:00 | PVC file backup, auto SQLite backup, pfSense, PVE config |
+| `offsite-sync-backup.timer` | Timer | Sunday 08:00 | Two-step rsync to Synology (sda + NFS via inotify) |
+| `nfs-change-tracker.service` | Service | Continuous | inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log` |
+
 ## GPU Node (k8s-node1)
 - **VMID**: 201, **PCIe**: `0000:06:00.0` (NVIDIA Tesla T4)
 - **Taint**: `nvidia.com/gpu=true:NoSchedule`, **Label**: `gpu=true`
