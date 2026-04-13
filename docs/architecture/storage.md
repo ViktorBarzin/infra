@@ -1,18 +1,24 @@
 # Storage Architecture
 
-Last updated: 2026-04-06
+Last updated: 2026-04-13
 
 ## Overview
 
-The cluster uses two storage backends: **Proxmox CSI** for database block storage and **TrueNAS NFS** for application data.
+The cluster uses two storage backends: **Proxmox CSI** for database block storage and **Proxmox NFS** for application data.
 
 **Block storage (Proxmox CSI)**: 65 PVCs for databases and stateful apps (CNPG PostgreSQL, MySQL InnoDB, Redis, Vaultwarden, Prometheus, Nextcloud, Calibre-Web, Forgejo, FreshRSS, ActualBudget, NovelApp, Headscale, Uptime Kuma, etc.) use `StorageClass: proxmox-lvm`, which provisions thin LVs directly from the Proxmox host's `local-lvm` storage (sdc, 10.7TB RAID1 HDD thin pool). This eliminates the previous double-CoW (ZFS + LVM-thin) path that caused 56 ZFS checksum errors.
 
-**NFS storage (TrueNAS)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and legacy app data continue to use TrueNAS ZFS at `10.0.10.15` via `StorageClass: nfs-truenas`.
+**NFS storage (Proxmox host)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and app data are served directly from the Proxmox host at `192.168.1.127`. Two NFS export roots exist:
+- **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB) — bulk media and backup targets
+- **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB) — high-performance data (Immich ML)
+
+Both `StorageClass: nfs-truenas` (name kept for compatibility) and `StorageClass: nfs-proxmox` (identical) point to the Proxmox host. Migrated from TrueNAS (10.0.10.15) which has been fully decommissioned.
 
 **Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, NFS mirrors, pfSense backups, and PVE config. Independent of live storage (sdc).
 
-**Migration (2026-04-02)**: All iSCSI block volumes were migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver is deprecated and pending removal.
+**Migration (2026-04-02)**: All iSCSI block volumes were migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver has been removed.
+
+**Migration (2026-04)**: TrueNAS (10.0.10.15) fully decommissioned. All NFS storage migrated to the Proxmox host (192.168.1.127). ZFS datasets under `/mnt/main/` and `/mnt/ssd/` moved to ext4 LVs at `/srv/nfs/` and `/srv/nfs-ssd/`. Legacy PVs referencing `/mnt/main/` paths still work (bind-mounted or symlinked on the Proxmox host); new PVs use `/srv/nfs/` and `/srv/nfs-ssd/`.
 
 ## Architecture Diagram
 
@@ -21,43 +27,37 @@ graph TB
     subgraph Proxmox["Proxmox Host (192.168.1.127)"]
         sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>65 proxmox-lvm PVCs"]
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
-    end
-
-    subgraph TrueNAS["TrueNAS (10.0.10.15)<br/>VMID 9000, 16c/16GB"]
-        ZFS_Main["ZFS Pool: main<br/>1.64 TiB<br/>32G + 7x256G + 1T disks"]
-        ZFS_SSD["ZFS Pool: ssd<br/>~256GB SSD<br/>Immich ML, PostgreSQL hot data"]
-
-        ZFS_Main --> NFS_Datasets["NFS Datasets<br/>~100 shares<br/>main/&lt;service&gt;<br/>Media + backup targets"]
-
-        NFS_Datasets --> NFS_Exports["NFS Exports<br/>managed by secrets/nfs_exports.sh"]
-
-        ZFS_SSD --> SSD_Data["Immich ML models"]
+        NFS_HDD["LV pve/nfs-data (2TB ext4)<br/>/srv/nfs<br/>~100 NFS shares<br/>Media + backup targets"]
+        NFS_SSD["LV ssd/nfs-ssd-data (100GB ext4)<br/>/srv/nfs-ssd<br/>High-performance data<br/>(Immich ML)"]
+        NFS_Exports["NFS Exports<br/>managed by /etc/exports"]
+        NFS_HDD --> NFS_Exports
+        NFS_SSD --> NFS_Exports
     end
 
     subgraph K8s["Kubernetes Cluster"]
-        CSI_NFS["democratic-csi-nfs<br/>StorageClass: nfs-truenas<br/>soft,timeo=30,retrans=3"]
-        CSI_iSCSI["democratic-csi-iscsi<br/>StorageClass: iscsi-truenas<br/>SSH driver"]
+        CSI_NFS["nfs-csi driver<br/>StorageClass: nfs-truenas / nfs-proxmox<br/>soft,timeo=30,retrans=3"]
+        CSI_PVE["Proxmox CSI plugin<br/>StorageClass: proxmox-lvm"]
 
         NFS_PV["NFS PersistentVolumes<br/>RWX, ~100 volumes"]
-        iSCSI_PV["iSCSI PersistentVolumes<br/>RWO, ~19 volumes"]
+        Block_PV["Block PersistentVolumes<br/>RWO, 65 PVCs"]
 
         Pods["Application Pods"]
         DBPods["Database Pods<br/>PostgreSQL CNPG<br/>MySQL InnoDB"]
     end
 
-    NFS_Exports -->|CSI driver| CSI_NFS
-    iSCSI_Targets -->|CSI driver| CSI_iSCSI
+    NFS_Exports -->|NFS mount| CSI_NFS
+    sdc -->|LVM-thin hotplug| CSI_PVE
 
     CSI_NFS --> NFS_PV
-    CSI_iSCSI --> iSCSI_PV
+    CSI_PVE --> Block_PV
 
     NFS_PV --> Pods
-    iSCSI_PV --> DBPods
+    Block_PV --> DBPods
 
-    style TrueNAS fill:#e1f5ff
+    style Proxmox fill:#e1f5ff
     style K8s fill:#fff4e1
-    style ZFS_Main fill:#c8e6c9
-    style ZFS_SSD fill:#ffe0b2
+    style NFS_HDD fill:#c8e6c9
+    style NFS_SSD fill:#ffe0b2
 ```
 
 ## Components
@@ -66,36 +66,38 @@ graph TB
 |-----------|---------------|----------|---------|
 | **Proxmox CSI plugin** | Helm chart | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
 | **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Databases and stateful apps |
-| TrueNAS VM | VMID 9000, 16c/16GB | Proxmox host (10.0.10.15) | ZFS NFS storage server |
-| ZFS pool `main` | 1.64 TiB usable | 32G + 7x256G + 1T disks | NFS data for all services |
-| ZFS pool `ssd` | ~256GB SSD | Dedicated SSD | High-performance data (Immich ML) |
+| Proxmox NFS (HDD) | LV `pve/nfs-data`, 2TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
+| Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
-| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | Default storage for apps |
-| ~~democratic-csi-iscsi~~ | **DEPRECATED** | Namespace: iscsi-csi | Replaced by Proxmox CSI (2026-04-02) |
-| ~~StorageClass `iscsi-truenas`~~ | **DEPRECATED** | Cluster-wide | Replaced by `proxmox-lvm` |
-| TF module `nfs_volume` | `modules/kubernetes/nfs_volume/` | Infra repo | NFS PV/PVC factory |
+| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | NFS storage (name kept for compatibility, points to Proxmox) |
+| StorageClass `nfs-proxmox` | RWX, soft mount | Cluster-wide | NFS storage (identical to nfs-truenas) |
+| TF module `nfs_volume` | `modules/kubernetes/nfs_volume/` | Infra repo | Static NFS PV/PVC factory |
+| ~~TrueNAS VM~~ | **DECOMMISSIONED** | Was VMID 9000 at 10.0.10.15 | Replaced by Proxmox NFS (2026-04) |
+| ~~democratic-csi-iscsi~~ | **REMOVED** | Was namespace: iscsi-csi | Replaced by Proxmox CSI (2026-04-02) |
+| ~~StorageClass `iscsi-truenas`~~ | **REMOVED** | Was cluster-wide | Replaced by `proxmox-lvm` |
 
 ## How It Works
 
 ### NFS Storage Flow
 
-1. **Dataset creation**: NFS shares are created as ZFS datasets under `main/<service>` (e.g., `main/immich`, `main/nextcloud`)
-2. **Export configuration**: `/root/secrets/nfs_exports.sh` on TrueNAS generates `/etc/exports` with per-dataset exports (`/mnt/main/<service>`)
-3. **CSI provisioning**: democratic-csi-nfs mounts NFS shares and creates K8s PersistentVolumes
-4. **Terraform module**: Stacks use `modules/kubernetes/nfs_volume/` to declaratively create PV + PVC pairs:
+1. **Directory creation**: NFS share directories are created under `/srv/nfs/<service>` (HDD) or `/srv/nfs-ssd/<service>` (SSD) on the Proxmox host
+2. **Export configuration**: `/etc/exports` on the Proxmox host lists per-directory NFS exports
+3. **Terraform module**: Stacks use `modules/kubernetes/nfs_volume/` to declaratively create static PV + PVC pairs:
    ```hcl
    module "nfs_data" {
      source     = "../../modules/kubernetes/nfs_volume"
      name       = "immich-data"
      namespace  = kubernetes_namespace.immich.metadata[0].name
-     nfs_server = var.nfs_server  # 10.0.10.15
-     nfs_path   = "/mnt/main/immich"
+     nfs_server = var.nfs_server  # 192.168.1.127
+     nfs_path   = "/srv/nfs/immich"
    }
    ```
-5. **Pod mount**: Applications reference PVCs in their deployment specs
-6. **Mount options**: All NFS mounts use `soft,timeo=30,retrans=3` (set in StorageClass) to prevent indefinite hangs
+4. **Pod mount**: Applications reference PVCs in their deployment specs
+5. **Mount options**: All NFS mounts use `soft,timeo=30,retrans=3` (set in StorageClass) to prevent indefinite hangs
 
-**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-truenas` StorageClass via PVCs.
+**Note**: Some legacy PVs still reference `/mnt/main/<service>` paths. These work via compatibility symlinks/bind-mounts on the Proxmox host. New PVs should use `/srv/nfs/<service>` or `/srv/nfs-ssd/<service>`.
+
+**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-truenas` or `nfs-proxmox` StorageClass via PVCs.
 
 ### Block Storage Flow (Proxmox CSI) — NEW
 
@@ -127,28 +129,9 @@ SQLite uses `fsync()` to guarantee durability. NFS's soft mount + async semantic
 
 **Solution**: Use Proxmox CSI (`proxmox-lvm`) for any SQLite database (Vaultwarden, plotting-book) or local disk (ephemeral).
 
-### Democratic-CSI Sidecar Resources
+### ~~Democratic-CSI Sidecar Resources~~ (HISTORICAL — democratic-csi removed)
 
-The Helm chart spawns 17 sidecar containers (driver-registrar, external-provisioner, etc.) across controller + node DaemonSet pods. Each sidecar defaults to `resources: {}`, which gets LimitRange defaults of 256Mi.
-
-**Fix**: Set explicit resources in `values.yaml`:
-```yaml
-csiProxy:  # TOP-LEVEL key, not nested
-  resources:
-    requests:
-      memory: "32Mi"
-    limits:
-      memory: "32Mi"
-
-controller:
-  externalProvisioner:
-    resources:
-      requests: {memory: "64Mi"}
-      limits: {memory: "64Mi"}
-  # ... repeat for all sidecars
-```
-
-Total footprint: ~1.5Gi → ~400Mi.
+> Democratic-csi has been removed along with TrueNAS decommissioning (2026-04). This section is kept for historical reference only.
 
 ## Configuration
 
@@ -156,25 +139,23 @@ Total footprint: ~1.5Gi → ~400Mi.
 
 | Path | Purpose |
 |------|---------|
-| `/root/secrets/nfs_exports.sh` | TrueNAS: generates `/etc/exports` with all service shares |
+| `/etc/exports` (on Proxmox host) | NFS export configuration for all service shares |
 | `stacks/proxmox-csi/` | Terraform stack for Proxmox CSI plugin + StorageClass |
-| `stacks/iscsi-csi/` | **DEPRECATED** — democratic-csi iSCSI driver (pending removal) |
-| `stacks/nfs-csi/` | NFS CSI driver |
-| `modules/kubernetes/nfs_volume/` | Reusable module for NFS PV/PVC creation |
-| `config.tfvars` | Variable `nfs_server = "10.0.10.15"` shared by all stacks |
+| `stacks/nfs-csi/` | NFS CSI driver + StorageClasses (`nfs-truenas`, `nfs-proxmox`) |
+| `modules/kubernetes/nfs_volume/` | Reusable module for static NFS PV/PVC creation |
+| `config.tfvars` | Variable `nfs_server = "192.168.1.127"` shared by all stacks |
 
 ### Vault Paths
 
 | Path | Contents |
 |------|----------|
-| `secret/viktor/truenas_ssh_key` | SSH private key for democratic-csi SSH driver |
-| `secret/viktor/truenas_root_password` | TrueNAS root password (web UI access) |
+| ~~`secret/viktor/truenas_ssh_key`~~ | **LEGACY** — was SSH key for democratic-csi SSH driver (TrueNAS decommissioned) |
+| ~~`secret/viktor/truenas_root_password`~~ | **LEGACY** — was TrueNAS root password (TrueNAS decommissioned) |
 
 ### Terraform Stacks
 
 - **`stacks/proxmox-csi/`**: Deploys Proxmox CSI plugin + `proxmox-lvm` StorageClass + node topology labels
-- **`stacks/nfs-csi/`**: Deploys NFS CSI driver for TrueNAS
-- **`stacks/iscsi-csi/`**: ~~Deploys democratic-csi iSCSI driver~~ — **DEPRECATED**, pending removal
+- **`stacks/nfs-csi/`**: Deploys NFS CSI driver + StorageClasses for Proxmox NFS
 - All application stacks reference NFS volumes via `module "nfs_<name>"` calls
 - Database PVCs use `storageClass: proxmox-lvm` (CNPG, MySQL Helm VCT, Redis Helm, standalone PVCs)
 
@@ -182,14 +163,11 @@ Total footprint: ~1.5Gi → ~400Mi.
 
 NFS exports are NOT managed by Terraform. To add a new service:
 
-1. SSH to TrueNAS: `ssh root@10.0.10.15`
-2. Edit `/root/secrets/nfs_exports.sh`
-3. Add dataset + export entry:
-   ```bash
-   create_nfs_export "main/<service>" "/mnt/main/<service>"
-   ```
-4. Run the script: `/root/secrets/nfs_exports.sh`
-5. Verify: `showmount -e 10.0.10.15`
+1. SSH to Proxmox host: `ssh root@192.168.1.127`
+2. Create the directory: `mkdir -p /srv/nfs/<service> && chmod 777 /srv/nfs/<service>`
+3. Edit `/etc/exports` — add the export entry
+4. Reload exports: `exportfs -ra`
+5. Verify: `showmount -e 192.168.1.127`
 
 ## Decisions & Rationale
 
@@ -197,26 +175,14 @@ NFS exports are NOT managed by Terraform. To add a new service:
 
 - **Simplicity**: No volume provisioning delays, instant mounts
 - **RWX support**: Multiple pods can share one volume (Nextcloud, Immich)
-- **ZFS benefits**: Snapshots, compression, dedup all work at dataset level
-- **Good enough**: For SQLite on NFS specifically, we accept the risk for low-value data (logs, caches) but mandate iSCSI for critical DBs
+- **Good enough**: For SQLite on NFS specifically, we accept the risk for low-value data (logs, caches) but mandate proxmox-lvm for critical DBs
 
-### Why iSCSI for Databases?
+### Why Proxmox CSI for Databases? (formerly iSCSI)
 
 - **ACID guarantees**: Block device + local filesystem = real fsync
-- **Performance**: No NFS protocol overhead for random I/O
-- **Tested**: PostgreSQL CNPG and MySQL InnoDB Cluster both run on iSCSI, zero corruption in 2+ years
-
-### Why SSH Driver Over API?
-
-The democratic-csi API driver (`driver: freenas-api-iscsi`) has these issues:
-- Requires TrueNAS API credentials in plaintext ConfigMap
-- Fails silently when API schema changes between TrueNAS versions
-- No retry logic on transient API errors
-
-SSH driver (`driver: freenas-ssh`) is simpler:
-- Direct `zfs` commands, no API translation layer
-- SSH key auth (Vault-managed)
-- Deterministic error messages
+- **Performance**: No NFS protocol overhead for random I/O, no network hop (LVM-thin hotplug direct to VM)
+- **Tested**: PostgreSQL CNPG and MySQL InnoDB Cluster both run on proxmox-lvm, zero corruption
+- **Single CoW layer**: LVM-thin only, no ZFS double-CoW issues
 
 ### Why Soft Mount for NFS?
 
@@ -230,7 +196,7 @@ Soft mount (`soft,timeo=30,retrans=3`) trades availability for responsiveness:
 - Operations return EIO after timeout → app can handle error
 - Acceptable for non-critical data paths
 
-**Critical paths**: Databases use iSCSI (not NFS), so soft mount never affects data integrity.
+**Critical paths**: Databases use proxmox-lvm (not NFS), so soft mount never affects data integrity.
 
 ## Troubleshooting
 
@@ -242,55 +208,23 @@ Soft mount (`soft,timeo=30,retrans=3`) trades availability for responsiveness:
 ```bash
 # On K8s node
 mount | grep nfs
-showmount -e 10.0.10.15
+showmount -e 192.168.1.127
 
-# Check NFS server
-ssh root@10.0.10.15
-zfs list | grep main/<service>
+# Check NFS server (Proxmox host)
+ssh root@192.168.1.127
+ls -la /srv/nfs/<service>
 cat /etc/exports | grep <service>
 ```
 
 **Fix**:
-1. Verify dataset exists: `zfs list main/<service>`
+1. Verify directory exists: `ls /srv/nfs/<service>` (or `/srv/nfs-ssd/<service>`)
 2. Verify export: `grep <service> /etc/exports`
-3. If missing: re-run `/root/secrets/nfs_exports.sh`
-4. Restart NFS server: `service nfs-server restart`
+3. If missing: add to `/etc/exports` and run `exportfs -ra`
+4. Restart NFS server: `systemctl restart nfs-server`
 
-### iSCSI Session Drops
+### ~~iSCSI Session Drops~~ (HISTORICAL — iSCSI removed)
 
-**Symptom**: PostgreSQL/MySQL pod restarts, iSCSI reconnection loops
-
-**Diagnosis**:
-```bash
-# On K8s node
-iscsiadm -m session
-dmesg | grep iscsi
-journalctl -u iscsid -f
-```
-
-**Fix**:
-1. Check TrueNAS iSCSI service: WebUI → Sharing → iSCSI → Targets
-2. Verify hardened timeouts: `iscsiadm -m node -o show | grep timeout`
-3. If defaults: re-apply cloud-init or manually update `/etc/iscsi/iscsid.conf`
-4. Restart session:
-   ```bash
-   iscsiadm -m node -u
-   iscsiadm -m node -l
-   ```
-
-### Democratic-CSI Sidecar OOMKill
-
-**Symptom**: `kubectl describe pod` shows sidecar containers OOMKilled
-
-**Diagnosis**:
-```bash
-kubectl get events -n democratic-csi | grep OOM
-kubectl top pod -n democratic-csi
-```
-
-**Fix**:
-1. Set explicit resources in Helm values (see "Democratic-CSI Sidecar Resources" above)
-2. Apply: `terragrunt apply` in `stacks/democratic-csi/`
+> iSCSI was replaced by Proxmox CSI (2026-04-02) and TrueNAS has been decommissioned. This section is kept for historical reference only.
 
 ### SQLite Corruption on NFS
 
@@ -302,8 +236,8 @@ kubectl top pod -n democratic-csi
 sqlite3 /data/db.sqlite "PRAGMA integrity_check;"
 ```
 
-**Fix**: Migrate to iSCSI
-1. Create iSCSI PVC in Terraform stack
+**Fix**: Migrate to proxmox-lvm
+1. Create proxmox-lvm PVC in Terraform stack
 2. Restore from backup to new volume
 3. Update deployment to use new PVC
 4. Delete old NFS PVC
@@ -314,18 +248,18 @@ sqlite3 /data/db.sqlite "PRAGMA integrity_check;"
 
 **Diagnosis**:
 ```bash
-# On TrueNAS
-zpool iostat -v 5
-arc_summary | grep "Hit Rate"
+# On Proxmox host
+ssh root@192.168.1.127
+iostat -x 5
+lvs --reportformat json pve/nfs-data ssd/nfs-ssd-data
 
 # On K8s node
 nfsiostat 5
 ```
 
 **Optimization**:
-1. Check ZFS ARC hit rate (should be >90%)
-2. Move hot datasets to SSD pool: `zfs send main/<dataset> | zfs recv ssd/<dataset>`
-3. Tune NFS mount: add `rsize=1048576,wsize=1048576` to StorageClass `mountOptions`
+1. Move hot data to SSD NFS: relocate from `/srv/nfs/<service>` to `/srv/nfs-ssd/<service>` and update PV path
+2. Tune NFS mount: add `rsize=1048576,wsize=1048576` to StorageClass `mountOptions`
 
 ## Related
 
@@ -333,5 +267,5 @@ nfsiostat 5
   - `docs/runbooks/restore-postgresql.md`
   - `docs/runbooks/restore-mysql.md`
   - `docs/runbooks/recover-nfs-mount.md`
-- **Architecture**: `docs/architecture/backup-dr.md` (backup strategy using ZFS snapshots)
-- **Reference**: `.claude/reference/service-catalog.md` (which services use NFS vs iSCSI)
+- **Architecture**: `docs/architecture/backup-dr.md` (backup strategy using LVM snapshots and Proxmox host scripts)
+- **Reference**: `.claude/reference/service-catalog.md` (which services use NFS vs proxmox-lvm)

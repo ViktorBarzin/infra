@@ -63,11 +63,11 @@ variable "ha_sofia_token" {
 }
 variable "nfs_music_server" {
   type    = string
-  default = "10.0.10.15"
+  default = "192.168.1.127"
 }
 variable "nfs_music_path" {
   type    = string
-  default = "/mnt/main/freedify-music"
+  default = "/srv/nfs/freedify-music"
 }
 
 

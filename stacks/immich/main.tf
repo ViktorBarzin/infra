@@ -17,7 +17,7 @@ variable "immich_version" {
   # Change me to upgrade
   default = "v2.7.4"
 }
-variable "nfs_server" { type = string }
+variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
 
 
@@ -27,71 +27,70 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# NFS volumes for immich-server
-module "nfs_backups" {
+# NFS volumes on Proxmox host (migrated from TrueNAS 2026-04-13)
+
+module "nfs_backups_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-backups"
+  name       = "immich-backups-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/immich/backups"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/backups"
 }
 
-module "nfs_encoded_video" {
+module "nfs_encoded_video_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-encoded-video"
+  name       = "immich-encoded-video-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/immich/encoded-video"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/encoded-video"
 }
 
-module "nfs_library" {
+module "nfs_library_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-library"
+  name       = "immich-library-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/immich/library"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/library"
 }
 
-module "nfs_profile" {
+module "nfs_profile_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-profile"
+  name       = "immich-profile-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/immich/profile"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/profile"
 }
 
-module "nfs_thumbs" {
+module "nfs_thumbs_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-thumbs"
+  name       = "immich-thumbs-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/ssd/immich/thumbs"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs-ssd/immich/thumbs"
 }
 
-module "nfs_upload" {
+module "nfs_upload_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-upload"
+  name       = "immich-upload-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/immich/upload"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/upload"
 }
 
-# NFS volume for immich-postgresql (shared with backup cronjob)
-module "nfs_postgresql" {
+module "nfs_postgresql_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-postgresql-data"
+  name       = "immich-postgresql-data-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/immich/data-immich-postgresql"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/immich/postgresql"
 }
 
-# NFS volume for immich-machine-learning cache
-module "nfs_ml_cache" {
+module "nfs_ml_cache_host" {
   source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-ml-cache"
+  name       = "immich-ml-cache-host"
   namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/ssd/immich/machine-learning"
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs-ssd/immich/machine-learning"
 }
 
 resource "kubernetes_namespace" "immich" {
@@ -303,37 +302,37 @@ resource "kubernetes_deployment" "immich_server" {
         volume {
           name = "backups"
           persistent_volume_claim {
-            claim_name = module.nfs_backups.claim_name
+            claim_name = module.nfs_backups_host.claim_name
           }
         }
         volume {
           name = "encoded-video"
           persistent_volume_claim {
-            claim_name = module.nfs_encoded_video.claim_name
+            claim_name = module.nfs_encoded_video_host.claim_name
           }
         }
         volume {
           name = "library"
           persistent_volume_claim {
-            claim_name = module.nfs_library.claim_name
+            claim_name = module.nfs_library_host.claim_name
           }
         }
         volume {
           name = "profile"
           persistent_volume_claim {
-            claim_name = module.nfs_profile.claim_name
+            claim_name = module.nfs_profile_host.claim_name
           }
         }
         volume {
           name = "thumbs"
           persistent_volume_claim {
-            claim_name = module.nfs_thumbs.claim_name
+            claim_name = module.nfs_thumbs_host.claim_name
           }
         }
         volume {
           name = "upload"
           persistent_volume_claim {
-            claim_name = module.nfs_upload.claim_name
+            claim_name = module.nfs_upload_host.claim_name
           }
         }
       }
@@ -478,7 +477,7 @@ resource "kubernetes_deployment" "immich-postgres" {
         volume {
           name = "postgresql-persistent-storage"
           persistent_volume_claim {
-            claim_name = module.nfs_postgresql.claim_name
+            claim_name = module.nfs_postgresql_host.claim_name
           }
         }
       }
@@ -646,7 +645,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
         volume {
           name = "cache"
           persistent_volume_claim {
-            claim_name = module.nfs_ml_cache.claim_name
+            claim_name = module.nfs_ml_cache_host.claim_name
           }
         }
       }
@@ -771,7 +770,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
             volume {
               name = "postgresql-backup"
               persistent_volume_claim {
-                claim_name = module.nfs_postgresql.claim_name
+                claim_name = module.nfs_postgresql_host.claim_name
               }
             }
           }

@@ -23,7 +23,6 @@ graph TB
         NODE3["k8s-node3<br/>203"]
         NODE4["k8s-node4<br/>204"]
         REG["docker-registry<br/>220"]
-        TN["TrueNAS<br/>9000"]
     end
 
     subgraph Network["Network Bridges"]
@@ -48,7 +47,6 @@ graph TB
     PF --> VMBR1_20
     HA --> VMBR0
     DEV --> VMBR1_10
-    TN --> VMBR1_10
 
     MASTER --> VMBR1_20
     NODE1 --> VMBR1_20
@@ -78,7 +76,7 @@ graph TB
 | Network | VLAN | CIDR | Purpose |
 |---------|------|------|---------|
 | Physical | - | 192.168.1.0/24 | Physical devices, Proxmox host (192.168.1.127) |
-| Management | 10 | 10.0.10.0/24 | Infrastructure VMs, TrueNAS, devvm |
+| Management | 10 | 10.0.10.0/24 | Infrastructure VMs, devvm |
 | Kubernetes | 20 | 10.0.20.0/24 | K8s cluster nodes and services |
 
 ### Virtual Machine Inventory
@@ -94,7 +92,7 @@ graph TB
 | 203 | k8s-node3 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 204 | k8s-node4 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 220 | docker-registry | 4 | 4GB | vmbr1:vlan20 | 10.0.20.10 | Private Docker registry |
-| 9000 | truenas | 16 | 16GB | vmbr1:vlan10 | 10.0.10.15 | NFS storage server |
+| ~~9000~~ | ~~truenas~~ | — | — | — | ~~10.0.10.15~~ | **DECOMMISSIONED** — NFS now served by Proxmox host (192.168.1.127) |
 
 ### Kubernetes Cluster
 
@@ -103,7 +101,7 @@ graph TB
 | Version | v1.34.2 |
 | Nodes | 5 (1 control plane, 4 workers) |
 | CNI | Calico |
-| Storage | NFS (democratic-csi) + Proxmox-LVM (Proxmox CSI) |
+| Storage | NFS (Proxmox host, nfs-csi) + Proxmox-LVM (Proxmox CSI) |
 | Ingress | Traefik v3 |
 | Total Services | 70+ services across 5 tiers |
 
@@ -164,8 +162,8 @@ Kyverno policies automatically inject namespace labels, LimitRange, ResourceQuot
 - **Headscale**: Tailscale-compatible mesh VPN control plane
 
 **Storage & Security**:
-- **TrueNAS**: NFS storage backend (10.0.10.15)
-- **democratic-csi**: Dynamic PV provisioning from TrueNAS
+- **Proxmox NFS**: NFS storage served directly from Proxmox host (192.168.1.127) at `/srv/nfs` (HDD) and `/srv/nfs-ssd` (SSD)
+- **Proxmox CSI**: Block storage via LVM-thin hotplug for databases
 - **Vaultwarden**: Password manager
 - **Immich**: Photo management
 - **CrowdSec**: IPS/IDS with community threat intelligence
