@@ -1282,19 +1282,19 @@ serverFiles:
               summary: "LVM thin pool has only {{ $value }}% free — snapshot overhead may cause pool exhaustion"
           # --- 3-2-1 Backup Pipeline Alerts ---
           - alert: WeeklyBackupStale
-            expr: (time() - weekly_backup_last_run_timestamp{job="weekly-backup"}) > 777600
+            expr: (time() - daily_backup_last_run_timestamp{job="daily-backup"}) > 777600
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Weekly backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
+              summary: "Daily backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: WeeklyBackupFailing
-            expr: weekly_backup_last_status{job="weekly-backup"} != 0
+            expr: daily_backup_last_status{job="daily-backup"} != 0
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "Weekly backup completed with errors (status={{ $value }})"
+              summary: "Daily backup completed with errors (status={{ $value }})"
           - alert: PfsenseBackupStale
             expr: (time() - backup_last_success_timestamp{job="pfsense-backup"}) > 777600
             for: 30m

@@ -193,10 +193,10 @@ For databases (MySQL, PostgreSQL), prefer the app-level backup restore (see `res
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | "LV is active" during mount | Workload pod still running or stuck | `kubectl get pods -A | grep <pvc-name>`, delete pod if stuck |
-| "No such file or directory" in backup | PVC not backed up (in excluded namespace) | Check `weekly-backup` script EXCLUDE_NAMESPACES |
+| "No such file or directory" in backup | PVC not backed up (in excluded namespace) | Check `daily-backup` script EXCLUDE_NAMESPACES |
 | rsync shows 0 files transferred | Wrong backup week or PVC name | Double-check paths: `ls /mnt/backup/pvc-data/<week>/<ns>/<pvc>/` |
 | Pod stuck in ContainerCreating after restore | LV still active on PVE host | `lvchange -an pve/<lv-name>`, wait 30s, check pod again |
-| Backup week missing | Weekly backup hasn't run for that week | Check `systemctl status weekly-backup.service`, verify retention |
+| Backup week missing | Daily backup hasn't run for that week | Check `systemctl status daily-backup.service`, verify retention |
 
 ## Restore from Synology (if PVE host sda is unavailable)
 

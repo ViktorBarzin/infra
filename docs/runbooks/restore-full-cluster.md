@@ -91,7 +91,7 @@ lvchange -an pve/$LV_NAME
 
 **Note on pfSense restore**: If pfSense needs restoration, restore `config.xml` from `/mnt/backup/pfsense/<week>/config.xml` via web UI, or full filesystem tar for custom scripts.
 
-**Note on PVE config restore**: If custom scripts/timers are lost, restore from `/mnt/backup/pve-config/` (weekly-backup, offsite-sync-backup, lvm-pvc-snapshot scripts + timers).
+**Note on PVE config restore**: If custom scripts/timers are lost, restore from `/mnt/backup/pve-config/` (daily-backup, offsite-sync-backup, lvm-pvc-snapshot scripts + timers).
 
 ### Phase 4: Vault (secrets foundation)
 ```bash

@@ -188,8 +188,8 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 **Copy 3**: Synology NAS offsite (two-tier: sda + NFS)
 
 **PVE host scripts** (source: `infra/scripts/`):
-- `/usr/local/bin/weekly-backup` — Sunday 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Auto SQLite backup (magic number check, `?mode=ro`). Auto-discovered BACKUP_DIRS (glob, not hardcoded). Also backs up pfSense (config.xml + tar), PVE config. Prunes snapshots >7d.
-- `/usr/local/bin/offsite-sync-backup` — Sunday 08:00 (After=weekly-backup). Step 1: sda → Synology `pve-backup/` (PVC snapshots, pfSense, PVE config). Step 2: NFS → Synology `nfs/` + `nfs-ssd/` via inotify change-tracked `rsync --files-from`. Monthly full `rsync --delete` on 1st Sunday.
+- `/usr/local/bin/daily-backup` — Daily 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Auto SQLite backup (magic number check, `?mode=ro`). Auto-discovered BACKUP_DIRS (glob, not hardcoded). Also backs up pfSense (config.xml + tar), PVE config. Prunes snapshots >7d.
+- `/usr/local/bin/offsite-sync-backup` — Daily 06:00 (After=daily-backup). Step 1: sda → Synology `pve-backup/` (PVC snapshots, pfSense, PVE config). Step 2: NFS → Synology `nfs/` + `nfs-ssd/` via inotify change-tracked `rsync --files-from`. Monthly full `rsync --delete` on 1st Sunday.
 - `/usr/local/bin/lvm-pvc-snapshot` — Daily 03:00. Thin snapshots of all PVCs except dbaas+monitoring. 7-day retention. Instant restore: `lvm-pvc-snapshot restore <lv> <snap>`.
 - `nfs-change-tracker.service` — Continuous inotifywait on `/srv/nfs` + `/srv/nfs-ssd`. Logs changed file paths to `/mnt/backup/.nfs-changes.log`. Consumed by offsite-sync-backup for incremental rsync (completes in seconds instead of 30+ minutes).
 
