@@ -10,12 +10,11 @@
 
 ## Summary
 
-This is a test post-mortem to validate the automated TODO implementation pipeline. No real incident occurred.
+This is a test post-mortem to validate the automated TODO implementation pipeline.
 
 ## Impact
 
 - **User-facing**: None
-- **Blast radius**: None
 - **Duration**: N/A
 - **Data loss**: None
 
@@ -23,7 +22,7 @@ This is a test post-mortem to validate the automated TODO implementation pipelin
 
 | Time | Event |
 |------|-------|
-| **12:30** | Test post-mortem created to validate pipeline |
+| **15:55** | Test post-mortem created |
 
 ## Root Cause
 
@@ -35,12 +34,12 @@ Test document — no real root cause.
 
 | Priority | Action | Type | Details | Status |
 |----------|--------|------|---------|--------|
-| P2 | Add Uptime Kuma monitor for PVE NFS port 2049 | Monitor | TCP check on 192.168.1.127:2049 to detect NFS service failures | Done |
-| P2 | Verify PVE NFS export health in daily backup script | Investigation | Check if daily-backup.service validates NFS exports before starting | TODO |
+| P2 | Add Uptime Kuma monitor for PVE SSH port 22 | Monitor | TCP check on 192.168.1.127:22 to detect PVE host unreachable | TODO |
+| P2 | Review NFS export monitoring strategy | Investigation | Evaluate if node_exporter NFS metrics are sufficient | TODO |
 
 ## Lessons Learned
 
-1. Test post-mortems are useful for validating automation pipelines.
+1. Test post-mortems validate automation pipelines.
 
 ## Follow-up Implementation
 
@@ -48,5 +47,3 @@ _This section is auto-populated by the postmortem-todo-resolver agent._
 
 | Date | Action | Priority | Type | Commit | Implemented By |
 |------|--------|----------|------|--------|----------------|
-| 2026-04-14 | Add Uptime Kuma TCP monitor for PVE NFS 192.168.1.127:2049 (ID: 328, Tier 1, 30s interval) | P2 | Monitor | — (API) | postmortem-todo-resolver |
-| — | Verify PVE NFS export health in daily backup script | P2 | Investigation | — | Needs human review |
