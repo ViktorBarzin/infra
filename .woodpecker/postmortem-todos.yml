@@ -1,0 +1,80 @@
+when:
+  event: push
+  branch: master
+  path:
+    include:
+      - 'docs/post-mortems/*.md'
+    exclude:
+      - '.woodpecker/**'
+
+steps:
+  - name: parse-todos
+    image: python:3.12-alpine
+    commands:
+      - apk add --no-cache jq git openssh-client
+      # Find which post-mortem changed
+      - PM_FILE=$(git diff HEAD~1 --name-only | grep 'docs/post-mortems/.*\.md' | head -1)
+      - |
+        if [ -z "$PM_FILE" ]; then
+          echo "No post-mortem markdown changes detected"
+          echo '{"skip": true}' > /tmp/todos.json
+          exit 0
+        fi
+      - echo "Post-mortem changed: $PM_FILE"
+      # Check if there are new TODOs (not just TODO→Done updates)
+      - |
+        if ! git diff HEAD~1 -- "$PM_FILE" | grep -q '+.*| TODO |'; then
+          echo "No new TODOs added (only status updates)"
+          echo '{"skip": true}' > /tmp/todos.json
+          exit 0
+        fi
+      # Parse TODOs
+      - python3 scripts/parse-postmortem-todos.sh "$PM_FILE" > /tmp/todos.json || bash scripts/parse-postmortem-todos.sh "$PM_FILE" > /tmp/todos.json
+      - cat /tmp/todos.json
+      - TODO_COUNT=$(jq '.safe_todos' /tmp/todos.json)
+      - echo "$TODO_COUNT auto-implementable TODO(s) found"
+      - |
+        if [ "$TODO_COUNT" -eq 0 ]; then
+          echo "No auto-implementable TODOs (all are Architecture/Investigation/Migration type)"
+          echo '{"skip": true}' > /tmp/todos.json
+        fi
+
+  - name: implement-todos
+    image: alpine
+    commands:
+      - |
+        if [ "$(jq -r '.skip // empty' /tmp/todos.json 2>/dev/null)" = "true" ]; then
+          echo "Skipping — no TODOs to implement"
+          exit 0
+        fi
+      - apk add --no-cache openssh-client jq
+      - PM_FILE=$(jq -r '.file' /tmp/todos.json)
+      - PM_DATE=$(echo "$PM_FILE" | grep -oP '\d{4}-\d{2}-\d{2}')
+      - TODOS=$(cat /tmp/todos.json)
+      # SSH to DevVM and run Claude Code in headless mode
+      - |
+        ssh -o StrictHostKeyChecking=no wizard@10.0.10.10 \
+          "cd ~/code/infra && git pull && claude -p \
+            --agent postmortem-todo-resolver \
+            --dangerously-skip-permissions \
+            --max-budget-usd 5 \
+            'Implement the auto-implementable TODOs from $PM_FILE. Here is the parsed TODO list: $TODOS'"
+    secrets:
+      - ssh_deploy_key
+
+  - name: notify-slack
+    image: alpine
+    commands:
+      - apk add --no-cache curl jq
+      - |
+        PM_FILE=$(jq -r '.file // "unknown"' /tmp/todos.json 2>/dev/null)
+        SAFE=$(jq -r '.safe_todos // 0' /tmp/todos.json 2>/dev/null)
+        SKIPPED=$(jq -r '.skipped_todos // 0' /tmp/todos.json 2>/dev/null)
+        STATUS="${CI_PIPELINE_STATUS:-unknown}"
+        curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+          -H "Content-Type: application/json" \
+          -d "{\"text\": \"*Post-mortem TODO resolver* ($STATUS)\\n• File: \`$PM_FILE\`\\n• Safe TODOs processed: $SAFE\\n• Skipped (needs human): $SKIPPED\\n• Pipeline: ${CI_PIPELINE_URL:-N/A}\"}" || true
+    secrets:
+      - slack_webhook
+    when:
+      - status: [success, failure]
