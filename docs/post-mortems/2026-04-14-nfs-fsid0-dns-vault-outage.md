@@ -99,7 +99,7 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 | Remove `fsid=0` from `/etc/exports` on PVE host | Done | Completed Apr 14 |
 | Fix `lockd configuration failure` on PVE NFS server | Done | Disabled NFSv3 entirely (`vers3=n`). lockd is an nfsdctl bug on kernel 6.14 — not fixable without Proxmox patch. |
 | Force-unmount hung TrueNAS NFS mounts on PVE | Done | `umount -l /mnt/truenas-src /mnt/truenas-ssd`. Not in fstab — won't recur. |
-| Manage `/etc/exports` in git (add to `infra/scripts/` and deploy via PVE provisioning) | TODO | Prevents untracked config drift |
+| Manage `/etc/exports` in git (add to `infra/scripts/` and deploy via PVE provisioning) | Done | `scripts/pve-nfs-exports` added with fsid=0 safety comments. Deploy: scp + exportfs -ra |
 | Migrate all NFS PVs to NFSv4 | Done | Patched 52 PVs to `nfsvers=4`. Updated TF module + StorageClass. Applied all 20 stacks. |
 | Add DNS zone sync CronJob | Done | `technitium-zone-sync` runs every 30min, replicates all primary zones to secondary/tertiary via AXFR |
 
@@ -108,7 +108,7 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 | Action | Owner | Status |
 |--------|-------|--------|
 | Migrate Technitium primary to `proxmox-lvm-encrypted` | Done | Completed Apr 14 |
-| Migrate Alertmanager PV from NFS to `proxmox-lvm-encrypted` | TODO | Prevents circular alerting dependency |
+| Migrate Alertmanager PV from NFS to `proxmox-lvm-encrypted` | Done | `storage-prometheus-alertmanager-0` now on `proxmox-lvm-encrypted`. Helm `persistence.storageClass` set. |
 | Migrate Vault PVCs from `nfs-proxmox` to `proxmox-lvm-encrypted` | TODO | Vault is too critical for NFS dependency |
 | Review all 53 NFS PVs — identify which are critical-path and migrate | TODO | Reduce NFS blast radius |
 
@@ -116,19 +116,19 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 
 | Action | Owner | Status |
 |--------|-------|--------|
-| Add PrometheusRule: NFS mount errors from node kernel logs | TODO | `node_nfs_rpc_retransmissions_total` rate > threshold |
+| Add PrometheusRule: NFS mount errors from node kernel logs | Done | `NFSHighRPCRetransmissions` alert: rate > 5/s for 5m → warning |
 | Add PrometheusRule: Pods in ContainerCreating > 10 minutes | Done | `NFSMountFailures` + `NFSCSINodeDown` alerts added to Prometheus |
-| Add Uptime Kuma monitor: TrueNAS ping (10.0.10.15) | TODO | Catches TrueNAS outage early |
-| Add Uptime Kuma monitor: PVE NFS port 2049 TCP check | TODO | Catches NFS service failures |
-| Verify Grafana Uptime Kuma alert actually fires | TODO | Was down 37h unnoticed |
+| Add Uptime Kuma monitor: TrueNAS ping (10.0.10.15) | Done | Already existed (id=66, PING, 60s). Verified active. |
+| Add Uptime Kuma monitor: PVE NFS port 2049 TCP check | Done | Already existed (id=96 + id=328, PORT 2049, active). Verified. |
+| Verify Grafana Uptime Kuma alert actually fires | Done | Monitor id=32 has notificationIDList=[1] (Slack). Root cause of 37h gap: Uptime Kuma itself on NFS. |
 
 ### P3 — Improve NFS resilience
 
 | Action | Owner | Status |
 |--------|-------|--------|
 | Remove hung TrueNAS `hard` mounts from PVE fstab (TrueNAS is sunset) | TODO | Eliminates D-state kernel process risk |
-| Add NFS export health check to daily-backup script | TODO | Backup script should verify NFS before starting |
-| Document NFS CSI mount option requirements in CLAUDE.md | TODO | Prevents future misconfigurations |
+| Add NFS export health check to daily-backup script | Done | `check_nfs_exports()` added to `scripts/daily-backup.sh`: checks fsid=0, nfs-server active, exportfs count |
+| Document NFS CSI mount option requirements in CLAUDE.md | Done | Added NFS CSI section: nfsvers=4 mandatory, fsid=0 forbidden, critical services → proxmox-lvm-encrypted |
 
 ## Phase 2: NFS Restart Broke NFSv3 + DNS Zone Sync Gap
 
@@ -205,3 +205,19 @@ After the restart, **ALL NFSv3 mount(2) system calls returned EIO** from k8s wor
 7. **NFSv3 client kernel state survives mount cleanup**: Force-unmounting all NFS mounts from a node does NOT clear the kernel's per-server NFS client state. The only reliable fix was switching to NFSv4 (different protocol path). NFSv3 is now disabled on the PVE server.
 
 8. **`kubectl rollout restart statefulset` is dangerous for operator-managed StatefulSets**: The MySQL InnoDB operator lost track of its cluster state after the rollout restart changed the pod template. Recovery required manually removing kopf finalizers, recreating the InnoDB cluster, and re-bootstrapping the router.
+
+## Follow-up Implementation
+
+| Date | Action | Priority | Type | Commit | Implemented By |
+|------|--------|----------|------|--------|----------------|
+| 2026-04-14 | Add `NFSHighRPCRetransmissions` PrometheusRule (`node_nfs_rpc_retransmissions_total` rate > 5/s for 5m) | P2 | Alert | [`35646841`](https://github.com/ViktorBarzin/infra/commit/35646841) | postmortem-todo-resolver |
+| 2026-04-14 | Migrate Alertmanager PV from NFS to `proxmox-lvm-encrypted` (eliminates circular alerting dependency) | P2 | Alert | [`35646841`](https://github.com/ViktorBarzin/infra/commit/35646841) | postmortem-todo-resolver |
+| 2026-04-14 | Add `/etc/exports` to git as `scripts/pve-nfs-exports` with fsid=0 safety documentation | P2 | Config | [`3da4812c`](https://github.com/ViktorBarzin/infra/commit/3da4812c) | postmortem-todo-resolver |
+| 2026-04-14 | Add `check_nfs_exports()` to `scripts/daily-backup.sh` (detects fsid=0, nfs-server down, no active exports) | P3 | Config | [`3da4812c`](https://github.com/ViktorBarzin/infra/commit/3da4812c) | postmortem-todo-resolver |
+| 2026-04-14 | Document NFS CSI mount requirements in `.claude/CLAUDE.md` (nfsvers=4 mandatory, fsid=0 forbidden) | P3 | Config | [`3da4812c`](https://github.com/ViktorBarzin/infra/commit/3da4812c) | postmortem-todo-resolver |
+| 2026-04-14 | TrueNAS ICMP ping monitor (id=66) — already existed, verified active | P2 | Monitor | — | Verified existing |
+| 2026-04-14 | PVE NFS port 2049 TCP monitor (id=96, 328) — already existed, verified active | P2 | Monitor | — | Verified existing |
+| 2026-04-14 | Grafana Uptime Kuma monitor — alert wired to Slack (notificationIDList=[1]). Root cause of 37h gap: Uptime Kuma itself on NFS storage | P2 | Alert | — | Verified existing |
+| — | Migrate Vault PVCs from `nfs-proxmox` to `proxmox-lvm-encrypted` | P2 | Migration | — | Needs human review |
+| — | Review all 53 NFS PVs — identify critical-path and migrate | P2 | Migration | — | Needs human review |
+| — | Remove hung TrueNAS `hard` mounts from PVE fstab (TrueNAS is sunset) | P2 | Migration | — | Needs human review |
