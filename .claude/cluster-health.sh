@@ -637,56 +637,60 @@ except ImportError:
     sys.exit(0)
 
 try:
-    api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=30)
     password = os.environ.get("UPTIME_KUMA_PASSWORD", "")
     if not password:
         print("ERROR:UPTIME_KUMA_PASSWORD not set")
         sys.exit(0)
+    api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=120, wait_events=0.2)
     api.login("admin", password)
 
     monitors = api.get_monitors()
-    # Build id->name map and track active/paused
-    id_to_name = {}
+    heartbeats = api.get_heartbeats()
+
+    internal_up = 0
+    internal_down = []
+    external_up = 0
+    external_down = []
     paused_count = 0
+
     for m in monitors:
         mid = m.get("id")
         name = m.get("name", "unknown")
         active = m.get("active", True)
+        is_external = name.startswith("[External] ")
+
         if not active:
             paused_count += 1
-        else:
-            id_to_name[mid] = name
+            continue
 
-    # Use bulk heartbeat fetch (single API call) instead of per-monitor calls
-    heartbeats = api.get_heartbeats()
-
-    down = []
-    up_count = 0
-    for mid, name in id_to_name.items():
         beats = heartbeats.get(mid, [])
         if beats:
             last_beat = beats[-1]
-            # Handle nested lists (some monitors return list of lists)
             if isinstance(last_beat, list):
                 last_beat = last_beat[-1] if last_beat else {}
             status = last_beat.get("status", 0) if isinstance(last_beat, dict) else 0
-            # Handle both enum and int (MonitorStatus.UP == 1)
-            if status == 1:
-                up_count += 1
-            elif status == 3:
-                paused_count += 1
-            else:
-                down.append(name)
+            if hasattr(status, "value"):
+                status = status.value
+            is_up = (status == 1)
         else:
-            # No heartbeats = unknown, treat as down
-            down.append(name)
+            is_up = False
+
+        if is_external:
+            if is_up:
+                external_up += 1
+            else:
+                external_down.append(name.replace("[External] ", ""))
+        else:
+            if is_up:
+                internal_up += 1
+            else:
+                internal_down.append(name)
 
     api.disconnect()
 
-    down_count = len(down)
-    total_active = up_count + down_count
-    down_names = ", ".join(down) if down else ""
-    print(f"{down_count}:{up_count}:{paused_count}:{total_active}:{down_names}")
+    int_down_names = ", ".join(internal_down) if internal_down else ""
+    ext_down_names = ", ".join(external_down) if external_down else ""
+    print(f"{len(internal_down)}:{internal_up}:{len(external_down)}:{external_up}:{paused_count}:{int_down_names}|{ext_down_names}")
 except Exception as e:
     print(f"CONN_ERROR:{e}")
 ' 2>/dev/null) || result="CONN_ERROR:python execution failed"
@@ -700,24 +704,35 @@ except Exception as e:
         warn "Cannot connect to Uptime Kuma: ${result#CONN_ERROR:}"
         json_add "uptime_kuma" "WARN" "Connection failed"
     else
-        local down_count up_count paused_count total_active down_names
-        down_count=$(echo "$result" | cut -d: -f1)
-        up_count=$(echo "$result" | cut -d: -f2)
-        paused_count=$(echo "$result" | cut -d: -f3)
-        total_active=$(echo "$result" | cut -d: -f4)
-        down_names=$(echo "$result" | cut -d: -f5-)
+        local int_down int_up ext_down ext_up paused_count down_details
+        int_down=$(echo "$result" | cut -d: -f1)
+        int_up=$(echo "$result" | cut -d: -f2)
+        ext_down=$(echo "$result" | cut -d: -f3)
+        ext_up=$(echo "$result" | cut -d: -f4)
+        paused_count=$(echo "$result" | cut -d: -f5)
+        down_details=$(echo "$result" | cut -d: -f6-)
+        local int_down_names="${down_details%%|*}"
+        local ext_down_names="${down_details#*|}"
 
-        if [[ "$down_count" -eq 0 ]]; then
-            pass "All $total_active active monitors up ($paused_count paused)"
-            json_add "uptime_kuma" "PASS" "$total_active up, $paused_count paused"
-        elif [[ "$down_count" -le 3 ]]; then
-            [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
-            warn "$down_count/$total_active monitor(s) down: $down_names"
-            json_add "uptime_kuma" "WARN" "$down_count down: $down_names"
+        local total_down=$((int_down + ext_down))
+        local total_up=$((int_up + ext_up))
+        local total_active=$((total_up + total_down))
+
+        if [[ "$total_down" -eq 0 ]]; then
+            pass "All monitors up — internal: ${int_up}, external: ${ext_up} ($paused_count paused)"
+            json_add "uptime_kuma" "PASS" "internal: $int_up up, external: $ext_up up, $paused_count paused"
         else
             [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
-            fail "$down_count/$total_active monitors down: $down_names"
-            json_add "uptime_kuma" "FAIL" "$down_count down: $down_names"
+            local details=""
+            [[ "$int_down" -gt 0 ]] && details="internal down($int_down): $int_down_names"
+            [[ "$ext_down" -gt 0 ]] && { [[ -n "$details" ]] && details="$details; "; details="${details}external down($ext_down): $ext_down_names"; }
+            if [[ "$total_down" -le 3 ]]; then
+                warn "$total_down/$total_active down: $details"
+                json_add "uptime_kuma" "WARN" "$details"
+            else
+                fail "$total_down/$total_active down: $details"
+                json_add "uptime_kuma" "FAIL" "$details"
+            fi
         fi
     fi
 }
