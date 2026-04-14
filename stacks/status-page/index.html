@@ -209,6 +209,9 @@ footer { color: var(--fg3); font-size: 11px; margin-top: 32px; padding-top: 16px
     html+='<div class="inc-info"><div class="inc-title">'+esc(inc.title)+'</div>';
     html+='<div class="inc-meta"><span>'+ago(created)+'</span>';
     if(!isReport)html+='<span>'+dur(created,end)+'</span>';
+    if(isReport&&inc.error_type)html+='<span>'+esc(inc.error_type)+'</span>';
+    if(isReport&&inc.scope)html+='<span>'+esc(inc.scope)+'</span>';
+    if(isReport&&inc.when_started)html+='<span>Since: '+esc(inc.when_started)+'</span>';
     if(resolved)html+='<span style="color:var(--green)">Resolved</span>';
     html+='</div>';
     if(inc.affected_services&&inc.affected_services.length){

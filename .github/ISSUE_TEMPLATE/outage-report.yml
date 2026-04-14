@@ -8,16 +8,30 @@ body:
       label: Affected Service
       description: Which service is affected?
       options:
-        - Nextcloud
-        - Immich
-        - Vaultwarden
-        - Grafana
+        - Nextcloud (files, calendar, contacts)
+        - Immich (photos)
+        - Vaultwarden (passwords)
+        - Mail (email, roundcube)
+        - Home Assistant
+        - Actual Budget
+        - Navidrome (music)
+        - Audiobookshelf (audiobooks)
         - Plex / Jellyfin
-        - Mail
+        - Grafana (dashboards)
+        - Linkwarden (bookmarks)
+        - Matrix (chat)
+        - Paperless-ngx (documents)
+        - Tandoor (recipes)
+        - FreshRSS (news)
+        - Frigate (cameras)
+        - HackMD (notes)
+        - Excalidraw (whiteboard)
+        - Wealthfolio / Finance
+        - Headscale / VPN
         - DNS
-        - VPN / Tailscale
         - Website / Blog
-        - Music (Navidrome / Freedify)
+        - Send (file sharing)
+        - Stirling PDF
         - Other
     validations:
       required: true
@@ -29,6 +43,49 @@ body:
       placeholder: "e.g., Getting 502 errors when trying to access Nextcloud since about 3pm"
     validations:
       required: true
+  - type: dropdown
+    id: error_type
+    attributes:
+      label: What kind of error?
+      description: This helps us narrow down the issue faster.
+      options:
+        - Page won't load (timeout / connection refused)
+        - 502 Bad Gateway
+        - 503 Service Unavailable
+        - Login / authentication not working
+        - Slow / degraded performance
+        - Specific feature broken (app loads but something inside doesn't work)
+        - Data missing or incorrect
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Is it just you or others too?
+      description: Helps us tell apart service outages from account/device issues.
+      options:
+        - Just me (others seem fine)
+        - Multiple people affected
+        - Not sure
+    validations:
+      required: false
+  - type: input
+    id: when
+    attributes:
+      label: When did it start?
+      description: Approximate time helps us correlate with logs and deployments.
+      placeholder: "e.g., about 3pm today, or since yesterday morning"
+    validations:
+      required: false
+  - type: input
+    id: url
+    attributes:
+      label: URL you were accessing (optional)
+      description: The exact URL helps us check the right endpoint.
+      placeholder: "e.g., https://nextcloud.viktorbarzin.me/apps/files"
+    validations:
+      required: false
   - type: input
     id: contact
     attributes:
