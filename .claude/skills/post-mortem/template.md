@@ -6,6 +6,7 @@
 | **Duration** | <DURATION> |
 | **Severity** | <SEV1/SEV2/SEV3> |
 | **Affected Services** | <COUNT> pods across <COUNT> namespaces |
+| **Issue** | [#N](https://github.com/ViktorBarzin/infra/issues/N) |
 | **Status** | Draft |
 
 ## Summary

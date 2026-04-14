@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service Status</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #ffffff; --surface: #f8fafb; --fg: #1a202c; --fg2: #64748b; --fg3: #94a3b8;
+  --border: #e2e8f0; --hover: #f1f5f9;
+  --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --indigo: #6366f1;
+  --green-bg: #f0fdf4; --red-bg: #fef2f2; --amber-bg: #fffbeb;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --fg: #e2e8f0; --fg2: #94a3b8; --fg3: #64748b;
+    --border: #334155; --hover: #1e293b;
+    --green: #4ade80; --red: #f87171; --amber: #fbbf24; --indigo: #818cf8;
+    --green-bg: #052e16; --red-bg: #450a0a; --amber-bg: #451a03;
+  }
+}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--sans); background: var(--bg); color: var(--fg); line-height: 1.5; -webkit-font-smoothing: antialiased; font-size: 14px; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; }
+
+header { margin-bottom: 28px; }
+header h1 { font-size: 20px; font-weight: 600; margin-bottom: 2px; }
+.ts { color: var(--fg3); font-family: var(--mono); font-size: 12px; }
+
+.hero { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-radius: 10px; margin-bottom: 24px; font-weight: 600; font-size: 15px; color: #fff; }
+.hero-ok { background: var(--green); }
+.hero-warn { background: var(--amber); color: var(--fg); }
+.hero-down { background: var(--red); }
+.hero-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.5); flex-shrink: 0; }
+.hero-ok .hero-dot { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.4); opacity: 1; } }
+
+.stale { background: var(--amber-bg); color: var(--amber); padding: 10px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; border: 1px solid color-mix(in srgb, var(--amber) 20%, transparent); }
+
+/* Incidents */
+.incidents { margin-bottom: 24px; }
+.inc-header { font-size: 15px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.inc-header .cnt { font-size: 12px; color: var(--fg3); font-weight: 400; }
+.resolved-header { margin-top: 20px; }
+
+.inc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+.inc-top { padding: 14px 16px; cursor: pointer; display: flex; align-items: flex-start; gap: 10px; user-select: none; }
+.inc-top:hover { background: var(--hover); }
+
+.sev { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; margin-top: 2px; }
+.sev-1 { background: var(--red-bg); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, transparent); }
+.sev-2 { background: var(--amber-bg); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
+.sev-3 { background: var(--surface); color: var(--fg2); border: 1px solid var(--border); }
+
+.inc-info { flex: 1; min-width: 0; }
+.inc-title { font-size: 14px; font-weight: 600; }
+.inc-meta { font-size: 12px; color: var(--fg3); margin-top: 2px; display: flex; gap: 12px; flex-wrap: wrap; }
+.inc-services { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.inc-svc { font-size: 11px; padding: 1px 8px; border-radius: 4px; background: var(--hover); border: 1px solid var(--border); color: var(--fg2); }
+
+.inc-tl { border-top: 1px solid var(--border); padding: 12px 16px; display: none; }
+.inc.open .inc-tl { display: block; }
+.tl-entry { position: relative; padding-left: 20px; padding-bottom: 14px; border-left: 2px solid var(--border); margin-left: 4px; }
+.tl-entry:last-child { padding-bottom: 0; }
+.tl-entry::before { content: ''; position: absolute; left: -5px; top: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--fg3); border: 2px solid var(--surface); }
+.tl-time { font-family: var(--mono); font-size: 11px; color: var(--fg3); }
+.tl-status { font-size: 12px; font-weight: 600; color: var(--fg); display: inline; }
+.tl-body { font-size: 13px; color: var(--fg2); margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+
+.inc-links { margin-top: 10px; font-size: 12px; display: flex; gap: 14px; }
+.inc-links a { color: var(--indigo); text-decoration: none; }
+.inc-links a:hover { text-decoration: underline; }
+
+.inc-resolved { opacity: 0.7; }
+.inc-resolved:hover { opacity: 1; }
+
+.sev-ur { background: color-mix(in srgb, var(--indigo) 15%, transparent); color: var(--indigo); border: 1px solid color-mix(in srgb, var(--indigo) 30%, transparent); }
+
+.report-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-radius: 10px; margin-bottom: 24px; background: var(--surface); border: 1px solid var(--border); }
+.report-bar span { font-size: 13px; color: var(--fg2); }
+.report-btn { font-family: var(--sans); font-size: 12px; font-weight: 600; padding: 6px 16px; border-radius: 6px; background: var(--indigo); color: #fff; text-decoration: none; white-space: nowrap; transition: opacity 0.15s; }
+.report-btn:hover { opacity: 0.85; }
+
+.bar { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.bar label { font-size: 11px; color: var(--fg3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+.fbtn { font-family: var(--sans); font-size: 12px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--fg2); cursor: pointer; font-weight: 500; }
+.fbtn:hover { border-color: var(--fg3); color: var(--fg); }
+.fbtn.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.bar select { font-family: var(--sans); font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; }
+
+.g { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.g.hide { display: none; }
+.gh { padding: 14px 16px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+.gh:hover { background: var(--hover); }
+.gt { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.gt .n { font-weight: 400; color: var(--fg3); font-size: 12px; }
+.chev { font-size: 10px; color: var(--fg3); transition: transform 0.15s; display: inline-block; }
+.g.shut .chev { transform: rotate(-90deg); }
+.g.shut .gb { display: none; }
+.gs { font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; }
+
+.gb { border-top: 1px solid var(--border); }
+.colh { display: flex; align-items: center; padding: 6px 16px; gap: 8px; }
+.colh-sp { width: 8px; flex-shrink: 0; }
+.colh-n { flex: 1; font-size: 10px; color: var(--fg3); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+.colh-v { display: flex; gap: 2px; }
+.colh-l { width: 52px; text-align: right; font-size: 10px; color: var(--fg3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+
+.row { display: flex; align-items: center; padding: 8px 16px; gap: 8px; border-top: 1px solid var(--border); }
+.row:first-of-type { border-top: none; }
+.row:hover { background: var(--hover); }
+.row.hide { display: none; }
+.d { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.d-up { background: var(--green); }
+.d-dn { background: var(--red); box-shadow: 0 0 0 3px rgba(239,68,68,0.15); }
+.d-pn { background: var(--amber); }
+.mn { flex: 1; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mn a { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.15s; }
+.mn a:hover { color: var(--indigo); border-bottom-color: var(--indigo); }
+.uv { display: flex; gap: 2px; font-family: var(--mono); font-size: 12px; }
+.uv span { width: 52px; text-align: right; color: var(--fg3); }
+.uv .ok { color: var(--green); }
+.uv .wn { color: var(--amber); }
+.uv .bd { color: var(--red); }
+
+footer { color: var(--fg3); font-size: 11px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); text-align: center; }
+.ld { text-align: center; padding: 60px 0; color: var(--fg3); }
+.err { text-align: center; padding: 40px 0; color: var(--red); }
+
+@media (max-width: 480px) {
+  .wrap { padding: 20px 14px 40px; }
+  .uv span, .colh-l { width: 42px; font-size: 11px; }
+  .row, .colh { padding-left: 12px; padding-right: 12px; }
+  .gh { padding: 12px; }
+  .inc-top { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Service Status</h1>
+    <div class="ts" id="ts"></div>
+  </header>
+  <div class="stale" id="stale"></div>
+  <div class="hero" id="hero"></div>
+  <div class="report-bar">
+    <span>Something not working?</span>
+    <a href="https://github.com/ViktorBarzin/infra/issues/new?template=outage-report.yml" target="_blank" rel="noopener" class="report-btn">Report an Outage</a>
+  </div>
+  <div id="incidents"></div>
+  <div class="bar" id="bar" style="display:none">
+    <label>Show:</label>
+    <button class="fbtn on" data-f="all">All</button>
+    <button class="fbtn" data-f="up">Up</button>
+    <button class="fbtn" data-f="down">Down</button>
+    <span style="flex:1"></span>
+    <label>Sort:</label>
+    <select id="ss">
+      <option value="status">Status</option>
+      <option value="name">Name</option>
+      <option value="u-asc">Uptime asc</option>
+      <option value="u-desc">Uptime desc</option>
+    </select>
+  </div>
+  <div id="gs"><div class="ld">Loading&hellip;</div></div>
+  <footer>Updated every 5 minutes &middot; Powered by Uptime Kuma &middot; <a href="https://github.com/ViktorBarzin/infra/issues" style="color:var(--fg3)">Report issues</a></footer>
+</div>
+<script>
+(function(){
+  var U='status.json',S=6e5,D=null,F='all',O='status';
+
+  function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+  function ago(d){var s=Math.floor((Date.now()-d)/1e3);if(s<0)s=0;return s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':Math.floor(s/86400)+'d ago'}
+  function dur(start,end){var m=Math.floor((end-start)/6e4);if(m<1)return '<1m';return m<60?m+'m':Math.floor(m/60)+'h '+m%60+'m'}
+  function uc(p){return p==null?'':p>=99?'ok':p>=95?'wn':'bd'}
+  function pf(p){return p==null?'\u2014':p.toFixed(1)+'%'}
+
+  function srt(a){return a.slice().sort(function(x,y){
+    if(O==='name')return x.name.localeCompare(y.name);
+    if(O==='u-asc'){var xa=x.uptime_24h==null?101:x.uptime_24h,ya=y.uptime_24h==null?101:y.uptime_24h;return xa-ya}
+    if(O==='u-desc'){var xd=x.uptime_24h==null?-1:x.uptime_24h,yd=y.uptime_24h==null?-1:y.uptime_24h;return yd-xd}
+    var o={down:0,pending:1,up:2},ao=o[x.status]!=null?o[x.status]:1,bo=o[y.status]!=null?o[y.status]:1;
+    return ao!==bo?ao-bo:x.name.localeCompare(y.name);
+  })}
+  function fm(m){return F==='all'||(F==='up'?m.status==='up':m.status!=='up')}
+
+  function buildIncident(inc,resolved){
+    var isReport=inc.type==='user-report';
+    var sevNum=isReport?0:inc.severity==='sev1'?1:inc.severity==='sev2'?2:3;
+    var created=new Date(inc.created_at);
+    var end=resolved&&inc.closed_at?new Date(inc.closed_at):new Date();
+
+    var el=document.createElement('div');
+    el.className='inc'+(resolved?' inc-resolved':'');
+
+    // Top bar
+    var top=document.createElement('div');
+    top.className='inc-top';
+    var badgeHtml=isReport
+      ?'<div class="sev sev-ur">REPORT</div>'
+      :'<div class="sev sev-'+sevNum+'">SEV'+sevNum+'</div>';
+    var html=badgeHtml;
+    html+='<div class="inc-info"><div class="inc-title">'+esc(inc.title)+'</div>';
+    html+='<div class="inc-meta"><span>'+ago(created)+'</span>';
+    if(!isReport)html+='<span>'+dur(created,end)+'</span>';
+    if(resolved)html+='<span style="color:var(--green)">Resolved</span>';
+    html+='</div>';
+    if(inc.affected_services&&inc.affected_services.length){
+      html+='<div class="inc-services">';
+      for(var i=0;i<inc.affected_services.length;i++)html+='<span class="inc-svc">'+esc(inc.affected_services[i])+'</span>';
+      html+='</div>';
+    }
+    html+='</div><span class="chev">&#9656;</span>';
+    top.innerHTML=html;
+    top.onclick=function(){el.classList.toggle('open')};
+    el.appendChild(top);
+
+    // Timeline
+    var tl=document.createElement('div');
+    tl.className='inc-tl';
+    if(inc.timeline&&inc.timeline.length){
+      for(var i=inc.timeline.length-1;i>=0;i--){
+        var te=inc.timeline[i];
+        var entry=document.createElement('div');
+        entry.className='tl-entry';
+        entry.innerHTML='<div class="tl-time">'+new Date(te.timestamp).toLocaleString()+'</div>'
+          +'<div class="tl-status">'+esc(te.status)+'</div>'
+          +'<div class="tl-body">'+esc(te.body)+'</div>';
+        tl.appendChild(entry);
+      }
+    }
+    // Links
+    var links=document.createElement('div');
+    links.className='inc-links';
+    if(inc.postmortem)links.innerHTML+='<a href="'+esc(inc.postmortem)+'" target="_blank" rel="noopener">Postmortem</a>';
+    links.innerHTML+='<a href="'+esc(inc.url)+'" target="_blank" rel="noopener">View on GitHub &rarr;</a>';
+    tl.appendChild(links);
+    el.appendChild(tl);
+
+    return el;
+  }
+
+  function render(data){
+    D=data;
+    var t=new Date(data.last_updated),age=Date.now()-t.getTime();
+    document.getElementById('ts').textContent=ago(t);
+    var st=document.getElementById('stale');
+    if(age>S){st.textContent='Data is '+Math.floor(age/6e4)+' minutes old. Monitoring may be unreachable.';st.style.display='block'}else st.style.display='none';
+
+    var gs={};
+    for(var gn in data.groups){var a=data.groups[gn].filter(function(m){return m.status!=='paused'});if(a.length)gs[gn]=a}
+
+    var tu=0,td=0;
+    for(var g in gs)for(var i=0;i<gs[g].length;i++)gs[g][i].status==='up'?tu++:td++;
+
+    // Incidents
+    var inc=data.incidents||{active:[],resolved:[]};
+    var incEl=document.getElementById('incidents');
+    incEl.innerHTML='';
+
+    // Hero — incidents take priority
+    var h=document.getElementById('hero');
+    if(inc.active.length>0){
+      var maxSev=3;
+      for(var si=0;si<inc.active.length;si++){
+        var s=inc.active[si].severity==='sev1'?1:inc.active[si].severity==='sev2'?2:3;
+        if(s<maxSev)maxSev=s;
+      }
+      if(maxSev===1){h.className='hero hero-down';h.innerHTML='<div class="hero-dot"></div>Active Incident \u2014 SEV1'}
+      else{h.className='hero hero-warn';h.innerHTML='<div class="hero-dot"></div>'+inc.active.length+' Active Incident'+(inc.active.length>1?'s':'')}
+    }else if(!td){h.className='hero hero-ok';h.innerHTML='<div class="hero-dot"></div>All Systems Operational'}
+    else if(td<=3){h.className='hero hero-warn';h.innerHTML='<div class="hero-dot"></div>'+td+' service'+(td>1?'s':'')+' experiencing issues'}
+    else{h.className='hero hero-down';h.innerHTML='<div class="hero-dot"></div>'+td+' services down'}
+
+    // Render active incidents
+    if(inc.active.length>0){
+      var ah=document.createElement('div');
+      ah.className='inc-header';
+      ah.innerHTML='Active Incidents <span class="cnt">'+inc.active.length+'</span>';
+      incEl.appendChild(ah);
+      for(var ai=0;ai<inc.active.length;ai++)incEl.appendChild(buildIncident(inc.active[ai],false));
+    }
+
+    // Render user reports
+    var reports=inc.user_reports||[];
+    if(reports.length>0){
+      var urh=document.createElement('div');
+      urh.className='inc-header';
+      urh.innerHTML='User Reports <span class="cnt">'+reports.length+'</span>';
+      incEl.appendChild(urh);
+      for(var ui=0;ui<reports.length;ui++)incEl.appendChild(buildIncident(reports[ui],false));
+    }
+
+    // Render resolved incidents
+    if(inc.resolved.length>0){
+      var rh=document.createElement('div');
+      rh.className='inc-header resolved-header';
+      rh.innerHTML='Recently Resolved <span class="cnt">last 7 days</span>';
+      incEl.appendChild(rh);
+      for(var ri=0;ri<inc.resolved.length;ri++)incEl.appendChild(buildIncident(inc.resolved[ri],true));
+    }
+
+    // Monitor groups
+    document.getElementById('bar').style.display='flex';
+    var c=document.getElementById('gs');c.innerHTML='';
+    var ks=Object.keys(gs).sort(function(a,b){return gs[b].length-gs[a].length});
+
+    for(var ki=0;ki<ks.length;ki++){
+      var gn=ks[ki],ms=gs[gn],so=srt(ms),vc=so.filter(fm).length;
+      var ge=document.createElement('div');ge.className='g'+(vc?'':' hide');
+
+      var up=ms.filter(function(m){return m.status==='up'}).length,dn=ms.length-up;
+      var hd=document.createElement('div');hd.className='gh';
+      hd.innerHTML='<div class="gt"><span class="chev">&#9656;</span>'+gn+' <span class="n">'+ms.length+'</span></div><div class="gs">'+(dn?'<span style="color:var(--red)">'+dn+' down</span>':'')+'<span style="color:var(--green)">'+up+' up</span></div>';
+      hd.onclick=function(){this.parentElement.classList.toggle('shut')};
+
+      var bd=document.createElement('div');bd.className='gb';
+      var ch=document.createElement('div');ch.className='colh';
+      ch.innerHTML='<div class="colh-sp"></div><div class="colh-n">Service</div><div class="colh-v"><div class="colh-l">24h</div><div class="colh-l">7d</div><div class="colh-l">30d</div></div>';
+      bd.appendChild(ch);
+
+      for(var mi=0;mi<so.length;mi++){
+        var m=so[mi],dc=m.status==='up'?'d-up':m.status==='pending'?'d-pn':'d-dn';
+        var r=document.createElement('div');r.className='row'+(fm(m)?'':' hide');
+        var nameHtml=m.name;
+        if(m.url){nameHtml='<a href="'+m.url+'" target="_blank" rel="noopener">'+m.name+'</a>'}
+        r.innerHTML='<div class="d '+dc+'"></div><div class="mn">'+nameHtml+'</div><div class="uv"><span class="'+uc(m.uptime_24h)+'">'+pf(m.uptime_24h)+'</span><span class="'+uc(m.uptime_7d)+'">'+pf(m.uptime_7d)+'</span><span class="'+uc(m.uptime_30d)+'">'+pf(m.uptime_30d)+'</span></div>';
+        bd.appendChild(r);
+      }
+      ge.appendChild(hd);ge.appendChild(bd);c.appendChild(ge);
+    }
+  }
+
+  document.addEventListener('click',function(e){
+    if(!e.target.classList.contains('fbtn'))return;
+    var bs=document.querySelectorAll('.fbtn');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');
+    e.target.classList.add('on');F=e.target.getAttribute('data-f');if(D)render(D);
+  });
+  document.getElementById('ss').onchange=function(){O=this.value;if(D)render(D)};
+
+  function load(){
+    fetch(U+'?t='+Date.now()).then(function(r){if(!r.ok)throw 0;return r.json()}).then(render)
+    .catch(function(){document.getElementById('gs').innerHTML='<div class="err">Could not load status data.</div>';
+      var h=document.getElementById('hero');h.className='hero hero-down';h.innerHTML='<div class="hero-dot"></div>Status Unavailable'});
+  }
+  load();setInterval(load,6e4);
+})();
+</script>
+</body>
+</html>

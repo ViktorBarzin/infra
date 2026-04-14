@@ -33,7 +33,30 @@ Generate a structured post-mortem document after an incident mitigation session.
 4. **Update index**: Add an entry to `docs/post-mortems/index.html`
    - Add a new card in the incidents grid with date, severity tag, title, description
 
-5. **Commit and push**:
+5. **Link to GitHub Issue** (if an issue exists for this incident):
+   - Fill in the `Issue` field in the template metadata table with `[#N](https://github.com/ViktorBarzin/infra/issues/N)`
+   - Add a comment to the GitHub Issue linking the postmortem:
+     ```bash
+     GITHUB_TOKEN=$(vault kv get -field=github_pat secret/viktor)
+     curl -s -X POST \
+       -H "Authorization: token $GITHUB_TOKEN" \
+       -H "Accept: application/vnd.github.v3+json" \
+       "https://api.github.com/repos/ViktorBarzin/infra/issues/<N>/comments" \
+       -d '{"body": "**Postmortem:** [View postmortem](https://viktorbarzin.github.io/infra/post-mortems/<YYYY-MM-DD>-<slug>)"}'
+     ```
+   - Add the `postmortem-done` label and remove `postmortem-required`:
+     ```bash
+     curl -s -X POST \
+       -H "Authorization: token $GITHUB_TOKEN" \
+       "https://api.github.com/repos/ViktorBarzin/infra/issues/<N>/labels" \
+       -d '{"labels": ["postmortem-done"]}'
+     curl -s -X DELETE \
+       -H "Authorization: token $GITHUB_TOKEN" \
+       "https://api.github.com/repos/ViktorBarzin/infra/issues/<N>/labels/postmortem-required"
+     ```
+   - If no issue exists, create one with labels `incident`, `sev<N>`, `postmortem-done`
+
+6. **Commit and push**:
    ```
    git add docs/post-mortems/<file>.md docs/post-mortems/index.html
    git commit -m "docs: post-mortem for <date> <title> [ci skip]"

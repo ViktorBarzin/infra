@@ -1,0 +1,37 @@
+name: Report an Outage
+description: Report a service that appears to be down or degraded
+labels: ["user-report"]
+body:
+  - type: dropdown
+    id: service
+    attributes:
+      label: Affected Service
+      description: Which service is affected?
+      options:
+        - Nextcloud
+        - Immich
+        - Vaultwarden
+        - Grafana
+        - Plex / Jellyfin
+        - Mail
+        - DNS
+        - VPN / Tailscale
+        - Website / Blog
+        - Music (Navidrome / Freedify)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What's happening?
+      description: Describe what you're seeing. Include error messages, when it started, etc.
+      placeholder: "e.g., Getting 502 errors when trying to access Nextcloud since about 3pm"
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Contact (optional)
+      description: How can we reach you with updates?
+      placeholder: Email, Telegram handle, etc.
