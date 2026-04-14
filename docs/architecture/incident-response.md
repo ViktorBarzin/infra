@@ -1,5 +1,89 @@
 # Incident Response & Post-Mortem Pipeline
 
+## Reporting an Issue
+
+If something is broken or behaving unexpectedly, here's how to report it:
+
+### Where to report
+
+| Channel | When to use | Response time |
+|---------|-------------|---------------|
+| **Slack #alerts** | Service down, can't access something | Minutes |
+| **GitHub Issue** on [ViktorBarzin/infra](https://github.com/ViktorBarzin/infra/issues) | Non-urgent bugs, feature requests, recurring problems | Hours |
+| **Direct message Viktor** | Emergencies (DNS down, cluster unreachable, data loss risk) | ASAP |
+
+### What to include
+
+A good issue report helps us fix things faster. Include:
+
+1. **What's broken** — which service, URL, or feature
+2. **When it started** — approximate time (timezone!)
+3. **What you see** — error message, screenshot, HTTP status code
+4. **What you expected** — what should have happened
+
+### Examples
+
+**Good report:**
+> Nextcloud at nextcloud.viktorbarzin.me returns 502 Bad Gateway since ~14:00 UTC.
+> Was working fine this morning. Other services (Grafana, Immich) seem fine.
+
+**Also good (minimal):**
+> ha-sofia.viktorbarzin.lan not resolving — getting NXDOMAIN
+
+**Not helpful:**
+> Nothing works
+
+### What happens after you report
+
+```
+You report issue
+    │
+    ▼
+Viktor investigates with Claude Code (cluster-health, logs, diagnostics)
+    │
+    ▼
+Fix applied → service restored
+    │
+    ▼
+Post-mortem auto-generated with /post-mortem
+    │
+    ▼
+Post-mortem pushed to repo
+    │
+    ▼
+Automated pipeline implements follow-up fixes (alerts, monitoring, config)
+    │
+    ▼
+Post-mortem updated with implementation links
+    │
+    ▼
+Published at GitHub Pages for review
+```
+
+You'll be notified in Slack when:
+- Your issue is being investigated
+- The fix is applied
+- The post-mortem is published (with what was done to prevent recurrence)
+
+### Checking service status
+
+- **Uptime dashboard**: [uptime.viktorbarzin.me](https://uptime.viktorbarzin.me) — real-time status of all services
+- **Post-mortems**: [ViktorBarzin/infra post-mortems](https://github.com/ViktorBarzin/infra/tree/master/docs/post-mortems) — past incidents and their fixes
+- **Grafana**: [grafana.viktorbarzin.me](https://grafana.viktorbarzin.me) — metrics and dashboards
+
+### Common self-service checks
+
+Before reporting, you can check:
+
+| Symptom | Quick check |
+|---------|-------------|
+| Service returns 502/503 | Is the pod running? Check [K8s Dashboard](https://dashboard.viktorbarzin.me) |
+| Can't login (SSO) | Try incognito window — might be cached auth |
+| Slow performance | Check if the node is under memory pressure in Grafana |
+| DNS not resolving | Try `nslookup <domain> 10.0.20.201` — if that works, it's client DNS cache |
+
+---
+
 ## Overview
 
 Automated incident response pipeline that handles the full lifecycle: detection → mitigation → post-mortem generation → TODO implementation → documentation update. Claude Code agents automate both the post-mortem writing and the follow-up remediation, with human review gates for risky changes.
