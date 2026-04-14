@@ -3,31 +3,20 @@
 # Called from .woodpecker/postmortem-todos.yml
 set -e
 
-# 1. Find which post-mortem changed
-# Woodpecker shallow clones (depth 1) so HEAD~1 may not exist. Fetch more history.
-git fetch --deepen=2 origin master 2>/dev/null || true
-PM_FILE=$(git diff HEAD~1 --name-only 2>/dev/null | grep 'docs/post-mortems/.*[.]md' | head -1)
+# 1. Find post-mortem(s) with TODO items
+# Scan all post-mortems — don't rely on git diff (Woodpecker shallow clone breaks HEAD~1)
+PM_FILE=""
+for f in docs/post-mortems/*.md; do
+  if grep -q '| TODO |' "$f" 2>/dev/null; then
+    PM_FILE="$f"
+    break
+  fi
+done
 if [ -z "$PM_FILE" ]; then
-  # Fallback: check all post-mortems for TODO items
-  for f in docs/post-mortems/*.md; do
-    if grep -q '| TODO |' "$f" 2>/dev/null; then
-      PM_FILE="$f"
-      echo "Fallback: found TODOs in $f"
-      break
-    fi
-  done
-fi
-if [ -z "$PM_FILE" ]; then
-  echo "No post-mortem with TODOs found"
+  echo "No post-mortem with pending TODOs found"
   exit 0
 fi
-echo "Post-mortem: $PM_FILE"
-
-# 2. Check if there are TODO items to process
-if ! grep -q '| TODO |' "$PM_FILE"; then
-  echo "No TODOs in $PM_FILE — skipping"
-  exit 0
-fi
+echo "Post-mortem with TODOs: $PM_FILE"
 
 # 3. Parse TODOs
 bash scripts/parse-postmortem-todos.sh "$PM_FILE" > /tmp/todos.json
