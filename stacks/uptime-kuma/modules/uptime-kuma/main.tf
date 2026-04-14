@@ -301,7 +301,7 @@ with open(TARGETS_FILE) as f:
 
 print(f"Loaded {len(targets)} external monitor targets")
 
-api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=30)
+api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
 api.login("admin", UPTIME_KUMA_PASS)
 
 monitors = api.get_monitors()
@@ -323,7 +323,7 @@ for t in targets:
             url=t["url"],
             interval=300,
             maxretries=3,
-            accepted_statecodes=["200-499"],
+            accepted_statuscodes=["200-299", "300-399", "400-499"],
         )
         created += 1
         time.sleep(0.3)
