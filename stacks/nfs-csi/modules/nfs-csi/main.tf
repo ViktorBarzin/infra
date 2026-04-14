@@ -80,6 +80,7 @@ resource "kubernetes_storage_class" "nfs_truenas" {
   volume_binding_mode = "Immediate"
 
   mount_options = [
+    "nfsvers=4",
     "soft",
     "timeo=30",
     "retrans=3",
