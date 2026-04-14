@@ -385,21 +385,32 @@ ISSUES_REPO = "ViktorBarzin/infra"
 def has_label(issue, name):
     return any(l["name"].lower() == name.lower() for l in issue.get("labels", []))
 
-def parse_user_report_service(body):
-    """Extract service from GitHub Issue Form dropdown response."""
+def parse_form_field(body, heading):
+    """Extract value after a ### heading from GitHub Issue Form response."""
     if not body:
         return None
-    for line in body.split("\n"):
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and not stripped.startswith("_") and not stripped.startswith("<!"):
-            prev_was_heading = False
-            for i, ln in enumerate(body.split("\n")):
-                if "affected service" in ln.lower():
-                    prev_was_heading = True
-                    continue
-                if prev_was_heading and ln.strip():
-                    return ln.strip()
+    lines = body.split("\n")
+    for i, ln in enumerate(lines):
+        if heading.lower() in ln.lower() and ln.strip().startswith("#"):
+            for j in range(i + 1, len(lines)):
+                val = lines[j].strip()
+                if val and not val.startswith("#") and val != "_No response_":
+                    return val
     return None
+
+def parse_user_report_context(body):
+    """Extract structured fields from the issue form body."""
+    service = parse_form_field(body, "affected service")
+    # Strip parenthetical hints: "Nextcloud (files, calendar)" -> "Nextcloud"
+    if service and "(" in service:
+        service = service[:service.index("(")].strip()
+    return {
+        "service": service,
+        "error_type": parse_form_field(body, "what kind of error"),
+        "scope": parse_form_field(body, "is it just you"),
+        "when": parse_form_field(body, "when did it start"),
+        "url": parse_form_field(body, "url you were accessing"),
+    }
 
 try:
     issues_url = "https://api.github.com/repos/" + ISSUES_REPO + "/issues"
@@ -435,7 +446,8 @@ try:
             continue
         if has_label(issue, "incident"):
             continue  # Already promoted to incident, skip duplicate
-        svc = parse_user_report_service(issue.get("body"))
+        ctx = parse_user_report_context(issue.get("body"))
+        svc = ctx["service"]
         user_reports.append({
             "id": issue["number"],
             "title": issue["title"],
@@ -443,6 +455,9 @@ try:
             "status": "open",
             "created_at": issue["created_at"],
             "affected_services": [svc] if svc else [],
+            "error_type": ctx.get("error_type"),
+            "scope": ctx.get("scope"),
+            "when_started": ctx.get("when"),
             "url": issue["html_url"],
         })
 
