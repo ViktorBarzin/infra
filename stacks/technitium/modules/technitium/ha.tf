@@ -356,88 +356,95 @@ resource "kubernetes_pod_disruption_budget_v1" "technitium_dns" {
 }
 
 # Setup Job — configures secondary + tertiary zones via Technitium REST API
-resource "kubernetes_job" "technitium_secondary_setup" {
+# Zone sync CronJob — replicates all primary zones to secondary/tertiary
+# Runs every 30 minutes. Idempotent: skips zones that already exist on replicas.
+resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
   metadata {
-    name      = "technitium-replica-setup"
+    name      = "technitium-zone-sync"
     namespace = kubernetes_namespace.technitium.metadata[0].name
   }
   spec {
-    backoff_limit = 5
-    template {
+    schedule                      = "*/30 * * * *"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
       metadata {}
       spec {
-        restart_policy = "OnFailure"
-        container {
-          name  = "setup"
-          image = "curlimages/curl:latest"
-          command = ["/bin/sh", "-c", <<-SCRIPT
-            set -e
-            PRIMARY="http://technitium-primary.technitium.svc.cluster.local:5380"
-            REPLICAS="http://technitium-secondary-web.technitium.svc.cluster.local:5380 http://technitium-tertiary-web.technitium.svc.cluster.local:5380"
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "zone-sync"
+              image = "curlimages/curl:latest"
+              command = ["/bin/sh", "-c", <<-SCRIPT
+                set -e
+                PRIMARY="http://technitium-primary.technitium.svc.cluster.local:5380"
+                REPLICAS="http://technitium-secondary-web.technitium.svc.cluster.local:5380 http://technitium-tertiary-web.technitium.svc.cluster.local:5380"
 
-            # Wait for primary
-            until curl -sf "$PRIMARY/api/user/login?user=$TECH_USER&pass=$TECH_PASS" -o /tmp/p.json; do echo "Waiting for primary..."; sleep 5; done
-            P_TOKEN=$(cat /tmp/p.json | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                # Login to primary
+                P_TOKEN=$(curl -sf "$PRIMARY/api/user/login?user=$TECH_USER&pass=$TECH_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                if [ -z "$P_TOKEN" ]; then echo "ERROR: Cannot login to primary"; exit 1; fi
 
-            # Get zones from primary
-            curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/zones.txt
-            echo "Found zones:"; cat /tmp/zones.txt
+                # Get zones from primary (excluding default zones that don't need replication)
+                curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | \
+                  grep -v -E '^(localhost|0\.in-addr\.arpa|127\.in-addr\.arpa|255\.in-addr\.arpa|1\.0\.0.*ip6\.arpa)$$' > /tmp/primary_zones.txt
+                echo "Primary has $(wc -l < /tmp/primary_zones.txt) zones to replicate"
 
-            # Enable zone transfers on primary
-            while read -r zone; do
-              echo "Enabling zone transfer for: $zone"
-              curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" || true
-            done < /tmp/zones.txt
+                # Enable zone transfers on primary for all zones
+                while read -r zone; do
+                  curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" > /dev/null || true
+                done < /tmp/primary_zones.txt
 
-            # Configure each replica
-            for REPLICA in $REPLICAS; do
-              echo "=== Configuring replica: $REPLICA ==="
-              until curl -sf "$REPLICA/api/user/login?user=$TECH_USER&pass=$TECH_PASS" -o /tmp/r.json; do echo "Waiting for $REPLICA..."; sleep 5; done
-              R_TOKEN=$(cat /tmp/r.json | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                # Sync to each replica
+                SYNCED=0
+                for REPLICA in $REPLICAS; do
+                  R_TOKEN=$(curl -sf "$REPLICA/api/user/login?user=$TECH_USER&pass=$TECH_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                  if [ -z "$R_TOKEN" ]; then echo "WARN: Cannot login to $REPLICA, skipping"; continue; fi
 
-              while read -r zone; do
-                echo "Creating secondary zone: $zone on $REPLICA"
-                curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" || true
-              done < /tmp/zones.txt
+                  # Get existing zones on this replica
+                  curl -sf "$REPLICA/api/zones/list?token=$R_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/replica_zones.txt
 
-              while read -r zone; do
-                echo "Resyncing: $zone on $REPLICA"
-                curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" || true
-              done < /tmp/zones.txt
-            done
+                  while read -r zone; do
+                    if grep -qx "$zone" /tmp/replica_zones.txt; then
+                      # Zone exists — just resync
+                      curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" > /dev/null || true
+                    else
+                      # New zone — create as Secondary and sync
+                      echo "NEW: Creating $zone on $REPLICA"
+                      curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" > /dev/null || true
+                      SYNCED=$((SYNCED + 1))
+                    fi
+                  done < /tmp/primary_zones.txt
+                done
 
-            echo "Replica zone setup complete"
-          SCRIPT
-          ]
-          env {
-            name  = "TECH_USER"
-            value = var.technitium_username
-          }
-          env {
-            name  = "TECH_PASS"
-            value = var.technitium_password
-          }
-          env {
-            name  = "PRIMARY_IP"
-            value = kubernetes_service.technitium_primary.spec[0].cluster_ip
-          }
-        }
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
+                echo "Zone sync complete. $$SYNCED new zone(s) created."
+              SCRIPT
+              ]
+              env {
+                name  = "TECH_USER"
+                value = var.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = var.technitium_password
+              }
+              env {
+                name  = "PRIMARY_IP"
+                value = kubernetes_service.technitium_primary.spec[0].cluster_ip
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
           }
         }
       }
     }
   }
-
-  depends_on = [
-    kubernetes_deployment.technitium,
-    kubernetes_deployment.technitium_secondary,
-    kubernetes_deployment.technitium_tertiary,
-    kubernetes_service.technitium_primary,
-    kubernetes_service.technitium_secondary_web,
-    kubernetes_service.technitium_tertiary_web,
-  ]
 }
