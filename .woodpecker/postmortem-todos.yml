@@ -7,6 +7,12 @@ when:
     exclude:
       - '.woodpecker/**'
 
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 5
+
 steps:
   - name: parse-and-implement
     image: python:3.12-alpine
