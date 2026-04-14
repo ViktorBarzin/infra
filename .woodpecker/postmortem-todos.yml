@@ -16,10 +16,11 @@ steps:
 
   - name: notify-slack
     image: alpine
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
     commands:
       - apk add --no-cache curl
       - "curl -sf -X POST https://hooks.slack.com/services/$SLACK_WEBHOOK -H 'Content-Type: application/json' -d '{\"text\": \"Post-mortem TODO pipeline completed\"}' || true"
-    secrets:
-      - slack_webhook
     when:
       - status: [success, failure]
