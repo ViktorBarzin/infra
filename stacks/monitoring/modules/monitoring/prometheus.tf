@@ -30,6 +30,26 @@ module "nfs_prometheus_backup_host" {
   nfs_path   = "/srv/nfs/prometheus-backup"
 }
 
+resource "kubernetes_persistent_volume_claim" "alertmanager_pvc" {
+  wait_until_bound = false
+  metadata {
+    name      = "alertmanager-pvc"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "10Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = { storage = "2Gi" }
+    }
+  }
+}
+
 resource "helm_release" "prometheus" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true

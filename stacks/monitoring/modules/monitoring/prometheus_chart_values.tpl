@@ -1717,6 +1717,14 @@ serverFiles:
               severity: critical
             annotations:
               summary: ">5 pods stuck in ContainerCreating with sudden increase — possible NFS or storage outage"
+          - alert: NFSHighRPCRetransmissions
+            expr: |
+              sum by (instance) (rate(node_nfs_rpc_retransmissions_total[5m])) > 5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }}: NFS RPC retransmission rate {{ $value | printf \"%.1f\" }}/s — NFS server (192.168.1.127) may be degraded or unreachable"
       - name: "Application Health"
         rules:
           - alert: MailServerDown
