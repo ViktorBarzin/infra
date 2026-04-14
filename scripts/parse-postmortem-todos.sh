@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # parse-postmortem-todos.sh — Extract auto-implementable TODOs from a post-mortem markdown file
 # Usage: bash scripts/parse-postmortem-todos.sh docs/post-mortems/2026-04-14-foo.md
 # Output: JSON with file path and list of TODOs
@@ -6,7 +6,7 @@
 # Supports two table formats:
 #   New: | Priority | Action | Type | Details | Status |
 #   Old: | Action | Status | Details |  (infers type from action text)
-set -euo pipefail
+set -eu
 
 PM_FILE="${1:?Usage: $0 <post-mortem.md>}"
 

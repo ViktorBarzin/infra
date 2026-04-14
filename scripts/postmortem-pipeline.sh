@@ -19,7 +19,7 @@ fi
 echo "Post-mortem with TODOs: $PM_FILE"
 
 # 3. Parse TODOs
-bash scripts/parse-postmortem-todos.sh "$PM_FILE" > /tmp/todos.json
+sh scripts/parse-postmortem-todos.sh "$PM_FILE" > /tmp/todos.json
 cat /tmp/todos.json
 TODO_COUNT=$(jq '.safe_todos' /tmp/todos.json)
 echo "$TODO_COUNT safe TODO(s) found"
