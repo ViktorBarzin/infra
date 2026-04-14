@@ -1700,6 +1700,23 @@ serverFiles:
             annotations:
               summary: "NFS CSI controller down — new NFS volume provisioning broken"
           # ISCSICSIControllerDown alert removed — democratic-csi replaced by proxmox-csi (2026-04-05)
+          - alert: NFSCSINodeDown
+            expr: kube_daemonset_status_number_unavailable{namespace="nfs-csi", daemonset="csi-nfs-node"} > 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $value }} NFS CSI node pod(s) unavailable — NFS mounts will fail on affected nodes"
+          - alert: NFSMountFailures
+            expr: |
+              count(kube_pod_container_status_waiting_reason{reason="ContainerCreating"} == 1) > 5
+              and on()
+              count(kube_pod_container_status_waiting_reason{reason="ContainerCreating"} == 1) > 2 * count(kube_pod_container_status_waiting_reason{reason="ContainerCreating"} offset 10m == 1 or on() vector(0))
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: ">5 pods stuck in ContainerCreating with sudden increase — possible NFS or storage outage"
       - name: "Application Health"
         rules:
           - alert: MailServerDown

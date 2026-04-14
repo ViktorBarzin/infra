@@ -44,6 +44,7 @@ resource "kubernetes_persistent_volume" "this" {
     volume_mode                      = "Filesystem"
 
     mount_options = [
+      "nfsvers=4",
       "soft",
       "timeo=30",
       "retrans=3",

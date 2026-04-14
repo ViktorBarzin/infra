@@ -180,7 +180,7 @@ resource "helm_release" "mysql_cluster" {
   version    = "2.2.7"
 
   values = [yamlencode({
-    serverInstances = 3
+    serverInstances = 1
     routerInstances = 1
     serverVersion   = "8.4.4"
 
@@ -216,6 +216,7 @@ resource "helm_release" "mysql_cluster" {
       mycnf = <<-EOT
         [mysqld]
         skip-name-resolve
+        mysql-native-password=ON
         # Auto-recovery after crashes: rejoin group without manual intervention
         group_replication_autorejoin_tries=2016
         group_replication_exit_state_action=OFFLINE_MODE
