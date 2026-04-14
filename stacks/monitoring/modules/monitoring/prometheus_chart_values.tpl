@@ -4,9 +4,10 @@ alertmanager:
   replicaCount: 1
   persistentVolume:
     enabled: true
-    existingClaim: alertmanager-pvc
-    #existingClaim: alertmanager-iscsi-pvc
-    # storageClass: rook-cephfs
+  persistence:
+    storageClass: proxmox-lvm-encrypted
+    # Previously on NFS (alertmanager-pv / nfs-truenas). Migrated 2026-04-14 [PM-2026-04-14]
+    # to proxmox-lvm-encrypted to eliminate circular alerting dependency.
   strategy:
     type: RollingUpdate
   baseURL: "https://alertmanager.viktorbarzin.me"
