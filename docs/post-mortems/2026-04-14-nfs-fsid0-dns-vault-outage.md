@@ -3,9 +3,9 @@
 | Field | Value |
 |-------|-------|
 | **Date** | 2026-04-14 |
-| **Duration** | ~5h (NFS broken for k8s: 05:37–10:40 EEST). Stale mounts persisted after fix until pod restarts. |
+| **Duration** | ~5h initial (05:37–10:40 EEST), then ~2h secondary (NFS restart broke NFSv3 + DNS zone sync gap) |
 | **Severity** | SEV1 |
-| **Affected Services** | 25+ pods across 15+ namespaces. DNS (primary), Vault (2/3 pods), Alertmanager, Grafana, ebooks, phpipam, poison-fountain, email monitoring, status page, backup CronJobs |
+| **Affected Services** | 48+ pods across 20+ namespaces. DNS (all instances), Vault, MySQL, Grafana, Uptime Kuma, ebooks, phpipam, immich, servarr, and more |
 | **Status** | Complete |
 
 ## Summary
@@ -97,10 +97,11 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 | Action | Owner | Status |
 |--------|-------|--------|
 | Remove `fsid=0` from `/etc/exports` on PVE host | Done | Completed Apr 14 |
-| Fix `lockd configuration failure` on PVE NFS server | TODO | Check `nfs-common` package, `/etc/nfs.conf` lockd settings |
-| Force-unmount hung TrueNAS NFS mounts on PVE (`umount -f -l /mnt/truenas-src /mnt/truenas-ssd`) | TODO | TrueNAS is sunset; remove mounts entirely |
+| Fix `lockd configuration failure` on PVE NFS server | Done | Disabled NFSv3 entirely (`vers3=n`). lockd is an nfsdctl bug on kernel 6.14 — not fixable without Proxmox patch. |
+| Force-unmount hung TrueNAS NFS mounts on PVE | Done | `umount -l /mnt/truenas-src /mnt/truenas-ssd`. Not in fstab — won't recur. |
 | Manage `/etc/exports` in git (add to `infra/scripts/` and deploy via PVE provisioning) | TODO | Prevents untracked config drift |
-| Add NFS CSI mount options `nfsvers=3,nolock` to `nfs-proxmox` StorageClass | TODO | Prevents NFSv4 pseudo-root issues + lockd dependency |
+| Migrate all NFS PVs to NFSv4 | Done | Patched 52 PVs to `nfsvers=4`. Updated TF module + StorageClass. Applied all 20 stacks. |
+| Add DNS zone sync CronJob | Done | `technitium-zone-sync` runs every 30min, replicates all primary zones to secondary/tertiary via AXFR |
 
 ### P1 — Eliminate the NFS single point of failure for critical services
 
@@ -116,7 +117,7 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 | Action | Owner | Status |
 |--------|-------|--------|
 | Add PrometheusRule: NFS mount errors from node kernel logs | TODO | `node_nfs_rpc_retransmissions_total` rate > threshold |
-| Add PrometheusRule: Pods in ContainerCreating > 10 minutes | TODO | Catches CSI mount failures |
+| Add PrometheusRule: Pods in ContainerCreating > 10 minutes | Done | `NFSMountFailures` + `NFSCSINodeDown` alerts added to Prometheus |
 | Add Uptime Kuma monitor: TrueNAS ping (10.0.10.15) | TODO | Catches TrueNAS outage early |
 | Add Uptime Kuma monitor: PVE NFS port 2049 TCP check | TODO | Catches NFS service failures |
 | Verify Grafana Uptime Kuma alert actually fires | TODO | Was down 37h unnoticed |
@@ -129,6 +130,64 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 | Add NFS export health check to daily-backup script | TODO | Backup script should verify NFS before starting |
 | Document NFS CSI mount option requirements in CLAUDE.md | TODO | Prevents future misconfigurations |
 
+## Phase 2: NFS Restart Broke NFSv3 + DNS Zone Sync Gap
+
+### What happened after the 10:40 fix
+
+The NFS server restart at 10:40 (which fixed the fsid=0 issue) introduced two new problems:
+
+#### Problem 1: NFSv3 completely broken after restart
+
+After the restart, **ALL NFSv3 mount(2) system calls returned EIO** from k8s worker nodes, even though:
+- NFS port 2049 was reachable from all nodes
+- `showmount -e` listed correct exports
+- NFSv4 mounts worked perfectly from all nodes
+- NFSv3 mounts worked from k8s-master (which had no prior NFS mounts — clean kernel state)
+
+**Root cause**: `nfsdctl: lockd configuration failure` on PVE kernel 6.14.11-4-pve — a bug where nfsdctl's `autostart` command tries to call a non-existent `lockd` subcommand. This warning was present since Apr 11 but NFSv3 only broke after the restart. Worker nodes retained corrupted NFS client kernel state from the stale mount period that could not be cleared without a reboot.
+
+**Resolution**: Patched all 52 NFS PVs to add `nfsvers=4` mount option via `kubectl patch pv`. Updated Terraform `nfs_volume` module and `nfs-csi` StorageClass. Disabled NFSv3 on PVE (`vers3=n` in `/etc/nfs.conf`). Applied to all 20+ Terraform stacks.
+
+#### Problem 2: DNS zone sync gap — .lan resolution failures
+
+**Finding**: Technitium secondary and tertiary instances had **only 5 default zones** (localhost, arpa). Custom zones (`viktorbarzin.lan`, `viktorbarzin.me`, reverse lookup zones, etc.) only existed on the primary. This was a **pre-existing gap** — the zone setup was a one-time Kubernetes Job that ran at initial deployment and never synced new zones created afterward.
+
+**Impact**: The MetalLB VIP (10.0.20.201) load-balances across all 3 instances. 2/3 of queries hit secondary/tertiary → NXDOMAIN for `.lan` → cached for 300s by CoreDNS → ExternalName services (e.g., `ha-sofia.viktorbarzin.lan`) returned 502 Bad Gateway.
+
+**Why it surfaced now**: The NFS outage restarted the primary Technitium pod, flushing client DNS caches. This increased the visible failure rate for `.lan` queries.
+
+**Resolution**: 
+1. Created `viktorbarzin.lan` and `viktorbarzin.me` as Secondary zones on both secondary and tertiary via Technitium API
+2. **Converted one-time setup Job to a CronJob** (`technitium-zone-sync`) running every 30 minutes that:
+   - Gets all zones from primary
+   - Enables zone transfer (AXFR) on primary
+   - Creates missing zones as Secondary type on replicas
+   - Resyncs existing zones
+3. 20 zones were synced to tertiary that were previously missing
+
+### Phase 2 Timeline
+
+| Time | Event |
+|------|-------|
+| **10:40** | NFS server restarted (fsid=0 fix). NFSv3 breaks. 48+ stale mounts across all workers. |
+| **10:41–10:50** | Vault, DNS primary come back. But NFSv3 mounts stay stale. |
+| **11:00–11:40** | Investigation: NFSv3 mount(2) returns EIO on workers, NFSv4 works. Patched 52 PVs to nfsvers=4. |
+| **11:40–12:00** | Restarted all NFS-dependent pods. Fixed MySQL (Vault rotation mismatch), Redis HAProxy, Woodpecker DB. |
+| **12:00–12:15** | Users report .lan resolution failures. Discovered secondary/tertiary missing all custom zones. |
+| **12:15** | Created secondary zones on secondary/tertiary via API. .lan resolution restored. |
+| **12:15–12:20** | Converted one-time setup Job to zone-sync CronJob. Applied via Terraform. |
+
+### Additional collateral damage fixed during Phase 2
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Grafana, realestate-crawler, shlink MySQL access denied | Vault rotated passwords during NFS outage, credentials mismatched | Force-rotated Vault DB roles, manually synced Grafana password |
+| Uptime Kuma `mysql_native_password` plugin not loaded | MySQL 8.4 disabled plugin by default | Enabled via `mysql-native-password=ON` in mycnf, changed user auth plugin |
+| Redis HAProxy all backends DOWN | Health check timeout during cluster turbulence | Restarted HAProxy pods |
+| Woodpecker missing PostgreSQL database | DB init Job ran at deploy, DB dropped during cluster recreation | Manually created database |
+| Nextcloud PVC deleted | `nextcloud-data-proxmox` was Terminating and got garbage collected | Rebound Released PV to new PVC |
+| MySQL InnoDB cluster OFFLINE | rollout restart invalidated operator state, kopf finalizer blocked deletion | Removed finalizer, recreated cluster via `dba.createCluster()` |
+
 ## Lessons Learned
 
 1. **NFSv4 `fsid=0` is dangerous for CSI subdirectory mounts**: It changes path resolution semantics in non-obvious ways. Never use it on exports that serve dynamic subdirectory mounts.
@@ -140,3 +199,9 @@ The trigger was likely the `daily-backup.service` at 05:04 on Apr 14, which acce
 4. **`/etc/exports` is a single-point-of-configuration**: Unmanaged, unversioned, no review process. A single flag caused a cluster-wide outage.
 
 5. **This is the SECOND DNS outage related to NFS migration** (first was Apr 6 — unbound PVC). Storage migrations for DNS infrastructure need extra scrutiny and pre-migration testing.
+
+6. **DNS HA requires zone replication, not just pod replication**: Having 3 Technitium pods with a PDB is useless if only the primary has the zone data. A one-time setup Job is insufficient — zones created after initial deployment are never synced. This is now fixed with a recurring CronJob.
+
+7. **NFSv3 client kernel state survives mount cleanup**: Force-unmounting all NFS mounts from a node does NOT clear the kernel's per-server NFS client state. The only reliable fix was switching to NFSv4 (different protocol path). NFSv3 is now disabled on the PVE server.
+
+8. **`kubectl rollout restart statefulset` is dangerous for operator-managed StatefulSets**: The MySQL InnoDB operator lost track of its cluster state after the rollout restart changed the pod template. Recovery required manually removing kopf finalizers, recreating the InnoDB cluster, and re-bootstrapping the router.
