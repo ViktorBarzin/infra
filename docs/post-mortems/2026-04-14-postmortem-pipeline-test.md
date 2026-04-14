@@ -10,21 +10,23 @@
 
 ## Summary
 
-Test post-mortem for pipeline E2E validation.
+Test post-mortem to validate the automated TODO implementation pipeline end-to-end.
 
 ## Prevention Plan
 
 | Priority | Action | Type | Details | Status |
 |----------|--------|------|---------|--------|
-| P2 | Add Uptime Kuma monitor for PVE SSH port 22 | Monitor | TCP check on 192.168.1.127:22 | TODO |
-| P2 | Review NFS monitoring strategy | Investigation | Evaluate node_exporter NFS metrics | TODO |
+| P2 | Add Uptime Kuma monitor for Proxmox web UI port 8006 | Monitor | TCP check on 192.168.1.127:8006 to detect PVE management plane down | TODO |
+| P2 | Migrate Alertmanager to encrypted storage | Architecture | Move from NFS to proxmox-lvm-encrypted to avoid circular alerting dependency | TODO |
 
 ## Lessons Learned
 
-1. Test post-mortems validate automation pipelines.
+1. Automated post-mortem pipelines reduce mean time to remediation.
 
 ## Follow-up Implementation
 
+_This section is auto-populated by the postmortem-todo-resolver agent._
+
 | Date | Action | Priority | Type | Commit | Implemented By |
 |------|--------|----------|------|--------|----------------|
-# Pipeline E2E test Tue Apr 14 04:49:07 PM UTC 2026
+
