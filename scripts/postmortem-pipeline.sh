@@ -4,16 +4,28 @@
 set -e
 
 # 1. Find which post-mortem changed
-PM_FILE=$(git diff HEAD~1 --name-only | grep 'docs/post-mortems/.*[.]md' | head -1)
+# Woodpecker shallow clones (depth 1) so HEAD~1 may not exist. Fetch more history.
+git fetch --deepen=2 origin master 2>/dev/null || true
+PM_FILE=$(git diff HEAD~1 --name-only 2>/dev/null | grep 'docs/post-mortems/.*[.]md' | head -1)
 if [ -z "$PM_FILE" ]; then
-  echo "No post-mortem markdown changes detected"
+  # Fallback: check all post-mortems for TODO items
+  for f in docs/post-mortems/*.md; do
+    if grep -q '| TODO |' "$f" 2>/dev/null; then
+      PM_FILE="$f"
+      echo "Fallback: found TODOs in $f"
+      break
+    fi
+  done
+fi
+if [ -z "$PM_FILE" ]; then
+  echo "No post-mortem with TODOs found"
   exit 0
 fi
-echo "Post-mortem changed: $PM_FILE"
+echo "Post-mortem: $PM_FILE"
 
-# 2. Check if there are new TODOs (not just TODO→Done updates)
-if ! git diff HEAD~1 -- "$PM_FILE" | grep -q '+.*TODO'; then
-  echo "No new TODOs added — skipping"
+# 2. Check if there are TODO items to process
+if ! grep -q '| TODO |' "$PM_FILE"; then
+  echo "No TODOs in $PM_FILE — skipping"
   exit 0
 fi
 
