@@ -516,6 +516,101 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
   }
 }
 
+# Per-database MySQL backups (enables single-database restore without affecting others)
+resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
+  metadata {
+    name      = "mysql-backup-per-db"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 3
+    schedule                  = "45 0 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "mysql-backup-per-db"
+              image = "docker.io/library/mysql:8.0"
+              env {
+                name = "MYSQL_PWD"
+                value_from {
+                  secret_key_ref {
+                    name = "cluster-secret"
+                    key  = "ROOT_PASSWORD"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
+                _t0=$(date +%s)
+                now=$(date +"%Y_%m_%d_%H_%M")
+                MYSQL_HOST=mysql.dbaas.svc.cluster.local
+                failed=0
+                total=0
+                ok=0
+
+                # Discover all user databases
+                dbs=$(mysql -u root --host $MYSQL_HOST -N -e \
+                  "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys','mysql_innodb_cluster_metadata');")
+
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p /backup/per-db/$db
+                  echo "=== Backing up $db ==="
+                  if mysqldump -u root --host $MYSQL_HOST --single-transaction --set-gtid-purged=OFF "$db" | gzip -9 > "/backup/per-db/$db/dump_$now.sql.gz"; then
+                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.sql.gz")
+                    echo "  OK — $(( _size / 1024 )) KiB"
+                    ok=$((ok + 1))
+                  else
+                    echo "  FAILED"
+                    rm -f "/backup/per-db/$db/dump_$now.sql.gz"
+                    failed=$((failed + 1))
+                  fi
+                done
+
+                # Rotate — 14 day retention per database
+                find /backup/per-db -name "dump_*.sql.gz" -type f -mtime +14 -delete
+
+                _dur=$(($(date +%s) - _t0))
+                echo "=== Per-DB Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
+                echo "duration: $${_dur}s"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup-per-db" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_databases_total $total
+                backup_databases_ok $ok
+                backup_databases_failed $failed
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              volume_mount {
+                name       = "mysql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "mysql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_mysql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 # resource "kubernetes_persistent_volume" "mysql" {
 #   metadata {
 #     name = "mysql-pv"
@@ -1269,6 +1364,113 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
               volume_mount {
                 name       = "postgresql-backup"
                 mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+# Per-database PostgreSQL backups (enables single-database restore without affecting others)
+resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
+  metadata {
+    name      = "postgresql-backup-per-db"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 3
+    schedule                  = "15 0 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup-per-db"
+              image = "docker.io/library/postgres:16.4-bullseye"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "pg-cluster-superuser"
+                    key  = "password"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
+                apt-get update -qq && apt-get install -yqq curl >/dev/null 2>&1 || true
+
+                _t0=$(date +%s)
+                now=$(date +"%Y_%m_%d_%H_%M")
+                PGHOST=pg-cluster-rw.dbaas
+                PGUSER=postgres
+                failed=0
+                total=0
+                ok=0
+
+                # Discover all user databases
+                dbs=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -U $PGUSER -t -A -c \
+                  "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
+
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p /backup/per-db/$db
+                  echo "=== Backing up $db ==="
+                  if PGPASSWORD=$PGPASSWORD pg_dump -Fc -h $PGHOST -U $PGUSER "$db" > "/backup/per-db/$db/dump_$now.dump"; then
+                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.dump")
+                    echo "  OK — $(( _size / 1024 )) KiB"
+                    ok=$((ok + 1))
+                  else
+                    echo "  FAILED"
+                    rm -f "/backup/per-db/$db/dump_$now.dump"
+                    failed=$((failed + 1))
+                  fi
+                done
+
+                # Rotate — 14 day retention per database
+                find /backup/per-db -name "dump_*.dump" -type f -mtime +14 -delete
+
+                _dur=$(($(date +%s) - _t0))
+                echo "=== Per-DB Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
+                echo "duration: $${_dur}s"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup-per-db" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_databases_total $total
+                backup_databases_ok $ok
+                backup_databases_failed $failed
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+              resources {
+                requests = {
+                  memory = "256Mi"
+                  cpu    = "50m"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
               }
             }
             volume {
