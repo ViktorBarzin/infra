@@ -53,7 +53,7 @@ echo "SSH key fetched"
 # 6. SSH to DevVM and run Claude Code headless
 TODOS=$(cat /tmp/todos.json)
 ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
-  "cd ~/code/infra && git pull && claude -p \
+  "cd ~/code/infra && git pull && ~/.local/bin/claude -p \
     --agent postmortem-todo-resolver \
     --dangerously-skip-permissions \
     --max-budget-usd 5 \
