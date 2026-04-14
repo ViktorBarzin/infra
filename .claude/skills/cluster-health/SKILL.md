@@ -295,6 +295,14 @@ The webhook URL is passed as an environment variable from `openclaw_skill_secret
 | kubectl (in pod) | `/tools/kubectl` |
 | terraform (in pod) | `/tools/terraform` |
 
+## Post-Mortem Auto-Suggest
+
+After running a healthcheck, if the cluster has **recovered from an unhealthy state** (previous run showed FAIL items that are now resolved), suggest writing a post-mortem:
+
+> The cluster has recovered from the previous unhealthy state. Would you like me to write a post-mortem? Run `/post-mortem` to generate one.
+
+This ensures incidents are documented while context is fresh.
+
 ## Notes
 
 1. This script is designed to run inside the OpenClaw pod where kubectl is pre-configured via the ServiceAccount
