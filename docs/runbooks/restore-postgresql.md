@@ -84,6 +84,43 @@ kubectl rollout restart deployment -n linkwarden
 # ... repeat for all PG-dependent services (excluding trading — disabled)
 ```
 
+## Restore Single Database (from per-db backup)
+
+Per-database backups use `pg_dump -Fc` (custom format) and are stored at `/mnt/main/postgresql-backup/per-db/<dbname>/`.
+
+### 1. List available per-db backups
+```bash
+ls -lt /mnt/main/postgresql-backup/per-db/<dbname>/
+
+# Or via a pod:
+kubectl exec -n dbaas pg-cluster-1 -c postgres -- ls -lt /backup/per-db/<dbname>/ 2>/dev/null || \
+  echo "Mount a backup pod — see Option A below"
+```
+
+### 2. Restore a single database
+```bash
+# Port-forward to the CNPG primary
+kubectl port-forward svc/pg-cluster-rw -n dbaas 5433:5432 &
+
+# Restore single database (drops and recreates objects in that DB only)
+PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d) \
+  pg_restore -h 127.0.0.1 -p 5433 -U postgres -d <dbname> --clean --if-exists \
+  /path/to/per-db/<dbname>/dump_YYYY_MM_DD_HH_MM.dump
+```
+
+### 3. Verify
+```bash
+PGPASSWORD=$PGPASSWORD psql -h 127.0.0.1 -p 5433 -U postgres -d <dbname> -c \
+  "SELECT schemaname, tablename, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 10;"
+```
+
+### 4. Restart the affected service only
+```bash
+kubectl rollout restart deployment -n <namespace>
+```
+
+**Advantages over full restore**: Only the target database is affected. All other databases continue running with their current data.
+
 ## Alternative: Restore from sda Backup
 
 If TrueNAS NFS is unavailable but the PVE host is accessible:

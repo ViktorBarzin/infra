@@ -96,6 +96,38 @@ kubectl exec -it mysql-cluster-0 -n dbaas -c mysql -- mysqlsh root@localhost --p
 kubectl exec -it mysql-cluster-0 -n dbaas -c mysql -- mysqlsh root@localhost --password="$ROOT_PWD" -- cluster rejoinInstance root@mysql-cluster-1:3306
 ```
 
+## Restore Single Database (from per-db backup)
+
+Per-database backups are stored at `/mnt/main/mysql-backup/per-db/<dbname>/` as gzipped SQL dumps.
+
+### 1. List available per-db backups
+```bash
+ls -lt /mnt/main/mysql-backup/per-db/<dbname>/
+```
+
+### 2. Restore a single database
+```bash
+# Port-forward to MySQL
+kubectl port-forward svc/mysql -n dbaas 3307:3306 &
+ROOT_PWD=$(kubectl get secret cluster-secret -n dbaas -o jsonpath='{.data.ROOT_PASSWORD}' | base64 -d)
+
+# Restore single database (this replaces only the target database)
+zcat /path/to/per-db/<dbname>/dump_YYYY_MM_DD_HH_MM.sql.gz | mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 <dbname>
+```
+
+### 3. Verify
+```bash
+mysql -u root -p"$ROOT_PWD" --host 127.0.0.1 --port 3307 -e \
+  "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA='<dbname>' ORDER BY TABLE_ROWS DESC LIMIT 10;"
+```
+
+### 4. Restart the affected service only
+```bash
+kubectl rollout restart deployment -n <namespace>
+```
+
+**Advantages over full restore**: Only the target database is affected. All other databases continue running with their current data.
+
 ## Alternative: Restore from sda Backup
 
 If TrueNAS NFS is unavailable but the PVE host is accessible:
