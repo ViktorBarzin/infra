@@ -50,12 +50,57 @@ resolve_pvc_name() {
     ' "${MAPPING_CACHE}" 2>/dev/null
 }
 
+# --- NFS Export Health Check ---
+# Verify NFS exports are healthy before starting backup.
+# Detects: missing /etc/exports, incorrect fsid=0 flag, unexpected exports.
+# Added 2026-04-14 [PM-2026-04-14]: backup script accessed NFS causing stale handle
+# propagation during the fsid=0 outage. Early check prevents cascading failures.
+check_nfs_exports() {
+    local exports_file="/etc/exports"
+    local status=0
+
+    if [ ! -f "${exports_file}" ]; then
+        log "WARN: ${exports_file} does not exist — NFS exports may be unconfigured"
+        return 1
+    fi
+
+    # Check for dangerous fsid=0 on /srv/nfs (breaks NFSv4 subdirectory path resolution)
+    if grep -E '^/srv/nfs[[:space:]].*fsid=0' "${exports_file}" 2>/dev/null; then
+        log "ERROR: /etc/exports contains fsid=0 on /srv/nfs — this will break all k8s NFS mounts!"
+        log "ERROR: Remove fsid=0 and run: exportfs -ra && systemctl restart nfs-server"
+        return 1
+    fi
+
+    # Verify NFS server is active
+    if ! systemctl is-active --quiet nfs-server 2>/dev/null; then
+        log "WARN: nfs-server is not running — NFS mounts will fail"
+        return 1
+    fi
+
+    # Verify exports are actually loaded (exportfs -s lists active exports)
+    local active_exports
+    active_exports=$(exportfs -s 2>/dev/null | grep -c '/srv/nfs' || true)
+    if [ "${active_exports:-0}" -eq 0 ]; then
+        log "WARN: No /srv/nfs exports active in kernel — run: exportfs -ra"
+        return 1
+    fi
+
+    log "NFS export health check passed (${active_exports} /srv/nfs export(s) active)"
+    return 0
+}
+
 # --- Main ---
 log "=== Weekly backup starting ==="
 
 if ! mountpoint -q "${BACKUP_ROOT}"; then
     die "${BACKUP_ROOT} is not mounted"
 fi
+
+# NFS export health check — warn but don't abort (backup can proceed with block storage PVCs)
+check_nfs_exports || {
+    log "WARN: NFS export health check failed — NFS-backed PVC backups may fail"
+    STATUS=1
+}
 
 STATUS=0
 TOTAL_BYTES=0
