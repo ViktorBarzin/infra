@@ -12,29 +12,13 @@ steps:
     image: python:3.12-alpine
     commands:
       - apk add --no-cache jq curl git openssh-client
-      - "PM_FILE=$(git diff HEAD~1 --name-only | grep 'docs/post-mortems/.*\\.md' | head -1)"
-      - "if [ -z \"$PM_FILE\" ]; then echo 'No post-mortem changes'; exit 0; fi"
-      - "echo \"Post-mortem changed: $PM_FILE\""
-      - "if ! git diff HEAD~1 -- \"$PM_FILE\" | grep -q '+.*TODO'; then echo 'No new TODOs'; exit 0; fi"
-      - "bash scripts/parse-postmortem-todos.sh \"$PM_FILE\" > /tmp/todos.json"
-      - "cat /tmp/todos.json"
-      - "TODO_COUNT=$(jq '.safe_todos' /tmp/todos.json)"
-      - "echo \"$TODO_COUNT safe TODO(s) found\""
-      - "if [ \"$TODO_COUNT\" -eq 0 ]; then echo 'No auto-implementable TODOs'; exit 0; fi"
-      - "SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-      - "VAULT_TOKEN=$(curl -sf -X POST http://vault-active.vault.svc.cluster.local:8200/v1/auth/kubernetes/login -d \"{\\\"role\\\":\\\"ci\\\",\\\"jwt\\\":\\\"$SA_TOKEN\\\"}\" | jq -r .auth.client_token)"
-      - "if [ -z \"$VAULT_TOKEN\" ] || [ \"$VAULT_TOKEN\" = 'null' ]; then echo 'Vault auth failed'; exit 1; fi"
-      - "curl -sf -H \"X-Vault-Token: $VAULT_TOKEN\" http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/ci/infra | jq -r '.data.data.devvm_ssh_key' > /tmp/devvm-key"
-      - "chmod 600 /tmp/devvm-key"
-      - "TODOS=$(cat /tmp/todos.json | tr '\\n' ' ')"
-      - "ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \"cd ~/code/infra && git pull && claude -p --agent postmortem-todo-resolver --dangerously-skip-permissions --max-budget-usd 5 'Implement TODOs from $PM_FILE: $TODOS'\""
-      - "rm -f /tmp/devvm-key"
+      - sh scripts/postmortem-pipeline.sh
 
   - name: notify-slack
     image: alpine
     commands:
-      - "apk add --no-cache curl"
-      - "curl -sf -X POST \"https://hooks.slack.com/services/${SLACK_WEBHOOK}\" -H 'Content-Type: application/json' -d '{\"text\": \"Post-mortem TODO resolver pipeline completed\"}' || true"
+      - apk add --no-cache curl
+      - "curl -sf -X POST https://hooks.slack.com/services/$SLACK_WEBHOOK -H 'Content-Type: application/json' -d '{\"text\": \"Post-mortem TODO pipeline completed\"}' || true"
     secrets:
       - slack_webhook
     when:
