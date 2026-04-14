@@ -127,13 +127,10 @@ resource "kubernetes_config_map" "openclaw_config" {
             mode = "off"
           }
           model = {
-            primary   = "anthropic/claude-sonnet-4-20250514"
+            primary   = "nim/qwen/qwen3.5-397b-a17b"
             fallbacks = ["nim/mistralai/mistral-large-3-675b-instruct-2512", "nim/nvidia/llama-3.1-nemotron-ultra-253b-v1", "modelrelay/auto-fastest"]
           }
           models = {
-            "anthropic/claude-sonnet-4-20250514"                     = {}
-            "anthropic/claude-opus-4-20250514"                       = {}
-            "anthropic/claude-haiku-4-20250506"                      = {}
             "modelrelay/auto-fastest"                                = {}
             "nim/deepseek-ai/deepseek-v3.2"                          = {}
             "nim/qwen/qwen3.5-397b-a17b"                             = {}
@@ -204,16 +201,6 @@ resource "kubernetes_config_map" "openclaw_config" {
             apiKey  = "modelrelay"
             models = [
               { id = "auto-fastest", name = "Auto (Fastest)", reasoning = false, input = ["text"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
-            ]
-          }
-          anthropic = {
-            baseUrl = "https://api.anthropic.com/v1"
-            api     = "anthropic-messages"
-            apiKey  = data.vault_kv_secret_v2.secrets.data["anthropic_api_key"]
-            models = [
-              { id = "claude-sonnet-4-20250514", name = "Claude Sonnet 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.003, output = 0.015, cacheRead = 0.0003, cacheWrite = 0.00375 } },
-              { id = "claude-opus-4-20250514", name = "Claude Opus 4", reasoning = true, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.015, output = 0.075, cacheRead = 0.0015, cacheWrite = 0.01875 } },
-              { id = "claude-haiku-4-20250506", name = "Claude Haiku 4", reasoning = false, input = ["text", "image"], contextWindow = 200000, maxTokens = 16384, cost = { input = 0.0008, output = 0.004, cacheRead = 0.00008, cacheWrite = 0.001 } },
             ]
           }
           nim = {
