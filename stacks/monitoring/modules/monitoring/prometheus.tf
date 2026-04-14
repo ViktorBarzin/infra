@@ -30,26 +30,6 @@ module "nfs_prometheus_backup_host" {
   nfs_path   = "/srv/nfs/prometheus-backup"
 }
 
-resource "kubernetes_persistent_volume_claim" "alertmanager_pvc" {
-  wait_until_bound = false
-  metadata {
-    name      = "alertmanager-pvc"
-    namespace = kubernetes_namespace.monitoring.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "10Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = { storage = "2Gi" }
-    }
-  }
-}
-
 resource "helm_release" "prometheus" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -60,7 +40,8 @@ resource "helm_release" "prometheus" {
   # version    = "15.0.2"
   version = "25.8.2"
 
-  timeout = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
+  timeout      = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
+  force_update = true # Required for StatefulSet volumeClaimTemplate changes (immutable field)
 
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token })]
 }
