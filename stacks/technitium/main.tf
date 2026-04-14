@@ -1,5 +1,5 @@
 variable "tls_secret_name" { type = string }
-variable "nfs_server" { type = string }
+variable "nfs_server" { type = string } # passed by config.tfvars, unused after NFS removal
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
 
@@ -15,7 +15,6 @@ locals {
 module "technitium" {
   source              = "./modules/technitium"
   tls_secret_name     = var.tls_secret_name
-  nfs_server          = var.nfs_server
   mysql_host          = var.mysql_host
   postgresql_host     = var.postgresql_host
   homepage_token      = local.homepage_credentials["technitium"]["token"]

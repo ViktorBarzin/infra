@@ -6,10 +6,10 @@
 # Both pods share the `dns-server=true` label so the DNS LoadBalancer
 # in main.tf routes queries to whichever pod is healthy.
 
-resource "kubernetes_persistent_volume_claim" "secondary_config_proxmox" {
+resource "kubernetes_persistent_volume_claim" "secondary_config_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "technitium-secondary-config-proxmox"
+    name      = "technitium-secondary-config-encrypted"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -19,7 +19,7 @@ resource "kubernetes_persistent_volume_claim" "secondary_config_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "2Gi"
@@ -153,7 +153,7 @@ resource "kubernetes_deployment" "technitium_secondary" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.secondary_config_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.secondary_config_encrypted.metadata[0].name
           }
         }
         dns_config {
@@ -190,10 +190,10 @@ resource "kubernetes_service" "technitium_secondary_web" {
 }
 
 # Tertiary DNS deployment — another zone-transfer replica for ETP=Local coverage
-resource "kubernetes_persistent_volume_claim" "tertiary_config_proxmox" {
+resource "kubernetes_persistent_volume_claim" "tertiary_config_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "technitium-tertiary-config-proxmox"
+    name      = "technitium-tertiary-config-encrypted"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -203,7 +203,7 @@ resource "kubernetes_persistent_volume_claim" "tertiary_config_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "2Gi"
@@ -304,7 +304,7 @@ resource "kubernetes_deployment" "technitium_tertiary" {
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.tertiary_config_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.tertiary_config_encrypted.metadata[0].name
           }
         }
         dns_config {

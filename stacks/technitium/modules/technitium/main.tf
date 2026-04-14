@@ -1,7 +1,6 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "homepage_token" {}
-variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
 variable "technitium_username" { type = string }
@@ -84,12 +83,26 @@ resource "kubernetes_config_map" "coredns" {
   }
 }
 
-module "nfs_config_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "technitium-config-host"
-  namespace  = kubernetes_namespace.technitium.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/technitium"
+resource "kubernetes_persistent_volume_claim" "primary_config_encrypted" {
+  wait_until_bound = false
+  metadata {
+    name      = "technitium-primary-config-encrypted"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
 }
 
 resource "kubernetes_deployment" "technitium" {
@@ -186,7 +199,7 @@ resource "kubernetes_deployment" "technitium" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = module.nfs_config_host.claim_name
+            claim_name = kubernetes_persistent_volume_claim.primary_config_encrypted.metadata[0].name
           }
         }
         volume {
@@ -490,7 +503,7 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
             volume {
               name = "technitium-data"
               persistent_volume_claim {
-                claim_name = module.nfs_config_host.claim_name
+                claim_name = kubernetes_persistent_volume_claim.primary_config_encrypted.metadata[0].name
               }
             }
             restart_policy = "OnFailure"
