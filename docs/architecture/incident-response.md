@@ -8,24 +8,24 @@ Automated incident response pipeline that handles the full lifecycle: detection 
 
 ```mermaid
 graph TD
-    A[Incident Detected] --> B[Interactive Mitigation<br/>Claude Code CLI]
+    A[Incident Detected] --> B[Interactive Mitigation]
     B --> C{Cluster Healthy?}
     C -->|No| B
-    C -->|Yes| D[/post-mortem skill<br/>generates markdown]
-    D --> E[git push to<br/>docs/post-mortems/*.md]
+    C -->|Yes| D[post-mortem skill]
+    D --> E[git push post-mortem]
     E --> F[GitHub Webhook]
-    F --> G[Woodpecker Pipeline<br/>postmortem-todos.yml]
-    G --> H[parse-postmortem-todos.sh<br/>Extract safe TODOs]
+    F --> G[Woodpecker Pipeline]
+    G --> H[Parse safe TODOs]
     H --> I{Safe TODOs?}
-    I -->|None| J[Slack: No auto-implementable TODOs]
-    I -->|Found| K[Vault Auth<br/>K8s SA JWT]
-    K --> L[Fetch SSH Key<br/>secret/ci/infra]
-    L --> M[SSH to DevVM<br/>10.0.10.10]
-    M --> N[Claude Code Headless<br/>postmortem-todo-resolver agent]
-    N --> O[Implement TODOs<br/>Terraform plan/apply]
-    O --> P[Update Post-Mortem<br/>Follow-up Table]
+    I -->|None| J[Slack: nothing to do]
+    I -->|Found| K[Vault Auth via K8s SA]
+    K --> L[Fetch SSH Key]
+    L --> M[SSH to DevVM]
+    M --> N[Claude Code Headless Agent]
+    N --> O[Terraform plan + apply]
+    O --> P[Update Post-Mortem]
     P --> Q[git push]
-    Q --> R[GHA: Deploy to<br/>GitHub Pages]
+    Q --> R[GHA: GitHub Pages]
     Q --> S[Slack Notification]
 
     style B fill:#6366f1
