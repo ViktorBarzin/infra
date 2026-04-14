@@ -109,6 +109,22 @@ footer {
 <p class="subtitle">Incident reviews for the viktorbarzin.me Kubernetes cluster</p>
 <ul class="incident-list">
   <li class="incident-item">
+    <a href="2026-04-14-nfs-fsid0-dns-vault-outage.md">
+      <span class="incident-date">2026-04-14</span>
+      <span class="sev-tag">SEV 1</span>
+      <div class="incident-title">NFS fsid=0 Cascade &mdash; DNS + Vault + Multi-Service Outage</div>
+      <div class="incident-desc">5h outage: fsid=0 in PVE /etc/exports broke NFSv4 subdirectory mounts &rarr; Technitium primary I/O errors &rarr; Vault lost quorum &rarr; Alertmanager blind &rarr; 25+ pods affected across 15+ namespaces.</div>
+    </a>
+  </li>
+  <li class="incident-item">
+    <a href="2026-03-16-nfs-csi-cascade-failure.md">
+      <span class="incident-date">2026-03-16</span>
+      <span class="sev-tag">SEV 1</span>
+      <div class="incident-title">NFS CSI Cascade Failure</div>
+      <div class="incident-desc">47h outage: NFS CSI driver liveness-probe port conflict &rarr; all NFS mounts fail &rarr; 40+ pods stuck across 20+ namespaces.</div>
+    </a>
+  </li>
+  <li class="incident-item">
     <a href="2026-03-16-kured-containerd-cascade-outage.html">
       <span class="incident-date">2026-03-16</span>
       <span class="sev-tag">SEV 1</span>
