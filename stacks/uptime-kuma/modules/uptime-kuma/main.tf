@@ -1,6 +1,26 @@
 variable "tls_secret_name" {}
 variable "tier" { type = string }
 variable "nfs_server" { type = string }
+variable "cloudflare_proxied_names" { type = list(string) }
+
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
+locals {
+  # Services that don't respond to standard HTTP health checks
+  non_http_services = toset(["xray-vless", "xray-ws", "xray-grpc"])
+
+  external_monitor_targets = [
+    for name in var.cloudflare_proxied_names : {
+      name     = name
+      hostname = name == "viktorbarzin.me" ? "viktorbarzin.me" : "${name}.viktorbarzin.me"
+      url      = name == "viktorbarzin.me" ? "https://viktorbarzin.me" : "https://${name}.viktorbarzin.me"
+    }
+    if !contains(local.non_http_services, name)
+  ]
+}
 
 resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
@@ -228,3 +248,137 @@ module "ingress" {
 #     }
 #   }
 # }
+
+# =============================================================================
+# External Monitor Sync
+# Ensures Uptime Kuma has external HTTPS monitors for all Cloudflare-proxied services.
+# Reads targets from a Terraform-generated ConfigMap, creates/deletes monitors to match.
+# =============================================================================
+resource "kubernetes_config_map_v1" "external_monitor_targets" {
+  metadata {
+    name      = "external-monitor-targets"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  data = {
+    "targets.json" = jsonencode(local.external_monitor_targets)
+  }
+}
+
+resource "kubernetes_cron_job_v1" "external_monitor_sync" {
+  metadata {
+    name      = "external-monitor-sync"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/10 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "sync"
+              image = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check uptime-kuma-api
+                python3 << 'PYEOF'
+import os, json, time
+from uptime_kuma_api import UptimeKumaApi, MonitorType
+
+UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
+UPTIME_KUMA_PASS = os.environ["UPTIME_KUMA_PASSWORD"]
+TARGETS_FILE = "/config/targets.json"
+PREFIX = "[External] "
+
+with open(TARGETS_FILE) as f:
+    targets = json.load(f)
+
+print(f"Loaded {len(targets)} external monitor targets")
+
+api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=30)
+api.login("admin", UPTIME_KUMA_PASS)
+
+monitors = api.get_monitors()
+existing_external = {}
+for m in monitors:
+    if m["name"].startswith(PREFIX):
+        existing_external[m["name"]] = m
+
+target_names = set()
+created = 0
+for t in targets:
+    monitor_name = f"{PREFIX}{t['name']}"
+    target_names.add(monitor_name)
+    if monitor_name not in existing_external:
+        print(f"Creating monitor: {monitor_name} -> {t['url']}")
+        api.add_monitor(
+            type=MonitorType.HTTP,
+            name=monitor_name,
+            url=t["url"],
+            interval=300,
+            maxretries=3,
+            accepted_statecodes=["200-499"],
+        )
+        created += 1
+        time.sleep(0.3)
+
+# Remove monitors for services no longer in the list
+deleted = 0
+for name, m in existing_external.items():
+    if name not in target_names:
+        print(f"Deleting orphaned monitor: {name}")
+        api.delete_monitor(m["id"])
+        deleted += 1
+        time.sleep(0.3)
+
+api.disconnect()
+print(f"Sync complete: {created} created, {deleted} deleted, {len(target_names) - created} unchanged")
+PYEOF
+              EOT
+              ]
+              env {
+                name  = "UPTIME_KUMA_PASSWORD"
+                value = data.vault_kv_secret_v2.viktor.data["uptime_kuma_admin_password"]
+              }
+              volume_mount {
+                name       = "config"
+                mount_path = "/config"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  memory = "128Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+            volume {
+              name = "config"
+              config_map {
+                name = kubernetes_config_map_v1.external_monitor_targets.metadata[0].name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}

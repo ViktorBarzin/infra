@@ -1895,6 +1895,15 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Headscale 5xx error rate is {{ $value | printf \"%.1f\" }}%"
+      - name: "External Access"
+        rules:
+          - alert: ExternalAccessDivergence
+            expr: external_internal_divergence_count > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} service(s) externally unreachable but internally healthy — check Cloudflare tunnel, DNS, or Traefik routing"
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'

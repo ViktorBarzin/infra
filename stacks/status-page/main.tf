@@ -202,7 +202,10 @@ for m in monitors:
     raw_type = m.get("type", "unknown")
     monitor_type = raw_type.value if hasattr(raw_type, "value") else str(raw_type)
     monitor_type = monitor_type.lower().replace("monitortype.", "")
-    group_name = TYPE_NAMES.get(monitor_type, monitor_type.upper())
+    if m["name"].startswith("[External] "):
+        group_name = "External Reachability"
+    else:
+        group_name = TYPE_NAMES.get(monitor_type, monitor_type.upper())
 
     if not m.get("active", True):
         continue
@@ -267,9 +270,220 @@ for m in monitors:
 api.disconnect()
 print(f"Generated {len(groups)} groups")
 
+# ============ Detect external-down / internal-up divergence ============
+external_status = {}
+internal_status = {}
+for gname, gmonitors in groups.items():
+    for mon in gmonitors:
+        if mon["name"].startswith("[External] "):
+            svc = mon["name"].replace("[External] ", "").lower()
+            external_status[svc] = mon["status"]
+        elif gname != "External Reachability":
+            internal_status[mon["name"].lower()] = mon["status"]
+
+divergent = []
+for svc, ext_st in external_status.items():
+    if ext_st != "down":
+        continue
+    for iname, int_st in internal_status.items():
+        if svc in iname or iname in svc:
+            if int_st == "up":
+                divergent.append(svc)
+            break
+
+divergence_count = len(divergent)
+metric_body = (
+    "# HELP external_internal_divergence_count Services externally down but internally up\n"
+    "# TYPE external_internal_divergence_count gauge\n"
+    f"external_internal_divergence_count {divergence_count}\n"
+)
+for svc in divergent:
+    metric_body += f'external_internal_divergence_services{{service="{svc}"}} 1\n'
+
+try:
+    import urllib.request as _ur
+    req = _ur.Request(
+        "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/external-monitor-divergence",
+        data=metric_body.encode(),
+        method="POST"
+    )
+    _ur.urlopen(req, timeout=10)
+    if divergent:
+        print(f"WARNING: {len(divergent)} services externally down but internally up: {divergent}")
+    else:
+        print("No external/internal divergence detected")
+except Exception as e:
+    print(f"Warning: could not push divergence metric: {e}")
+
+# ============ Fetch incidents from GitHub Issues ============
+import urllib.request, urllib.error, re as _re2
+
+def fetch_github_json(url):
+    req = urllib.request.Request(url, headers={
+        "Authorization": "token " + GITHUB_TOKEN,
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "status-page-pusher",
+    })
+    resp = urllib.request.urlopen(req, timeout=15)
+    return json.loads(resp.read())
+
+def parse_severity(labels):
+    for lbl in labels:
+        name = lbl["name"].lower()
+        if name in ("sev1", "sev2", "sev3"):
+            return name
+    return "sev3"
+
+def parse_affected_services(body):
+    services = []
+    if not body:
+        return services
+    in_section = False
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped.lower().startswith("## affected"):
+            in_section = True
+            continue
+        if in_section:
+            if stripped.startswith("##"):
+                break
+            if stripped.startswith("- ") and not stripped.startswith("- <!--"):
+                services.append(stripped[2:].strip())
+    return services
+
+def parse_timeline(comments):
+    timeline = []
+    for c in comments:
+        body = (c.get("body") or "").strip()
+        status_label = "Update"
+        if body.startswith("**"):
+            end = body.find("**", 2)
+            if end > 2:
+                status_label = body[2:end]
+        timeline.append({
+            "timestamp": c["created_at"],
+            "status": status_label,
+            "body": body,
+        })
+    return timeline
+
+def extract_postmortem(comments):
+    for c in reversed(comments):
+        body = (c.get("body") or "").lower()
+        if "postmortem" in body:
+            urls = _re2.findall(r'https?://\S+', c.get("body", ""))
+            if urls:
+                return urls[0].rstrip(")>")
+    return None
+
+incidents_active = []
+incidents_resolved = []
+user_reports = []
+
+ISSUES_REPO = "ViktorBarzin/infra"
+
+def has_label(issue, name):
+    return any(l["name"].lower() == name.lower() for l in issue.get("labels", []))
+
+def parse_user_report_service(body):
+    """Extract service from GitHub Issue Form dropdown response."""
+    if not body:
+        return None
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and not stripped.startswith("_") and not stripped.startswith("<!"):
+            prev_was_heading = False
+            for i, ln in enumerate(body.split("\n")):
+                if "affected service" in ln.lower():
+                    prev_was_heading = True
+                    continue
+                if prev_was_heading and ln.strip():
+                    return ln.strip()
+    return None
+
+try:
+    issues_url = "https://api.github.com/repos/" + ISSUES_REPO + "/issues"
+
+    # Fetch admin-declared incidents (open)
+    open_incidents = fetch_github_json(
+        issues_url + "?labels=incident&state=open&per_page=50&sort=created&direction=desc"
+    )
+    for issue in open_incidents:
+        if issue.get("pull_request"):
+            continue
+        comments = fetch_github_json(issue["comments_url"]) if issue.get("comments", 0) > 0 else []
+        incidents_active.append({
+            "id": issue["number"],
+            "title": issue["title"],
+            "type": "incident",
+            "severity": parse_severity(issue.get("labels", [])),
+            "status": "active",
+            "created_at": issue["created_at"],
+            "updated_at": issue["updated_at"],
+            "affected_services": parse_affected_services(issue.get("body")),
+            "timeline": parse_timeline(comments),
+            "url": issue["html_url"],
+            "postmortem": None,
+        })
+
+    # Fetch user reports (open, not yet triaged to incident)
+    open_reports = fetch_github_json(
+        issues_url + "?labels=user-report&state=open&per_page=20&sort=created&direction=desc"
+    )
+    for issue in open_reports:
+        if issue.get("pull_request"):
+            continue
+        if has_label(issue, "incident"):
+            continue  # Already promoted to incident, skip duplicate
+        svc = parse_user_report_service(issue.get("body"))
+        user_reports.append({
+            "id": issue["number"],
+            "title": issue["title"],
+            "type": "user-report",
+            "status": "open",
+            "created_at": issue["created_at"],
+            "affected_services": [svc] if svc else [],
+            "url": issue["html_url"],
+        })
+
+    # Fetch recently closed incidents (last 7 days)
+    closed_incidents = fetch_github_json(
+        issues_url + "?labels=incident&state=closed&per_page=20&sort=updated&direction=desc"
+    )
+    cutoff_7d = (now - timedelta(days=7)).isoformat()
+    for issue in closed_incidents:
+        if issue.get("pull_request"):
+            continue
+        if issue.get("closed_at") and issue["closed_at"] < cutoff_7d:
+            continue
+        comments = fetch_github_json(issue["comments_url"]) if issue.get("comments", 0) > 0 else []
+        incidents_resolved.append({
+            "id": issue["number"],
+            "title": issue["title"],
+            "type": "incident",
+            "severity": parse_severity(issue.get("labels", [])),
+            "status": "resolved",
+            "created_at": issue["created_at"],
+            "closed_at": issue["closed_at"],
+            "updated_at": issue["updated_at"],
+            "affected_services": parse_affected_services(issue.get("body")),
+            "timeline": parse_timeline(comments),
+            "url": issue["html_url"],
+            "postmortem": extract_postmortem(comments),
+        })
+
+    print(f"Incidents: {len(incidents_active)} active, {len(incidents_resolved)} resolved, {len(user_reports)} user reports")
+except Exception as e:
+    print(f"Warning: could not fetch incidents: {e}")
+
 status_data = {
     "last_updated": now.isoformat(),
     "groups": groups,
+    "incidents": {
+        "active": incidents_active,
+        "resolved": incidents_resolved,
+        "user_reports": user_reports,
+    },
 }
 
 work_dir = "/tmp/status-page"
