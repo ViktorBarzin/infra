@@ -320,7 +320,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - Firewall rules: Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:
-- Config: Stored on NFS PVC (`/srv/nfs/technitium` on 192.168.1.127)
+- Config: Stored on `proxmox-lvm-encrypted` PVCs (migrated from NFS 2026-04-14)
 - Zone file: `viktorbarzin.lan` (A records for all internal hosts)
 - Reverse zones: `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`, `2.3.10.in-addr.arpa`, `0.168.192.in-addr.arpa`
 - Stub zone: `emrsn.org` (returns NXDOMAIN locally for corporate domain queries, avoids upstream forwarding)
@@ -479,6 +479,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
   - `docs/runbooks/reset-crowdsec-bans.md`
   - `docs/runbooks/add-dns-record.md`
 - **Architecture Docs**:
+  - `docs/architecture/dns.md` — DNS architecture (Technitium, CoreDNS, Cloudflare, Split Horizon)
   - `docs/architecture/vpn.md` — VPN and remote access
   - `docs/architecture/storage.md` — NFS and iSCSI architecture (coming soon)
 - **Reference**:
