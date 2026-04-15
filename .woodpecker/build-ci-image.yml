@@ -1,12 +1,11 @@
 # Build the CI tools Docker image used by all infra pipelines.
-# Triggers on changes to ci/Dockerfile or manual dispatch.
+# Triggers on changes to ci/Dockerfile only (push to master).
 
 when:
-  - event: [push, manual]
-    branch: master
-    evaluate: 'CI_PIPELINE_VARIABLE_ISSUE_NUMBER == ""'
-    path:
-      include:
+  event: push
+  branch: master
+  path:
+    include:
       - 'ci/Dockerfile'
 
 steps:
