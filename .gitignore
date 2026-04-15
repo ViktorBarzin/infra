@@ -81,3 +81,9 @@ terraform.tfvars
 .dolt/
 *.db
 .beads-credential-key
+
+# Build artifacts — binaries should be built by CI, not committed
+cli/cli
+cli/infra_cli
+stacks/terminal/clipboard-upload/clipboard-upload
+*.zip
