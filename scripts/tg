@@ -1,22 +1,60 @@
 #!/usr/bin/env bash
 # scripts/tg — wrapper: decrypt state before, encrypt+commit after mutating ops
 # Usage: scripts/tg apply --non-interactive
-#        scripts/tg run --all -- plan
+#        scripts/tg plan
 # Auth: `vault login -method=oidc` (token at ~/.vault-token)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SYNC="$REPO_ROOT/scripts/state-sync"
 
+# Enable provider cache (shared across stacks)
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
+export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=1
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
 # Determine stack name from cwd (relative to stacks/)
 STACK_NAME=""
 cwd="$(pwd)"
 stacks_dir="$REPO_ROOT/stacks"
 if [[ "$cwd" == "$stacks_dir"/* ]]; then
-  # Get first path component relative to stacks/
   rel="${cwd#$stacks_dir/}"
   STACK_NAME="${rel%%/*}"
 fi
+
+# ── Advisory lock via Vault KV ──
+LOCK_MAX_AGE=1800  # 30 minutes — stale lock threshold
+acquire_lock() {
+  local stack="$1"
+  local vault_addr="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  local lock_path="secret/data/locks/$stack"
+  local holder="pid=$$,host=$(hostname -s),user=$(whoami)"
+
+  # Check if lock exists and is not stale
+  local existing
+  existing=$(vault kv get -format=json "secret/locks/$stack" 2>/dev/null || echo '{}')
+  local locked=$(echo "$existing" | jq -r '.data.data.locked // "false"')
+  local acquired=$(echo "$existing" | jq -r '.data.data.acquired // "0"')
+  local existing_holder=$(echo "$existing" | jq -r '.data.data.holder // ""')
+
+  if [ "$locked" = "true" ]; then
+    local now=$(date +%s)
+    local age=$((now - acquired))
+    if [ "$age" -lt "$LOCK_MAX_AGE" ]; then
+      echo "ERROR: Stack '$stack' is locked by: $existing_holder (${age}s ago)"
+      echo "       Wait for it to finish or run: vault kv delete secret/locks/$stack"
+      return 1
+    fi
+    echo "WARNING: Breaking stale lock on '$stack' (held ${age}s by $existing_holder)"
+  fi
+
+  vault kv put "secret/locks/$stack" locked=true holder="$holder" acquired="$(date +%s)" >/dev/null
+}
+
+release_lock() {
+  local stack="$1"
+  vault kv delete "secret/locks/$stack" >/dev/null 2>&1 || true
+}
 
 # Decrypt state before any operation
 if [ -n "$STACK_NAME" ] && [ -f "$REPO_ROOT/state/stacks/$STACK_NAME/terraform.tfstate.enc" ]; then
@@ -31,6 +69,14 @@ for arg in "$@"; do
   esac
 done
 
+# Acquire lock for mutating operations
+if $is_mutating && [ -n "$STACK_NAME" ]; then
+  if command -v vault &>/dev/null && [ -n "${VAULT_TOKEN:-}" ]; then
+    acquire_lock "$STACK_NAME"
+    trap 'release_lock "$STACK_NAME"' EXIT
+  fi
+fi
+
 # If running apply with --non-interactive, add -auto-approve for Terraform
 args=("$@")
 has_apply=false
@@ -43,7 +89,6 @@ for arg in "${args[@]}"; do
 done
 
 if $has_apply && $has_non_interactive; then
-  # Rebuild args: insert -auto-approve after apply
   new_args=()
   for arg in "${args[@]}"; do
     new_args+=("$arg")
