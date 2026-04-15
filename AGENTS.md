@@ -104,5 +104,14 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **Add a secret**: `sops set secrets.sops.json '["key"]' '"value"'` then commit.
 - **NFS exports**: Create dir on Proxmox host (`ssh root@192.168.1.127 "mkdir -p /srv/nfs/<service>"`), add to `/etc/exports`, run `exportfs -ra`.
 
+## Automated Service Upgrades
+- **Pipeline**: DIUN (detect) → n8n webhook (filter + rate limit) → SSH → `claude -p` (upgrade agent)
+- **Agent**: `.claude/agents/service-upgrade.md` — analyzes changelogs, backs up DBs, bumps versions, verifies health, rolls back on failure
+- **Config**: `.claude/reference/upgrade-config.json` — GitHub repo mappings, DB-backed services, skip patterns
+- **Rate limit**: Max 5 upgrades per 6h DIUN scan cycle (configured in n8n workflow)
+- **Skipped**: databases, `:latest`, custom images (`viktorbarzin/*`), infrastructure images
+- **Risk**: SAFE (2min verify) vs CAUTION (10min, DB backup, step through versions) based on changelog analysis
+- **Docs**: `docs/architecture/automated-upgrades.md`
+
 ## Detailed Reference
 See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure, archived troubleshooting runbooks index.

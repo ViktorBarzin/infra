@@ -151,6 +151,10 @@ resource "kubernetes_deployment" "n8n" {
           name  = "n8n"
           image = "docker.n8n.io/n8nio/n8n:1.80.0"
           env {
+            name  = "N8N_PORT"
+            value = "5678"
+          }
+          env {
             name  = "DB_TYPE"
             value = "postgresdb"
           }
