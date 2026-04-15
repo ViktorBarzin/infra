@@ -204,7 +204,7 @@ resource "kubernetes_deployment" "affine" {
         # Init container to run database migrations
         init_container {
           name    = "migration"
-          image   = "ghcr.io/toeverything/affine:0.20.7"
+          image   = "ghcr.io/toeverything/affine:0.26.6"
           command = ["sh", "-c", "npx prisma migrate deploy && SERVER_FLAVOR=script node ./dist/main.js run"]
 
           dynamic "env" {
@@ -247,7 +247,7 @@ resource "kubernetes_deployment" "affine" {
 
         container {
           name  = "affine"
-          image = "ghcr.io/toeverything/affine:0.20.7"
+          image = "ghcr.io/toeverything/affine:0.26.6"
 
           port {
             container_port = 3010
