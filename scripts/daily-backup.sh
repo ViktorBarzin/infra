@@ -150,6 +150,12 @@ else
         MOUNT_DEV="/dev/pve/${snap}"
         MOUNT_OPTS="ro"
         if blkid -o value -s TYPE "/dev/pve/${snap}" 2>/dev/null | grep -q 'crypto_LUKS'; then
+            # Clean up any stale LUKS mapping for this snapshot from a previous crashed run
+            STALE_LUKS="pvc-snap-$(echo "${snap}" | md5sum | cut -c1-12)"
+            if [ -e "/dev/mapper/${STALE_LUKS}" ]; then
+                umount "/dev/mapper/${STALE_LUKS}" 2>/dev/null || true
+                cryptsetup close "${STALE_LUKS}" 2>/dev/null || true
+            fi
             LUKS_KEY="/root/.luks-backup-key"
             LUKS_NAME="pvc-snap-$(echo "${snap}" | md5sum | cut -c1-12)"
             if [ -f "${LUKS_KEY}" ] && cryptsetup open --type luks --key-file "${LUKS_KEY}" --readonly "/dev/pve/${snap}" "${LUKS_NAME}" 2>&1; then
@@ -167,12 +173,19 @@ else
         if timeout 30 mount -o "${MOUNT_OPTS}" "${MOUNT_DEV}" "${PVC_MOUNT}" 2>&1; then
             dst="${BACKUP_ROOT}/pvc-data/${WEEK}/${ns_pvc}"
             mkdir -p "${dst}"
-            if rsync -az --delete \
+            rsync_rc=0
+            rsync -az --delete \
                 ${PREV:+--link-dest="${PREV}/${ns_pvc}/"} \
-                "${PVC_MOUNT}/" "${dst}/" 2>&1; then
+                "${PVC_MOUNT}/" "${dst}/" 2>&1 || rsync_rc=$?
+            if [ "$rsync_rc" -eq 0 ]; then
                 PVC_COUNT=$((PVC_COUNT + 1))
+            elif [ "$rsync_rc" -eq 23 ] && [ -n "${LUKS_NAME}" ]; then
+                # rsync 23 = partial transfer; expected for LUKS noload mounts
+                # (in-flight writes have corrupt metadata from skipped journal replay)
+                PVC_COUNT=$((PVC_COUNT + 1))
+                log "  partial rsync (LUKS noload) for ${ns_pvc} — OK"
             else
-                warn "rsync failed for ${ns_pvc}"
+                warn "rsync failed for ${ns_pvc} (rc=$rsync_rc)"
                 PVC_FAIL=$((PVC_FAIL + 1))
             fi
 
