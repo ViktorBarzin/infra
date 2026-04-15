@@ -1,3 +1,15 @@
+# Unified infra CI pipeline — detects changed stacks and applies only those.
+# Platform stacks and app stacks handled in one pipeline with proper ordering.
+#
+# Optimizations over the previous split pipeline:
+# - Custom CI image (no apk/wget per step)
+# - Shallow clone (depth=2 for git diff HEAD~1)
+# - TF_PLUGIN_CACHE_DIR (shared provider cache)
+# - Concurrency limit (xargs -P 4)
+# - Step consolidation (2 steps instead of 4)
+# - Changed-stacks-only detection (skips no-op applies)
+# - Global-file fallback (modules/config changes trigger full apply)
+
 when:
   event: push
   branch: master
@@ -6,28 +18,14 @@ clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
+      depth: 2
       attempts: 5
       backoff: 10s
 
 steps:
-  - name: prepare
-    image: alpine
-    commands:
-      - "apk update && apk add jq curl git git-crypt"
-      # git-crypt for secrets/ directory (TLS certs, deploy key)
-      - |
-        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq -r .data.key | base64 -d > /tmp/key
-      - "git-crypt unlock /tmp/key && rm /tmp/key"
-      # Vault: authenticate via K8s service account JWT
-      - |
-        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        VAULT_TOKEN=$(curl -s -X POST http://vault-active.vault.svc.cluster.local:8200/v1/auth/kubernetes/login \
-          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
-        echo "export VAULT_TOKEN=$VAULT_TOKEN" > .vault-env
-        echo "export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200" >> .vault-env
-
-  - name: terragrunt-apply
-    image: alpine
+  - name: apply
+    image: registry.viktorbarzin.me:5050/infra-ci:latest
+    pull: true
     backend_options:
       kubernetes:
         resources:
@@ -35,51 +33,142 @@ steps:
             memory: 3Gi
           limits:
             memory: 6Gi
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
     commands:
-      - "apk update && apk add curl unzip git openssh-client"
-      # Install Terraform
-      - "wget -qO /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip"
-      - "unzip -o /tmp/terraform.zip -d /usr/local/bin/ && chmod 755 /usr/local/bin/terraform"
-      # Install Terragrunt
-      - "wget -qO /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v0.99.4/terragrunt_linux_amd64"
-      - "chmod 755 /usr/local/bin/terragrunt"
-      # Source Vault token
-      - "source .vault-env"
-      # Apply all platform stacks in parallel
+      # ── Skip CI commits ──
       - |
-        for stack in dbaas authentik crowdsec monitoring nvidia mailserver cloudflared kyverno \
-                     metallb redis traefik technitium headscale rbac k8s-portal vaultwarden \
-                     reverse-proxy metrics-server vpa nfs-csi iscsi-csi cnpg sealed-secrets \
-                     uptime-kuma wireguard xray infra-maintenance platform; do
-          (cd stacks/$stack && terragrunt apply --non-interactive -auto-approve) &
+        if echo "$CI_COMMIT_MESSAGE" | grep -q '\[CI SKIP\]\|\[ci skip\]'; then
+          echo "Commit has [CI SKIP], exiting"
+          exit 0
+        fi
+
+      # ── git-crypt unlock ──
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        curl -sk "https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key" \
+          -H "Authorization:Bearer $SA_TOKEN" | jq -r .data.key | base64 -d > /tmp/key
+        git-crypt unlock /tmp/key && rm /tmp/key
+
+      # ── Vault auth ──
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+        export VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+
+      # ── Detect changed stacks ──
+      - |
+        PLATFORM_STACKS="dbaas authentik crowdsec monitoring nvidia mailserver cloudflared kyverno metallb redis traefik technitium headscale rbac k8s-portal vaultwarden reverse-proxy metrics-server vpa nfs-csi iscsi-csi cnpg sealed-secrets uptime-kuma wireguard xray infra-maintenance platform vault reloader descheduler external-secrets"
+
+        # Check if global files changed (triggers full platform apply)
+        GLOBAL_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -E '^(modules/|config\.tfvars|terragrunt\.hcl)' || true)
+
+        if [ -n "$GLOBAL_CHANGED" ]; then
+          echo "Global files changed — applying ALL platform stacks"
+          echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
+        else
+          # Detect platform stacks that changed
+          git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
+          > .platform_apply
+          while read -r stack; do
+            if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
+              echo "$stack" >> .platform_apply
+            fi
+          done < .all_changed
+        fi
+
+        # Detect app stacks that changed
+        > .app_apply
+        git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
+          if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
+            continue  # Skip platform stacks
+          fi
+          if [ ! -f "stacks/$stack/terragrunt.hcl" ]; then
+            continue  # Skip non-terragrunt dirs
+          fi
+          echo "$stack" >> .app_apply
         done
-        wait
 
-  - name: cleanup-and-push
-    image: alpine
-    commands:
-      - "rm -f .vault-env"
-      - "apk update && apk add openssh-client git git-crypt"
-      - "mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
-      - "chmod 400 secrets/deploy_key"
-      # Only add specific paths — never git add .
-      - "git add stacks/ state/ .woodpecker/ || true"
-      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
-      - "git commit -m 'Woodpecker CI deploy commit [CI SKIP]' || echo 'No changes'"
-      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master || true"
-      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
-    when:
-      status: [success, failure]
+        PLATFORM_COUNT=$(wc -l < .platform_apply | tr -d ' ')
+        APP_COUNT=$(wc -l < .app_apply | tr -d ' ')
+        echo "Platform stacks to apply: $PLATFORM_COUNT"
+        echo "App stacks to apply: $APP_COUNT"
+        cat .platform_apply .app_apply
 
-  - name: slack
+      # ── Pre-warm provider cache ──
+      - |
+        if [ -s .platform_apply ] || [ -s .app_apply ]; then
+          FIRST_STACK=$(head -1 .platform_apply .app_apply 2>/dev/null | head -1)
+          if [ -n "$FIRST_STACK" ]; then
+            echo "Pre-warming provider cache from stacks/$FIRST_STACK..."
+            cd "stacks/$FIRST_STACK" && terragrunt init --terragrunt-non-interactive -input=false 2>&1 | tail -3 && cd ../..
+          fi
+        fi
+
+      # ── Apply platform stacks (with concurrency limit) ──
+      - |
+        if [ -s .platform_apply ]; then
+          echo "=== Applying platform stacks (max 4 parallel) ==="
+          cat .platform_apply | xargs -P 4 -I{} sh -c '
+            echo "[{}] Starting apply..."
+            cd stacks/{} && terragrunt apply --non-interactive -auto-approve 2>&1 | tail -5
+            EXIT=$?
+            if [ $EXIT -ne 0 ]; then
+              echo "[{}] FAILED (exit $EXIT)"
+            else
+              echo "[{}] OK"
+            fi
+          '
+        fi
+
+      # ── Apply app stacks (with concurrency limit) ──
+      - |
+        if [ -s .app_apply ]; then
+          echo "=== Applying app stacks (max 4 parallel) ==="
+          cat .app_apply | xargs -P 4 -I{} sh -c '
+            echo "[{}] Starting apply..."
+            cd stacks/{} && terragrunt apply --non-interactive -auto-approve 2>&1 | tail -5
+            EXIT=$?
+            if [ $EXIT -ne 0 ]; then
+              echo "[{}] FAILED (exit $EXIT)"
+            else
+              echo "[{}] OK"
+            fi
+          '
+        fi
+
+      # ── Commit and push state changes ──
+      - |
+        mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+        chmod 400 secrets/deploy_key
+        git add stacks/ state/ .woodpecker/ 2>/dev/null || true
+        git remote set-url origin git@github.com:ViktorBarzin/infra.git
+        git diff --cached --quiet && echo "No changes to commit" && exit 0
+        git commit -m "Woodpecker CI deploy [CI SKIP]"
+        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git fetch origin master
+        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase origin/master || true
+        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master
+
+      # ── Slack notification ──
+      - |
+        PLATFORM_COUNT=$(wc -l < .platform_apply 2>/dev/null | tr -d ' ')
+        APP_COUNT=$(wc -l < .app_apply 2>/dev/null | tr -d ' ')
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: infra pipeline ${CI_PIPELINE_STATUS} (platform:${PLATFORM_COUNT}, apps:${APP_COUNT})\"}" \
+          "$SLACK_WEBHOOK" || true
+
+  # Slack on failure (runs even if apply step fails)
+  - name: notify-failure
     image: curlimages/curl
     commands:
       - |
         curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: infra pipeline ${CI_PIPELINE_STATUS}\"}" \
+          --data "{\"channel\":\"general\",\"text\":\":red_circle: Woodpecker CI: infra pipeline FAILED\"}" \
           "$SLACK_WEBHOOK" || true
     environment:
       SLACK_WEBHOOK:
         from_secret: slack_webhook
     when:
-      status: [success, failure]
+      status: [failure]

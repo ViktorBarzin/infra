@@ -1,0 +1,80 @@
+# Daily drift detection — runs terraform plan on all stacks and alerts on drift.
+# Triggered by Woodpecker cron schedule "drift-detection" (must be registered in Woodpecker UI/API).
+
+when:
+  event: cron
+  cron: drift-detection
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: detect-drift
+    image: registry.viktorbarzin.me:5050/infra-ci:latest
+    pull: true
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            memory: 2Gi
+          limits:
+            memory: 4Gi
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      # ── git-crypt unlock ──
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        curl -sk "https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key" \
+          -H "Authorization:Bearer $SA_TOKEN" | jq -r .data.key | base64 -d > /tmp/key
+        git-crypt unlock /tmp/key && rm /tmp/key
+
+      # ── Vault auth ──
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+        export VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+
+      # ── Run terraform plan on all stacks ──
+      - |
+        DRIFTED=""
+        CLEAN=0
+        ERRORS=""
+
+        for stack_dir in stacks/*/; do
+          stack=$(basename "$stack_dir")
+          [ -f "$stack_dir/terragrunt.hcl" ] || continue
+
+          echo -n "[$stack] planning... "
+          OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1)
+          EXIT=$?
+
+          case $EXIT in
+            0) echo "OK (no changes)"; CLEAN=$((CLEAN + 1)) ;;
+            1) echo "ERROR"; ERRORS="$ERRORS $stack" ;;
+            2) echo "DRIFT DETECTED"; DRIFTED="$DRIFTED $stack" ;;
+          esac
+        done
+
+        echo ""
+        echo "=== Drift Detection Summary ==="
+        echo "Clean: $CLEAN stacks"
+        echo "Drift: ${DRIFTED:-none}"
+        echo "Errors: ${ERRORS:-none}"
+
+        # ── Slack alert if drift found ──
+        if [ -n "$DRIFTED" ]; then
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:${DRIFTED}\nClean: ${CLEAN} stacks. Errors:${ERRORS:-none}\"}" \
+            "$SLACK_WEBHOOK" || true
+        else
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "{\"channel\":\"general\",\"text\":\":white_check_mark: Drift detection: all ${CLEAN} stacks clean${ERRORS:+. Errors: $ERRORS}\"}" \
+            "$SLACK_WEBHOOK" || true
+        fi

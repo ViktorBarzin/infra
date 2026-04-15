@@ -1,0 +1,41 @@
+# Build the CI tools Docker image used by all infra pipelines.
+# Triggers on changes to ci/Dockerfile or manual dispatch.
+
+when:
+  event: [push, manual]
+  branch: master
+  path:
+    include:
+      - 'ci/Dockerfile'
+
+steps:
+  - name: build-and-push
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: registry.viktorbarzin.me:5050/infra-ci
+      dockerfile: ci/Dockerfile
+      context: ci/
+      tags:
+        - latest
+        - "${CI_COMMIT_SHA:0:8}"
+      platforms: linux/amd64
+      registry: registry.viktorbarzin.me:5050
+      logins:
+        - registry: registry.viktorbarzin.me:5050
+          username:
+            from_secret: registry_user
+          password:
+            from_secret: registry_password
+
+  - name: slack
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"CI image built: registry.viktorbarzin.me:5050/infra-ci:${CI_COMMIT_SHA:0:8}\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [success]
