@@ -1,3 +1,8 @@
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+
 resource "kubernetes_namespace" "beads" {
   metadata {
     name = "beads-server"
@@ -168,5 +173,134 @@ resource "kubernetes_service" "dolt" {
       port        = 3306
       target_port = 3306
     }
+  }
+}
+
+# ── Dolt Workbench (web UI) ──
+
+resource "kubernetes_deployment" "workbench" {
+  metadata {
+    name      = "dolt-workbench"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+    labels = {
+      app  = "dolt-workbench"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "dolt-workbench"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "dolt-workbench"
+        }
+      }
+      spec {
+        container {
+          name  = "workbench"
+          image = "dolthub/dolt-workbench:latest"
+
+          port {
+            name           = "http"
+            container_port = 3000
+          }
+          port {
+            name           = "graphql"
+            container_port = 9002
+          }
+
+          env {
+            name  = "DATABASE_URL"
+            value = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
+          }
+
+          startup_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            failure_threshold = 30
+            period_seconds    = 2
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 30
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+
+          resources {
+            requests = {
+              memory = "128Mi"
+              cpu    = "10m"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config
+    ]
+  }
+}
+
+resource "kubernetes_service" "workbench" {
+  metadata {
+    name      = "dolt-workbench"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+    labels = {
+      app = "dolt-workbench"
+    }
+  }
+  spec {
+    selector = {
+      app = "dolt-workbench"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 3000
+    }
+  }
+}
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.beads.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+module "ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.beads.metadata[0].name
+  name            = "dolt-workbench"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Dolt Workbench"
+    "gethomepage.dev/description"  = "Beads task database UI"
+    "gethomepage.dev/icon"         = "dolt.png"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
   }
 }
