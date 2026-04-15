@@ -62,34 +62,47 @@ steps:
       - |
         PLATFORM_STACKS="dbaas authentik crowdsec monitoring nvidia mailserver cloudflared kyverno metallb redis traefik technitium headscale rbac k8s-portal vaultwarden reverse-proxy metrics-server vpa nfs-csi iscsi-csi cnpg sealed-secrets uptime-kuma wireguard xray infra-maintenance platform vault reloader descheduler external-secrets"
 
-        # Check if global files changed (triggers full platform apply)
-        GLOBAL_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -E '^(modules/|config\.tfvars|terragrunt\.hcl)' || true)
-
-        if [ -n "$GLOBAL_CHANGED" ]; then
-          echo "Global files changed — applying ALL platform stacks"
-          echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
-        else
-          # Detect platform stacks that changed
-          git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
-          > .platform_apply
-          while read -r stack; do
-            if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
-              echo "$stack" >> .platform_apply
-            fi
-          done < .all_changed
+        # Ensure we have enough history for diff (clone may be shallow)
+        if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+          echo "WARNING: HEAD~1 not available (shallow clone?) — fetching more history"
+          git fetch --deepen=1 origin master 2>/dev/null || true
         fi
 
-        # Detect app stacks that changed
-        > .app_apply
-        git diff --name-only HEAD~1 HEAD 2>/dev/null | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
-          if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
-            continue  # Skip platform stacks
+        # If still no parent, apply all platform stacks as a safe fallback
+        if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+          echo "Cannot determine changed files — applying ALL platform stacks"
+          echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
+          > .app_apply
+        else
+          # Check if global files changed (triggers full platform apply)
+          GLOBAL_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E '^(modules/|config\.tfvars|terragrunt\.hcl)' || true)
+
+          if [ -n "$GLOBAL_CHANGED" ]; then
+            echo "Global files changed — applying ALL platform stacks"
+            echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
+          else
+            # Detect platform stacks that changed
+            git diff --name-only HEAD~1 HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
+            > .platform_apply
+            while read -r stack; do
+              if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
+                echo "$stack" >> .platform_apply
+              fi
+            done < .all_changed
           fi
-          if [ ! -f "stacks/$stack/terragrunt.hcl" ]; then
-            continue  # Skip non-terragrunt dirs
-          fi
-          echo "$stack" >> .app_apply
-        done
+
+          # Detect app stacks that changed
+          > .app_apply
+          git diff --name-only HEAD~1 HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
+            if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
+              continue  # Skip platform stacks
+            fi
+            if [ ! -f "stacks/$stack/terragrunt.hcl" ]; then
+              continue  # Skip non-terragrunt dirs
+            fi
+            echo "$stack" >> .app_apply
+          done
+        fi
 
         PLATFORM_COUNT=$(wc -l < .platform_apply | tr -d ' ')
         APP_COUNT=$(wc -l < .app_apply | tr -d ' ')
