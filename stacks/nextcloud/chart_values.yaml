@@ -30,12 +30,14 @@ nextcloud:
     zzz-redis.config.php: |
       <?php
       // Redis with Sentinel-based master discovery
-      // Queries Sentinel at startup to find the current master, falls back to direct host
+      // Queries Sentinel to find the current master, falls back to HAProxy service
+      // which health-checks Redis nodes and routes only to the master.
       $sentinels = [
         ['redis-node-0.redis-headless.redis.svc.cluster.local', 26379],
         ['redis-node-1.redis-headless.redis.svc.cluster.local', 26379],
       ];
-      $redisHost = 'redis-node-0.redis-headless.redis.svc.cluster.local';
+      // Fallback: HAProxy master-only service (safe even if Sentinel is unavailable)
+      $redisHost = 'redis-master.redis.svc.cluster.local';
       $redisPort = 6379;
       foreach ($sentinels as [$sHost, $sPort]) {
         try {
@@ -145,7 +147,7 @@ readinessProbe:
 podAnnotations:
   diun.enable: "true"
   diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
-  dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis.redis:6379"
+  dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis-master.redis:6379"
   secret.reloader.stakater.com/reload: "nextcloud-db-creds"
 
 collabora:

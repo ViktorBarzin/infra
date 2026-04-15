@@ -55,21 +55,23 @@ resource "helm_release" "authentik" {
 
   repository = "https://charts.goauthentik.io/"
   chart      = "authentik"
-  # version    = "2025.8.1"
-  version = "2025.10.3"
+  # version    = "2025.10.3"
+  # version    = "2025.12.4"
+  version = "2026.2.2"
   atomic  = true
   timeout = 6000
 
-  values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key, redis_host = var.redis_host })]
+  values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key })]
 }
 
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.authentik.metadata[0].name
-  name            = "authentik"
-  service_name    = "goauthentik-server"
-  tls_secret_name = var.tls_secret_name
+  source           = "../../../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.authentik.metadata[0].name
+  name             = "authentik"
+  service_name     = "goauthentik-server"
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Authentik"
@@ -84,12 +86,14 @@ module "ingress" {
 }
 
 module "ingress-outpost" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.authentik.metadata[0].name
-  name            = "authentik-outpost"
-  host            = "authentik"
-  service_name    = "ak-outpost-authentik-embedded-outpost"
-  port            = 9000
-  ingress_path    = ["/outpost.goauthentik.io"]
-  tls_secret_name = var.tls_secret_name
+  source           = "../../../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.authentik.metadata[0].name
+  name             = "authentik-outpost"
+  host             = "authentik"
+  service_name     = "ak-outpost-authentik-embedded-outpost"
+  port             = 9000
+  ingress_path     = ["/outpost.goauthentik.io"]
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+  exclude_crowdsec = true
 }

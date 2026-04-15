@@ -1594,10 +1594,10 @@ serverFiles:
           - alert: HighServiceLatency
             expr: |
               (
-                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service)
-                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service)
+                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*"}[5m])) by (service)
+                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*"}[5m])) by (service)
               ) > 10
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*authentik.*"}[5m])) by (service) > 0.01
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*"}[5m])) by (service) > 0.01
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             labels:

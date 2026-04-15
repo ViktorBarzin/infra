@@ -114,19 +114,43 @@ resource "kubernetes_deployment" "meshcentral" {
           image_pull_policy = "IfNotPresent"
           command           = ["/bin/sh"]
           args = ["-c", <<-EOT
-if [ -f /opt/meshcentral/meshcentral-data/config.json ]; then
+CONFIG=/opt/meshcentral/meshcentral-data/config.json
+if [ -f "$CONFIG" ]; then
   # Disable certUrl when using Traefik reverse proxy with TLS offload
-  sed -i 's/"certUrl":/"_certUrl":/g' /opt/meshcentral/meshcentral-data/config.json
+  sed -i 's/"certUrl":/"_certUrl":/g' "$CONFIG"
 
   # Fix WebRTC value from string to boolean
-  sed -i 's/"WebRTC": "[^"]*"/"WebRTC": false/g' /opt/meshcentral/meshcentral-data/config.json
+  sed -i 's/"WebRTC": "[^"]*"/"WebRTC": false/g' "$CONFIG"
 
   # Ensure TLSOffload is enabled (Traefik terminates TLS, MeshCentral serves HTTP on 443)
-  # Re-enable if previously disabled by restoring _TLSOffload back to TLSOffload
-  sed -i 's/"_TLSOffload":/"TLSOffload":/g' /opt/meshcentral/meshcentral-data/config.json
-  # Set TLSOffload to true (accepts any reverse proxy)
-  sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' /opt/meshcentral/meshcentral-data/config.json
-  sed -i 's/"TLSOffload": false/"TLSOffload": true/g' /opt/meshcentral/meshcentral-data/config.json
+  sed -i 's/"_TLSOffload":/"TLSOffload":/g' "$CONFIG"
+  sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' "$CONFIG"
+  sed -i 's/"TLSOffload": false/"TLSOffload": true/g' "$CONFIG"
+else
+  # First run: create config from template before startup.sh runs, so REVERSE_PROXY
+  # env var doesn't generate a bad certUrl. Pre-seed with correct values.
+  cat > "$CONFIG" <<'CONF'
+{
+  "$schema": "http://info.meshcentral.com/downloads/meshcentral-config-schema.json",
+  "settings": {
+    "cert": "meshcentral.viktorbarzin.me",
+    "_WANonly": true,
+    "_LANonly": true,
+    "port": 443,
+    "redirPort": 80,
+    "AgentPong": 300,
+    "TLSOffload": true,
+    "SelfUpdate": false,
+    "AllowFraming": false,
+    "WebRTC": false
+  },
+  "domains": {
+    "": {
+      "NewAccounts": false
+    }
+  }
+}
+CONF
 fi
 EOT
           ]
@@ -153,7 +177,7 @@ EOT
           }
           env {
             name  = "REVERSE_PROXY"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "ALLOW_NEW_ACCOUNTS"
