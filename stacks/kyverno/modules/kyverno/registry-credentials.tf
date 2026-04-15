@@ -23,6 +23,9 @@ resource "kubernetes_secret" "registry_credentials" {
         "registry.viktorbarzin.me" = {
           auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
         }
+        "registry.viktorbarzin.me:5050" = {
+          auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
+        }
         "10.0.20.10:5050" = {
           auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
         }
