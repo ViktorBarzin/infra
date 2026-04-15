@@ -214,11 +214,6 @@ resource "kubernetes_deployment" "workbench" {
             container_port = 9002
           }
 
-          env {
-            name  = "DATABASE_URL"
-            value = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
-          }
-
           startup_probe {
             http_get {
               path = "/"
@@ -295,6 +290,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.beads.metadata[0].name
   name            = "dolt-workbench"
   tls_secret_name = var.tls_secret_name
+  protected       = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dolt Workbench"
