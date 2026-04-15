@@ -1,12 +1,16 @@
 # Storage Architecture
 
-Last updated: 2026-04-13
+Last updated: 2026-04-15
 
 ## Overview
 
 The cluster uses two storage backends: **Proxmox CSI** for database block storage and **Proxmox NFS** for application data.
 
-**Block storage (Proxmox CSI)**: 65 PVCs for databases and stateful apps (CNPG PostgreSQL, MySQL InnoDB, Redis, Vaultwarden, Prometheus, Nextcloud, Calibre-Web, Forgejo, FreshRSS, ActualBudget, NovelApp, Headscale, Uptime Kuma, etc.) use `StorageClass: proxmox-lvm`, which provisions thin LVs directly from the Proxmox host's `local-lvm` storage (sdc, 10.7TB RAID1 HDD thin pool). This eliminates the previous double-CoW (ZFS + LVM-thin) path that caused 56 ZFS checksum errors.
+**Block storage (Proxmox CSI)**: ~95 PVCs for databases and stateful apps use two StorageClasses provisioned from the same `local-lvm` thin pool (sdc, 10.7TB RAID1 HDD):
+- **`proxmox-lvm`**: Unencrypted block storage for non-sensitive workloads (~67 PVCs)
+- **`proxmox-lvm-encrypted`**: LUKS2-encrypted block storage for all sensitive data (~28 PVCs) — databases, auth, email, password managers, git repos, health data, etc. Uses Argon2id key derivation with passphrase from Vault KV.
+
+All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 2026-04-15. This eliminates the previous double-CoW (ZFS + LVM-thin) path and ensures data-at-rest encryption.
 
 **NFS storage (Proxmox host)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and app data are served directly from the Proxmox host at `192.168.1.127`. Two NFS export roots exist:
 - **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB) — bulk media and backup targets
@@ -25,7 +29,7 @@ Both `StorageClass: nfs-truenas` (name kept for compatibility) and `StorageClass
 ```mermaid
 graph TB
     subgraph Proxmox["Proxmox Host (192.168.1.127)"]
-        sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>65 proxmox-lvm PVCs"]
+        sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>~67 proxmox-lvm PVCs<br/>~28 proxmox-lvm-encrypted PVCs"]
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
         NFS_HDD["LV pve/nfs-data (2TB ext4)<br/>/srv/nfs<br/>~100 NFS shares<br/>Media + backup targets"]
         NFS_SSD["LV ssd/nfs-ssd-data (100GB ext4)<br/>/srv/nfs-ssd<br/>High-performance data<br/>(Immich ML)"]
@@ -36,10 +40,11 @@ graph TB
 
     subgraph K8s["Kubernetes Cluster"]
         CSI_NFS["nfs-csi driver<br/>StorageClass: nfs-truenas / nfs-proxmox<br/>soft,timeo=30,retrans=3"]
-        CSI_PVE["Proxmox CSI plugin<br/>StorageClass: proxmox-lvm"]
+        CSI_PVE["Proxmox CSI plugin<br/>StorageClass: proxmox-lvm<br/>StorageClass: proxmox-lvm-encrypted"]
 
         NFS_PV["NFS PersistentVolumes<br/>RWX, ~100 volumes"]
-        Block_PV["Block PersistentVolumes<br/>RWO, 65 PVCs"]
+        Block_PV["Block PersistentVolumes<br/>RWO, ~67 PVCs (unencrypted)"]
+        Enc_PV["Encrypted Block PVs<br/>RWO, ~28 PVCs (LUKS2)"]
 
         Pods["Application Pods"]
         DBPods["Database Pods<br/>PostgreSQL CNPG<br/>MySQL InnoDB"]
@@ -50,9 +55,11 @@ graph TB
 
     CSI_NFS --> NFS_PV
     CSI_PVE --> Block_PV
+    CSI_PVE --> Enc_PV
 
     NFS_PV --> Pods
-    Block_PV --> DBPods
+    Block_PV --> Pods
+    Enc_PV --> DBPods
 
     style Proxmox fill:#e1f5ff
     style K8s fill:#fff4e1
@@ -65,7 +72,8 @@ graph TB
 | Component | Version/Config | Location | Purpose |
 |-----------|---------------|----------|---------|
 | **Proxmox CSI plugin** | Helm chart | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
-| **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Databases and stateful apps |
+| **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Non-sensitive stateful apps |
+| **StorageClass `proxmox-lvm-encrypted`** | RWO, WaitForFirstConsumer, LUKS2 | Cluster-wide | **All sensitive data** (databases, auth, email, passwords, git) |
 | Proxmox NFS (HDD) | LV `pve/nfs-data`, 2TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
 | Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
@@ -112,6 +120,21 @@ graph TB
 
 **Proxmox API token**: `csi@pve!csi-token` with CSI role (`VM.Audit VM.Config.Disk Datastore.Allocate Datastore.AllocateSpace Datastore.Audit`). Stored in Vault at `secret/viktor`.
 
+### Encrypted Block Storage Flow (proxmox-lvm-encrypted) — 2026-04-15
+
+1. **PVC creation**: Pod requests a PVC with `storageClass: proxmox-lvm-encrypted`
+2. **CSI provisioning**: Same as `proxmox-lvm` — thin LV created in `local-lvm`
+3. **LUKS encryption**: CSI node plugin reads the encryption passphrase from K8s Secret `proxmox-csi-encryption` (namespace `kube-system`), formats the disk with LUKS2 (Argon2id key derivation), then creates ext4 on top
+4. **Transparent mounting**: Application sees a normal ext4 filesystem — encryption/decryption is handled by dm-crypt in the kernel
+5. **Passphrase management**: ExternalSecret syncs passphrase from Vault KV (`secret/viktor/proxmox_csi_encryption_passphrase`) → K8s Secret. Backup key at `/root/.luks-backup-key` on PVE host.
+
+**Services on encrypted storage (2026-04-15 migration):**
+vaultwarden, dbaas (mysql+pg+pgadmin), mailserver, nextcloud, forgejo, matrix, n8n, affine, health, hackmd, redis, headscale, frigate, meshcentral, technitium, actualbudget, grampsweb, owntracks, paperless-ngx, wealthfolio, monitoring (alertmanager)
+
+**CSI node plugin memory**: Requires 1280Mi limit for LUKS2 Argon2id key derivation (~1GiB). Set via `node.plugin.resources` in Helm values (not `node.resources`).
+
+**Terraform stack**: `stacks/proxmox-csi/` manages both StorageClasses, the ExternalSecret, and CSI plugin resources.
+
 ### iSCSI Storage Flow (DEPRECATED — replaced 2026-04-02)
 
 > **This section is historical.** All iSCSI PVCs have been migrated to Proxmox CSI (`proxmox-lvm`). The democratic-csi iSCSI driver is pending removal.
@@ -149,12 +172,13 @@ SQLite uses `fsync()` to guarantee durability. NFS's soft mount + async semantic
 
 | Path | Contents |
 |------|----------|
+| `secret/viktor/proxmox_csi_encryption_passphrase` | LUKS2 encryption passphrase for `proxmox-lvm-encrypted` StorageClass |
 | ~~`secret/viktor/truenas_ssh_key`~~ | **LEGACY** — was SSH key for democratic-csi SSH driver (TrueNAS decommissioned) |
 | ~~`secret/viktor/truenas_root_password`~~ | **LEGACY** — was TrueNAS root password (TrueNAS decommissioned) |
 
 ### Terraform Stacks
 
-- **`stacks/proxmox-csi/`**: Deploys Proxmox CSI plugin + `proxmox-lvm` StorageClass + node topology labels
+- **`stacks/proxmox-csi/`**: Deploys Proxmox CSI plugin + `proxmox-lvm` and `proxmox-lvm-encrypted` StorageClasses + ExternalSecret for encryption passphrase + node topology labels
 - **`stacks/nfs-csi/`**: Deploys NFS CSI driver + StorageClasses for Proxmox NFS
 - All application stacks reference NFS volumes via `module "nfs_<name>"` calls
 - Database PVCs use `storageClass: proxmox-lvm` (CNPG, MySQL Helm VCT, Redis Helm, standalone PVCs)

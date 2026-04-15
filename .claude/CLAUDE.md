@@ -143,15 +143,15 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 
 Choose storage class based on workload type:
 
-| Use **proxmox-lvm** when | Use **NFS** (`nfs_volume` module) when | Use **nfs-proxmox** SC when |
-|--------------------------|----------------------------------------|-----------------------------|
-| Database files (SQLite, embedded DBs) | Shared data across multiple pods (RWX) | Dynamic provisioning on Proxmox host NFS |
-| Write-heavy / fsync-heavy workloads | Media libraries (music, ebooks, photos) | Vault (dynamic PVC creation) |
-| Single-pod app state (RWO is fine) | Backup destinations (cloud sync picks up from NFS) | |
-| Latency-sensitive data | Large datasets (>10Gi) where snapshots matter | |
-| Any new service by default | Data you want to browse/inspect from outside k8s | |
+| Use **proxmox-lvm-encrypted** when | Use **proxmox-lvm** when | Use **NFS** (`nfs_volume` module) when | Use **nfs-proxmox** SC when |
+|------------------------------------|--------------------------|----------------------------------------|-----------------------------|
+| **Any service storing sensitive data** | Non-sensitive app state (configs, caches) | Shared data across multiple pods (RWX) | Dynamic provisioning on Proxmox host NFS |
+| Databases (user data, credentials) | Media indexes, search caches | Media libraries (music, ebooks, photos) | Vault (dynamic PVC creation) |
+| Auth/identity services | Monitoring data (Prometheus) | Backup destinations (cloud sync picks up from NFS) | |
+| Password managers, email, git repos | Tools with no user secrets | Large datasets (>10Gi) where snapshots matter | |
+| Health/financial data | | Data you want to browse/inspect from outside k8s | |
 
-**Default is proxmox-lvm.** Only use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
+**Default for sensitive data is proxmox-lvm-encrypted.** Use plain `proxmox-lvm` only for non-sensitive workloads. Use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
 
 **NFS servers:**
 - **Proxmox host** (192.168.1.127): Primary NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `async,insecure` options (`async` — safe with UPS + Vault Raft replication + databases on block storage; `insecure` — pfSense NATs source ports >1024 between VLANs).
@@ -192,6 +192,35 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 - Deployment strategy **must be Recreate** (RWO volumes)
 - Autoresizer annotations are **required** on all proxmox-lvm PVCs
 - Every proxmox-lvm app **MUST** add a backup CronJob writing to NFS `/mnt/main/<app>-backup/`
+
+**proxmox-lvm-encrypted PVC template** (Terraform) — use for all sensitive data:
+```hcl
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
+  wait_until_bound = false
+  metadata {
+    name      = "<service>-data-encrypted"
+    namespace = kubernetes_namespace.<ns>.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = { storage = "1Gi" }
+    }
+  }
+}
+```
+- Same rules as `proxmox-lvm` (wait_until_bound, Recreate strategy, autoresizer, backup CronJob)
+- Uses LUKS2 encryption with Argon2id key derivation via Proxmox CSI plugin
+- Encryption passphrase stored in Vault KV (`secret/viktor/proxmox_csi_encryption_passphrase`), synced to K8s Secret `proxmox-csi-encryption` in `kube-system` via ExternalSecret
+- Backup key at `/root/.luks-backup-key` on PVE host (chmod 600)
+- CSI node plugin needs 1280Mi memory limit for LUKS operations (`node.plugin.resources` in Helm values)
+- Convention: PVC names end in `-encrypted` (not `-proxmox`)
 
 ### 3-2-1 Backup Strategy
 **Copy 1**: Live data on sdc thin pool (65 PVCs + VMs)
