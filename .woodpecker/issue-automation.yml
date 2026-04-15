@@ -50,7 +50,7 @@ steps:
         echo "Labels: $ISSUE_LABELS"
 
         ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
-          "cd ~/code && git -C infra pull --rebase && \
+          "cd ~/code && git -C infra stash && git -C infra pull --rebase && git -C infra stash pop 2>/dev/null; \
            ~/.local/bin/claude -p \
              --agent infra/.claude/agents/issue-responder \
              --dangerously-skip-permissions \
