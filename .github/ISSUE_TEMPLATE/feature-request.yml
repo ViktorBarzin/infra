@@ -1,0 +1,12 @@
+name: Feature Request
+description: Request a new service, configuration change, or improvement
+labels: ["feature-request"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What do you need?
+      description: Describe what you'd like. Be as specific as possible.
+      placeholder: "e.g., Deploy Obsidian for note-taking, or add a new Uptime Kuma monitor for service X"
+    validations:
+      required: true

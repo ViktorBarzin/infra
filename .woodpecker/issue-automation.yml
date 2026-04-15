@@ -1,0 +1,60 @@
+when:
+  event: manual
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 2
+
+steps:
+  - name: run-issue-responder
+    image: python:3.12-alpine
+    commands:
+      - apk add --no-cache openssh-client curl jq
+      # Authenticate to Vault via K8s SA JWT
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_RESP=$(curl -sf -X POST http://vault-active.vault.svc.cluster.local:8200/v1/auth/kubernetes/login \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}")
+        VAULT_TOKEN=$(echo "$VAULT_RESP" | jq -r .auth.client_token)
+        if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+          echo "ERROR: Vault authentication failed"
+          exit 1
+        fi
+        echo "Vault authenticated"
+      # Fetch DevVM SSH key
+      - |
+        curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+          http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/ci/infra | \
+          jq -r '.data.data.devvm_ssh_key' > /tmp/devvm-key
+        chmod 600 /tmp/devvm-key
+        if [ ! -s /tmp/devvm-key ]; then
+          echo "ERROR: Failed to fetch DevVM SSH key"
+          exit 1
+        fi
+        echo "SSH key fetched"
+      # SSH to DevVM and run issue-responder agent
+      - |
+        ISSUE_NUM="${CI_PIPELINE_VARIABLE_ISSUE_NUMBER:-}"
+        ISSUE_TITLE="${CI_PIPELINE_VARIABLE_ISSUE_TITLE:-}"
+        ISSUE_LABELS="${CI_PIPELINE_VARIABLE_ISSUE_LABELS:-}"
+        ISSUE_URL="${CI_PIPELINE_VARIABLE_ISSUE_URL:-}"
+
+        if [ -z "$ISSUE_NUM" ]; then
+          echo "ERROR: No issue number provided"
+          exit 1
+        fi
+
+        echo "Processing issue #$ISSUE_NUM: $ISSUE_TITLE"
+        echo "Labels: $ISSUE_LABELS"
+
+        ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
+          "cd ~/code/infra && git pull --rebase && \
+           ~/.local/bin/claude -p \
+             --agent .claude/agents/issue-responder \
+             --dangerously-skip-permissions \
+             --max-budget-usd 10 \
+             'Process GitHub Issue #${ISSUE_NUM}: ${ISSUE_TITLE}. Labels: ${ISSUE_LABELS}. URL: ${ISSUE_URL}. Read the issue body via GitHub API, investigate, and take appropriate action.'"
+      # Cleanup
+      - rm -f /tmp/devvm-key
