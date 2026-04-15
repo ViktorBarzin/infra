@@ -1,266 +1,254 @@
-# Incident Response & Post-Mortem Pipeline
+# Contributing to the Infrastructure
 
-## Reporting an Issue
+Welcome! This doc explains how to report issues, request features, and what happens behind the scenes.
 
-If something is broken or behaving unexpectedly, here's how to report it:
+## Quick Links
 
-### Where to report
+| What | Where |
+|------|-------|
+| Report an outage | [File an issue](https://github.com/ViktorBarzin/infra/issues/new?template=outage-report.yml) |
+| Request a feature | [File a request](https://github.com/ViktorBarzin/infra/issues/new?template=feature-request.yml) |
+| Check service status | [status.viktorbarzin.me](https://status.viktorbarzin.me) |
+| View past incidents | [Post-mortems](https://viktorbarzin.github.io/infra/post-mortems/) |
+| Uptime dashboard | [uptime.viktorbarzin.me](https://uptime.viktorbarzin.me) |
+| Grafana dashboards | [grafana.viktorbarzin.me](https://grafana.viktorbarzin.me) |
 
-| Channel | When to use | Response time |
-|---------|-------------|---------------|
-| **Slack #alerts** | Service down, can't access something | Minutes |
-| **GitHub Issue** on [ViktorBarzin/infra](https://github.com/ViktorBarzin/infra/issues) | Non-urgent bugs, feature requests, recurring problems | Hours |
-| **Direct message Viktor** | Emergencies (DNS down, cluster unreachable, data loss risk) | ASAP |
+---
 
-### What to include
+## Reporting an Outage
 
-A good issue report helps us fix things faster. Include:
+If something is broken, [file an outage report](https://github.com/ViktorBarzin/infra/issues/new?template=outage-report.yml). The form asks for:
 
-1. **What's broken** — which service, URL, or feature
-2. **When it started** — approximate time (timezone!)
-3. **What you see** — error message, screenshot, HTTP status code
-4. **What you expected** — what should have happened
+- **Which service** is affected (dropdown)
+- **What you see** (error message, behavior)
+- **What kind of error** (502, timeout, auth, slow, etc.)
+- **When it started**
+- **Is it just you or others too?**
 
-### Examples
+### What makes a good report
 
-**Good report:**
+**Good:**
 > Nextcloud at nextcloud.viktorbarzin.me returns 502 Bad Gateway since ~14:00 UTC.
-> Was working fine this morning. Other services (Grafana, Immich) seem fine.
+> Other services seem fine. Tried incognito — same result.
 
 **Also good (minimal):**
-> ha-sofia.viktorbarzin.lan not resolving — getting NXDOMAIN
+> Home Assistant not loading since this morning
 
 **Not helpful:**
 > Nothing works
 
 ### What happens after you report
 
+```mermaid
+flowchart TD
+    A["You file a GitHub Issue<br/>(outage-report template)"] --> B["GitHub Actions triggers<br/>(within seconds)"]
+    B --> C{Are you a<br/>collaborator?}
+    C -->|No| D["'Queued for review'<br/>comment added"]
+    D --> E["Viktor reviews manually"]
+    C -->|Yes| F["Automated agent<br/>starts investigating"]
+    F --> G{Is the service<br/>actually down?}
+    G -->|"Healthy"| H["Agent posts findings<br/>+ closes issue"]
+    G -->|"Down"| I["Agent classifies severity<br/>(SEV1 / SEV2 / SEV3)"]
+    I --> J{Can the agent<br/>fix it?}
+    J -->|"Yes (confident)"| K["Agent applies fix<br/>+ posts resolution"]
+    J -->|"No (complex)"| L["Agent escalates<br/>to Viktor"]
+    K --> M["Post-mortem written<br/>+ published"]
+    L --> N["Viktor investigates<br/>+ fixes manually"]
+    N --> M
+    M --> O["Status page updated<br/>at status.viktorbarzin.me"]
+
+    style A fill:#6366f1,color:#fff
+    style F fill:#22c55e,color:#fff
+    style K fill:#22c55e,color:#fff
+    style L fill:#f59e0b,color:#000
+    style M fill:#3b82f6,color:#fff
 ```
-You report issue
-    │
-    ▼
-Viktor investigates with Claude Code (cluster-health, logs, diagnostics)
-    │
-    ▼
-Fix applied → service restored
-    │
-    ▼
-Post-mortem auto-generated with /post-mortem
-    │
-    ▼
-Post-mortem pushed to repo
-    │
-    ▼
-Automated pipeline implements follow-up fixes (alerts, monitoring, config)
-    │
-    ▼
-Post-mortem updated with implementation links
-    │
-    ▼
-Published at GitHub Pages for review
-```
 
-You'll be notified in Slack when:
-- Your issue is being investigated
-- The fix is applied
-- The post-mortem is published (with what was done to prevent recurrence)
+### What to expect
 
-### Checking service status
+| Scenario | Response time | Who handles it |
+|----------|--------------|----------------|
+| Service is actually healthy | ~5 minutes | Automated agent checks and closes |
+| Simple fix (pod restart, config) | ~10 minutes | Automated agent fixes and reports |
+| Complex issue (data, architecture) | ~30 min to acknowledge | Agent investigates, escalates to Viktor |
+| Non-collaborator report | Hours | Queued for manual review |
 
-- **Uptime dashboard**: [uptime.viktorbarzin.me](https://uptime.viktorbarzin.me) — real-time status of all services
-- **Post-mortems**: [ViktorBarzin/infra post-mortems](https://github.com/ViktorBarzin/infra/tree/master/docs/post-mortems) — past incidents and their fixes
-- **Grafana**: [grafana.viktorbarzin.me](https://grafana.viktorbarzin.me) — metrics and dashboards
+### After resolution
 
-### Common self-service checks
+For SEV1 and SEV2 incidents, a **post-mortem** is automatically written documenting:
+- What happened and the timeline
+- Root cause analysis
+- What was done to prevent recurrence
 
-Before reporting, you can check:
-
-| Symptom | Quick check |
-|---------|-------------|
-| Service returns 502/503 | Is the pod running? Check [K8s Dashboard](https://dashboard.viktorbarzin.me) |
-| Can't login (SSO) | Try incognito window — might be cached auth |
-| Slow performance | Check if the node is under memory pressure in Grafana |
-| DNS not resolving | Try `nslookup <domain> 10.0.20.201` — if that works, it's client DNS cache |
+Post-mortems are published at [viktorbarzin.github.io/infra/post-mortems](https://viktorbarzin.github.io/infra/post-mortems/).
 
 ---
 
-## Overview
+## Requesting a Feature
 
-Automated incident response pipeline that handles the full lifecycle: detection → mitigation → post-mortem generation → TODO implementation → documentation update. Claude Code agents automate both the post-mortem writing and the follow-up remediation, with human review gates for risky changes.
+Want a new service deployed, a config change, or a new monitor? [File a feature request](https://github.com/ViktorBarzin/infra/issues/new?template=feature-request.yml).
 
-## Architecture Diagram
+Just describe what you need — be specific.
+
+### What happens after you request
 
 ```mermaid
-graph TD
-    A[Incident Detected] --> B[Interactive Mitigation]
-    B --> C{Cluster Healthy?}
-    C -->|No| B
-    C -->|Yes| D[post-mortem skill]
-    D --> E[git push post-mortem]
-    E --> F[GitHub Webhook]
-    F --> G[Woodpecker Pipeline]
-    G --> H[Parse safe TODOs]
-    H --> I{Safe TODOs?}
-    I -->|None| J[Slack: nothing to do]
-    I -->|Found| K[Vault Auth via K8s SA]
-    K --> L[Fetch SSH Key]
-    L --> M[SSH to DevVM]
-    M --> N[Claude Code Headless Agent]
-    N --> O[Terraform plan + apply]
-    O --> P[Update Post-Mortem]
-    P --> Q[git push]
-    Q --> R[GHA: GitHub Pages]
-    Q --> S[Slack Notification]
+flowchart TD
+    A["You file a GitHub Issue<br/>(feature-request template)"] --> B["GitHub Actions triggers"]
+    B --> C{Are you a<br/>collaborator?}
+    C -->|No| D["'Queued for review'<br/>comment added"]
+    C -->|Yes| E["Automated agent<br/>assesses the request"]
+    E --> F{Is it<br/>straightforward?}
+    F -->|"Yes"| G["Agent implements it<br/>(Terraform + apply)"]
+    G --> H["Agent comments<br/>what was done"]
+    H --> I["Issue closed"]
+    F -->|"No (complex)"| J["Agent posts assessment:<br/>what's needed, risks, effort"]
+    J --> K["Escalated to Viktor<br/>for review"]
 
-    style B fill:#6366f1
-    style D fill:#6366f1
-    style G fill:#4c9e47
-    style N fill:#6366f1
-    style R fill:#2088ff
+    style A fill:#6366f1,color:#fff
+    style G fill:#22c55e,color:#fff
+    style K fill:#f59e0b,color:#000
 ```
 
-## Components
+### Examples of what the agent can do automatically
 
-### 1. Post-Mortem Writer Skill
+- Add an Uptime Kuma monitor for a service
+- Deploy a known service (Helm chart or standard Terraform stack)
+- Change resource limits, replica counts
+- Add a DNS record
+- Configure an ingress route
 
-**Location**: `.claude/skills/post-mortem/`
+### Examples of what gets escalated
 
-| File | Purpose |
-|------|---------|
-| `skill.md` | Skill definition — triggered by `/post-mortem` command |
-| `template.md` | Standard post-mortem markdown template |
+- Deploy a completely new/unknown service
+- Architecture changes (HA, storage migration)
+- Changes to core platform (auth, DNS, ingress, databases)
+- Anything involving data migration or secrets
 
-**When to use**: After mitigating an incident. Auto-suggested when cluster health transitions UNHEALTHY → HEALTHY.
+---
 
-**What it generates**:
-- Standard fields (date, duration, severity, affected services)
-- Timeline from investigation session
-- Root cause chain
-- Prevention Plan with TODO table (Priority, Action, **Type**, Details, Status)
-- Lessons learned
-- Follow-up Implementation table (auto-populated by agent)
+## Before Reporting — Self-Service Checks
 
-**Type column** is critical for automation:
+| Symptom | Quick check |
+|---------|-------------|
+| Service returns 502/503 | Check [status page](https://status.viktorbarzin.me) — is the service shown as down? |
+| Can't login (SSO) | Try incognito window — might be cached auth cookie |
+| Slow performance | Check [Grafana](https://grafana.viktorbarzin.me) for node memory/CPU pressure |
+| DNS not resolving | Try `nslookup <domain> 10.0.20.201` — if that works, flush your DNS cache |
+| VPN not connecting | Check [Headscale admin](https://vpn.viktorbarzin.me) for your device status |
 
-| Type | Auto-implementable? | Examples |
-|------|---------------------|----------|
-| `Alert` | Yes | PrometheusRule, alert thresholds |
-| `Config` | Yes | Terraform config, NFS options |
-| `Monitor` | Yes | Uptime Kuma HTTP/TCP monitor |
-| `Architecture` | No — human review | Storage migration, HA redesign |
-| `Investigation` | No — human review | Research, root cause analysis |
-| `Migration` | No — human review | Data or service migration |
-| `Runbook` | No — human review | Document recovery procedure |
+---
 
-### 2. TODO Parser
+## Severity Levels
 
-**Location**: `scripts/parse-postmortem-todos.sh`
+| Level | Definition | Examples | Response |
+|-------|-----------|----------|----------|
+| **SEV1** | Critical — multiple services down, data at risk, core infra outage | DNS down, auth broken, cluster node unreachable | Immediate automated investigation + escalation |
+| **SEV2** | Major — single important service down or significantly degraded | Nextcloud 502, Immich not loading, mail not sending | Automated investigation, fix if possible |
+| **SEV3** | Minor — limited impact, workaround available, cosmetic | Slow dashboard, one monitor flapping, non-critical CronJob failed | Noted, fixed when convenient |
 
-Shell script (POSIX sh + python3) that:
-1. Scans a post-mortem markdown file for TODO items in Prevention Plan tables
-2. Classifies each TODO as safe (Alert/Config/Monitor) or unsafe
-3. Outputs structured JSON:
+---
 
-```json
-{
-  "file": "docs/post-mortems/2026-04-14-example.md",
-  "todos": [{"priority": "P2", "action": "Add NFS alert", "type": "Alert", "details": "...", "safe": true}],
-  "skipped": [{"priority": "P1", "action": "Migrate Vault", "type": "Migration", "details": "...", "safe": false}],
-  "safe_todos": 3,
-  "skipped_todos": 2
-}
+## Status Page
+
+The status page at [status.viktorbarzin.me](https://status.viktorbarzin.me) shows:
+
+- **Live service status** — updated every 5 minutes from Uptime Kuma monitors
+- **Active incidents** — SEV-classified with timelines and affected services
+- **User reports** — issues filed by users, with error type and scope
+- **Recently resolved** — incidents closed in the last 7 days with postmortem links
+
+The status page is hosted on GitHub Pages — it stays up even when the cluster is down.
+
+---
+
+## Architecture (Technical Details)
+
+For contributors who want to understand how the automation works.
+
+### End-to-End Flow
+
+```mermaid
+flowchart LR
+    subgraph GitHub
+        A[Issue Created] --> B[GHA Workflow]
+        B --> C{Collaborator?}
+    end
+
+    subgraph "Kubernetes Cluster"
+        C -->|Yes| D[Woodpecker Pipeline]
+        D --> E[Vault Auth<br/>K8s SA JWT]
+        E --> F[Fetch SSH Key]
+    end
+
+    subgraph "DevVM (10.0.10.10)"
+        F --> G[SSH + Claude Code]
+        G --> H[issue-responder agent]
+        H --> I[Investigate / Implement]
+        I --> J[Comment on Issue]
+        I --> K[Terraform Apply]
+        I --> L[Post-Mortem Pipeline]
+    end
+
+    subgraph "Post-Mortem Pipeline"
+        L --> M[sev-triage<br/>haiku, ~60s]
+        M --> N[Specialists<br/>3-5 agents parallel]
+        N --> O[sev-historian<br/>cross-ref past incidents]
+        O --> P[sev-report-writer<br/>write report + action items]
+        P --> Q[postmortem-todo-resolver<br/>implement safe fixes]
+    end
+
+    style B fill:#2088ff,color:#fff
+    style D fill:#4c9e47,color:#fff
+    style H fill:#6366f1,color:#fff
+    style Q fill:#6366f1,color:#fff
 ```
 
-Supports both the new template format (`Priority | Action | Type | Details | Status`) and the legacy format (`Action | Status | Details`), inferring types from action text for legacy.
+### Components
 
-### 3. Woodpecker Pipeline
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| GHA Workflow | `.github/workflows/issue-automation.yml` | Triggers on issue creation, checks collaborator, POSTs to Woodpecker |
+| Woodpecker Pipeline | `.woodpecker/issue-automation.yml` | Authenticates to Vault, SSHes to DevVM, runs Claude agent |
+| Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
+| Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
+| SEV Triage | `.claude/agents/sev-triage.md` | Fast cluster scan + severity classification |
+| SEV Historian | `.claude/agents/sev-historian.md` | Cross-references past incidents |
+| SEV Report Writer | `.claude/agents/sev-report-writer.md` | Writes final postmortem + links to issue |
+| TODO Resolver | `.claude/agents/postmortem-todo-resolver.md` | Implements safe follow-up fixes |
+| Post-Mortem Skill | `.claude/skills/post-mortem/` | Manual `/post-mortem` command |
+| Cluster Health | `.claude/skills/cluster-health/` | Health check with auto-filing for SEV1/SEV2 |
+| Status Page CronJob | `stacks/status-page/main.tf` | Pushes status + incidents to GitHub Pages every 5 min |
+| Issue Templates | `.github/ISSUE_TEMPLATE/` | Structured forms for outage reports + feature requests |
 
-**Location**: `.woodpecker/postmortem-todos.yml`
+### Safety Guardrails
 
-**Trigger**: Push to `master` with changes in `docs/post-mortems/*.md`
+The automated agent follows strict rules:
 
-**Steps**:
+- **All changes go through Terraform** — never `kubectl apply` as final state
+- **`terraform plan` before every apply** — aborts if any resources would be destroyed
+- **Platform stacks are hands-off** — vault, dbaas, traefik, authentik, kyverno always escalate
+- **No data deletion** — never deletes PVCs, PVs, or user data
+- **Budget capped** — $10 max per issue, $5 per post-mortem run
+- **Complex = escalate** — if the agent isn't confident, it assigns to Viktor with findings
 
-1. **parse-and-implement**: Runs `scripts/postmortem-pipeline.sh` which:
-   - Scans all post-mortems for pending TODOs (no git diff — avoids shallow clone issues)
-   - Parses safe TODOs via the parser script
-   - Authenticates to Vault via K8s Service Account JWT
-   - Fetches DevVM SSH key from `secret/ci/infra` → `devvm_ssh_key`
-   - SSHes to DevVM (10.0.10.10) and runs Claude Code headless
+### Labels
 
-2. **notify-slack**: Posts pipeline result to Slack
+| Label | Purpose |
+|-------|---------|
+| `user-report` | Auto-applied to outage reports |
+| `feature-request` | Auto-applied to feature requests |
+| `incident` | Confirmed incident (appears on status page) |
+| `sev1` / `sev2` / `sev3` | Severity classification |
+| `postmortem-required` | SEV needs a postmortem |
+| `postmortem-done` | Postmortem written and linked |
+| `needs-human` | Agent escalated — needs Viktor's attention |
 
-**Authentication chain**: Woodpecker pod → K8s SA token → Vault K8s auth (role: `ci`) → `secret/data/ci/infra` → SSH key → DevVM
+### Commit Conventions
 
-### 4. TODO Resolver Agent
-
-**Location**: `.claude/agents/postmortem-todo-resolver.md`
-
-Claude Code agent that runs in headless mode (`claude -p --agent postmortem-todo-resolver`).
-
-**What it does per TODO** (in priority order P0 → P3):
-1. Reads relevant Terraform files
-2. Implements the change (edit `.tf`, `.tpl`, etc.)
-3. Runs `scripts/tg plan` — aborts if any resources would be destroyed
-4. Runs `scripts/tg apply --non-interactive`
-5. Commits with: `fix(post-mortem): <action> [PM-YYYY-MM-DD]`
-
-**After all TODOs**:
-- Updates the Prevention Plan table: `TODO` → `Done`
-- Populates the **Follow-up Implementation** table:
-
-| Date | Action | Priority | Type | Commit | Implemented By |
-|------|--------|----------|------|--------|----------------|
-| 2026-04-14 | Add NFS RPC retransmission alert | P2 | Alert | [`abc1234`](https://github.com/ViktorBarzin/infra/commit/abc1234) | postmortem-todo-resolver |
-| — | Migrate Vault to encrypted PVC | P1 | Migration | — | Needs human review |
-
-**Safety guardrails**:
-- Only implements Alert, Config, Monitor types
-- Never modifies platform stacks (vault, dbaas, traefik, authentik)
-- Aborts if Terraform plan shows any destroys
-- Budget cap: $5 per run
-- Skipped items marked as "Needs human review"
-
-### 5. Cluster Health Auto-Suggest
-
-**Location**: `.claude/skills/cluster-health/SKILL.md`
-
-After running a healthcheck, if the cluster recovered from a previous unhealthy state, the skill suggests:
-
-> The cluster has recovered. Would you like me to write a post-mortem? Run `/post-mortem` to generate one.
-
-## Secrets & Configuration
-
-| Secret | Vault Path | Purpose |
-|--------|-----------|---------|
-| DevVM SSH key | `secret/ci/infra` → `devvm_ssh_key` | Woodpecker → DevVM SSH access |
-| Slack webhook | Woodpecker global secret `slack_webhook` | Pipeline notifications |
-| Anthropic API key | `~/.claude/` on DevVM | Claude Code headless mode |
-
-## File Inventory
-
-| File | Type | Description |
-|------|------|-------------|
-| `.claude/skills/post-mortem/skill.md` | Skill | Post-mortem writer definition |
-| `.claude/skills/post-mortem/template.md` | Template | Post-mortem markdown skeleton |
-| `.claude/agents/postmortem-todo-resolver.md` | Agent | Headless TODO implementation agent |
-| `.woodpecker/postmortem-todos.yml` | Pipeline | Woodpecker CI triggered on post-mortem changes |
-| `scripts/postmortem-pipeline.sh` | Script | Pipeline orchestration (parse, auth, SSH, invoke) |
-| `scripts/parse-postmortem-todos.sh` | Script | TODO extraction from markdown |
-| `docs/post-mortems/` | Directory | All post-mortem documents |
-| `docs/post-mortems/index.html` | Static | Post-mortem index page (deployed to GH Pages) |
-
-## Commit Conventions
-
-| Pattern | Used by | Example |
-|---------|---------|---------|
-| `fix(post-mortem): <action> [PM-YYYY-MM-DD]` | TODO resolver agent | `fix(post-mortem): add NFS alert [PM-2026-04-14]` |
-| `docs: post-mortem for <date> <title> [ci skip]` | Post-mortem writer skill | `docs: post-mortem for 2026-04-14 NFS outage [ci skip]` |
-| `docs: update post-mortem follow-up [PM-YYYY-MM-DD] [ci skip]` | TODO resolver agent | Final update with Follow-up table |
-
-## Limitations
-
-- **Woodpecker shallow clone**: The pipeline scans all post-mortems for TODOs rather than diffing `HEAD~1` (shallow clone breaks git history)
-- **Single DevVM**: The agent runs on 10.0.10.10 — if DevVM is down, pipeline fails. Could be extended to multiple hosts.
-- **Anthropic API dependency**: Headless Claude Code requires API access. Budget capped at $5 per run.
-- **No interactive approval**: The agent cannot ask for human approval mid-run. Risky items are skipped entirely.
+| Pattern | Used by |
+|---------|---------|
+| `feat: <desc> (fixes #N)` | Issue responder (feature implementations) |
+| `fix: <desc> (fixes #N)` | Issue responder (incident fixes) |
+| `fix(post-mortem): <action> [PM-YYYY-MM-DD]` | Post-mortem TODO resolver |
+| `docs: post-mortem for <date> <title> [ci skip]` | Post-mortem writer |
