@@ -145,8 +145,26 @@ else
             continue
         fi
 
+        # Detect LUKS-encrypted volumes and set up mount device
+        LUKS_NAME=""
+        MOUNT_DEV="/dev/pve/${snap}"
+        MOUNT_OPTS="ro"
+        if blkid -o value -s TYPE "/dev/pve/${snap}" 2>/dev/null | grep -q 'crypto_LUKS'; then
+            LUKS_KEY="/root/.luks-backup-key"
+            LUKS_NAME="pvc-snap-$(echo "${snap}" | md5sum | cut -c1-12)"
+            if [ -f "${LUKS_KEY}" ] && cryptsetup open --type luks --key-file "${LUKS_KEY}" --readonly "/dev/pve/${snap}" "${LUKS_NAME}" 2>&1; then
+                MOUNT_DEV="/dev/mapper/${LUKS_NAME}"
+                MOUNT_OPTS="ro,noload"  # noload skips ext4 journal replay on read-only LUKS
+                log "  LUKS: decrypted ${snap} → ${LUKS_NAME}"
+            else
+                warn "Failed to decrypt LUKS snapshot ${snap}"
+                PVC_FAIL=$((PVC_FAIL + 1))
+                continue
+            fi
+        fi
+
         # Mount snapshot read-only, rsync files
-        if timeout 30 mount -o ro "/dev/pve/${snap}" "${PVC_MOUNT}" 2>&1; then
+        if timeout 30 mount -o "${MOUNT_OPTS}" "${MOUNT_DEV}" "${PVC_MOUNT}" 2>&1; then
             dst="${BACKUP_ROOT}/pvc-data/${WEEK}/${ns_pvc}"
             mkdir -p "${dst}"
             if rsync -az --delete \
@@ -181,6 +199,11 @@ else
         else
             warn "Failed to mount snapshot ${snap}"
             PVC_FAIL=$((PVC_FAIL + 1))
+        fi
+
+        # Close LUKS device if we opened one
+        if [ -n "${LUKS_NAME}" ]; then
+            cryptsetup close "${LUKS_NAME}" 2>/dev/null || true
         fi
     done
 
