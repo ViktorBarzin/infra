@@ -50,9 +50,9 @@ steps:
         echo "Labels: $ISSUE_LABELS"
 
         ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
-          "cd ~/code/infra && git pull --rebase && \
+          "cd ~/code && git -C infra pull --rebase && \
            ~/.local/bin/claude -p \
-             --agent .claude/agents/issue-responder \
+             --agent infra/.claude/agents/issue-responder \
              --dangerously-skip-permissions \
              --max-budget-usd 10 \
              'Process GitHub Issue #${ISSUE_NUM}: ${ISSUE_TITLE}. Labels: ${ISSUE_LABELS}. URL: ${ISSUE_URL}. Read the issue body via GitHub API, investigate, and take appropriate action.'"
