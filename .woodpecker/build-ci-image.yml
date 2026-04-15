@@ -2,10 +2,11 @@
 # Triggers on changes to ci/Dockerfile or manual dispatch.
 
 when:
-  event: [push, manual]
-  branch: master
-  path:
-    include:
+  - event: [push, manual]
+    branch: master
+    evaluate: 'CI_PIPELINE_VARIABLE_ISSUE_NUMBER == ""'
+    path:
+      include:
       - 'ci/Dockerfile'
 
 steps:
