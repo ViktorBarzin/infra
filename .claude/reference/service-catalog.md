@@ -79,7 +79,7 @@
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
 | ntfy | Push notifications | ntfy |
 | cyberchef | Data transformation | cyberchef |
-| diun | Docker image update notifier | diun |
+| diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |
 | meshcentral | Remote management | meshcentral |
 | homepage | Dashboard/startpage | homepage |
 | matrix | Matrix chat server | matrix |

@@ -1,0 +1,58 @@
+{
+  "name": "DIUN Upgrade Agent",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "30805ab6-7281-4d42-8aa1-fbfe5a9694fa", "options": {}},
+      "id": "webhook-trigger",
+      "name": "DIUN Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "30805ab6-7281-4d42-8aa1-fbfe5a9694fa"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "cond-status", "leftValue": "={{ $json.body.diun_entry_status }}", "rightValue": "update", "operator": {"type": "string", "operation": "equals"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-status",
+      "name": "Filter Updates Only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_UPGRADES_PER_WINDOW = 5;\nconst WINDOW_HOURS = 6;\n\nconst staticData = $getWorkflowStaticData('global');\nconst now = Date.now();\nconst windowMs = WINDOW_HOURS * 60 * 60 * 1000;\n\nif (!staticData.windowStart || (now - staticData.windowStart) > windowMs) {\n  staticData.windowStart = now;\n  staticData.count = 0;\n}\n\nif (staticData.count >= MAX_UPGRADES_PER_WINDOW) {\n  console.log('Rate limit reached: ' + staticData.count + '/' + MAX_UPGRADES_PER_WINDOW);\n  return [];\n}\n\nconst image = $input.first().json.body.diun_entry_image || '';\nconst tag = $input.first().json.body.diun_entry_imagetag || '';\n\nconst dbPatterns = ['postgres', 'mysql', 'redis', 'clickhouse', 'etcd'];\nif (dbPatterns.some(p => image.toLowerCase().includes(p))) return [];\n\nconst skipPrefixes = ['viktorbarzin/', 'registry.viktorbarzin.me/', 'ancamilea/', 'mghee/'];\nif (skipPrefixes.some(p => image.startsWith(p))) return [];\n\nconst infraPrefixes = ['registry.k8s.io/', 'quay.io/tigera/', 'quay.io/metallb/', 'nvcr.io/', 'reg.kyverno.io/'];\nif (infraPrefixes.some(p => image.startsWith(p))) return [];\n\nif (tag === 'latest' || tag === '') return [];\n\nstaticData.count += 1;\nconsole.log('Upgrade ' + staticData.count + '/' + MAX_UPGRADES_PER_WINDOW + ': ' + image + ':' + tag);\n\nreturn [$input.first()];"
+      },
+      "id": "filter-images",
+      "name": "Filter and Rate Limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "command": "='claude -p \"You are the service-upgrade agent. Read /home/wizard/code/infra/.claude/agents/service-upgrade.md for full instructions.\\n\\nUpgrade task:\\n- Image: ' + $json.body.diun_entry_image + '\\n- New tag: ' + $json.body.diun_entry_imagetag + '\\n- Hub link: ' + ($json.body.diun_entry_hublink || 'none') + '\\n\\nExecute the upgrade workflow now.\"'",
+        "cwd": "/home/wizard/code/infra"
+      },
+      "id": "ssh-execute",
+      "name": "Run Upgrade Agent",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [910, 300],
+      "credentials": {"sshPassword": {"id": "REPLACE_WITH_SSH_CRED_ID", "name": "Dev VM SSH"}}
+    }
+  ],
+  "connections": {
+    "DIUN Webhook": {"main": [[{"node": "Filter Updates Only", "type": "main", "index": 0}]]},
+    "Filter Updates Only": {"main": [[{"node": "Filter and Rate Limit", "type": "main", "index": 0}]]},
+    "Filter and Rate Limit": {"main": [[{"node": "Run Upgrade Agent", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}
