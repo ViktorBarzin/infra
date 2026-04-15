@@ -200,8 +200,10 @@ graph LR
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
-| PostgreSQL Backup | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
-| MySQL Backup | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump for all databases |
+| PostgreSQL Backup (full) | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
+| PostgreSQL Backup (per-db) | Daily 00:15, 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
+| MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
+| MySQL Backup (per-db) | Daily 00:45, 14d retention | CronJob in `dbaas` namespace | mysqldump per database → `/backup/per-db/<db>/` |
 | etcd Backup | Weekly Sunday 01:00, 30d | CronJob in `kube-system` | etcdctl snapshot |
 | Vaultwarden Backup | Every 6h, 30d retention | CronJob in `vaultwarden` | sqlite3 .backup + integrity |
 | Vault Backup | Weekly Sunday 02:00, 30d | CronJob in `vault` | raft snapshot |
@@ -277,8 +279,10 @@ K8s CronJobs run inside the cluster, dumping database/state to NFS-exported back
 - Need point-in-time recovery for specific apps without full LVM rollback
 
 **Daily backups (00:00-00:30)**:
-- **PostgreSQL** (`pg_dumpall`): Dumps all databases to `/mnt/main/postgresql-backup/`. Command: `pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > backup-$(date +%Y%m%d).sql.gz`. 14-day rotation via `find -mtime +14 -delete`.
-- **MySQL** (`mysqldump`): Dumps all databases. Command: `mysqldump -h mysql-primary.dbaas --all-databases --single-transaction | gzip -9 > backup-$(date +%Y%m%d).sql.gz`. 14-day rotation.
+- **PostgreSQL full** (`pg_dumpall`, 00:00): Dumps all databases to `/mnt/main/postgresql-backup/dump_*.sql.gz`. 14-day rotation.
+- **PostgreSQL per-db** (`pg_dump -Fc`, 00:15): Dumps each database individually to `/mnt/main/postgresql-backup/per-db/<dbname>/dump_*.dump`. Enables single-database restore via `pg_restore -d <db> --clean --if-exists`. 14-day rotation.
+- **MySQL full** (`mysqldump --all-databases`, 00:30): Dumps all databases to `/mnt/main/mysql-backup/dump_*.sql.gz`. 14-day rotation.
+- **MySQL per-db** (`mysqldump`, 00:45): Dumps each database individually to `/mnt/main/mysql-backup/per-db/<dbname>/dump_*.sql.gz`. Enables single-database restore. 14-day rotation.
 
 **Daily backups (Sunday 01:00-04:00)**:
 - **etcd**: `etcdctl snapshot save /mnt/main/etcd-backup/snapshot-$(date +%Y%m%d).db`. 30-day retention. Critical for cluster recovery.
@@ -733,8 +737,8 @@ Detailed runbooks in `docs/runbooks/`:
 
 - **`restore-lvm-snapshot.md`** — Instant rollback of a PVC using LVM snapshot (RTO <5 min)
 - **`restore-pvc-from-backup.md`** — Restore a PVC from sda file backup (when snapshots expired)
-- **`restore-postgresql.md`** — Restore individual database or full cluster from pg_dumpall backup
-- **`restore-mysql.md`** — Restore MySQL databases from mysqldump backup
+- **`restore-postgresql.md`** — Restore individual database (from per-db `pg_dump -Fc`) or full cluster (from `pg_dumpall`)
+- **`restore-mysql.md`** — Restore individual database (from per-db `mysqldump`) or full cluster (from `mysqldump --all-databases`)
 - **`restore-vault.md`** — Restore Vault from raft snapshot
 - **`restore-vaultwarden.md`** — Restore password vault from sqlite3 backup
 - **`restore-etcd.md`** — Restore etcd cluster from snapshot

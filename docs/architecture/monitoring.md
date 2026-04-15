@@ -59,7 +59,8 @@ graph TB
 | Grafana | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Visualization, 14+ dashboards (API server, CoreDNS, GPU, UPS, etc.) |
 | Loki | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Log aggregation and querying |
 | Alertmanager | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Alert routing with cascade inhibitions |
-| Uptime Kuma | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Per-service HTTP monitors, status page |
+| Uptime Kuma | Latest (Diun monitored) | `stacks/uptime-kuma/` | Internal + external HTTP monitors, status page |
+| External Monitor Sync | Python 3.12 | `stacks/uptime-kuma/` | CronJob (10min) syncs `[External]` monitors from `cloudflare_proxied_names` |
 | dcgm-exporter | Configurable resources | `stacks/monitoring/modules/monitoring/` | NVIDIA GPU metrics collection |
 | Email Roundtrip Probe | Python 3.12 | `stacks/mailserver/modules/mailserver/` | E2E email delivery verification via Mailgun API + IMAP |
 
@@ -69,7 +70,12 @@ graph TB
 
 Prometheus scrapes metrics from all cluster components and applications using ServiceMonitor CRDs and scrape configs. Every new service deployed to the cluster receives:
 1. A Prometheus scrape configuration (via ServiceMonitor or static config)
-2. An Uptime Kuma HTTP monitor for health checks
+2. An Uptime Kuma HTTP monitor for internal health checks
+3. An external HTTP monitor (auto-created by `external-monitor-sync` for all Cloudflare-proxied services)
+
+### External Monitoring
+
+The `external-monitor-sync` CronJob (every 10min, `stacks/uptime-kuma/`) ensures Uptime Kuma has `[External] <service>` monitors for every service in `cloudflare_proxied_names`. These monitors test the full external access path (DNS → Cloudflare → Tunnel → Traefik → Service) from inside the cluster. The status-page-pusher groups them as "External Reachability" and pushes a `external_internal_divergence_count` metric to Pushgateway when services are externally down but internally up. Alert `ExternalAccessDivergence` fires after 15min of divergence.
 
 Data flows from targets through Prometheus storage to Grafana dashboards. Applications emit logs to stdout/stderr which are aggregated by Loki and queryable through Grafana's log viewer.
 

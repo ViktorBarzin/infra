@@ -132,8 +132,9 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 ## Monitoring & Alerting
 - Alert cascade inhibitions: if node is down, suppress pod alerts on that node.
 - Exclude completed CronJob pods from "pod not ready" alerts.
-- Every new service gets Prometheus scrape config + Uptime Kuma monitor.
-- Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable.
+- Every new service gets Prometheus scrape config + Uptime Kuma monitor. External monitors auto-created for Cloudflare-proxied services by `external-monitor-sync` CronJob (10min, uptime-kuma ns).
+- **External monitoring**: `[External] <service>` monitors in Uptime Kuma test full external path (DNS → Cloudflare → Tunnel → Traefik). Divergence metric `external_internal_divergence_count` → alert `ExternalAccessDivergence` (15min). Config: `stacks/uptime-kuma/`, targets from `cloudflare_proxied_names` in `config.tfvars`.
+- Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable, ExternalAccessDivergence.
 - **E2E email monitoring**: CronJob `email-roundtrip-monitor` (every 20 min) sends test email via Mailgun API to `smoke-test@viktorbarzin.me` (catch-all → `spam@`), verifies IMAP delivery, deletes test email, pushes metrics to Pushgateway + Uptime Kuma. Alerts: `EmailRoundtripFailing` (60m), `EmailRoundtripStale` (60m), `EmailRoundtripNeverRun` (60m). Outbound relay: Brevo EU (`smtp-relay.brevo.com:587`, 300/day free — migrated from Mailgun). Mailserver on dedicated MetalLB IP `10.0.20.202` with `externalTrafficPolicy: Local` for CrowdSec real-IP detection. Vault: `mailgun_api_key` in `secret/viktor` (probe), `brevo_api_key` in `secret/viktor` (relay).
 
 ## Storage & Backup Architecture
@@ -209,13 +210,15 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 - `nfs-ssd/` — mirrors `/srv/nfs-ssd` on Proxmox (inotify change-tracked rsync)
 
 **App-level CronJobs** (write to Proxmox host NFS, synced to Synology via inotify):
-- MySQL (daily), PostgreSQL (daily), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
+- MySQL (daily full + per-db), PostgreSQL (daily full + per-db), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
+- **Per-database backups**: `postgresql-backup-per-db` (00:15, `pg_dump -Fc` → `/backup/per-db/<db>/`) and `mysql-backup-per-db` (00:45, `mysqldump` → `/backup/per-db/<db>/`). Enables single-database restore without affecting others.
 - **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
 
 **Restore paths**:
+- Single database: `pg_restore -d <db> --clean --if-exists` (PG) or `mysql <db> < dump.sql.gz` (MySQL) from per-db backup
 - Accidental delete: `lvm-pvc-snapshot restore` (instant, 7 daily snapshots)
 - Older data: Browse `/mnt/backup/pvc-data/<week>/<ns>/<pvc>/`, rsync back
-- Database: Restore from dump at `/srv/nfs/<db>-backup/` or Synology `nfs/<db>-backup/`
+- Database (full cluster): Restore from dump at `/srv/nfs/<db>-backup/` or Synology `nfs/<db>-backup/`
 - pfsense: Upload config.xml via web UI, or extract tar for custom scripts
 - Full disaster: Restore from Synology
 
