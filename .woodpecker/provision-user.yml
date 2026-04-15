@@ -1,6 +1,5 @@
 when:
-  - event: manual
-    evaluate: 'CI_PIPELINE_VARIABLE_ISSUE_NUMBER == ""'
+  event: manual
 
 clone:
   git:
