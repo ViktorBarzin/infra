@@ -115,7 +115,7 @@ externalDatabase:
 
 persistence:
   enabled: true
-  existingClaim: nextcloud-data-proxmox
+  existingClaim: nextcloud-data-encrypted
 
   accessMode: ReadWriteOnce
   size: 20Gi

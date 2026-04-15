@@ -23,10 +23,10 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "config_proxmox" {
+resource "kubernetes_persistent_volume_claim" "config_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "frigate-config-proxmox"
+    name      = "frigate-config-encrypted"
     namespace = kubernetes_namespace.frigate.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -36,7 +36,7 @@ resource "kubernetes_persistent_volume_claim" "config_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -186,7 +186,7 @@ for name, det in stats.get('detectors', {}).items():
         volume {
           name = "config"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.config_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.config_encrypted.metadata[0].name
           }
         }
         volume {

@@ -47,10 +47,10 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "n8n-data-proxmox"
+    name      = "n8n-data-encrypted"
     namespace = kubernetes_namespace.n8n.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -60,7 +60,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -225,7 +225,7 @@ resource "kubernetes_deployment" "n8n" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
         }
       }

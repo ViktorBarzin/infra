@@ -2,7 +2,7 @@ resource "kubernetes_namespace" "proxmox_csi" {
   metadata {
     name = "proxmox-csi"
     labels = {
-      tier                              = var.tier
+      tier                               = var.tier
       "resource-governance/custom-quota" = "true"
     }
   }
@@ -30,16 +30,34 @@ resource "helm_release" "proxmox_csi" {
     }
 
     # StorageClass for block volumes on existing HDD thin pool
-    storageClass = [{
-      name                 = "proxmox-lvm"
-      storage              = "local-lvm"
-      reclaimPolicy        = "Retain"
-      fstype               = "ext4"
-      ssd                  = false
-      cache                = "none"
-      volumeBindingMode    = "WaitForFirstConsumer"
-      allowVolumeExpansion = true
-    }]
+    storageClass = [
+      {
+        name                 = "proxmox-lvm"
+        storage              = "local-lvm"
+        reclaimPolicy        = "Retain"
+        fstype               = "ext4"
+        ssd                  = false
+        cache                = "none"
+        volumeBindingMode    = "WaitForFirstConsumer"
+        allowVolumeExpansion = true
+      },
+      {
+        name                 = "proxmox-lvm-encrypted"
+        storage              = "local-lvm"
+        reclaimPolicy        = "Retain"
+        fstype               = "ext4"
+        ssd                  = false
+        cache                = "none"
+        volumeBindingMode    = "WaitForFirstConsumer"
+        allowVolumeExpansion = true
+        extraParameters = {
+          "csi.storage.k8s.io/node-stage-secret-name"       = "proxmox-csi-encryption"
+          "csi.storage.k8s.io/node-stage-secret-namespace"  = "kube-system"
+          "csi.storage.k8s.io/node-expand-secret-name"      = "proxmox-csi-encryption"
+          "csi.storage.k8s.io/node-expand-secret-namespace" = "kube-system"
+        }
+      },
+    ]
 
     controller = {
       replicas = 2
@@ -49,10 +67,13 @@ resource "helm_release" "proxmox_csi" {
       }
     }
 
+    # LUKS2 Argon2id key derivation needs ~1GiB memory
     node = {
-      resources = {
-        requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { memory = "64Mi" }
+      plugin = {
+        resources = {
+          requests = { cpu = "10m", memory = "64Mi" }
+          limits   = { memory = "1280Mi" }
+        }
       }
     }
   })]
@@ -151,5 +172,38 @@ resource "kubernetes_cluster_role_binding" "pve_snapshot_admin" {
     kind      = "ServiceAccount"
     name      = kubernetes_service_account.pve_snapshot_admin.metadata[0].name
     namespace = "kube-system"
+  }
+}
+
+# --- ExternalSecret for LUKS encryption passphrase ---
+# Creates K8s Secret "proxmox-csi-encryption" in kube-system from Vault KV.
+# Referenced by the proxmox-lvm-encrypted StorageClass for node-stage and node-expand.
+resource "kubernetes_manifest" "external_secret_encryption" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "proxmox-csi-encryption"
+      namespace = "kube-system"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        kind = "ClusterSecretStore"
+        name = "vault-kv"
+      }
+      target = {
+        name           = "proxmox-csi-encryption"
+        creationPolicy = "Owner"
+        deletionPolicy = "Retain"
+      }
+      data = [{
+        secretKey = "encryption-passphrase"
+        remoteRef = {
+          key      = "viktor"
+          property = "proxmox_csi_encryption_passphrase"
+        }
+      }]
+    }
   }
 }

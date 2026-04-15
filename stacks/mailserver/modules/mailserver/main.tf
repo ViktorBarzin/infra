@@ -117,10 +117,10 @@ resource "kubernetes_config_map" "mailserver_config" {
     }
     EOF
     # Increase max IMAP connections per user+IP - all Roundcube connections come from same pod IP
-    "dovecot.cf" = <<-EOF
+    "dovecot.cf"  = <<-EOF
     mail_max_userip_connections = 50
     EOF
-    fail2ban_conf       = <<-EOF
+    fail2ban_conf = <<-EOF
     [DEFAULT]
 
     #logtarget = /var/log/fail2ban.log
@@ -167,10 +167,10 @@ resource "kubernetes_secret" "opendkim_key" {
 }
 
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "mailserver-data-proxmox"
+    name      = "mailserver-data-encrypted"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -180,7 +180,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "2Gi"
@@ -447,7 +447,7 @@ resource "kubernetes_deployment" "mailserver" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
           # iscsi {
           #   target_portal = "iscsi.viktorbarzin.lan:3260"

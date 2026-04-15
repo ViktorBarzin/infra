@@ -184,9 +184,10 @@ resource "kubernetes_config_map" "apache_tuning" {
 #   }
 # }
 
-resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
+resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
+  wait_until_bound = false
   metadata {
-    name      = "nextcloud-data-proxmox"
+    name      = "nextcloud-data-encrypted"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -196,7 +197,7 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_iscsi" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "20Gi"
@@ -509,7 +510,7 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
             volume {
               name = "nextcloud-data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.nextcloud_data_iscsi.metadata[0].name
+                claim_name = kubernetes_persistent_volume_claim.nextcloud_data_encrypted.metadata[0].name
               }
             }
 

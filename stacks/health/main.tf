@@ -20,10 +20,10 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "uploads_proxmox" {
+resource "kubernetes_persistent_volume_claim" "uploads_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "health-uploads-proxmox"
+    name      = "health-uploads-encrypted"
     namespace = kubernetes_namespace.health.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -33,7 +33,7 @@ resource "kubernetes_persistent_volume_claim" "uploads_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "2Gi"
@@ -135,7 +135,7 @@ resource "kubernetes_deployment" "health" {
         volume {
           name = "uploads"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.uploads_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.uploads_encrypted.metadata[0].name
           }
         }
       }
