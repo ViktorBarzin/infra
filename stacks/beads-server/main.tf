@@ -178,6 +178,22 @@ resource "kubernetes_service" "dolt" {
 
 # ── Dolt Workbench (web UI) ──
 
+resource "kubernetes_config_map" "workbench_store" {
+  metadata {
+    name      = "workbench-store"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  data = {
+    "store.json" = jsonencode([{
+      name          = "beads"
+      connectionUrl = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
+      hideDoltFeatures = false
+      useSSL        = false
+      type          = "mysql"
+    }])
+  }
+}
+
 resource "kubernetes_deployment" "workbench" {
   metadata {
     name      = "dolt-workbench"
@@ -201,6 +217,35 @@ resource "kubernetes_deployment" "workbench" {
         }
       }
       spec {
+        init_container {
+          name  = "seed-config"
+          image = "dolthub/dolt-workbench:latest"
+          command = ["sh", "-c", <<-EOT
+            # Seed connection store
+            cp /config/store.json /store/store.json
+            # Copy static JS to writable volume and patch GraphQL URL
+            cp -r /app/web/.next/static/* /static/
+            for f in /static/chunks/pages/_app-*.js; do
+              sed -i 's|http://localhost:9002/graphql|/graphql|g' "$f"
+            done
+            echo "Patched GraphQL URL to /graphql"
+          EOT
+          ]
+          volume_mount {
+            name       = "store-config"
+            mount_path = "/config"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "store"
+            mount_path = "/store"
+          }
+          volume_mount {
+            name       = "static-patched"
+            mount_path = "/static"
+          }
+        }
+
         container {
           name  = "workbench"
           image = "dolthub/dolt-workbench:latest"
@@ -212,6 +257,15 @@ resource "kubernetes_deployment" "workbench" {
           port {
             name           = "graphql"
             container_port = 9002
+          }
+
+          volume_mount {
+            name       = "store"
+            mount_path = "/app/store"
+          }
+          volume_mount {
+            name       = "static-patched"
+            mount_path = "/app/web/.next/static"
           }
 
           startup_probe {
@@ -249,6 +303,21 @@ resource "kubernetes_deployment" "workbench" {
             }
           }
         }
+
+        volume {
+          name = "store-config"
+          config_map {
+            name = kubernetes_config_map.workbench_store.metadata[0].name
+          }
+        }
+        volume {
+          name = "store"
+          empty_dir {}
+        }
+        volume {
+          name = "static-patched"
+          empty_dir {}
+        }
       }
     }
   }
@@ -276,6 +345,11 @@ resource "kubernetes_service" "workbench" {
       port        = 80
       target_port = 3000
     }
+    port {
+      name        = "graphql"
+      port        = 9002
+      target_port = 9002
+    }
   }
 }
 
@@ -298,5 +372,42 @@ module "ingress" {
     "gethomepage.dev/icon"         = "dolt.png"
     "gethomepage.dev/group"        = "Core Platform"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# GraphQL API ingress — the frontend JS hardcodes localhost:9002/graphql,
+# but we rewrite the browser request to hit the same hostname on /graphql
+# routed to port 9002.
+resource "kubernetes_ingress_v1" "graphql" {
+  metadata {
+    name      = "dolt-workbench-graphql"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+    annotations = {
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-authentik-forward-auth@kubernetescrd"
+    }
+  }
+  spec {
+    ingress_class_name = "traefik"
+    tls {
+      hosts       = ["dolt-workbench.viktorbarzin.me"]
+      secret_name = var.tls_secret_name
+    }
+    rule {
+      host = "dolt-workbench.viktorbarzin.me"
+      http {
+        path {
+          path      = "/graphql"
+          path_type = "Exact"
+          backend {
+            service {
+              name = kubernetes_service.workbench.metadata[0].name
+              port {
+                number = 9002
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
