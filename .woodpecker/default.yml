@@ -5,10 +5,11 @@
 # - Custom CI image (no apk/wget per step)
 # - Shallow clone (depth=2 for git diff HEAD~1)
 # - TF_PLUGIN_CACHE_DIR (shared provider cache)
-# - Concurrency limit (xargs -P 4)
+# - Serial apply with Vault advisory locks (prevents user/CI race conditions)
 # - Step consolidation (2 steps instead of 4)
 # - Changed-stacks-only detection (skips no-op applies)
 # - Global-file fallback (modules/config changes trigger full apply)
+# - Lock-aware: skips stacks locked by users instead of failing
 
 when:
   event: push
@@ -120,36 +121,52 @@ steps:
           fi
         fi
 
-      # ── Apply platform stacks (with concurrency limit) ──
+      # ── Apply platform stacks (serial, with Vault advisory locks) ──
       - |
         if [ -s .platform_apply ]; then
-          echo "=== Applying platform stacks (max 4 parallel) ==="
-          cat .platform_apply | xargs -P 4 -I{} sh -c '
-            echo "[{}] Starting apply..."
-            cd stacks/{} && terragrunt apply --non-interactive -auto-approve 2>&1 | tail -5
+          echo "=== Applying platform stacks (serial, locked) ==="
+          while read -r stack; do
+            echo "[$stack] Starting apply..."
+            set +e
+            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
             EXIT=$?
+            set -e
             if [ $EXIT -ne 0 ]; then
-              echo "[{}] FAILED (exit $EXIT)"
+              if echo "$OUTPUT" | grep -q "is locked by"; then
+                echo "[$stack] SKIPPED (locked by another session)"
+              else
+                echo "$OUTPUT" | tail -5
+                echo "[$stack] FAILED (exit $EXIT)"
+              fi
             else
-              echo "[{}] OK"
+              echo "$OUTPUT" | tail -3
+              echo "[$stack] OK"
             fi
-          '
+          done < .platform_apply
         fi
 
-      # ── Apply app stacks (with concurrency limit) ──
+      # ── Apply app stacks (serial, with Vault advisory locks) ──
       - |
         if [ -s .app_apply ]; then
-          echo "=== Applying app stacks (max 4 parallel) ==="
-          cat .app_apply | xargs -P 4 -I{} sh -c '
-            echo "[{}] Starting apply..."
-            cd stacks/{} && terragrunt apply --non-interactive -auto-approve 2>&1 | tail -5
+          echo "=== Applying app stacks (serial, locked) ==="
+          while read -r stack; do
+            echo "[$stack] Starting apply..."
+            set +e
+            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
             EXIT=$?
+            set -e
             if [ $EXIT -ne 0 ]; then
-              echo "[{}] FAILED (exit $EXIT)"
+              if echo "$OUTPUT" | grep -q "is locked by"; then
+                echo "[$stack] SKIPPED (locked by another session)"
+              else
+                echo "$OUTPUT" | tail -5
+                echo "[$stack] FAILED (exit $EXIT)"
+              fi
             else
-              echo "[{}] OK"
+              echo "$OUTPUT" | tail -3
+              echo "[$stack] OK"
             fi
-          '
+          done < .app_apply
         fi
 
       # ── Commit and push state changes ──
@@ -161,7 +178,12 @@ steps:
         git diff --cached --quiet && echo "No changes to commit" && exit 0
         git commit -m "Woodpecker CI deploy [CI SKIP]"
         GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git fetch origin master
-        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase origin/master || true
+        if ! GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase origin/master; then
+          echo "ERROR: Git rebase failed — state commits could not be pushed"
+          echo "Manual intervention required: pull, resolve conflicts, push"
+          GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase --abort || true
+          exit 1
+        fi
         GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master
 
       # ── Slack notification ──
