@@ -20,9 +20,9 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "vaultwarden_data" {
+resource "kubernetes_persistent_volume_claim" "vaultwarden_data_encrypted" {
   metadata {
-    name      = "vaultwarden-data-proxmox"
+    name      = "vaultwarden-data-encrypted"
     namespace = kubernetes_namespace.vaultwarden.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -32,7 +32,7 @@ resource "kubernetes_persistent_volume_claim" "vaultwarden_data" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -75,7 +75,7 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.35.4"
+          image = "vaultwarden/server:1.35.7"
           name  = "vaultwarden"
 
           resources {
@@ -152,7 +152,7 @@ resource "kubernetes_deployment" "vaultwarden" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.vaultwarden_data.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.vaultwarden_data_encrypted.metadata[0].name
           }
         }
         dns_config {
@@ -310,7 +310,7 @@ resource "kubernetes_cron_job_v1" "vaultwarden-backup" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.vaultwarden_data.metadata[0].name
+                claim_name = kubernetes_persistent_volume_claim.vaultwarden_data_encrypted.metadata[0].name
               }
             }
             volume {
@@ -400,7 +400,7 @@ METRICS
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.vaultwarden_data.metadata[0].name
+                claim_name = kubernetes_persistent_volume_claim.vaultwarden_data_encrypted.metadata[0].name
               }
             }
             dns_config {
