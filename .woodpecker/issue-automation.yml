@@ -36,10 +36,10 @@ steps:
         echo "SSH key fetched"
       # SSH to DevVM and run issue-responder agent
       - |
-        ISSUE_NUM="${CI_PIPELINE_VARIABLE_ISSUE_NUMBER:-}"
-        ISSUE_TITLE="${CI_PIPELINE_VARIABLE_ISSUE_TITLE:-}"
-        ISSUE_LABELS="${CI_PIPELINE_VARIABLE_ISSUE_LABELS:-}"
-        ISSUE_URL="${CI_PIPELINE_VARIABLE_ISSUE_URL:-}"
+        ISSUE_NUM="${ISSUE_NUMBER:-}"
+        ISSUE_TITLE="${ISSUE_TITLE:-}"
+        ISSUE_LABELS="${ISSUE_LABELS:-}"
+        ISSUE_URL="${ISSUE_URL:-}"
 
         if [ -z "$ISSUE_NUM" ]; then
           echo "ERROR: No issue number provided"
