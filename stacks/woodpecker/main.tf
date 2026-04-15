@@ -135,43 +135,9 @@ resource "kubernetes_config_map" "git_crypt_key" {
   }
 }
 
-# Database init job - creates the woodpecker database and user in PostgreSQL
-resource "kubernetes_job" "db_init" {
-  metadata {
-    name      = "woodpecker-db-init"
-    namespace = kubernetes_namespace.woodpecker.metadata[0].name
-  }
-  spec {
-    template {
-      metadata {}
-      spec {
-        container {
-          name  = "db-init"
-          image = "postgres:16-alpine"
-          command = [
-            "sh", "-c",
-            <<-EOT
-              set -e
-              # Create user if not exists
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE woodpecker WITH LOGIN PASSWORD '${data.vault_kv_secret_v2.secrets.data["db_password"]}'"
-              # Create database if not exists
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='woodpecker'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE woodpecker OWNER woodpecker"
-              echo "Database init complete"
-            EOT
-          ]
-        }
-        restart_policy = "Never"
-      }
-    }
-    backoff_limit = 3
-  }
-  wait_for_completion = true
-  timeouts {
-    create = "2m"
-  }
-}
+# Database init job - REMOVED: database and user already exist.
+# The job used -U root which doesn't work with CNPG (superuser is 'postgres').
+# Vault DB engine manages the woodpecker credentials via rotation.
 
 # Woodpecker server data is on local-path (node-local storage), NOT NFS.
 # The old NFS PV was unused — PVC was already bound to local-path PV.
@@ -199,7 +165,7 @@ resource "helm_release" "woodpecker" {
   ]
 
   timeout    = 600
-  depends_on = [kubernetes_job.db_init, kubernetes_manifest.db_external_secret]
+  depends_on = [kubernetes_manifest.db_external_secret]
 }
 
 # ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces
