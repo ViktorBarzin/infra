@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block large files from being committed.
+# Install: git config core.hooksPath .githooks
+#
+# Max allowed file size (bytes). Override with GIT_MAX_FILE_SIZE env var.
+MAX_SIZE="${GIT_MAX_FILE_SIZE:-2097152}"  # 2 MB default
+
+errors=0
+
+while IFS= read -r line; do
+  # Format: :old_mode new_mode old_sha new_sha status\tpath
+  status=$(echo "$line" | awk '{print $5}' | cut -c1)
+  file=$(echo "$line" | awk '{print $6}')
+
+  # Skip deleted files
+  [ "$status" = "D" ] && continue
+
+  sha=$(echo "$line" | awk '{print $4}')
+  size=$(git cat-file -s "$sha" 2>/dev/null || echo 0)
+
+  if [ "$size" -gt "$MAX_SIZE" ]; then
+    printf "BLOCKED: %s is %s bytes (max %s)\n" "$file" "$size" "$MAX_SIZE" >&2
+    errors=$((errors + 1))
+  fi
+done < <(git diff --cached --raw)
+
+if [ "$errors" -gt 0 ]; then
+  echo >&2
+  echo "Commit blocked: $errors file(s) exceed the ${MAX_SIZE}-byte limit." >&2
+  echo "If intentional, bypass with: git commit --no-verify" >&2
+  exit 1
+fi

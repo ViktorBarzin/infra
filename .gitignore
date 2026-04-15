@@ -87,3 +87,14 @@ cli/cli
 cli/infra_cli
 stacks/terminal/clipboard-upload/clipboard-upload
 *.zip
+*.tar.gz
+*.tgz
+*.iso
+*.img
+*.bin
+*.exe
+*.dmg
+
+# Plaintext terraform state — NEVER commit (use SOPS-encrypted .tfstate.enc only)
+terraform.tfstate
+terraform.tfstate.backup
