@@ -40,8 +40,8 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| Authentik Server | Latest | `stacks/authentik/` | Core IdP application servers (3 replicas) |
-| Authentik Worker | Latest | `stacks/authentik/` | Background task processors (3 replicas) |
+| Authentik Server | 2026.2.2 | `stacks/authentik/` | Core IdP application servers (2 replicas) |
+| Authentik Worker | 2026.2.2 | `stacks/authentik/` | Background task processors (2 replicas) |
 | PgBouncer | Latest | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
 | Embedded Outpost | - | Built into Authentik | Forward auth endpoint for Traefik |
 | Traefik ForwardAuth | - | `ingress_factory` module | Middleware for protected ingresses |

@@ -34,6 +34,6 @@ module "mailserver" {
   sasl_passwd                 = local.mailserver_sasl_passwd
   roundcube_db_password       = data.vault_kv_secret_v2.secrets.data["mailserver_roundcubemail_db_password"]
   tier                        = local.tiers.edge
-  mailgun_api_key             = data.vault_kv_secret_v2.viktor.data["mailgun_api_key"]
+  brevo_api_key               = jsondecode(base64decode(data.vault_kv_secret_v2.viktor.data["brevo_api_key"]))["api_key"]
   email_monitor_imap_password = local.mailserver_accounts["spam@viktorbarzin.me"]
 }

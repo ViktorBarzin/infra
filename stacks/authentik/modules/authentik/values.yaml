@@ -1,19 +1,19 @@
 authentik:
   log_level: warning
   # log_level: trace
-  secret_key: "${secret_key}"
+  secret_key: ""
+  existingSecret:
+    secretName: "goauthentik"
   # This sends anonymous usage-data, stack traces on errors and
   # performance data to authentik.error-reporting.a7k.io, and is fully opt-in
   error_reporting:
-    enabled: true
+    enabled: false
   postgresql:
     # host: postgresql.dbaas
     host: pgbouncer.authentik
     port: 6432
     user: authentik
-    password: ${postgres_password}
-  redis:
-    host: ${redis_host}
+    password: ""
 
 server:
   replicas: 2
@@ -58,9 +58,9 @@ worker:
   resources:
     requests:
       cpu: 100m
-      memory: 1Gi
+      memory: 1.5Gi
     limits:
-      memory: 1Gi
+      memory: 1.5Gi
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
@@ -71,3 +71,6 @@ worker:
   pdb:
     enabled: true
     maxUnavailable: 1
+
+postgresql:
+  enabled: false

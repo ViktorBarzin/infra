@@ -5,7 +5,7 @@ variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
 variable "sasl_passwd" {} # For sendgrid i.e relayhost
 variable "nfs_server" { type = string }
-variable "mailgun_api_key" {
+variable "brevo_api_key" {
   type      = string
   sensitive = true
 }
@@ -537,7 +537,7 @@ resource "kubernetes_service" "mailserver" {
 
 # =============================================================================
 # E2E Email Roundtrip Monitor
-# Sends test email via Mailgun API, verifies delivery via IMAP, pushes metrics
+# Sends test email via Brevo API, verifies delivery via IMAP, pushes metrics
 # =============================================================================
 resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
   metadata {
@@ -562,9 +562,9 @@ resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
               image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check requests && python3 -c '
-import requests, imaplib, email, time, os, uuid, sys, ssl
+import requests, imaplib, email, time, os, uuid, sys, ssl, json
 
-MAILGUN_API_KEY = os.environ["MAILGUN_API_KEY"]
+BREVO_API_KEY = os.environ["BREVO_API_KEY"]
 IMAP_USER = "spam@viktorbarzin.me"
 IMAP_PASS = os.environ["EMAIL_MONITOR_IMAP_PASSWORD"]
 IMAP_HOST = "mailserver.mailserver.svc.cluster.local"
@@ -578,20 +578,24 @@ success = 0
 duration = 0
 
 try:
-    # Step 1: Send via Mailgun HTTP API to smoke-test@ (hits catch-all -> spam@)
+    # Step 1: Send via Brevo Transactional Email API to smoke-test@ (hits catch-all -> spam@)
     resp = requests.post(
-        f"https://api.eu.mailgun.net/v3/{DOMAIN}/messages",
-        auth=("api", MAILGUN_API_KEY),
-        data={
-            "from": f"monitoring@{DOMAIN}",
-            "to": f"smoke-test@{DOMAIN}",
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        json={
+            "sender": {"name": "Monitoring", "email": f"monitoring@{DOMAIN}"},
+            "to": [{"email": f"smoke-test@{DOMAIN}"}],
             "subject": subject,
-            "text": f"E2E email monitoring probe {marker}. Auto-generated, will be deleted.",
+            "textContent": f"E2E email monitoring probe {marker}. Auto-generated, will be deleted.",
         },
         timeout=30,
     )
     resp.raise_for_status()
-    print(f"Sent test email via Mailgun: {resp.status_code} marker={marker}")
+    print(f"Sent test email via Brevo: {resp.status_code} marker={marker}")
 
     # Step 2: Wait for delivery, retry IMAP up to 3 min
     ctx = ssl.create_default_context()
@@ -667,8 +671,8 @@ sys.exit(0 if success else 1)
               EOT
               ]
               env {
-                name  = "MAILGUN_API_KEY"
-                value = var.mailgun_api_key
+                name  = "BREVO_API_KEY"
+                value = var.brevo_api_key
               }
               env {
                 name  = "EMAIL_MONITOR_IMAP_PASSWORD"

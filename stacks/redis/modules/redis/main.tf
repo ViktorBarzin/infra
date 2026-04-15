@@ -154,11 +154,13 @@ resource "kubernetes_config_map" "haproxy" {
         tcp-check send "PING\r\n"
         tcp-check expect string +PONG
         tcp-check send "INFO replication\r\n"
-        tcp-check expect string role:master
+        # Match "role:master" only — cannot appear in slave responses
+        # (slave has "role:slave" then "master_host:..." which doesn't match)
+        tcp-check expect rstring role:master
         tcp-check send "QUIT\r\n"
         tcp-check expect string +OK
-        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 3s fall 3 rise 2
-        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 3s fall 3 rise 2
+        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2
+        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2
 
       backend redis_sentinel
         balance roundrobin
