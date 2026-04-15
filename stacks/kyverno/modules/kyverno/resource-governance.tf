@@ -948,3 +948,80 @@ resource "kubernetes_manifest" "mutate_gpu_priority" {
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Layer 5: Automatic Cleanup of Failed/Evicted Pods
+# -----------------------------------------------------------------------------
+# Deletes pods in Failed phase every hour, cluster-wide.
+# Prevents stale evicted pods and failed CronJob pods from accumulating.
+
+# Grant Kyverno cleanup controller permission to delete Pods
+resource "kubernetes_cluster_role_v1" "kyverno_cleanup_pods" {
+  metadata {
+    name = "kyverno:cleanup-controller:pods"
+    labels = {
+      "app.kubernetes.io/part-of"  = "kyverno"
+      "app.kubernetes.io/instance" = "kyverno"
+    }
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list", "watch", "delete"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "kyverno_cleanup_pods" {
+  metadata {
+    name = "kyverno:cleanup-controller:pods"
+    labels = {
+      "app.kubernetes.io/part-of"  = "kyverno"
+      "app.kubernetes.io/instance" = "kyverno"
+    }
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.kyverno_cleanup_pods.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "kyverno-cleanup-controller"
+    namespace = "kyverno"
+  }
+}
+
+resource "kubernetes_manifest" "cleanup_failed_pods" {
+  manifest = {
+    apiVersion = "kyverno.io/v2"
+    kind       = "ClusterCleanupPolicy"
+    metadata = {
+      name = "cleanup-failed-pods"
+      annotations = {
+        "policies.kyverno.io/title"       = "Cleanup Failed Pods"
+        "policies.kyverno.io/description" = "Automatically deletes pods in Failed phase (evicted, error, completed CronJob failures)."
+      }
+    }
+    spec = {
+      match = {
+        any = [
+          {
+            resources = {
+              kinds = ["Pod"]
+            }
+          }
+        ]
+      }
+      conditions = {
+        any = [
+          {
+            key      = "{{ request.object.status.phase }}"
+            operator = "Equals"
+            value    = "Failed"
+          }
+        ]
+      }
+      schedule = "15 * * * *"
+    }
+  }
+}
