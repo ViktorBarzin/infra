@@ -8,30 +8,30 @@ body:
       label: Affected Service
       description: Which service is affected?
       options:
-        - Nextcloud (files, calendar, contacts)
-        - Immich (photos)
-        - Vaultwarden (passwords)
-        - Mail (email, roundcube)
-        - Home Assistant
         - Actual Budget
-        - Navidrome (music)
         - Audiobookshelf (audiobooks)
-        - Plex / Jellyfin
-        - Grafana (dashboards)
-        - Linkwarden (bookmarks)
-        - Matrix (chat)
-        - Paperless-ngx (documents)
-        - Tandoor (recipes)
+        - DNS
+        - Excalidraw (whiteboard)
         - FreshRSS (news)
         - Frigate (cameras)
+        - Grafana (dashboards)
         - HackMD (notes)
-        - Excalidraw (whiteboard)
-        - Wealthfolio / Finance
         - Headscale / VPN
-        - DNS
-        - Website / Blog
+        - Home Assistant
+        - Immich (photos)
+        - Linkwarden (bookmarks)
+        - Mail (email, roundcube)
+        - Matrix (chat)
+        - Navidrome (music)
+        - Nextcloud (files, calendar, contacts)
+        - Paperless-ngx (documents)
+        - Plex / Jellyfin
         - Send (file sharing)
         - Stirling PDF
+        - Tandoor (recipes)
+        - Vaultwarden (passwords)
+        - Wealthfolio / Finance
+        - Website / Blog
         - Other
     validations:
       required: true
