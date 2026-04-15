@@ -248,16 +248,17 @@ resource "kubernetes_config_map" "vault_woodpecker_sync" {
         VALUE=$(echo "$entry" | base64 -d | jq -r .value)
 
         # Try PATCH first (update), fall back to POST (create)
+        # Include all event types so secrets work for manual/cron-triggered pipelines too
         STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" -X PATCH "$WP_API/secrets/$NAME" \
           -H "Authorization: Bearer $WP_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"push\",\"tag\",\"deployment\"]}" 2>/dev/null || echo "000")
+          -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" 2>/dev/null || echo "000")
 
         if [ "$STATUS" != "200" ]; then
           curl -sf -X POST "$WP_API/secrets" \
             -H "Authorization: Bearer $WP_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"push\",\"tag\",\"deployment\"]}" > /dev/null
+            -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" > /dev/null
         fi
         synced=$((synced + 1))
       done
