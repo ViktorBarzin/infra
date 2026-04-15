@@ -470,11 +470,6 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 name  = "TECH_PASS"
                 value = var.technitium_password
               }
-              volume_mount {
-                name       = "technitium-data"
-                mount_path = "/etc/dns"
-                read_only  = true
-              }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
@@ -485,12 +480,10 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (MySQL)" --data-urlencode "config=$$MYSQL_CONFIG"
                 echo "MySQL logging disabled"
 
-                # Install PG plugin if not already loaded (survives restarts via NFS, but not upgrades)
+                # Check PG plugin is loaded (installed persistently in Technitium data dir)
                 PG_LOADED=$$(curl -sf "http://technitium-web:5380/api/apps/list?token=$$TOKEN" | grep -c 'QueryLogsPostgres.App' || true)
                 if [ "$$PG_LOADED" = "0" ]; then
-                  echo "PG plugin not loaded, installing from NFS..."
-                  curl -sf -X POST "http://technitium-web:5380/api/apps/install?token=$$TOKEN&name=Query%20Logs%20(Postgres)" -F "fileData=@/etc/dns/QueryLogsPostgresApp.zip"
-                  echo "PG plugin installed"
+                  echo "WARNING: PG plugin not loaded — reinstall manually via Technitium UI"
                 fi
 
                 # Configure PG query logging
@@ -499,12 +492,6 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 echo "PG logging configured"
               EOT
               ]
-            }
-            volume {
-              name = "technitium-data"
-              persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.primary_config_encrypted.metadata[0].name
-              }
             }
             restart_policy = "OnFailure"
           }

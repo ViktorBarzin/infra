@@ -206,9 +206,7 @@ resource "kubernetes_service" "speedtest" {
       "app" = "speedtest"
     }
     annotations = {
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/prometheus"
-      "prometheus.io/port"   = "80"
+      "prometheus.io/scrape" = "false"
     }
   }
 
