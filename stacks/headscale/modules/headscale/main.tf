@@ -44,10 +44,10 @@ module "nfs_data_host" {
   nfs_path   = "/srv/nfs/headscale"
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "headscale-data-proxmox"
+    name      = "headscale-data-encrypted"
     namespace = kubernetes_namespace.headscale.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -57,7 +57,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -186,7 +186,7 @@ resource "kubernetes_deployment" "headscale" {
         volume {
           name = "nfs-config"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
         }
         # container {
@@ -466,7 +466,7 @@ resource "kubernetes_cron_job_v1" "headscale_backup" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+                claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
               }
             }
             volume {

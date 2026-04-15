@@ -40,10 +40,10 @@ resource "kubernetes_config_map" "roundcubemail_config" {
 }
 
 
-resource "kubernetes_persistent_volume_claim" "roundcube_html_proxmox" {
+resource "kubernetes_persistent_volume_claim" "roundcube_html_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "roundcubemail-html-proxmox"
+    name      = "roundcubemail-html-encrypted"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -53,7 +53,7 @@ resource "kubernetes_persistent_volume_claim" "roundcube_html_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -62,10 +62,10 @@ resource "kubernetes_persistent_volume_claim" "roundcube_html_proxmox" {
   }
 }
 
-resource "kubernetes_persistent_volume_claim" "roundcube_enigma_proxmox" {
+resource "kubernetes_persistent_volume_claim" "roundcube_enigma_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "roundcubemail-enigma-proxmox"
+    name      = "roundcubemail-enigma-encrypted"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -75,7 +75,7 @@ resource "kubernetes_persistent_volume_claim" "roundcube_enigma_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -213,13 +213,13 @@ resource "kubernetes_deployment" "roundcubemail" {
         volume {
           name = "html"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.roundcube_html_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.roundcube_html_encrypted.metadata[0].name
           }
         }
         volume {
           name = "enigma"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.roundcube_enigma_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.roundcube_enigma_encrypted.metadata[0].name
           }
         }
         dns_config {

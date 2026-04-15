@@ -59,7 +59,7 @@ resource "helm_release" "redis" {
     master = {
       persistence = {
         enabled      = true
-        storageClass = "proxmox-lvm"
+        storageClass = "proxmox-lvm-encrypted"
         size         = "2Gi"
         annotations = {
           "resize.topolvm.io/threshold"     = "80%"
@@ -84,7 +84,7 @@ resource "helm_release" "redis" {
 
       persistence = {
         enabled      = true
-        storageClass = "proxmox-lvm"
+        storageClass = "proxmox-lvm-encrypted"
         size         = "2Gi"
         annotations = {
           "resize.topolvm.io/threshold"     = "80%"

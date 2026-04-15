@@ -197,7 +197,7 @@ resource "helm_release" "mysql_cluster" {
     }
 
     datadirVolumeClaimTemplate = {
-      storageClassName = "proxmox-lvm"
+      storageClassName = "proxmox-lvm-encrypted"
       metadata = {
         annotations = {
           "resize.topolvm.io/threshold"     = "80%"
@@ -353,13 +353,13 @@ resource "helm_release" "mysql_cluster" {
       ]
     }
 
-# MySQL Router - explicitly set resources (chart does not expose router.resources)
-# VPA shows 100Mi upper bound, setting to 128Mi
-# Note: This requires manual kubectl patch after helm release:
-#   kubectl patch deployment mysql-cluster-router -n dbaas --type=json -p='[
-#     {"op": "replace", "path": "/spec/template/spec/containers/0/resources",
-#      "value": {"requests": {"cpu": "25m", "memory": "128Mi"}, "limits": {"memory": "128Mi"}}}]'
-# TODO: migrate to mysql-operator fork or wait for upstream router.resources support
+    # MySQL Router - explicitly set resources (chart does not expose router.resources)
+    # VPA shows 100Mi upper bound, setting to 128Mi
+    # Note: This requires manual kubectl patch after helm release:
+    #   kubectl patch deployment mysql-cluster-router -n dbaas --type=json -p='[
+    #     {"op": "replace", "path": "/spec/template/spec/containers/0/resources",
+    #      "value": {"requests": {"cpu": "25m", "memory": "128Mi"}, "limits": {"memory": "128Mi"}}}]'
+    # TODO: migrate to mysql-operator fork or wait for upstream router.resources support
 
   })]
 
@@ -398,10 +398,10 @@ module "nfs_mysql_backup_host" {
   nfs_path   = "/srv/nfs/mysql-backup"
 }
 
-resource "kubernetes_persistent_volume_claim" "pgadmin_proxmox" {
+resource "kubernetes_persistent_volume_claim" "pgadmin_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "dbaas-pgadmin-proxmox"
+    name      = "dbaas-pgadmin-encrypted"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -411,7 +411,7 @@ resource "kubernetes_persistent_volume_claim" "pgadmin_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -523,9 +523,9 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
     namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
-    concurrency_policy        = "Replace"
-    failed_jobs_history_limit = 3
-    schedule                  = "45 0 * * *"
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "45 0 * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 3
     job_template {
@@ -1093,7 +1093,7 @@ resource "null_resource" "pg_cluster" {
     instances     = "2"
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
-    storage_class = "proxmox-lvm"
+    storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "2Gi"
     pg_params     = "v2-shared512-walcomp-workmem16"
   }
@@ -1127,7 +1127,7 @@ resource "null_resource" "pg_cluster" {
             resize.topolvm.io/storage_limit: "100Gi"
         storage:
           size: 20Gi
-          storageClass: proxmox-lvm
+          storageClass: proxmox-lvm-encrypted
         resources:
           requests:
             cpu: "50m"
@@ -1257,7 +1257,7 @@ resource "kubernetes_deployment" "pgadmin" {
           #   name = "pgadmin-config"
           # }
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.pgadmin_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.pgadmin_encrypted.metadata[0].name
           }
         }
         dns_config {
@@ -1386,9 +1386,9 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
     namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
-    concurrency_policy        = "Replace"
-    failed_jobs_history_limit = 3
-    schedule                  = "15 0 * * *"
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "15 0 * * *"
     starting_deadline_seconds     = 10
     successful_jobs_history_limit = 3
     job_template {
