@@ -295,6 +295,40 @@ The webhook URL is passed as an environment variable from `openclaw_skill_secret
 | kubectl (in pod) | `/tools/kubectl` |
 | terraform (in pod) | `/tools/terraform` |
 
+## Auto-File Incidents for SEV1/SEV2
+
+After running health checks, if **SEV1 or SEV2 issues** are found (node down, multiple services affected, core service outage, or single important service down), auto-file a GitHub Issue:
+
+### Severity Classification
+- **SEV1**: Node NotReady, multiple services down, data at risk, core service outage (DNS, auth, ingress, databases)
+- **SEV2**: Single non-core service down, degraded performance, persistent CrashLoopBackOff
+- **SEV3**: Warnings only, resource pressure <90%, cosmetic — do NOT auto-file
+
+### Workflow
+1. **Dedup check**: Before filing, query open incidents:
+   ```bash
+   GITHUB_TOKEN=$(vault kv get -field=github_pat secret/viktor)
+   curl -s -H "Authorization: token $GITHUB_TOKEN" \
+     "https://api.github.com/repos/ViktorBarzin/infra/issues?labels=incident&state=open&per_page=50"
+   ```
+   If an open issue already covers the same service/namespace, **skip filing**.
+
+2. **File the issue** with labels `incident`, `sev1` or `sev2`, `postmortem-required`:
+   - Title: `[AUTO] <Service/Namespace> — <brief symptom>`
+   - Body: full diagnostic dump (pod status, events, alerts, node state)
+   - The issue-automation GHA workflow will trigger the post-mortem pipeline automatically
+
+3. **Auto-close recovered services**: If a service that previously had an auto-filed incident is now healthy:
+   ```bash
+   # Comment and close
+   curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+     "https://api.github.com/repos/ViktorBarzin/infra/issues/<N>/comments" \
+     -d '{"body": "**Resolved** — Service recovered. Auto-closed by cluster health check."}'
+   curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
+     "https://api.github.com/repos/ViktorBarzin/infra/issues/<N>" \
+     -d '{"state": "closed"}'
+   ```
+
 ## Post-Mortem Auto-Suggest
 
 After running a healthcheck, if the cluster has **recovered from an unhealthy state** (previous run showed FAIL items that are now resolved), suggest writing a post-mortem:
