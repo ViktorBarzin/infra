@@ -138,7 +138,7 @@ resource "kubernetes_deployment" "owntracks" {
       spec {
 
         container {
-          image = "owntracks/recorder:0.9.9"
+          image = "owntracks/recorder:1.0.1"
           name  = "owntracks"
           port {
             name           = "https"
