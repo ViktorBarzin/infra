@@ -37,16 +37,17 @@ Violations cause state drift, which causes future applies to break or silently r
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See AGENTS.md for full workflow.
 - **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
 
-## Terraform State — SOPS-Encrypted in Git
-- **State is local** (`backend "local"`), encrypted with SOPS and committed as `.tfstate.enc` files.
-- **Decrypt priority**: Vault Transit (primary, uses existing `vault login` session) → age key fallback (`~/.config/sops/age/keys.txt`, for bootstrap/DR).
-- **Encrypt**: Always encrypts to both Vault Transit (`transit/keys/sops-state`) + age recipients.
-- **Scripts**: `scripts/state-sync {encrypt|decrypt|commit} [stack]` — handles all state sync. `scripts/tg` auto-decrypts before and auto-encrypts+commits after mutating ops (apply/destroy/import).
-- **Workflow**: `git pull` → `scripts/tg plan` → `scripts/tg apply` → `git push`. State sync is transparent.
-- **Config**: `.sops.yaml` at repo root defines encryption rules. age public keys listed there.
-- **Backups disabled**: `terragrunt.hcl` passes `-backup=-` to prevent `.backup` file accumulation.
-- **Adding operator**: Generate age key (`age-keygen`), add pubkey to `.sops.yaml`, run `sops updatekeys` on all `.enc` files.
-- **Two workstations**: Laptop (macOS) + DevVM (10.0.10.10, Linux). Both have age keys + Vault access. Keys backed up in Vault (`secret/viktor/sops_age_key_laptop`, `sops_age_key_devvm`).
+## Terraform State — Two-Tier Backend
+- **Tier 0 (bootstrap)**: Local state, SOPS-encrypted in git. Stacks: `infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`. These must exist before PG is reachable.
+- **Tier 1 (everything else)**: PostgreSQL backend (`pg`) on CNPG cluster at `pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`. Native `pg_advisory_lock` for concurrent safety. Each stack gets its own PG schema.
+- **Auth**: `scripts/tg` auto-fetches PG credentials from Vault (`database/static-creds/pg-terraform-state`). Humans use `vault login -method=oidc`, agents use K8s auth (role: `terraform-state`, namespace: `claude-agent`).
+- **Tier 0 workflow** (unchanged): `git pull` → `scripts/tg plan` → `scripts/tg apply` → `git push`. State sync via SOPS is transparent.
+- **Tier 1 workflow**: `vault login -method=oidc` → `scripts/tg plan` → `scripts/tg apply`. No git commit needed — PG is authoritative.
+- **Tier detection**: Defined in `terragrunt.hcl` (`locals.tier0_stacks`), `scripts/tg`, and `scripts/state-sync`. All three share the same list.
+- **Fallback**: If PG is down, Tier 0 local state can bring it back (`scripts/tg apply` in `dbaas` stack). Tier 1 ops are blocked until PG recovers.
+- **Tier 0 details**: Decrypt priority: Vault Transit (primary) → age key fallback. Encrypt: both Vault Transit + age recipients. Scripts: `scripts/state-sync {encrypt|decrypt|commit} [stack]`.
+- **Adding operator**: Generate age key (`age-keygen`), add pubkey to `.sops.yaml`, run `sops updatekeys` on Tier 0 `.enc` files. For Tier 1, only Vault access is needed.
+- **Migration script**: `scripts/migrate-state-to-pg` (one-shot, idempotent) migrates Tier 1 stacks from local to PG.
 
 ## Secrets Management — Vault KV
 - **Vault is the sole source of truth** for secrets.
@@ -56,7 +57,7 @@ Violations cause state drift, which causes future applies to break or silently r
 - **ESO (External Secrets Operator)**: `stacks/external-secrets/` — 43 ExternalSecrets + 9 DB-creds ExternalSecrets. API version `v1beta1`. Two ClusterSecretStores: `vault-kv` and `vault-database`.
 - **Plan-time pattern**: Former plan-time stacks use `data "kubernetes_secret"` to read ESO-created K8s Secrets at plan time (no Vault dependency). First-apply gotcha: must `terragrunt apply -target=kubernetes_manifest.external_secret` first, then full apply. `count` on resources using secret values fails — remove conditional counts.
 - **14 hybrid stacks** still keep `data "vault_kv_secret_v2"` for plan-time needs (job commands, Helm templatefile, module inputs). Platform has 48 plan-time refs — no migration possible without restructuring modules.
-- **Database rotation**: Vault DB engine rotates passwords every 7 days (604800s). MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, phpipam. PostgreSQL: health, linkwarden, affine, woodpecker, claude_memory, crowdsec, technitium. Excluded: authentik (PgBouncer), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API, disable MySQL logging, install PG plugin if missing, and configure PG query logging (90-day retention).
+- **Database rotation**: Vault DB engine rotates passwords every 7 days (604800s). MySQL: speedtest, wrongmove, codimd, nextcloud, shlink, grafana, phpipam. PostgreSQL: health, linkwarden, affine, woodpecker, claude_memory, crowdsec, technitium. Excluded: authentik (PgBouncer), root users. Technitium uses a password-sync CronJob (every 6h) to push rotated password to the Technitium app config via API, disable SQLite + MySQL logging, check PG plugin is loaded, configure PG query logging (90-day retention), and disable SQLite on secondary/tertiary instances.
 - **K8s credentials**: Vault K8s secrets engine. Roles: `dashboard-admin`, `ci-deployer`, `openclaw`, `local-admin`. Use `vault write kubernetes/creds/ROLE kubernetes_namespace=NS`. Helper: `scripts/vault-kubeconfig`.
 - **CI/CD (GHA + Woodpecker)**: Docker builds run on **GitHub Actions** (free on public repos). Woodpecker is **deploy-only** — receives image tag via API POST, runs `kubectl set image`. Woodpecker authenticates via K8s SA JWT → Vault K8s auth. Sync CronJob pushes `secret/ci/global` → Woodpecker API every 6h. Shell scripts in HCL heredocs: escape `$` → `$$`, `%{}` → `%%{}`.
 - **Platform cannot depend on vault** (circular). Apply order: vault first, then platform. Platform has 48 vault refs, all in module inputs — no ESO migration possible.
@@ -126,7 +127,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 | Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
 | Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
-| MySQL InnoDB | 1 instance (was 3 — only Uptime Kuma 34MB + phpIPAM 1.4MB remain), PriorityClass `mysql-critical` + PDB, `innodb_doublewrite=OFF`, anti-affinity excludes k8s-node1 (GPU), 2Gi req / 3Gi limit |
+| MySQL Standalone | Raw `kubernetes_stateful_set_v1` with `mysql:8.4` (migrated from InnoDB Cluster 2026-04-16). `skip-log-bin`, `innodb_flush_log_at_trx_commit=2`, `innodb_doublewrite=ON`. ConfigMap `mysql-standalone-cnf`. PVC `data-mysql-standalone-0` (15Gi, `proxmox-lvm-encrypted`). Service `mysql.dbaas` unchanged. Anti-affinity excludes k8s-node1. Old InnoDB Cluster + operator still in TF (Phase 4 cleanup pending). Bitnami charts deprecated (Broadcom Aug 2025) — use official images. |
 | phpIPAM | IPAM — no active scanning. `pfsense-import` CronJob (5min) pulls Kea leases + ARP via SSH. `dns-sync` CronJob (15min) bidirectional sync with Technitium. Kea DDNS on pfSense handles all 3 subnets. API app `claude` (ssl_token). |
 
 ## Monitoring & Alerting
