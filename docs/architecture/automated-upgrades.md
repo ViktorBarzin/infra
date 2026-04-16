@@ -124,6 +124,50 @@ The agent handles all three version patterns in Terraform:
 - **Git**: Detailed commit messages with changelog summaries, risk level, backup status
 - **DIUN Slack**: Independent Slack channel for raw version detection (separate from upgrade agent)
 
+## Bulk Upgrades
+
+To upgrade all outdated services at once, fire webhooks for each service:
+
+```bash
+WEBHOOK="https://n8n.viktorbarzin.me/webhook/<uuid>"
+curl -s -X POST "$WEBHOOK" \
+  -H "Content-Type: application/json" \
+  -d '{"diun_entry_status":"update","diun_entry_image":"<image>","diun_entry_imagetag":"<new_tag>","diun_entry_provider":"kubernetes"}'
+```
+
+n8n processes all webhooks in parallel (one `claude -p` per webhook). Before bulk runs, increase the rate limit in the n8n Code node (`MAX_UPGRADES_PER_WINDOW`) and reset the counter:
+
+```sql
+-- Reset rate limiter
+UPDATE workflow_entity SET "staticData" = '{}'::json WHERE name = 'DIUN Upgrade Agent';
+```
+
+### First Bulk Run (2026-04-16)
+
+12 services upgraded in ~30 minutes, fully automated:
+
+| Service | From | To | Notes |
+|---------|------|----|-------|
+| audiobookshelf | 2.32.1 | 2.33.1 | Security fixes (IDOR) |
+| owntracks | 0.9.9 | 1.0.1 | Major version bump |
+| open-webui | v0.7.2 | v0.8.12 | |
+| immich | v2.7.4 | v2.7.5 | Patch, DB backup taken |
+| coturn | 4.6.3-r1 | 4.10.0-r1 | Major version bump |
+| shlink | 4.3.4 | 5.0.2 | Major, DB-backed |
+| phpipam | v1.7.0 | v1.7.4 | Patch, DB-backed |
+| onlyoffice | 8.2.3 | 9.3.1 | Major version bump |
+| paperless-ngx | 2.16.4 | 2.20.14 | Agent also bumped memory 1Gi → 2Gi |
+| linkwarden | v2.9.1 | v2.14.0 | 23 intermediate releases, 254M DB backup |
+| synapse | v1.125.0 | v1.151.0 | Large jump, DB-backed |
+| dawarich | 0.37.1 | 1.6.1 | Upgraded → verification failed → auto-rolled back → forward-fixed |
+
+Key behaviors observed:
+- **Auto-rollback works**: Dawarich upgrade failed verification, agent reverted, then re-applied with a forward fix
+- **Resource awareness**: Paperless-ngx agent detected the new version needed more memory and bumped limits
+- **DB backups**: All DB-backed services had pre-upgrade dumps taken automatically
+- **Changelog analysis**: Linkwarden commit summarized 23 intermediate releases; vaultwarden (earlier test) identified 3 CVEs
+- **Parallel execution**: 11 agents ran concurrently, handled git rebase conflicts automatically
+
 ## Secrets
 
 | Secret | Vault Path | Purpose |
@@ -132,3 +176,4 @@ The agent handles all three version patterns in Terraform:
 | GitHub PAT | `secret/viktor` → `github_pat` | Changelog fetch (5000 req/hr) |
 | Slack webhook | `secret/platform` → `alertmanager_slack_api_url` | Upgrade notifications |
 | Woodpecker token | `secret/viktor` → `woodpecker_token` | CI pipeline polling |
+| Dev VM SSH key | n8n credentials store → `devvm-ssh` | n8n → dev VM SSH |
