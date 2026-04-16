@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
       }
       spec {
         container {
-          image = "ghcr.io/paperless-ngx/paperless-ngx:2.16.4"
+          image = "ghcr.io/paperless-ngx/paperless-ngx:2.20.14"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
