@@ -101,7 +101,7 @@ resource "kubernetes_deployment" "dawarich" {
             container_port = 9394
           }
           command = ["web-entrypoint.sh"]
-          args    = ["bin/dev"]
+          args    = ["bin/rails", "server", "-p", "3000", "-b", "::"]
           env {
             name  = "REDIS_URL"
             value = "redis://${var.redis_host}:6379"
@@ -159,6 +159,23 @@ resource "kubernetes_deployment" "dawarich" {
           #   name  = "PROMETHEUS_EXPORTER_HOST"
           #   value = "0.0.0.0"
           # }
+          env {
+            name  = "RAILS_ENV"
+            value = "production"
+          }
+          env {
+            name = "SECRET_KEY_BASE"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "secret_key_base"
+              }
+            }
+          }
+          env {
+            name  = "RAILS_LOG_TO_STDOUT"
+            value = "true"
+          }
           env {
             name  = "SELF_HOSTED"
             value = "true"
