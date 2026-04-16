@@ -33,7 +33,7 @@ resource "helm_release" "traefik" {
 
   values = [yamlencode({
     deployment = {
-      replicas = 3
+      replicas                      = 3
       terminationGracePeriodSeconds = 60
       lifecycle = {
         preStop = {
@@ -123,6 +123,9 @@ resource "helm_release" "traefik" {
           tls = {
             enabled = true
           }
+          middlewares = [
+            "traefik-compress@kubernetescrd",
+          ]
         }
         http3 = {
           enabled        = true
