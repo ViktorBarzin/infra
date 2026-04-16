@@ -24,6 +24,12 @@ stack_name_from_dir() {
   basename "$1"
 }
 
+# Tier 0 stacks keep SOPS-encrypted local state; Tier 1 uses PG backend
+TIER0_STACKS="infra platform cnpg vault dbaas external-secrets"
+is_tier0() {
+  echo "$TIER0_STACKS" | tr ' ' '\n' | grep -qx "$1"
+}
+
 # Read age recipients from .sops.yaml
 AGE_RECIPIENTS="$(python3 -c "
 import yaml, sys
@@ -74,24 +80,38 @@ decrypt_state() {
 case "$cmd" in
   encrypt)
     if [ -n "$stack" ]; then
-      encrypt_state "$STATE_DIR/$stack"
+      if is_tier0 "$stack"; then
+        encrypt_state "$STATE_DIR/$stack"
+      else
+        echo "state-sync: skipping Tier 1 stack '$stack' (PG backend)" >&2
+      fi
     else
       for dir in "$STATE_DIR"/*/; do
-        encrypt_state "$dir"
+        _name="$(stack_name_from_dir "$dir")"
+        if is_tier0 "$_name"; then
+          encrypt_state "$dir"
+        fi
       done
     fi
     ;;
   decrypt)
     if [ -n "$stack" ]; then
-      decrypt_state "$STATE_DIR/$stack"
+      if is_tier0 "$stack"; then
+        decrypt_state "$STATE_DIR/$stack"
+      else
+        echo "state-sync: skipping Tier 1 stack '$stack' (PG backend)" >&2
+      fi
     else
       for dir in "$STATE_DIR"/*/; do
-        decrypt_state "$dir"
+        _name="$(stack_name_from_dir "$dir")"
+        if is_tier0 "$_name"; then
+          decrypt_state "$dir"
+        fi
       done
     fi
     ;;
   commit)
-    # Encrypt all changed state, then git add + commit
+    # Only Tier 0 stacks have encrypted state in git
     "$0" encrypt
     cd "$REPO_ROOT"
     git add state/stacks/*/terraform.tfstate.enc
@@ -101,6 +121,8 @@ case "$cmd" in
     ;;
   help)
     echo "Usage: state-sync {encrypt|decrypt|commit} [stack-name]"
+    echo "Operates on Tier 0 stacks only (infra, platform, cnpg, vault, dbaas, external-secrets)."
+    echo "Tier 1 stacks use the PG backend and don't need local state sync."
     echo "Encrypt uses per-stack Vault Transit key (transit/keys/sops-state-<stack>)."
     echo "Decrypt uses Vault Transit if logged in, falls back to age key."
     ;;
