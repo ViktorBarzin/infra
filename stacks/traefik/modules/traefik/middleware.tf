@@ -277,6 +277,56 @@ resource "kubernetes_manifest" "middleware_strip_accept_encoding" {
   depends_on = [helm_release.traefik]
 }
 
+# Re-compress responses to clients after rewrite-body plugin has modified them.
+# Applied at websecure entrypoint level (outermost), so the response path is:
+# backend → rewrite-body modifies uncompressed HTML → compress gzips → client.
+# Uses includedContentTypes (whitelist) instead of excludedContentTypes:
+# - Only compresses text-based types that benefit from compression
+# - Binary types (images, video, zip) are never compressed (no wasted CPU)
+# - SSE (text/event-stream) is not listed = not compressed (safe for streaming)
+# - WebSocket is safe regardless (Hijacker interface bypasses compress)
+# - gRPC is hardcoded excluded in Traefik source (always safe)
+resource "kubernetes_manifest" "middleware_compress" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "compress"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      compress = {
+        minResponseBodyBytes = 1024
+        includedContentTypes = [
+          "text/html",
+          "text/css",
+          "text/plain",
+          "text/xml",
+          "text/javascript",
+          "application/javascript",
+          "application/json",
+          "application/xml",
+          "application/xhtml+xml",
+          "application/rss+xml",
+          "application/atom+xml",
+          "image/svg+xml",
+          "application/wasm",
+          "font/woff2",
+          "font/woff",
+          "font/ttf",
+          "application/manifest+json",
+        ]
+      }
+    }
+  }
+
+  field_manager {
+    force_conflicts = true
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # ForwardAuth middleware to block known AI bot User-Agents
 resource "kubernetes_manifest" "middleware_ai_bot_block" {
   manifest = {
