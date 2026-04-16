@@ -5,7 +5,7 @@ variable "tls_secret_name" {
 
 variable "image_version" {
   type    = string
-  default = "0.37.1"
+  default = "1.6.1"
 }
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
