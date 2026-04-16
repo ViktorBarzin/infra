@@ -178,7 +178,7 @@ resource "kubernetes_deployment" "shlink" {
       }
       spec {
         container {
-          image = "shlinkio/shlink:4.3.4"
+          image = "shlinkio/shlink:5.0.2"
           name  = "shlink"
           env {
             name  = "DEFAULT_DOMAIN"
