@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Technitium DNS query logs from MySQL",
+  "description": "Technitium DNS query logs from PostgreSQL",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -22,7 +22,7 @@
     {
       "title": "Total Queries",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -53,7 +53,7 @@
     {
       "title": "Cached %",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -78,7 +78,7 @@
       },
       "targets": [
         {
-          "rawSql": "SELECT SUM(CASE WHEN response_type = 3 THEN 1 ELSE 0 END) / COUNT(*) as cached_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "rawSql": "SELECT SUM(CASE WHEN response_type = 3 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) as cached_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
           "format": "table",
           "refId": "A"
         }
@@ -87,7 +87,7 @@
     {
       "title": "Blocked %",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -112,7 +112,7 @@
       },
       "targets": [
         {
-          "rawSql": "SELECT SUM(CASE WHEN response_type = 4 THEN 1 ELSE 0 END) / COUNT(*) as blocked_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "rawSql": "SELECT SUM(CASE WHEN response_type = 4 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) as blocked_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
           "format": "table",
           "refId": "A"
         }
@@ -121,7 +121,7 @@
     {
       "title": "NxDomain %",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -146,7 +146,7 @@
       },
       "targets": [
         {
-          "rawSql": "SELECT SUM(CASE WHEN rcode = 3 THEN 1 ELSE 0 END) / COUNT(*) as nxdomain_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
+          "rawSql": "SELECT SUM(CASE WHEN rcode = 3 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) as nxdomain_pct FROM dns_logs WHERE $__timeFilter(timestamp)",
           "format": "table",
           "refId": "A"
         }
@@ -155,7 +155,7 @@
     {
       "title": "Avg Response Time",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -189,7 +189,7 @@
     {
       "title": "Queries by Protocol",
       "type": "stat",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -215,7 +215,7 @@
     {
       "title": "Queries Over Time",
       "type": "timeseries",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
       "fieldConfig": {
         "defaults": {
@@ -256,7 +256,7 @@
     {
       "title": "Response Codes",
       "type": "piechart",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
       "fieldConfig": {
         "defaults": {
@@ -286,7 +286,7 @@
     {
       "title": "Response Types",
       "type": "piechart",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
       "fieldConfig": {
         "defaults": {
@@ -316,7 +316,7 @@
     {
       "title": "Query Types",
       "type": "piechart",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
       "fieldConfig": {
         "defaults": {
@@ -341,7 +341,7 @@
     {
       "title": "Top 20 Queried Domains",
       "type": "table",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 20 },
       "fieldConfig": {
         "defaults": {
@@ -366,7 +366,7 @@
     {
       "title": "Top 20 Clients",
       "type": "table",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 20 },
       "fieldConfig": {
         "defaults": {
@@ -391,7 +391,7 @@
     {
       "title": "Average Response Time Over Time",
       "type": "timeseries",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
       "fieldConfig": {
         "defaults": {
@@ -427,7 +427,7 @@
     {
       "title": "Top 20 NxDomain Domains",
       "type": "table",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 38 },
       "fieldConfig": {
         "defaults": {
@@ -452,7 +452,7 @@
     {
       "title": "Top 20 Blocked Domains",
       "type": "table",
-      "datasource": { "type": "mysql", "uid": "technitium-mysql" },
+      "datasource": { "type": "postgres", "uid": "technitium-pg" },
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 38 },
       "fieldConfig": {
         "defaults": {
@@ -477,7 +477,7 @@
   ],
   "refresh": "5m",
   "schemaVersion": 39,
-  "tags": ["dns", "technitium", "mysql"],
+  "tags": ["dns", "technitium", "postgresql"],
   "templating": { "list": [] },
   "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},

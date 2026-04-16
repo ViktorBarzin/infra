@@ -366,110 +366,192 @@ resource "helm_release" "mysql_cluster" {
   depends_on = [helm_release.mysql_operator]
 }
 
-#### MYSQL — Standalone Bitnami (migration target)
+#### MYSQL — Standalone (migration target)
 #
 # Standalone MySQL without Group Replication. Eliminates ~95 GB/day of GR
 # write overhead (binlog, relay log, XCom cache) for databases totaling ~35 MB.
 # Binary logging disabled entirely (skip-log-bin) since no replication needed.
+# Uses official mysql:8.4 image (Bitnami images deprecated by Broadcom Aug 2025).
 
-resource "helm_release" "mysql_standalone" {
-  namespace        = kubernetes_namespace.dbaas.metadata[0].name
-  create_namespace = false
-  name             = "mysql-standalone"
-  timeout          = 600
+resource "kubernetes_config_map" "mysql_standalone_cnf" {
+  metadata {
+    name      = "mysql-standalone-cnf"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  data = {
+    "standalone.cnf" = <<-EOT
+      [mysqld]
+      skip-name-resolve
+      mysql-native-password=ON
+      skip-log-bin
+      max_connections=80
+      innodb_log_buffer_size=16777216
+      innodb_flush_log_at_trx_commit=2
+      innodb_io_capacity=100
+      innodb_io_capacity_max=200
+      innodb_redo_log_capacity=1073741824
+      innodb_buffer_pool_size=1073741824
+      innodb_flush_neighbors=1
+      innodb_lru_scan_depth=256
+      innodb_page_cleaners=1
+      innodb_adaptive_flushing_lwm=10
+      innodb_max_dirty_pages_pct=90
+      innodb_max_dirty_pages_pct_lwm=10
+    EOT
+  }
+}
 
-  repository = "oci://registry-1.docker.io/bitnamicharts"
-  chart      = "mysql"
+resource "kubernetes_stateful_set_v1" "mysql_standalone" {
+  metadata {
+    name      = "mysql-standalone"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name"      = "mysql"
+      "app.kubernetes.io/instance"  = "mysql-standalone"
+      "app.kubernetes.io/component" = "primary"
+    }
+  }
+  spec {
+    service_name = "mysql-standalone"
+    replicas     = 1
 
-  values = [yamlencode({
-    architecture = "standalone"
-    image = {
-      tag = "8.4"
+    selector {
+      match_labels = {
+        "app.kubernetes.io/instance"  = "mysql-standalone"
+        "app.kubernetes.io/component" = "primary"
+      }
     }
 
-    auth = {
-      rootPassword = var.dbaas_root_password
+    template {
+      metadata {
+        labels = {
+          "app.kubernetes.io/name"      = "mysql"
+          "app.kubernetes.io/instance"  = "mysql-standalone"
+          "app.kubernetes.io/component" = "primary"
+        }
+      }
+      spec {
+        affinity {
+          node_affinity {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
+                match_expressions {
+                  key      = "kubernetes.io/hostname"
+                  operator = "NotIn"
+                  values   = ["k8s-node1"]
+                }
+              }
+            }
+          }
+        }
+
+        container {
+          name  = "mysql"
+          image = "mysql:8.4"
+
+          port {
+            container_port = 3306
+            name           = "mysql"
+          }
+
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.cluster-password.metadata[0].name
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "1536Mi"
+            }
+            limits = {
+              memory = "2Gi"
+            }
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/var/lib/mysql"
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/mysql/conf.d"
+            read_only  = true
+          }
+
+          liveness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          readiness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.mysql_standalone_cnf.metadata[0].name
+          }
+        }
+      }
     }
 
-    primary = {
-      configuration = <<-EOT
-        [mysqld]
-        skip-name-resolve
-        mysql-native-password=ON
-        skip-log-bin
-        max_connections=80
-        innodb_log_buffer_size=16777216
-        innodb_flush_log_at_trx_commit=2
-        innodb_io_capacity=100
-        innodb_io_capacity_max=200
-        innodb_redo_log_capacity=1073741824
-        innodb_buffer_pool_size=1073741824
-        innodb_flush_neighbors=1
-        innodb_lru_scan_depth=256
-        innodb_page_cleaners=1
-        innodb_adaptive_flushing_lwm=10
-        innodb_max_dirty_pages_pct=90
-        innodb_max_dirty_pages_pct_lwm=10
-      EOT
-
-      persistence = {
-        enabled      = true
-        storageClass = "proxmox-lvm-encrypted"
-        size         = "5Gi"
+    volume_claim_template {
+      metadata {
+        name = "data"
         annotations = {
           "resize.topolvm.io/threshold"     = "80%"
           "resize.topolvm.io/increase"      = "100%"
           "resize.topolvm.io/storage_limit" = "30Gi"
         }
       }
-
-      resources = {
-        requests = {
-          cpu    = "250m"
-          memory = "1536Mi"
-        }
-        limits = {
-          memory = "2Gi"
-        }
-      }
-
-      affinity = {
-        nodeAffinity = {
-          requiredDuringSchedulingIgnoredDuringExecution = {
-            nodeSelectorTerms = [{
-              matchExpressions = [{
-                key      = "kubernetes.io/hostname"
-                operator = "NotIn"
-                values   = ["k8s-node1"]
-              }]
-            }]
+      spec {
+        access_modes       = ["ReadWriteOnce"]
+        storage_class_name = "proxmox-lvm-encrypted"
+        resources {
+          requests = {
+            storage = "5Gi"
           }
         }
       }
     }
+  }
 
-    metrics = {
-      enabled = false
-    }
-  })]
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
-# Compatibility service: mysql.dbaas points at InnoDB Cluster mysqld pods.
-# Phase 3 cutover: switch selector to Bitnami standalone after dump/restore:
-#   "app.kubernetes.io/instance"  = "mysql-standalone"
-#   "app.kubernetes.io/component" = "primary"
-# and remove publish_not_ready_addresses + update depends_on.
+# Compatibility service: mysql.dbaas.svc.cluster.local:3306
+# Points at standalone MySQL (migrated from InnoDB Cluster 2026-04-16)
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
     namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
   spec {
-    publish_not_ready_addresses = true # bypass InnoDB Cluster readiness gate during partial failures
     selector = {
-      "component"                     = "mysqld"
-      "mysql.oracle.com/cluster"      = "mysql-cluster"
-      "mysql.oracle.com/cluster-role" = "PRIMARY"
+      "app.kubernetes.io/instance"  = "mysql-standalone"
+      "app.kubernetes.io/component" = "primary"
     }
     port {
       port        = 3306
@@ -477,7 +559,7 @@ resource "kubernetes_service" "mysql" {
     }
   }
 
-  depends_on = [helm_release.mysql_cluster]
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
 }
 
 module "nfs_mysql_backup_host" {
@@ -923,7 +1005,7 @@ resource "kubernetes_service" "phpmyadmin" {
 }
 module "ingress" {
   source                         = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
+  dns_type                       = "proxied"
   namespace                      = kubernetes_namespace.dbaas.metadata[0].name
   name                           = "pma"
   tls_secret_name                = var.tls_secret_name
@@ -1247,6 +1329,55 @@ resource "kubernetes_service" "postgresql" {
       port        = 5432
       target_port = 5432
     }
+  }
+}
+
+# LoadBalancer service for PG primary — accessible from DevVM (10.0.20.200:5432).
+# Shares MetalLB IP with other non-conflicting services (Traefik, Dolt, etc.).
+resource "kubernetes_service" "postgresql_lb" {
+  metadata {
+    name      = "postgresql-lb"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip"          = "shared"
+    }
+  }
+  spec {
+    type = "LoadBalancer"
+    selector = {
+      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/instanceRole" = "primary"
+    }
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+}
+
+# Create terraform_state database for remote TF state backend (pg backend).
+# User password is managed by Vault Database Secrets Engine (static role rotation).
+resource "null_resource" "pg_terraform_state_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "terraform_state"
+    username = "terraform_state"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'terraform_state'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE terraform_state WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'terraform_state'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE terraform_state OWNER terraform_state"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE terraform_state TO terraform_state"
+        '
+    EOT
   }
 }
 
