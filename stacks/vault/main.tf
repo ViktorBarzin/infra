@@ -465,6 +465,27 @@ resource "vault_kubernetes_auth_backend_role" "openclaw" {
   token_period                     = 777600   # periodic: auto-renews indefinitely
 }
 
+# --- Terraform State Policy & Role (Claude Agent) ---
+
+resource "vault_policy" "terraform_state" {
+  name   = "terraform-state"
+  policy = <<-EOT
+    path "database/static-creds/pg-terraform-state" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "terraform_state" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "terraform-state"
+  bound_service_account_names      = ["default"]
+  bound_service_account_namespaces = ["claude-agent"]
+  token_policies                   = [vault_policy.terraform_state.name]
+  token_ttl                        = 518400   # 6d (staggered from others: ci=7d, eso=10d, woodpecker=8d, openclaw=9d)
+  token_period                     = 518400   # periodic: auto-renews indefinitely
+}
+
 # =============================================================================
 # Database Secrets Engine — Static Password Rotation
 # =============================================================================
@@ -501,7 +522,8 @@ resource "vault_database_secret_backend_connection" "postgresql" {
   allowed_roles = [
     # "pg-trading",  # Commented out 2026-04-06 - trading-bot disabled
     "pg-health", "pg-linkwarden",
-    "pg-affine", "pg-woodpecker", "pg-claude-memory"
+    "pg-affine", "pg-woodpecker", "pg-claude-memory",
+    "pg-terraform-state"
   ]
 
   postgresql {
@@ -628,6 +650,14 @@ resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-claude-memory"
   username        = "claude_memory"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-terraform-state"
+  username        = "terraform_state"
   rotation_period = 604800
 }
 

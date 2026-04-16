@@ -22,6 +22,12 @@ if [[ "$cwd" == "$stacks_dir"/* ]]; then
   STACK_NAME="${rel%%/*}"
 fi
 
+# ── Tier detection ──
+TIER0_STACKS="infra platform cnpg vault dbaas external-secrets"
+is_tier0() {
+  echo "$TIER0_STACKS" | tr ' ' '\n' | grep -qx "$1"
+}
+
 # ── Advisory lock via Vault KV ──
 LOCK_MAX_AGE=1800  # 30 minutes — stale lock threshold
 acquire_lock() {
@@ -56,9 +62,25 @@ release_lock() {
   vault kv delete "secret/locks/$stack" >/dev/null 2>&1 || true
 }
 
-# Decrypt state before any operation
-if [ -n "$STACK_NAME" ] && [ -f "$REPO_ROOT/state/stacks/$STACK_NAME/terraform.tfstate.enc" ]; then
-  "$SYNC" decrypt "$STACK_NAME"
+# ── Pre-flight: decrypt state (Tier 0) or fetch PG creds (Tier 1) ──
+if [ -n "$STACK_NAME" ]; then
+  if is_tier0 "$STACK_NAME"; then
+    # Tier 0: SOPS-encrypted local state
+    if [ -f "$REPO_ROOT/state/stacks/$STACK_NAME/terraform.tfstate.enc" ]; then
+      "$SYNC" decrypt "$STACK_NAME"
+    fi
+  else
+    # Tier 1: PG backend — fetch credentials from Vault
+    if [ -z "${PG_CONN_STR:-}" ]; then
+      PG_CREDS=$(vault read -format=json database/static-creds/pg-terraform-state 2>/dev/null) || {
+        echo "ERROR: Cannot read PG credentials from Vault. Run: vault login -method=oidc" >&2
+        exit 1
+      }
+      PG_USER=$(echo "$PG_CREDS" | jq -r .data.username)
+      PG_PASS=$(echo "$PG_CREDS" | jq -r .data.password)
+      export PG_CONN_STR="postgres://${PG_USER}:${PG_PASS}@10.0.20.200:5432/terraform_state?sslmode=disable"
+    fi
+  fi
 fi
 
 # Detect if this is a mutating operation
@@ -69,8 +91,8 @@ for arg in "$@"; do
   esac
 done
 
-# Acquire lock for mutating operations
-if $is_mutating && [ -n "$STACK_NAME" ]; then
+# Acquire lock for mutating operations (Tier 0 only — Tier 1 uses pg_advisory_lock)
+if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
   if command -v vault &>/dev/null && [ -n "${VAULT_TOKEN:-}" ]; then
     acquire_lock "$STACK_NAME"
     trap 'release_lock "$STACK_NAME"' EXIT
@@ -101,8 +123,8 @@ else
   terragrunt "$@"
 fi
 
-# After mutating operations, encrypt and commit
-if $is_mutating && [ -n "$STACK_NAME" ]; then
+# After mutating operations: encrypt+commit (Tier 0) or no-op (Tier 1 — PG is authoritative)
+if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
   "$SYNC" encrypt "$STACK_NAME"
   cd "$REPO_ROOT"
   git add "state/stacks/$STACK_NAME/terraform.tfstate.enc"

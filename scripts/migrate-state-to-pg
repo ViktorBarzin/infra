@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# scripts/migrate-state-to-pg — One-shot migration from local SOPS state to PG backend.
+# Prerequisites: vault login -method=oidc, PG terraform_state DB exists, Vault static role created.
+# Usage: scripts/migrate-state-to-pg [--dry-run]
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SYNC="$REPO_ROOT/scripts/state-sync"
+STACKS_DIR="$REPO_ROOT/stacks"
+STATE_DIR="$REPO_ROOT/state/stacks"
+
+TIER0_STACKS="infra platform cnpg vault dbaas external-secrets"
+is_tier0() {
+  echo "$TIER0_STACKS" | tr ' ' '\n' | grep -qx "$1"
+}
+
+DRY_RUN=false
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
+
+# Fetch PG credentials from Vault
+echo "==> Fetching PG credentials from Vault..."
+PG_CREDS=$(vault read -format=json database/static-creds/pg-terraform-state) || {
+  echo "ERROR: Cannot read PG credentials. Run: vault login -method=oidc" >&2
+  exit 1
+}
+PG_USER=$(echo "$PG_CREDS" | jq -r .data.username)
+PG_PASS=$(echo "$PG_CREDS" | jq -r .data.password)
+export PG_CONN_STR="postgres://${PG_USER}:${PG_PASS}@10.0.20.200:5432/terraform_state?sslmode=disable"
+echo "    PG_CONN_STR set (user: $PG_USER)"
+
+# Enable provider cache
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
+export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=1
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+migrated=0
+failed=0
+skipped=0
+failed_stacks=""
+
+# Increment helpers (avoid arithmetic exit code 1 when value is 0)
+inc_migrated() { migrated=$((migrated + 1)); }
+inc_failed()   { failed=$((failed + 1)); }
+inc_skipped()  { skipped=$((skipped + 1)); }
+
+# Iterate over all stack directories that have state
+for state_dir in "$STATE_DIR"/*/; do
+  stack="$(basename "$state_dir")"
+
+  # Skip Tier 0
+  if is_tier0 "$stack"; then
+    echo "--- SKIP (Tier 0): $stack"
+    inc_skipped
+    continue
+  fi
+
+  # Skip stacks with no state file
+  if [ ! -f "$state_dir/terraform.tfstate.enc" ] && [ ! -f "$state_dir/terraform.tfstate" ]; then
+    echo "--- SKIP (no state): $stack"
+    inc_skipped
+    continue
+  fi
+
+  # Skip stacks with no corresponding stack directory
+  if [ ! -d "$STACKS_DIR/$stack" ]; then
+    echo "--- SKIP (no stack dir): $stack"
+    inc_skipped
+    continue
+  fi
+
+  echo "==> Migrating: $stack"
+
+  if $DRY_RUN; then
+    echo "    [dry-run] Would migrate $stack"
+    inc_skipped
+    continue
+  fi
+
+  # Decrypt state if needed (call decrypt_state directly — state-sync skips Tier 1)
+  if [ -f "$state_dir/terraform.tfstate.enc" ] && [ ! -f "$state_dir/terraform.tfstate" ]; then
+    sops -d --input-type json --output-type json "$state_dir/terraform.tfstate.enc" > "$state_dir/terraform.tfstate" || {
+      echo "    WARNING: decrypt failed, skipping"
+      inc_skipped
+      continue
+    }
+  fi
+
+  # Migrate state
+  cd "$STACKS_DIR/$stack"
+  if terragrunt init -upgrade -migrate-state -force-copy -input=false 2>&1 | tee /tmp/tg-migrate-$stack.log; then
+    echo "    init OK"
+
+    # Verify — plan should show no changes
+    if terragrunt plan -detailed-exitcode -input=false 2>&1 | tail -5 | grep -q "No changes"; then
+      echo "    plan OK — no drift"
+      inc_migrated
+    else
+      echo "    WARNING: plan shows changes (may be normal drift, not migration issue)"
+      inc_migrated
+    fi
+  else
+    echo "    FAILED: init error (see /tmp/tg-migrate-$stack.log)"
+    inc_failed
+    failed_stacks="$failed_stacks $stack"
+  fi
+done
+
+echo ""
+echo "========================================"
+echo "Migration complete"
+echo "  Migrated: $migrated"
+echo "  Failed:   $failed"
+echo "  Skipped:  $skipped"
+if [ -n "$failed_stacks" ]; then
+  echo "  Failed stacks:$failed_stacks"
+fi
+echo "========================================"

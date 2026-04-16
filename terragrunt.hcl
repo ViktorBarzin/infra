@@ -1,15 +1,26 @@
 # Root Terragrunt configuration
 # Provides DRY provider, backend, and variable loading for all stacks.
 
-# Each stack gets its own local state file under state/<stack-name>/
+# Two-tier state backend:
+#   Tier 0 (bootstrap): local state, SOPS-encrypted in git — must exist before PG is reachable.
+#   Tier 1 (everything else): PG backend on CNPG cluster, native pg_advisory_lock.
+locals {
+  tier0_stacks = ["infra", "platform", "cnpg", "vault", "dbaas", "external-secrets"]
+  stack_name   = replace(path_relative_to_include(), "stacks/", "")
+  is_tier0     = contains(local.tier0_stacks, local.stack_name)
+}
+
 remote_state {
-  backend = "local"
+  backend = local.is_tier0 ? "local" : "pg"
   generate = {
     path      = "backend.tf"
     if_exists = "overwrite_terragrunt"
   }
-  config = {
+  config = local.is_tier0 ? {
     path = "${get_repo_root()}/state/${path_relative_to_include()}/terraform.tfstate"
+  } : {
+    conn_str    = get_env("PG_CONN_STR", "")
+    schema_name = local.stack_name
   }
 }
 
