@@ -210,6 +210,7 @@ resource "kubernetes_service" "xray-reality" {
 
 module "ingress_ws" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-ws"
   service_name    = "xray"
@@ -220,6 +221,7 @@ module "ingress_ws" {
 
 module "ingress_grpc" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-grpc"
   service_name    = "xray"
@@ -234,6 +236,7 @@ module "ingress_grpc" {
 
 module "ingress_vless" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-vless"
   service_name    = "xray"

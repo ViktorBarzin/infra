@@ -611,6 +611,7 @@ resource "kubernetes_service" "trading-bot-frontend" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.trading-bot.metadata[0].name
   name            = "trading"
   service_name    = "trading-bot-frontend"

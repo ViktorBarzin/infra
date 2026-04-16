@@ -110,6 +110,7 @@ module "ingress" {
   name            = "blog"
   service_name    = "blog"
   full_host       = "viktorbarzin.me"
+  dns_type        = "proxied"
   tls_secret_name = var.tls_secret_name
   rybbit_site_id  = "da853a2438d0"
   extra_annotations = {

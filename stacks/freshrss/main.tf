@@ -207,6 +207,7 @@ resource "kubernetes_service" "freshrss" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "freshrss"
   name            = "rss"
   service_name    = "freshrss"

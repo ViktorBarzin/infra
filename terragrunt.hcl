@@ -35,7 +35,7 @@ terraform {
   }
 }
 
-# Generate kubernetes + helm providers for K8s stacks.
+# Generate kubernetes + helm + cloudflare providers for all stacks.
 # The infra stack overrides this to add the proxmox provider.
 generate "k8s_providers" {
   path      = "providers.tf"
@@ -46,6 +46,10 @@ terraform {
     vault = {
       source  = "hashicorp/vault"
       version = "~> 4.0"
+    }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4"
     }
   }
 }
@@ -68,6 +72,25 @@ provider "helm" {
 provider "vault" {
   address          = "https://vault.viktorbarzin.me"
   skip_child_token = true
+}
+EOF
+}
+
+# Generate Cloudflare provider config (separate file to avoid conflicts
+# with stacks that override providers.tf, e.g. infra stack).
+# DNS records are created per-service via ingress_factory's dns_type param.
+generate "cloudflare_provider" {
+  path      = "cloudflare_provider.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+data "vault_kv_secret_v2" "cf_platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
+provider "cloudflare" {
+  api_key = data.vault_kv_secret_v2.cf_platform.data["cloudflare_api_key"]
+  email   = "vbarzin@gmail.com"
 }
 EOF
 }

@@ -128,6 +128,7 @@ module "ingress" {
   namespace                      = kubernetes_namespace.privatebin.metadata[0].name
   name                           = "privatebin"
   host                           = "pb"
+  dns_type                       = "proxied"
   tls_secret_name                = var.tls_secret_name
   rybbit_site_id                 = "3ae810b0476d"
   custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me"

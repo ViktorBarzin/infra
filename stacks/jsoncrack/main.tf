@@ -78,6 +78,7 @@ resource "kubernetes_service" "jsoncrack" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.jsoncrack.metadata[0].name
   name            = "json"
   tls_secret_name = var.tls_secret_name

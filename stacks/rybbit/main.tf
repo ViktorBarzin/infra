@@ -543,6 +543,7 @@ resource "kubernetes_service" "rybbit-client" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
   name            = "rybbit"
   service_name    = "rybbit-client"
@@ -560,6 +561,7 @@ module "ingress" {
 
 module "ingress-api" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
   name            = "rybbit-api"
   host            = "rybbit"

@@ -625,6 +625,7 @@ resource "kubernetes_service" "openclaw" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.openclaw.metadata[0].name
   name            = "openclaw"
   tls_secret_name = var.tls_secret_name
@@ -1199,6 +1200,7 @@ resource "kubernetes_service" "openlobster" {
 
 module "openlobster_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.openclaw.metadata[0].name
   name            = "openlobster"
   tls_secret_name = var.tls_secret_name

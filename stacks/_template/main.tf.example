@@ -86,5 +86,6 @@ module "ingress" {
   namespace       = "<your-namespace>"
   name            = "<app-name>"
   tls_secret_name = var.tls_secret_name
-  protected       = false  # Set true to require Authentik login
+  dns_type        = "proxied"  # "proxied" (Cloudflare CDN), "non-proxied" (direct A/AAAA), or "none"
+  protected       = false      # Set true to require Authentik login
 }

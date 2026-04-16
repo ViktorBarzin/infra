@@ -258,6 +258,7 @@ resource "kubernetes_manifest" "ollama_api_basic_auth_middleware" {
 
 module "ollama-api-ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ollama.metadata[0].name
   name            = "ollama-api"
   service_name    = "ollama"
@@ -362,6 +363,7 @@ resource "kubernetes_service" "ollama-ui" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.ollama.metadata[0].name
   name            = "ollama"
   service_name    = "ollama-ui"

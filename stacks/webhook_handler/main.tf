@@ -259,6 +259,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
   name            = "webhook-handler"
   host            = "webhook"
+  dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

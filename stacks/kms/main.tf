@@ -116,6 +116,7 @@ resource "kubernetes_service" "kms-web-page" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.kms.metadata[0].name
   name            = "kms"
   tls_secret_name = var.tls_secret_name

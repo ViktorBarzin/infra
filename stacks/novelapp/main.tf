@@ -211,6 +211,7 @@ resource "kubernetes_service" "novelapp" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   name            = "novelapp"
   tls_secret_name = var.tls_secret_name

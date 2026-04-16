@@ -279,6 +279,7 @@ resource "kubernetes_service" "traefik_dashboard" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.traefik.metadata[0].name
   name            = "traefik"
   service_name    = "traefik-dashboard"

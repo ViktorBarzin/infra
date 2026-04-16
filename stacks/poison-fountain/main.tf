@@ -205,6 +205,7 @@ module "ingress" {
   namespace               = kubernetes_namespace.poison_fountain.metadata[0].name
   name                    = "poison-fountain"
   host                    = "poison"
+  dns_type                = "non-proxied"
   port                    = 8080
   tls_secret_name         = var.tls_secret_name
   skip_default_rate_limit = true

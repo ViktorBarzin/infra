@@ -221,6 +221,7 @@ resource "kubernetes_service" "linkwarden" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.linkwarden.metadata[0].name
   name            = "linkwarden"
   tls_secret_name = var.tls_secret_name

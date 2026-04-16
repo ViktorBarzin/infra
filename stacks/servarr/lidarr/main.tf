@@ -162,6 +162,7 @@ resource "kubernetes_service" "deemix" {
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "servarr"
   name            = "lidarr"
   tls_secret_name = var.tls_secret_name
@@ -174,6 +175,7 @@ module "ingress" {
 
 module "ingress-deemix" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "servarr"
   name            = "deemix"
   tls_secret_name = var.tls_secret_name

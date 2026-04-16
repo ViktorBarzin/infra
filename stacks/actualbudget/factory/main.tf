@@ -137,6 +137,7 @@ module "ingress" {
   namespace         = "actualbudget"
   name              = "budget-${var.name}"
   tls_secret_name   = var.tls_secret_name
+  dns_type          = "proxied"
   rybbit_site_id    = "3e6b6b68088a"
   extra_annotations = var.homepage_annotations
 }

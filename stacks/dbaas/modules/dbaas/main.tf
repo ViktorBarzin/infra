@@ -366,9 +366,99 @@ resource "helm_release" "mysql_cluster" {
   depends_on = [helm_release.mysql_operator]
 }
 
-# Compatibility service: mysql.dbaas points at InnoDB Cluster mysqld pods
-# When router is available it handles failover, but we fall back to direct
-# mysqld access to avoid total outage during partial cluster failures
+#### MYSQL — Standalone Bitnami (migration target)
+#
+# Standalone MySQL without Group Replication. Eliminates ~95 GB/day of GR
+# write overhead (binlog, relay log, XCom cache) for databases totaling ~35 MB.
+# Binary logging disabled entirely (skip-log-bin) since no replication needed.
+
+resource "helm_release" "mysql_standalone" {
+  namespace        = kubernetes_namespace.dbaas.metadata[0].name
+  create_namespace = false
+  name             = "mysql-standalone"
+  timeout          = 600
+
+  repository = "oci://registry-1.docker.io/bitnamicharts"
+  chart      = "mysql"
+
+  values = [yamlencode({
+    architecture = "standalone"
+    image = {
+      tag = "8.4"
+    }
+
+    auth = {
+      rootPassword = var.dbaas_root_password
+    }
+
+    primary = {
+      configuration = <<-EOT
+        [mysqld]
+        skip-name-resolve
+        mysql-native-password=ON
+        skip-log-bin
+        max_connections=80
+        innodb_log_buffer_size=16777216
+        innodb_flush_log_at_trx_commit=2
+        innodb_io_capacity=100
+        innodb_io_capacity_max=200
+        innodb_redo_log_capacity=1073741824
+        innodb_buffer_pool_size=1073741824
+        innodb_flush_neighbors=1
+        innodb_lru_scan_depth=256
+        innodb_page_cleaners=1
+        innodb_adaptive_flushing_lwm=10
+        innodb_max_dirty_pages_pct=90
+        innodb_max_dirty_pages_pct_lwm=10
+      EOT
+
+      persistence = {
+        enabled      = true
+        storageClass = "proxmox-lvm-encrypted"
+        size         = "5Gi"
+        annotations = {
+          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/increase"      = "100%"
+          "resize.topolvm.io/storage_limit" = "30Gi"
+        }
+      }
+
+      resources = {
+        requests = {
+          cpu    = "250m"
+          memory = "1536Mi"
+        }
+        limits = {
+          memory = "2Gi"
+        }
+      }
+
+      affinity = {
+        nodeAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = {
+            nodeSelectorTerms = [{
+              matchExpressions = [{
+                key      = "kubernetes.io/hostname"
+                operator = "NotIn"
+                values   = ["k8s-node1"]
+              }]
+            }]
+          }
+        }
+      }
+    }
+
+    metrics = {
+      enabled = false
+    }
+  })]
+}
+
+# Compatibility service: mysql.dbaas points at InnoDB Cluster mysqld pods.
+# Phase 3 cutover: switch selector to Bitnami standalone after dump/restore:
+#   "app.kubernetes.io/instance"  = "mysql-standalone"
+#   "app.kubernetes.io/component" = "primary"
+# and remove publish_not_ready_addresses + update depends_on.
 resource "kubernetes_service" "mysql" {
   metadata {
     name      = var.cluster_master_service
@@ -833,6 +923,7 @@ resource "kubernetes_service" "phpmyadmin" {
 }
 module "ingress" {
   source                         = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace                      = kubernetes_namespace.dbaas.metadata[0].name
   name                           = "pma"
   tls_secret_name                = var.tls_secret_name
@@ -1287,6 +1378,7 @@ resource "kubernetes_service" "pgadmin" {
 }
 module "ingress-pgadmin" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.dbaas.metadata[0].name
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name

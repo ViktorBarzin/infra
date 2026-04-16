@@ -244,6 +244,7 @@ resource "kubernetes_service" "tandoor" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.tandoor.metadata[0].name
   name            = "tandoor"
   tls_secret_name = var.tls_secret_name

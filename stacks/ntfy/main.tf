@@ -181,6 +181,7 @@ resource "kubernetes_service" "ntfy" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.ntfy.metadata[0].name
   name            = "ntfy"
   tls_secret_name = var.tls_secret_name

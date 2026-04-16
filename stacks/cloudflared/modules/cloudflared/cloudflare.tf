@@ -58,15 +58,20 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
     warp_routing {
       enabled = true
     }
-    dynamic "ingress_rule" {
-      for_each = toset(var.cloudflare_proxied_names)
-      content {
-        hostname = ingress_rule.value == "viktorbarzin.me" ? ingress_rule.value : "${ingress_rule.value}.viktorbarzin.me"
-        path     = "/"
-        service  = "https://10.0.20.200:443"
-        origin_request {
-          no_tls_verify = true
-        }
+    # Wildcard rule routes all subdomains through tunnel to Traefik.
+    # Traefik handles host-based routing via K8s Ingress resources.
+    ingress_rule {
+      hostname = "*.viktorbarzin.me"
+      service  = "https://10.0.20.200:443"
+      origin_request {
+        no_tls_verify = true
+      }
+    }
+    ingress_rule {
+      hostname = "viktorbarzin.me"
+      service  = "https://10.0.20.200:443"
+      origin_request {
+        no_tls_verify = true
       }
     }
     ingress_rule {

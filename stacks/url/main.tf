@@ -280,6 +280,7 @@ resource "kubernetes_service" "shlink" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "url"
   service_name    = "shlink"
@@ -420,6 +421,7 @@ resource "kubernetes_service" "shlink-web" {
 
 module "ingress-web" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "shlink"
   service_name    = "shlink-web"

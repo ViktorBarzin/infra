@@ -152,6 +152,7 @@ resource "kubernetes_service" "prowlarr" {
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "servarr"
   name            = "prowlarr"
   tls_secret_name = var.tls_secret_name

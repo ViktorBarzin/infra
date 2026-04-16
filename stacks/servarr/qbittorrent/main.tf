@@ -381,6 +381,7 @@ print(f"Global: connected={connected} dht={dht} dl_speed={dl_speed} ul_speed={ul
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = "servarr"
   name            = "qbittorrent"
   tls_secret_name = var.tls_secret_name

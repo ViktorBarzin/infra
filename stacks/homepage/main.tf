@@ -134,6 +134,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.homepage.metadata[0].name
   name            = "homepage"
   host            = "home"
+  dns_type        = "proxied"
   service_name    = kubernetes_service.cache_proxy.metadata[0].name
   tls_secret_name = var.tls_secret_name
   extra_annotations = {

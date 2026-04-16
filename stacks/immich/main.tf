@@ -674,6 +674,7 @@ resource "kubernetes_service" "immich-machine-learning" {
 
 module "ingress-immich" {
   source                  = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace               = kubernetes_namespace.immich.metadata[0].name
   name                    = "immich"
   service_name            = "immich-server"

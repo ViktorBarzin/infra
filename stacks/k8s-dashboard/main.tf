@@ -90,6 +90,7 @@ module "ingress" {
   name             = "kubernetes-dashboard"
   service_name     = "kubernetes-dashboard-kong-proxy"
   host             = "k8s"
+  dns_type         = "proxied"
   tls_secret_name  = var.tls_secret_name
   protected        = true
   backend_protocol = "HTTPS"

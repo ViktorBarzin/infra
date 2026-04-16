@@ -153,6 +153,7 @@ resource "kubernetes_service" "forgejo" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name

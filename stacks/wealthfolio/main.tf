@@ -193,6 +193,7 @@ resource "kubernetes_service" "wealthfolio" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.wealthfolio.metadata[0].name
   name            = "wealthfolio"
   tls_secret_name = var.tls_secret_name

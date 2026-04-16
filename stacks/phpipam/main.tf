@@ -226,6 +226,7 @@ resource "kubernetes_service" "phpipam" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.phpipam.metadata[0].name
   name            = "phpipam"
   tls_secret_name = var.tls_secret_name

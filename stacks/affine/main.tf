@@ -344,6 +344,7 @@ resource "kubernetes_service" "affine" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.affine.metadata[0].name
   name            = "affine"
   tls_secret_name = var.tls_secret_name

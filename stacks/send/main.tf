@@ -158,6 +158,7 @@ resource "kubernetes_service" "send" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.send.metadata[0].name
   name            = "send"
   tls_secret_name = var.tls_secret_name
