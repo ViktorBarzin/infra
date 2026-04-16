@@ -15,7 +15,7 @@ locals {
 variable "immich_version" {
   type = string
   # Change me to upgrade
-  default = "v2.7.4"
+  default = "v2.7.5"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
