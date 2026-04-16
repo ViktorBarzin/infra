@@ -144,7 +144,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
       spec {
         container {
           name  = "onlyoffice-document-server"
-          image = "onlyoffice/documentserver:8.2.3"
+          image = "onlyoffice/documentserver:9.3.1"
           resources {
             requests = {
               cpu    = "100m"
