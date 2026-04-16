@@ -305,7 +305,7 @@ resource "kubernetes_deployment" "ollama-ui" {
       spec {
         container {
           # image = "ghcr.io/open-webui/open-webui:main"
-          image = "ghcr.io/open-webui/open-webui:v0.7.2"
+          image = "ghcr.io/open-webui/open-webui:v0.8.12"
           name  = "ollama-ui"
           env {
             name  = "OLLAMA_BASE_URL"
