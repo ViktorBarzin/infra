@@ -111,7 +111,7 @@ resource "kubernetes_deployment" "matrix" {
       spec {
         init_container {
           name    = "install-psycopg2"
-          image   = "matrixdotorg/synapse:v1.125.0"
+          image   = "matrixdotorg/synapse:v1.151.0"
           command = ["/bin/sh", "-c", "pip install --target=/extra-packages psycopg2-binary 2>/dev/null"]
           volume_mount {
             name       = "extra-packages"
@@ -144,7 +144,7 @@ resource "kubernetes_deployment" "matrix" {
           }
         }
         container {
-          image = "matrixdotorg/synapse:v1.125.0"
+          image = "matrixdotorg/synapse:v1.151.0"
           name  = "matrix"
           port {
             container_port = 8008
