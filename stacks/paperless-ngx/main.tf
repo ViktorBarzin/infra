@@ -178,10 +178,10 @@ resource "kubernetes_deployment" "paperless-ngx" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
 
