@@ -242,6 +242,7 @@ resource "kubernetes_service" "ebook2audiobook" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ebook2audiobook.metadata[0].name
   name            = "ebook2audiobook"
   tls_secret_name = var.tls_secret_name
@@ -426,6 +427,7 @@ module "audiblez-web-ingress" {
   namespace       = kubernetes_namespace.ebook2audiobook.metadata[0].name
   name            = "audiblez-web"
   host            = "audiblez"
+  dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name
   protected       = true
   max_body_size   = "500m" # Allow large EPUB uploads

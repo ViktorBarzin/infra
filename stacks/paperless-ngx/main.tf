@@ -228,6 +228,7 @@ module "ingress" {
   name            = "paperless-ngx"
   service_name    = "paperless-ngx"
   host            = "pdf"
+  dns_type        = "proxied"
   tls_secret_name = var.tls_secret_name
   port            = 80
   extra_annotations = {

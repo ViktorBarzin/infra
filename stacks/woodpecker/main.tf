@@ -317,6 +317,7 @@ resource "kubernetes_cron_job_v1" "vault_secret_sync" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.woodpecker.metadata[0].name
   name            = "ci"
   service_name    = "woodpecker-server"

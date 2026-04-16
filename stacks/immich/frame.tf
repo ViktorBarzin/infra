@@ -120,6 +120,7 @@ resource "kubernetes_service" "immich-frame" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "immich"
   name            = "highlights-immich"
   tls_secret_name = var.tls_secret_name

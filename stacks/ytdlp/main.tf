@@ -173,6 +173,7 @@ module "ingress" {
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
   host            = "yt"
+  dns_type        = "non-proxied"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "yt-dlp"
@@ -347,6 +348,7 @@ resource "kubernetes_service" "yt_highlights" {
 
 module "highlights_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "yt-highlights"
   tls_secret_name = var.tls_secret_name

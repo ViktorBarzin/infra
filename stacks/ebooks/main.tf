@@ -374,6 +374,7 @@ resource "kubernetes_service" "calibre" {
 
 module "calibre_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "calibre"
   tls_secret_name = var.tls_secret_name
@@ -494,6 +495,7 @@ resource "kubernetes_service" "annas-archive-stacks" {
 
 module "stacks_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "stacks"
   service_name    = "annas-archive-stacks"
@@ -644,6 +646,7 @@ resource "kubernetes_service" "audiobookshelf" {
 
 module "audiobookshelf_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "audiobookshelf"
   tls_secret_name = var.tls_secret_name
@@ -904,6 +907,7 @@ resource "kubernetes_service" "book_search" {
 
 module "book_search_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "book-search"
   tls_secret_name = var.tls_secret_name

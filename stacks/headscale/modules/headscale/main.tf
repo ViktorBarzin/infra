@@ -291,6 +291,7 @@ resource "kubernetes_service" "headscale" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
   name            = "headscale"
   port            = 8080

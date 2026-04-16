@@ -72,6 +72,7 @@ resource "kubernetes_service" "flaresolverr" {
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "servarr"
   name            = "flaresolverr"
   tls_secret_name = var.tls_secret_name

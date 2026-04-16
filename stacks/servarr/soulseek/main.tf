@@ -105,6 +105,7 @@ resource "kubernetes_service" "soulseek" {
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = "servarr"
   name            = "soulseek"
   tls_secret_name = var.tls_secret_name

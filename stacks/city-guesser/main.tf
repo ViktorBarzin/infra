@@ -87,6 +87,7 @@ resource "kubernetes_service" "city-guesser" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "city-guesser"
   name            = "city-guesser"
   tls_secret_name = var.tls_secret_name

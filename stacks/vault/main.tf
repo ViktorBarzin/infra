@@ -223,6 +223,7 @@ resource "vault_identity_group_alias" "admins" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.vault.metadata[0].name
   name            = "vault"
   service_name    = "vault-active"

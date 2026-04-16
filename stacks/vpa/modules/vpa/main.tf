@@ -105,6 +105,7 @@ resource "helm_release" "goldilocks" {
 # -----------------------------------------------------------------------------
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.vpa.metadata[0].name
   name            = "goldilocks"
   service_name    = "goldilocks-dashboard"

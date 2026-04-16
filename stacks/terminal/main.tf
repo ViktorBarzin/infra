@@ -57,6 +57,7 @@ resource "kubernetes_endpoints" "terminal" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.terminal.metadata[0].name
   name            = "terminal"
   tls_secret_name = var.tls_secret_name
@@ -197,6 +198,7 @@ resource "kubernetes_manifest" "clipboard_strip_prefix" {
 
 module "ingress_ro" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.terminal.metadata[0].name
   name            = "terminal-ro"
   tls_secret_name = var.tls_secret_name

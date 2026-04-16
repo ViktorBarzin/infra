@@ -91,6 +91,7 @@ resource "kubernetes_service" "networking-toolbox" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.networking-toolbox.metadata[0].name
   name            = "networking-toolbox"
   tls_secret_name = var.tls_secret_name

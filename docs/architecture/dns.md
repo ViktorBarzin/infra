@@ -277,15 +277,31 @@ viktorbarzin.lan:53 {
 
 ## Cloudflare DNS — External Domains
 
-All public domains are under the `viktorbarzin.me` zone, managed via Terraform in `stacks/cloudflared/modules/cloudflared/cloudflare.tf`.
+All public domains are under the `viktorbarzin.me` zone. DNS records are **auto-created per service** via the `ingress_factory` module's `dns_type` parameter. A small number of records (Helm-managed ingresses, special cases) remain centrally managed in `config.tfvars`.
+
+### How DNS Records Are Created
+
+```
+stacks/<service>/main.tf
+  module "ingress" {
+    source   = ingress_factory
+    dns_type = "proxied"    # ← auto-creates Cloudflare DNS record
+  }
+```
+
+- **`dns_type = "proxied"`**: Creates CNAME → `{tunnel_id}.cfargotunnel.com` (Cloudflare CDN)
+- **`dns_type = "non-proxied"`**: Creates A → public IP + AAAA → IPv6
+- **`dns_type = "none"`** (default): No DNS record
+
+The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`) — no per-hostname tunnel config needed. Traefik handles host-based routing via K8s Ingress resources.
 
 ### Record Types
 
 | Type | Records | Target | Example |
 |------|---------|--------|---------|
-| Proxied CNAME | ~30 domains | `{tunnel_id}.cfargotunnel.com` | blog, hackmd, homepage, ntfy |
-| Non-proxied A | ~20 domains | `176.12.22.76` (public IP) | mail, headscale, immich, vaultwarden |
-| Non-proxied AAAA | ~20 domains | IPv6 (HE tunnel) | Same as non-proxied A |
+| Proxied CNAME | ~100 domains | `{tunnel_id}.cfargotunnel.com` | blog, hackmd, homepage, ntfy |
+| Non-proxied A | ~35 domains | `176.12.22.76` (public IP) | mail, headscale, immich |
+| Non-proxied AAAA | ~35 domains | IPv6 (HE tunnel) | Same as non-proxied A |
 | MX | 1 | `mail.viktorbarzin.me` | Inbound email |
 | TXT (SPF) | 1 | `v=spf1 include:mailgun.org -all` | Email authentication |
 | TXT (DKIM) | 4 | RSA keys (s1, mail, brevo1, brevo2) | Email signing |
@@ -393,9 +409,9 @@ For internal `.viktorbarzin.lan` records:
 3. Or add directly in Technitium web UI (`technitium.viktorbarzin.me`)
 
 For external `.viktorbarzin.me` records:
-1. Add to `cloudflare_proxied_names` or `cloudflare_non_proxied_names` in `config.tfvars`
-2. Run `scripts/tg apply -target=module.kubernetes_cluster.module.cloudflared`
-3. For non-standard records (MX, TXT), add a `cloudflare_record` resource in `cloudflare.tf`
+1. Add `dns_type = "proxied"` (or `"non-proxied"`) to the `ingress_factory` module call in the service stack
+2. Run `scripts/tg apply` on the service stack — DNS record is auto-created
+3. For non-standard records (MX, TXT), add a `cloudflare_record` resource in `stacks/cloudflared/modules/cloudflared/cloudflare.tf`
 
 ## Incident History
 

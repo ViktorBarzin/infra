@@ -192,6 +192,7 @@ resource "kubernetes_service" "plotting-book" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.plotting-book.metadata[0].name
   name            = "plotting-book"
   tls_secret_name = var.tls_secret_name

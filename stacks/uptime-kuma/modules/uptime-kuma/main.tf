@@ -174,6 +174,7 @@ resource "kubernetes_service" "uptime-kuma" {
 }
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.uptime-kuma.metadata[0].name
   name            = "uptime"
   tls_secret_name = var.tls_secret_name

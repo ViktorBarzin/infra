@@ -267,6 +267,7 @@ resource "kubernetes_service" "claude-memory" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.claude-memory.metadata[0].name
   name            = "claude-memory"
   tls_secret_name = var.tls_secret_name

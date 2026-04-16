@@ -166,6 +166,7 @@ resource "kubernetes_service" "health" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.health.metadata[0].name
   name            = "health"
   tls_secret_name = var.tls_secret_name

@@ -228,6 +228,7 @@ resource "kubernetes_service" "insta2spotify" {
 # Main ingress — protected by Authentik (frontend)
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
   name            = "insta2spotify"
   tls_secret_name = var.tls_secret_name

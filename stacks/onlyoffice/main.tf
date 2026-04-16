@@ -242,6 +242,7 @@ resource "kubernetes_service" "onlyoffice" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.onlyoffice.metadata[0].name
   name            = "onlyoffice"
   service_name    = "onlyoffice-document-server"

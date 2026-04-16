@@ -232,6 +232,7 @@ module "ingress" {
   namespace         = "freedify"
   name              = "music-${var.name}"
   tls_secret_name   = var.tls_secret_name
+  dns_type          = "non-proxied"
   protected         = var.protected
   extra_annotations = var.extra_annotations
 }

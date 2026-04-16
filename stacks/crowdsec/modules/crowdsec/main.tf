@@ -256,6 +256,7 @@ resource "kubernetes_service" "crowdsec-web" {
 }
 module "ingress" {
   source           = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace        = kubernetes_namespace.crowdsec.metadata[0].name
   name             = "crowdsec-web"
   protected        = true

@@ -342,6 +342,7 @@ resource "kubernetes_service" "resume" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.resume.metadata[0].name
   name            = "resume"
   tls_secret_name = var.tls_secret_name

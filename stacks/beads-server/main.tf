@@ -228,7 +228,7 @@ resource "kubernetes_deployment" "workbench" {
             for f in /static/chunks/pages/_app-*.js; do
               sed -i 's|http://localhost:9002/graphql|/graphql|g' "$f"
             done
-            echo "Patched GraphQL URL to /graphql"
+            echo "Patched GraphQL URL and store path"
           EOT
           ]
           volume_mount {
@@ -249,6 +249,13 @@ resource "kubernetes_deployment" "workbench" {
         container {
           name  = "workbench"
           image = "dolthub/dolt-workbench:latest"
+          command = ["sh", "-c", <<-EOT
+            # Patch GraphQL server to listen on 0.0.0.0 (IPv4) — Node 18+ defaults to IPv6
+            sed -i 's|app.listen(9002)|app.listen(9002,"0.0.0.0")|g' /app/graphql-server/dist/main.js
+            # Start PM2 (the default entrypoint)
+            exec pm2-runtime /app/process.yml
+          EOT
+          ]
 
           port {
             name           = "http"
@@ -259,9 +266,14 @@ resource "kubernetes_deployment" "workbench" {
             container_port = 9002
           }
 
+          env {
+            name  = "NODE_OPTIONS"
+            value = "--dns-result-order=ipv4first"
+          }
+
           volume_mount {
             name       = "store"
-            mount_path = "/app/store"
+            mount_path = "/app/graphql-server/store"
           }
           volume_mount {
             name       = "static-patched"
@@ -361,6 +373,7 @@ module "tls_secret" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.beads.metadata[0].name
   name            = "dolt-workbench"
   tls_secret_name = var.tls_secret_name

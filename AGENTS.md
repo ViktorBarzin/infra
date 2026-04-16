@@ -51,7 +51,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
 - `stacks/platform/modules/<service>/` — core infra modules
-- `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI
+- `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI, and auto Cloudflare DNS (`dns_type = "proxied"` or `"non-proxied"`)
 - `modules/kubernetes/nfs_volume/` — NFS volume module (CSI-backed, soft mount)
 - `config.tfvars` — non-secret configuration (plaintext)
 - `secrets.sops.json` — all secrets (SOPS-encrypted JSON)

@@ -139,6 +139,7 @@ resource "kubernetes_service" "k8s_portal" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
   name            = "k8s-portal"
   tls_secret_name = var.tls_secret_name

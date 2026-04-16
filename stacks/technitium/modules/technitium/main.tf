@@ -312,6 +312,7 @@ resource "kubernetes_service" "technitium_dns_internal" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.technitium.metadata[0].name
   name            = "technitium"
   tls_secret_name = var.tls_secret_name
@@ -380,7 +381,7 @@ data "kubernetes_secret" "technitium_db_creds" {
   depends_on = [kubernetes_manifest.external_secret]
 }
 
-# Grafana datasource for Technitium DNS query logs in MySQL
+# Grafana datasource for Technitium DNS query logs in PostgreSQL
 resource "kubernetes_config_map" "grafana_technitium_datasource" {
   metadata {
     name      = "grafana-technitium-datasource"
@@ -393,13 +394,18 @@ resource "kubernetes_config_map" "grafana_technitium_datasource" {
     "technitium-datasource.yaml" = yamlencode({
       apiVersion = 1
       datasources = [{
-        name     = "Technitium MySQL"
-        type     = "mysql"
+        name     = "Technitium PostgreSQL"
+        type     = "postgres"
         access   = "proxy"
-        url      = "${var.mysql_host}:3306"
+        url      = "${var.postgresql_host}:5432"
         database = "technitium"
         user     = "technitium"
-        uid      = "technitium-mysql"
+        uid      = "technitium-pg"
+        jsonData = {
+          sslmode         = "disable"
+          postgresVersion = 1600
+          timescaledb     = false
+        }
         secureJsonData = {
           password = data.kubernetes_secret.technitium_db_creds.data["db_password"]
         }
@@ -475,6 +481,11 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                 if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
 
+                # Disable SQLite query logging (eliminates ~18 GB/day write amplification on encrypted PVC)
+                SQLITE_CONFIG="{\"enableLogging\":false,\"maxLogDays\":0,\"maxLogRecords\":0}"
+                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Sqlite)" --data-urlencode "config=$$SQLITE_CONFIG"
+                echo "SQLite logging disabled on primary"
+
                 # Disable MySQL query logging
                 MYSQL_CONFIG="{\"enableLogging\":false,\"maxQueueSize\":1000000,\"maxLogDays\":30,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (MySQL)" --data-urlencode "config=$$MYSQL_CONFIG"
@@ -489,7 +500,17 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 # Configure PG query logging
                 PG_CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":90,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Host=${var.postgresql_host}; Port=5432; Username=technitium; Password=$$DB_PASSWORD;\"}"
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
-                echo "PG logging configured"
+                echo "PG logging configured on primary"
+
+                # Disable SQLite on secondary and tertiary instances
+                for INST in http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
+                  echo "Configuring $$INST"
+                  R_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                  if [ -z "$$R_TOKEN" ]; then echo "Login failed for $$INST, skipping"; continue; fi
+                  curl -sf -X POST "$$INST/api/apps/config/set?token=$$R_TOKEN" --data-urlencode "name=Query Logs (Sqlite)" --data-urlencode "config=$$SQLITE_CONFIG" || echo "WARN: SQLite plugin not present on $$INST"
+                  echo "SQLite logging disabled on $$INST"
+                done
+                echo "Password sync complete"
               EOT
               ]
             }

@@ -183,6 +183,7 @@ resource "kubernetes_service" "hackmd" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.hackmd.metadata[0].name
   name            = "hackmd"
   tls_secret_name = var.tls_secret_name

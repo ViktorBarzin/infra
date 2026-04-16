@@ -115,6 +115,7 @@ resource "kubernetes_service" "priority-pass" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = "priority-pass"
   name            = "priority-pass"
   tls_secret_name = var.tls_secret_name

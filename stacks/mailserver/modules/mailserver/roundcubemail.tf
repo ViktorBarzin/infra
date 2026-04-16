@@ -258,6 +258,7 @@ resource "kubernetes_service" "roundcubemail" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "non-proxied"
   namespace       = "mailserver"
   name            = "mail"
   service_name    = "roundcubemail"

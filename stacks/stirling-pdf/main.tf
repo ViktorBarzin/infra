@@ -124,6 +124,7 @@ resource "kubernetes_service" "stirling-pdf" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   name            = "stirling-pdf"
   tls_secret_name = var.tls_secret_name

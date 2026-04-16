@@ -326,6 +326,7 @@ resource "kubernetes_service" "realestate-crawler-api" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
   name            = "wrongmove"
   service_name    = "realestate-crawler-ui"
@@ -343,6 +344,7 @@ module "ingress" {
 
 module "ingress-api" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
   name            = "wrongmove-api"
   host            = "wrongmove"

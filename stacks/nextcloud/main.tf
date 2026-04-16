@@ -216,6 +216,7 @@ module "nfs_nextcloud_backup_host" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name

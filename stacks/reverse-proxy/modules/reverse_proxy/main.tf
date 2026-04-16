@@ -26,6 +26,7 @@ module "tls_secret" {
 # https://pfsense.viktorbarzin.me/
 module "pfsense" {
   source           = "./factory"
+  dns_type        = "proxied"
   name             = "pfsense"
   external_name    = "pfsense.viktorbarzin.lan"
   tls_secret_name  = var.tls_secret_name
@@ -53,6 +54,7 @@ module "pfsense" {
 # https://nas.viktorbarzin.me/
 module "nas" {
   source           = "./factory"
+  dns_type        = "proxied"
   name             = "nas"
   external_name    = "nas.viktorbarzin.lan"
   port             = 5001
@@ -74,6 +76,7 @@ module "nas" {
 # https://files.viktorbarzin.me/
 module "nas-files" {
   source            = "./factory"
+  dns_type        = "non-proxied"
   name              = "files"
   external_name     = "nas.viktorbarzin.lan"
   port              = 5001
@@ -89,6 +92,7 @@ module "nas-files" {
 # https://idrac.viktorbarzin.me/
 module "idrac" {
   source             = "./factory"
+  dns_type        = "proxied"
   name               = "idrac"
   external_name      = "idrac.viktorbarzin.lan"
   port               = 443
@@ -110,6 +114,7 @@ module "idrac" {
 # TODO: Not working yet
 module "tp-link-gateway" {
   source             = "./factory"
+  dns_type        = "proxied"
   name               = "gw"
   external_name      = "gw.viktorbarzin.lan"
   port               = 443
@@ -124,6 +129,7 @@ module "tp-link-gateway" {
 # https://truenas.viktorbarzin.me/
 module "truenas" {
   source          = "./factory"
+  dns_type        = "proxied"
   name            = "truenas"
   external_name   = "truenas.viktorbarzin.lan"
   port            = 80
@@ -168,6 +174,7 @@ module "r730" {
 # https://proxmox.viktorbarzin.me/
 module "proxmox" {
   source           = "./factory"
+  dns_type        = "proxied"
   name             = "proxmox"
   external_name    = "proxmox.viktorbarzin.lan"
   port             = 8006
@@ -189,6 +196,7 @@ module "proxmox" {
 # https://docker.viktorbarzin.me/ (registry web UI)
 module "docker-registry-ui" {
   source          = "./factory"
+  dns_type        = "proxied"
   name            = "docker"
   external_name   = "docker-registry.viktorbarzin.lan"
   port            = 8080
@@ -209,6 +217,7 @@ module "docker-registry-ui" {
 # https://registry.viktorbarzin.me/ (Docker CLI push/pull endpoint)
 module "docker-registry-cli" {
   source           = "./factory"
+  dns_type        = "non-proxied"
   name             = "registry"
   external_name    = "docker-registry.viktorbarzin.lan"
   port             = 5050
@@ -228,6 +237,7 @@ module "docker-registry-cli" {
 # https://valchedrym.viktorbarzin.me/
 module "valchedrym" {
   source            = "./factory"
+  dns_type        = "proxied"
   name              = "valchedrym"
   external_name     = "valchedrym.viktorbarzin.lan"
   tls_secret_name   = var.tls_secret_name
@@ -293,6 +303,7 @@ resource "kubernetes_manifest" "ha_sofia_rate_limit" {
 
 module "ha-sofia" {
   source                 = "./factory"
+  dns_type        = "non-proxied"
   name                   = "ha-sofia"
   external_name          = "ha-sofia.viktorbarzin.lan"
   port                   = 8123
@@ -317,6 +328,7 @@ module "ha-sofia" {
 # https://music-assistant.viktorbarzin.me/
 module "music-assistant" {
   source                 = "./factory"
+  dns_type        = "non-proxied"
   name                   = "music-assistant"
   external_name          = "ha-sofia.viktorbarzin.lan"
   port                   = 8095
@@ -332,6 +344,7 @@ module "music-assistant" {
 # https://ha-london.viktorbarzin.me/
 module "ha-london" {
   source          = "./factory"
+  dns_type        = "non-proxied"
   name            = "ha-london"
   external_name   = "ha-london.viktorbarzin.lan"
   port            = 8123
@@ -351,6 +364,7 @@ module "ha-london" {
 # https://london.viktorbarzin.me/
 module "london" {
   source           = "./factory"
+  dns_type        = "proxied"
   name             = "london"
   external_name    = "openwrt-london.viktorbarzin.lan"
   port             = 443
@@ -374,6 +388,7 @@ module "london" {
 }
 module "pi-lights" {
   source            = "./factory"
+  dns_type        = "proxied"
   name              = "pi"
   external_name     = "ha-london.viktorbarzin.lan"
   port              = 5000
@@ -401,6 +416,7 @@ module "pi-lights" {
 
 module "mbp14" {
   source            = "./factory"
+  dns_type        = "proxied"
   name              = "mbp14"
   external_name     = "mbp14.viktorbarzin.lan"
   port              = 4020

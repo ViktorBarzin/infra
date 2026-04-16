@@ -67,6 +67,7 @@ resource "helm_release" "authentik" {
 
 module "ingress" {
   source           = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
   namespace        = kubernetes_namespace.authentik.metadata[0].name
   name             = "authentik"
   service_name     = "goauthentik-server"
