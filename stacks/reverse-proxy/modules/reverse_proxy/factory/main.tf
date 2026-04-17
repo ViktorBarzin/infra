@@ -66,6 +66,21 @@ variable "dns_type" {
     error_message = "dns_type must be 'proxied', 'non-proxied', or 'none'."
   }
 }
+
+# Uptime Kuma external monitor: when true, annotate the ingress so the
+# external-monitor-sync CronJob creates a `[External] <name>` monitor pointing
+# at https://<host>. Null means "follow dns_type" — enabled when proxied.
+variable "external_monitor" {
+  type        = bool
+  default     = null
+  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type == 'proxied')."
+}
+
+variable "external_monitor_name" {
+  type        = string
+  default     = null
+  description = "Override the monitor label. Defaults to the ingress hostname label."
+}
 variable "cloudflare_zone_id" {
   type    = string
   default = "fd2c5dd4efe8fe38958944e74d0ced6d"
@@ -106,6 +121,16 @@ resource "kubernetes_service" "proxied-service" {
   }
 }
 
+locals {
+  # External monitor defaults: on when proxied, off otherwise. Explicit bool overrides.
+  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type == "proxied")
+
+  external_monitor_annotations = local.effective_external_monitor ? merge(
+    { "uptime.viktorbarzin.me/external-monitor" = "true" },
+    var.external_monitor_name != null ? { "uptime.viktorbarzin.me/external-monitor-name" = var.external_monitor_name } : {},
+  ) : {}
+}
+
 resource "kubernetes_ingress_v1" "proxied-ingress" {
   metadata {
     name      = var.name
@@ -125,8 +150,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"
       "traefik.ingress.kubernetes.io/service.serversscheme"    = var.backend_protocol == "HTTPS" ? "https" : null
       "traefik.ingress.kubernetes.io/service.serverstransport" = var.backend_protocol == "HTTPS" ? "traefik-insecure-skip-verify@kubernetescrd" : null
-    }, var.extra_annotations,
-      var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {}
+      }, var.extra_annotations,
+      var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
+      local.external_monitor_annotations,
     )
   }
 

@@ -13,24 +13,31 @@ variable "budget_encryption_password" {
   default   = null # If not passed, we won't run banksync ;known after initial installation
   sensitive = true
 }
+# Plan-time toggles — these MUST be known at plan time. The secret values
+# (budget_encryption_password, sync_id) are read from ESO-managed K8s Secrets
+# and are unknown at plan time on first apply, so we cannot base `count` on
+# them directly. Callers pass these booleans as hardcoded plan-time constants
+# that reflect whether the corresponding credentials are expected to exist.
+variable "enable_http_api" {
+  type        = bool
+  default     = false
+  description = "Deploy the actual-http-api sidecar. Must be true for the cronjob to run."
+}
+variable "enable_bank_sync" {
+  type        = bool
+  default     = false
+  description = "Deploy the daily bank-sync CronJob. Requires enable_http_api=true."
+}
 variable "nfs_server" { type = string }
 variable "homepage_annotations" {
   type    = map(string)
   default = {}
 }
 
-module "nfs_data" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "actualbudget-${var.name}-data"
-  namespace  = "actualbudget"
-  nfs_server = var.nfs_server
-  nfs_path   = "/mnt/main/actualbudget/${var.name}"
-}
-
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "actualbudget-${var.name}-data-proxmox"
+    name      = "actualbudget-${var.name}-data-encrypted"
     namespace = "actualbudget"
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -40,7 +47,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -103,7 +110,7 @@ resource "kubernetes_deployment" "actualbudget" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
         }
       }
@@ -149,7 +156,7 @@ resource "random_string" "api-key" {
 }
 
 resource "kubernetes_deployment" "actualbudget-http-api" {
-  count = var.budget_encryption_password != null ? 1 : 0
+  count = var.enable_http_api ? 1 : 0
   metadata {
     name      = "actualbudget-http-api-${var.name}"
     namespace = "actualbudget"
@@ -232,7 +239,7 @@ resource "kubernetes_service" "actualbudget-http-api" {
 }
 
 resource "kubernetes_cron_job_v1" "bank-sync" {
-  count = var.sync_id != null && var.budget_encryption_password != null ? 1 : 0
+  count = var.enable_bank_sync ? 1 : 0
   metadata {
     name      = "bank-sync-${var.name}"
     namespace = "actualbudget"

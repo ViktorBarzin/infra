@@ -77,6 +77,8 @@ module "viktor" {
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
+  enable_http_api            = true
+  enable_bank_sync           = true
   budget_encryption_password = lookup(local.credentials["viktor"], "password", null)
   sync_id                    = lookup(local.credentials["viktor"], "sync_id", null)
   homepage_annotations = {
@@ -98,6 +100,8 @@ module "anca" {
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
+  enable_http_api            = true
+  enable_bank_sync           = true
   budget_encryption_password = lookup(local.credentials["anca"], "password", null)
   sync_id                    = lookup(local.credentials["anca"], "sync_id", null)
   homepage_annotations = {
@@ -119,6 +123,8 @@ module "emo" {
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
+  enable_http_api            = true
+  enable_bank_sync           = true
   budget_encryption_password = lookup(local.credentials["emo"], "password", null)
   sync_id                    = lookup(local.credentials["emo"], "sync_id", null)
   homepage_annotations = {

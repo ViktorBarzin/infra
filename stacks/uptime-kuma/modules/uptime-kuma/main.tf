@@ -252,9 +252,50 @@ module "ingress" {
 
 # =============================================================================
 # External Monitor Sync
-# Ensures Uptime Kuma has external HTTPS monitors for all Cloudflare-proxied services.
-# Reads targets from a Terraform-generated ConfigMap, creates/deletes monitors to match.
+# Ensures Uptime Kuma has external HTTPS monitors for every ingress annotated
+# with `uptime.viktorbarzin.me/external-monitor=true`. Falls back to a
+# Terraform-generated ConfigMap when API discovery is unavailable.
+#
+# Discovery modes (the script tries them in order):
+#   1. K8s API — list ingresses cluster-wide, filter by annotation
+#   2. ConfigMap fallback — read /config/targets.json (legacy list from
+#      cloudflare_proxied_names)
 # =============================================================================
+
+resource "kubernetes_service_account_v1" "external_monitor_sync" {
+  metadata {
+    name      = "external-monitor-sync"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role_v1" "external_monitor_sync" {
+  metadata {
+    name = "external-monitor-sync"
+  }
+  rule {
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses"]
+    verbs      = ["list", "get"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "external_monitor_sync" {
+  metadata {
+    name = "external-monitor-sync"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.external_monitor_sync.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.external_monitor_sync.metadata[0].name
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+}
+
 resource "kubernetes_config_map_v1" "external_monitor_targets" {
   metadata {
     name      = "external-monitor-targets"
@@ -283,24 +324,79 @@ resource "kubernetes_cron_job_v1" "external_monitor_sync" {
         template {
           metadata {}
           spec {
+            service_account_name = kubernetes_service_account_v1.external_monitor_sync.metadata[0].name
             container {
               name  = "sync"
               image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
-import os, json, time
+import os, json, ssl, time, urllib.request, urllib.error
 from uptime_kuma_api import UptimeKumaApi, MonitorType
 
 UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
 UPTIME_KUMA_PASS = os.environ["UPTIME_KUMA_PASSWORD"]
-TARGETS_FILE = "/config/targets.json"
+FALLBACK_FILE = "/config/targets.json"
 PREFIX = "[External] "
+ANNOTATION_ENABLE = "uptime.viktorbarzin.me/external-monitor"
+ANNOTATION_NAME = "uptime.viktorbarzin.me/external-monitor-name"
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+API_SERVER = f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc.cluster.local')}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
 
-with open(TARGETS_FILE) as f:
-    targets = json.load(f)
 
-print(f"Loaded {len(targets)} external monitor targets")
+def load_from_api():
+    """List ingresses via in-cluster API, filter by annotation, derive targets."""
+    with open(f"{SA_DIR}/token") as f:
+        token = f.read().strip()
+    ctx = ssl.create_default_context(cafile=f"{SA_DIR}/ca.crt")
+    url = f"{API_SERVER}/apis/networking.k8s.io/v1/ingresses"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        body = json.loads(resp.read())
+
+    targets = []
+    for ing in body.get("items", []):
+        anns = (ing.get("metadata") or {}).get("annotations") or {}
+        if anns.get(ANNOTATION_ENABLE, "").lower() != "true":
+            continue
+        tls = (ing.get("spec") or {}).get("tls") or []
+        host = None
+        if tls and tls[0].get("hosts"):
+            host = tls[0]["hosts"][0]
+        else:
+            rules = (ing.get("spec") or {}).get("rules") or []
+            if rules:
+                host = rules[0].get("host")
+        if not host:
+            ns = ing["metadata"]["namespace"]
+            nm = ing["metadata"]["name"]
+            print(f"WARN: ingress {ns}/{nm} annotated but has no host; skipping")
+            continue
+        label = anns.get(ANNOTATION_NAME) or host.split(".")[0]
+        targets.append({"name": label, "url": f"https://{host}"})
+    return targets
+
+
+def load_from_configmap():
+    """Legacy fallback: read the ConfigMap list."""
+    with open(FALLBACK_FILE) as f:
+        raw = json.load(f)
+    return [{"name": t["name"], "url": t["url"]} for t in raw]
+
+
+try:
+    targets = load_from_api()
+    source = "k8s-api"
+    if not targets:
+        print("WARN: k8s-api returned 0 targets; falling back to ConfigMap")
+        targets = load_from_configmap()
+        source = "configmap"
+except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+    print(f"WARN: k8s-api discovery failed ({e!r}); falling back to ConfigMap")
+    targets = load_from_configmap()
+    source = "configmap"
+
+print(f"Loaded {len(targets)} external monitor targets (source={source})")
 
 api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
 api.login("admin", UPTIME_KUMA_PASS)
