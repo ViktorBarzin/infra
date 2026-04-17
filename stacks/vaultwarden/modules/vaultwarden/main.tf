@@ -193,7 +193,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   name            = "vaultwarden"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "b8fc85e18683"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Vaultwarden"

@@ -225,7 +225,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.navidrome.metadata[0].name
   name            = "navidrome"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "8a3844ff75ba"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Navidrome"

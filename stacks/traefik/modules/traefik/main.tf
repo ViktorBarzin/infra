@@ -53,12 +53,9 @@ resource "helm_release" "traefik" {
           "set -e; ",
           "STORAGE=/plugins-storage; ",
           "mkdir -p \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\"; ",
-          "mkdir -p \"$STORAGE/archives/github.com/the-ccsn/traefik-plugin-rewritebody\"; ",
           "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.4.2.zip\" ",
           "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.4.2.zip\"; ",
-          "wget -q -T 30 -O \"$STORAGE/archives/github.com/the-ccsn/traefik-plugin-rewritebody/v0.1.3.zip\" ",
-          "\"https://github.com/the-ccsn/traefik-plugin-rewritebody/archive/refs/tags/v0.1.3.zip\"; ",
-          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\",\"github.com/the-ccsn/traefik-plugin-rewritebody\":\"v0.1.3\"}' ",
+          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\"}' ",
           "> \"$STORAGE/archives/state.json\"; ",
           "echo \"Plugins pre-downloaded successfully\"",
         ])]
@@ -169,10 +166,6 @@ resource "helm_release" "traefik" {
         crowdsec-bouncer = {
           moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
           version    = "v1.4.2"
-        }
-        traefik-plugin-rewritebody = {
-          moduleName = "github.com/the-ccsn/traefik-plugin-rewritebody"
-          version    = "v0.1.3"
         }
       }
     }

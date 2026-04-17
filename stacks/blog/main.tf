@@ -112,7 +112,6 @@ module "ingress" {
   full_host       = "viktorbarzin.me"
   dns_type        = "proxied"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "da853a2438d0"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Blog"
@@ -130,5 +129,4 @@ module "ingress-www" {
   service_name    = "blog"
   full_host       = "www.viktorbarzin.me"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "da853a2438d0"
 }

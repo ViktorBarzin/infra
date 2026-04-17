@@ -281,7 +281,6 @@ module "ingress" {
   name            = "frigate"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  rybbit_site_id  = "0d4044069ff5"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Frigate"

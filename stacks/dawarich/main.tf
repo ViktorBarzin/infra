@@ -385,7 +385,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.dawarich.metadata[0].name
   name            = "dawarich"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "0abfd409f2fb"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dawarich"

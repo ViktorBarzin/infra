@@ -128,7 +128,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   name            = "stirling-pdf"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "a55ac54ec749"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Stirling PDF"

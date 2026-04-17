@@ -369,7 +369,6 @@ module "ingress" {
   service_name    = "ollama-ui"
   tls_secret_name = var.tls_secret_name
   port            = 80
-  rybbit_site_id  = "e73bebea399f"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Ollama"
