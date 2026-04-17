@@ -1369,7 +1369,9 @@ serverFiles:
             annotations:
               summary: "Authentik auth server has no available replicas"
           - alert: PoisonFountainDown
-            expr: (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
+            expr: |
+              kube_deployment_spec_replicas{namespace="poison-fountain", deployment="poison-fountain"} > 0
+              and (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
             for: 5m
             labels:
               severity: warning
@@ -1606,8 +1608,12 @@ serverFiles:
               summary: "{{ $labels.service }} has {{ $value | printf \"%.0f\" }} open connections (threshold: 500)"
           - alert: ForwardAuthFallbackActive
             expr: |
-              (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
-              or (kube_deployment_status_replicas_available{namespace="authentik", deployment="goauthentik-server"} or on() vector(0)) < 1
+              (
+                kube_deployment_spec_replicas{namespace="poison-fountain", deployment="poison-fountain"} > 0
+                and (kube_deployment_status_replicas_available{namespace="poison-fountain", deployment="poison-fountain"} or on() vector(0)) < 1
+              ) or (
+                kube_deployment_status_replicas_available{namespace="authentik", deployment="goauthentik-server"} or on() vector(0)
+              ) < 1
             for: 5m
             labels:
               severity: warning
