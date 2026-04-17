@@ -345,7 +345,11 @@ API_SERVER = f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.de
 
 
 def load_from_api():
-    """List ingresses via in-cluster API, filter by annotation, derive targets."""
+    """List ingresses via in-cluster API. Opt-OUT by default:
+    every ingress whose host matches *.viktorbarzin.me gets a monitor,
+    UNLESS its annotation `uptime.viktorbarzin.me/external-monitor` is `"false"`.
+    This covers Helm-managed ingresses (authentik, grafana, vault, forgejo, ntfy)
+    that don't go through ingress_factory."""
     with open(f"{SA_DIR}/token") as f:
         token = f.read().strip()
     ctx = ssl.create_default_context(cafile=f"{SA_DIR}/ca.crt")
@@ -355,10 +359,11 @@ def load_from_api():
         body = json.loads(resp.read())
 
     targets = []
+    seen = set()
     for ing in body.get("items", []):
         anns = (ing.get("metadata") or {}).get("annotations") or {}
-        if anns.get(ANNOTATION_ENABLE, "").lower() != "true":
-            continue
+        if anns.get(ANNOTATION_ENABLE, "").lower() == "false":
+            continue  # explicit opt-out
         tls = (ing.get("spec") or {}).get("tls") or []
         host = None
         if tls and tls[0].get("hosts"):
@@ -367,11 +372,11 @@ def load_from_api():
             rules = (ing.get("spec") or {}).get("rules") or []
             if rules:
                 host = rules[0].get("host")
-        if not host:
-            ns = ing["metadata"]["namespace"]
-            nm = ing["metadata"]["name"]
-            print(f"WARN: ingress {ns}/{nm} annotated but has no host; skipping")
+        if not host or not host.endswith(".viktorbarzin.me"):
+            continue  # skip internal-only or non-public hosts
+        if host in seen:
             continue
+        seen.add(host)
         label = anns.get(ANNOTATION_NAME) or host.split(".")[0]
         targets.append({"name": label, "url": f"https://{host}"})
     return targets
