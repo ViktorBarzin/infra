@@ -396,9 +396,7 @@ resource "kubernetes_ingress_v1" "graphql" {
     name      = "dolt-workbench-graphql"
     namespace = kubernetes_namespace.beads.metadata[0].name
     annotations = {
-      # No Authentik on GraphQL — the main page handles auth.
-      # JS fetch() to /graphql may not pass Authentik's forward-auth
-      # (302 on POST → fetch fails → "Request timed out").
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-authentik-forward-auth@kubernetescrd"
     }
   }
   spec {
@@ -424,5 +422,158 @@ resource "kubernetes_ingress_v1" "graphql" {
         }
       }
     }
+  }
+}
+
+# ── BeadBoard (task visualization dashboard) ──
+
+resource "kubernetes_config_map" "beadboard_config" {
+  metadata {
+    name      = "beadboard-beads-config"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  data = {
+    "metadata.json" = jsonencode({
+      database          = "dolt"
+      backend           = "dolt"
+      dolt_mode         = "server"
+      dolt_server_host  = "dolt.beads-server.svc.cluster.local"
+      dolt_server_port  = 3306
+      dolt_server_user  = "root"
+      dolt_database     = "code"
+      project_id        = "beadboard"
+    })
+    "dolt-server.port" = "3306"
+  }
+}
+
+resource "kubernetes_deployment" "beadboard" {
+  metadata {
+    name      = "beadboard"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+    labels = {
+      app  = "beadboard"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "beadboard"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "beadboard"
+        }
+      }
+      spec {
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+
+        container {
+          name  = "beadboard"
+          image = "registry.viktorbarzin.me:5050/beadboard:latest"
+
+          port {
+            name           = "http"
+            container_port = 3000
+          }
+
+          volume_mount {
+            name       = "beads-config"
+            mount_path = "/app/.beads"
+            read_only  = true
+          }
+
+          startup_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            failure_threshold = 30
+            period_seconds    = 2
+          }
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 30
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 3000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+
+          resources {
+            requests = {
+              memory = "256Mi"
+              cpu    = "50m"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
+        }
+
+        volume {
+          name = "beads-config"
+          config_map {
+            name = kubernetes_config_map.beadboard_config.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config
+    ]
+  }
+}
+
+resource "kubernetes_service" "beadboard" {
+  metadata {
+    name      = "beadboard"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+    labels = {
+      app = "beadboard"
+    }
+  }
+  spec {
+    selector = {
+      app = "beadboard"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 3000
+    }
+  }
+}
+
+module "beadboard_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.beads.metadata[0].name
+  name            = "beadboard"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "BeadBoard"
+    "gethomepage.dev/description"  = "Agent task visualization dashboard"
+    "gethomepage.dev/icon"         = "mdi-chart-gantt"
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
   }
 }
