@@ -282,7 +282,7 @@ resource "kubernetes_deployment" "workbench" {
           }
           env {
             name  = "GRAPHQLAPI_URL"
-            value = "https://dolt-workbench.viktorbarzin.me/graphql"
+            value = "http://localhost:9002/graphql"
           }
 
           volume_mount {
@@ -410,7 +410,8 @@ resource "kubernetes_ingress_v1" "graphql" {
     name      = "dolt-workbench-graphql"
     namespace = kubernetes_namespace.beads.metadata[0].name
     annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-authentik-forward-auth@kubernetescrd"
+      # No Authentik — browser fetch() can't follow 302 redirects on POST.
+      # Main page (/) is still protected. GraphQL has no sensitive data beyond task list.
     }
   }
   spec {
