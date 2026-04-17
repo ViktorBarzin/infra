@@ -97,6 +97,21 @@ variable "dns_type" {
   }
 }
 
+# Uptime Kuma external monitor: when true, annotate the ingress so the
+# external-monitor-sync CronJob creates a `[External] <name>` monitor pointing
+# at https://<host>. Null means "follow dns_type" — enabled when proxied.
+variable "external_monitor" {
+  type        = bool
+  default     = null
+  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type == 'proxied')."
+}
+
+variable "external_monitor_name" {
+  type        = string
+  default     = null
+  description = "Override the monitor label. Defaults to the ingress hostname label (e.g. 'dawarich' for dawarich.viktorbarzin.me)."
+}
+
 # Cloudflare config defaults — override via variables if these change.
 # Source of truth: config.tfvars (cloudflare_zone_id, cloudflare_tunnel_id, public_ip, public_ipv6)
 variable "cloudflare_zone_id" {
@@ -133,31 +148,40 @@ locals {
   effective_host    = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
   effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : !var.protected
 
+  # External monitor enabled by default when the ingress has a public DNS
+  # record (either CF-proxied or direct A/AAAA). Explicit bool overrides.
+  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type != "none")
+
+  external_monitor_annotations = local.effective_external_monitor ? merge(
+    { "uptime.viktorbarzin.me/external-monitor" = "true" },
+    var.external_monitor_name != null ? { "uptime.viktorbarzin.me/external-monitor-name" = var.external_monitor_name } : {},
+  ) : {}
+
   ns_to_group = {
-    monitoring       = "Infrastructure"
-    prometheus       = "Infrastructure"
-    technitium       = "Infrastructure"
-    traefik          = "Infrastructure"
-    metallb-system   = "Infrastructure"
-    kyverno          = "Infrastructure"
-    authentik        = "Identity & Security"
-    crowdsec         = "Identity & Security"
-    woodpecker       = "Development & CI"
-    forgejo          = "Development & CI"
-    immich           = "Media & Entertainment"
-    frigate          = "Smart Home"
-    home-assistant   = "Smart Home"
-    ollama           = "AI & Data"
-    dbaas            = "Infrastructure"
-    servarr          = "Media & Entertainment"
-    navidrome        = "Media & Entertainment"
-    nextcloud        = "Productivity"
-    n8n              = "Automation"
-    changedetection  = "Automation"
-    finance          = "Finance & Personal"
-    homepage         = "Core Platform"
-    reverse-proxy    = "Smart Home"
-    mailserver       = "Infrastructure"
+    monitoring      = "Infrastructure"
+    prometheus      = "Infrastructure"
+    technitium      = "Infrastructure"
+    traefik         = "Infrastructure"
+    metallb-system  = "Infrastructure"
+    kyverno         = "Infrastructure"
+    authentik       = "Identity & Security"
+    crowdsec        = "Identity & Security"
+    woodpecker      = "Development & CI"
+    forgejo         = "Development & CI"
+    immich          = "Media & Entertainment"
+    frigate         = "Smart Home"
+    home-assistant  = "Smart Home"
+    ollama          = "AI & Data"
+    dbaas           = "Infrastructure"
+    servarr         = "Media & Entertainment"
+    navidrome       = "Media & Entertainment"
+    nextcloud       = "Productivity"
+    n8n             = "Automation"
+    changedetection = "Automation"
+    finance         = "Finance & Personal"
+    homepage        = "Core Platform"
+    reverse-proxy   = "Smart Home"
+    mailserver      = "Infrastructure"
   }
 
   homepage_group = coalesce(
@@ -222,8 +246,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-    }, local.homepage_defaults, var.extra_annotations,
-      var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {}
+      }, local.homepage_defaults, var.extra_annotations,
+      var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
+      local.external_monitor_annotations,
     )
   }
 
