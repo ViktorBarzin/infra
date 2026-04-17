@@ -481,34 +481,42 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 TOKEN=$$(curl -sf "http://technitium-web:5380/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                 if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
 
-                # Disable SQLite query logging (eliminates ~18 GB/day write amplification on encrypted PVC)
-                SQLITE_CONFIG="{\"enableLogging\":false,\"maxLogDays\":0,\"maxLogRecords\":0}"
-                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Sqlite)" --data-urlencode "config=$$SQLITE_CONFIG"
-                echo "SQLite logging disabled on primary"
+                # Uninstall MySQL + SQLite query log plugins if present.
+                # These must be REMOVED, not just disabled — Technitium re-enables
+                # disabled plugins on pod restart, causing 46+ GB/day of writes.
+                # Only PostgreSQL query logging should remain.
+                APPS=$$(curl -sf "http://technitium-web:5380/api/apps/list?token=$$TOKEN")
+                if echo "$$APPS" | grep -q 'Query Logs (MySQL)'; then
+                  curl -sf -X POST "http://technitium-web:5380/api/apps/uninstall?token=$$TOKEN&name=Query%20Logs%20(MySQL)"
+                  echo "MySQL query log plugin UNINSTALLED"
+                else
+                  echo "MySQL query log plugin already absent"
+                fi
+                if echo "$$APPS" | grep -q 'Query Logs (Sqlite)'; then
+                  curl -sf -X POST "http://technitium-web:5380/api/apps/uninstall?token=$$TOKEN&name=Query%20Logs%20(Sqlite)"
+                  echo "SQLite query log plugin UNINSTALLED"
+                else
+                  echo "SQLite query log plugin already absent"
+                fi
 
-                # Disable MySQL query logging
-                MYSQL_CONFIG="{\"enableLogging\":false,\"maxQueueSize\":1000000,\"maxLogDays\":30,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Server=mysql.dbaas.svc.cluster.local; Port=3306; Uid=technitium; Pwd=$$DB_PASSWORD;\"}"
-                curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (MySQL)" --data-urlencode "config=$$MYSQL_CONFIG"
-                echo "MySQL logging disabled"
-
-                # Check PG plugin is loaded (installed persistently in Technitium data dir)
-                PG_LOADED=$$(curl -sf "http://technitium-web:5380/api/apps/list?token=$$TOKEN" | grep -c 'QueryLogsPostgres.App' || true)
-                if [ "$$PG_LOADED" = "0" ]; then
+                # Ensure PG plugin is loaded
+                if ! echo "$$APPS" | grep -q 'Query Logs (Postgres)'; then
                   echo "WARNING: PG plugin not loaded — reinstall manually via Technitium UI"
                 fi
 
-                # Configure PG query logging
+                # Configure PG query logging (updates password from Vault rotation)
                 PG_CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":90,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Host=${var.postgresql_host}; Port=5432; Username=technitium; Password=$$DB_PASSWORD;\"}"
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
                 echo "PG logging configured on primary"
 
-                # Disable SQLite on secondary and tertiary instances
+                # Uninstall MySQL/SQLite on secondary and tertiary instances too
                 for INST in http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
                   echo "Configuring $$INST"
                   R_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                   if [ -z "$$R_TOKEN" ]; then echo "Login failed for $$INST, skipping"; continue; fi
-                  curl -sf -X POST "$$INST/api/apps/config/set?token=$$R_TOKEN" --data-urlencode "name=Query Logs (Sqlite)" --data-urlencode "config=$$SQLITE_CONFIG" || echo "WARN: SQLite plugin not present on $$INST"
-                  echo "SQLite logging disabled on $$INST"
+                  R_APPS=$$(curl -sf "$$INST/api/apps/list?token=$$R_TOKEN")
+                  echo "$$R_APPS" | grep -q 'Query Logs (MySQL)' && curl -sf -X POST "$$INST/api/apps/uninstall?token=$$R_TOKEN&name=Query%20Logs%20(MySQL)" && echo "MySQL uninstalled on $$INST"
+                  echo "$$R_APPS" | grep -q 'Query Logs (Sqlite)' && curl -sf -X POST "$$INST/api/apps/uninstall?token=$$R_TOKEN&name=Query%20Logs%20(Sqlite)" && echo "SQLite uninstalled on $$INST"
                 done
                 echo "Password sync complete"
               EOT
