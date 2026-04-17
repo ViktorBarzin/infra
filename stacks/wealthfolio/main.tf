@@ -162,7 +162,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = "wealthfolio-data-encrypted"
           }
         }
       }
@@ -298,7 +298,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+                claim_name = "wealthfolio-data-encrypted"
               }
             }
           }
