@@ -474,6 +474,21 @@ resource "kubernetes_deployment" "beadboard" {
           name = "registry-credentials"
         }
 
+        init_container {
+          name  = "seed-beads-config"
+          image = "busybox:1.36"
+          command = ["sh", "-c", "cp /config/* /beads/ && mkdir -p /beads/templates /beads/archetypes"]
+          volume_mount {
+            name       = "beads-config"
+            mount_path = "/config"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "beads-writable"
+            mount_path = "/beads"
+          }
+        }
+
         container {
           name  = "beadboard"
           image = "registry.viktorbarzin.me:5050/beadboard:latest"
@@ -484,9 +499,8 @@ resource "kubernetes_deployment" "beadboard" {
           }
 
           volume_mount {
-            name       = "beads-config"
+            name       = "beads-writable"
             mount_path = "/app/.beads"
-            read_only  = true
           }
 
           startup_probe {
@@ -530,6 +544,10 @@ resource "kubernetes_deployment" "beadboard" {
           config_map {
             name = kubernetes_config_map.beadboard_config.metadata[0].name
           }
+        }
+        volume {
+          name = "beads-writable"
+          empty_dir {}
         }
       }
     }
