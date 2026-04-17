@@ -384,11 +384,14 @@ def load_from_api():
         if monitor_name in seen:
             continue  # dedupe by final monitor name, not hostname (fixes duplicate creation)
         seen.add(monitor_name)
-        path = anns.get(ANNOTATION_PATH) or DEFAULT_PATH
-        if not path.startswith("/"):
+        path = anns.get(ANNOTATION_PATH, "").strip()
+        if path and not path.startswith("/"):
             path = "/" + path
-        statuscodes = STATUSCODES_STRICT if path != DEFAULT_PATH else STATUSCODES_LENIENT
-        targets.append({"name": label, "url": f"https://{host}{path}", "statuscodes": statuscodes})
+        # Omit trailing slash when no explicit path — matches pre-existing monitor URLs
+        # and avoids every sync re-updating unchanged monitors.
+        url = f"https://{host}{path}" if path else f"https://{host}"
+        statuscodes = STATUSCODES_STRICT if path else STATUSCODES_LENIENT
+        targets.append({"name": label, "url": url, "statuscodes": statuscodes})
     return targets
 
 
