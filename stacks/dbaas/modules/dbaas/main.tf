@@ -611,19 +611,15 @@ resource "null_resource" "mysql_static_user" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas mysql-standalone-0 -c mysql -- \
-        env USER='${each.key}' DB='${each.value.database}' PW='${each.value.password}' \
-        bash -c '
-          mysql -uroot -p"$MYSQL_ROOT_PASSWORD" <<SQL
-          CREATE DATABASE IF NOT EXISTS \`'"$DB"'\`;
-          CREATE USER IF NOT EXISTS '"'$USER'"'@'"'%'"' IDENTIFIED WITH caching_sha2_password BY '"'$PW'"';
-          ALTER USER '"'$USER'"'@'"'%'"' IDENTIFIED WITH caching_sha2_password BY '"'$PW'"';
-          GRANT ALL PRIVILEGES ON \`'"$DB"'\`.* TO '"'$USER'"'@'"'%'"';
-          FLUSH PRIVILEGES;
-      SQL
-        '
-    EOT
+    command = <<EOT
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+CREATE DATABASE IF NOT EXISTS `${each.value.database}`;
+CREATE USER IF NOT EXISTS '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
+ALTER USER '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
+GRANT ALL PRIVILEGES ON `${each.value.database}`.* TO '${each.key}'@'%';
+FLUSH PRIVILEGES;
+SQL
+EOT
   }
 }
 
