@@ -441,7 +441,7 @@ resource "kubernetes_config_map" "beadboard_config" {
       dolt_server_port  = 3306
       dolt_server_user  = "root"
       dolt_database     = "code"
-      project_id        = "beadboard"
+      project_id        = "a8f8bae7-ce65-4145-a5db-a13d11d297da"
     })
     "dolt-server.port" = "3306"
   }
