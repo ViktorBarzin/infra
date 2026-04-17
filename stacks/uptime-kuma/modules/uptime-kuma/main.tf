@@ -339,6 +339,12 @@ FALLBACK_FILE = "/config/targets.json"
 PREFIX = "[External] "
 ANNOTATION_ENABLE = "uptime.viktorbarzin.me/external-monitor"
 ANNOTATION_NAME = "uptime.viktorbarzin.me/external-monitor-name"
+ANNOTATION_PATH = "uptime.viktorbarzin.me/external-monitor-path"
+DEFAULT_PATH = "/"
+# Homepages often serve 200/30x/40x even when backends are degraded.
+# When an explicit probe path is set we expect a real healthz: tighten codes.
+STATUSCODES_LENIENT = ["200-299", "300-399", "400-499"]
+STATUSCODES_STRICT = ["200-299"]
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 API_SERVER = f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc.cluster.local')}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
 
@@ -378,7 +384,11 @@ def load_from_api():
         if monitor_name in seen:
             continue  # dedupe by final monitor name, not hostname (fixes duplicate creation)
         seen.add(monitor_name)
-        targets.append({"name": label, "url": f"https://{host}"})
+        path = anns.get(ANNOTATION_PATH) or DEFAULT_PATH
+        if not path.startswith("/"):
+            path = "/" + path
+        statuscodes = STATUSCODES_STRICT if path != DEFAULT_PATH else STATUSCODES_LENIENT
+        targets.append({"name": label, "url": f"https://{host}{path}", "statuscodes": statuscodes})
     return targets
 
 
@@ -386,7 +396,7 @@ def load_from_configmap():
     """Legacy fallback: read the ConfigMap list."""
     with open(FALLBACK_FILE) as f:
         raw = json.load(f)
-    return [{"name": t["name"], "url": t["url"]} for t in raw]
+    return [{"name": t["name"], "url": t["url"], "statuscodes": STATUSCODES_LENIENT} for t in raw]
 
 
 try:
@@ -413,10 +423,12 @@ for m in monitors:
         existing_external[m["name"]] = m
 
 target_names = set()
+targets_by_name = {}
 created = 0
 for t in targets:
     monitor_name = f"{PREFIX}{t['name']}"
     target_names.add(monitor_name)
+    targets_by_name[monitor_name] = t
     if monitor_name not in existing_external:
         print(f"Creating monitor: {monitor_name} -> {t['url']}")
         api.add_monitor(
@@ -425,10 +437,30 @@ for t in targets:
             url=t["url"],
             interval=300,
             maxretries=3,
-            accepted_statuscodes=["200-299", "300-399", "400-499"],
+            accepted_statuscodes=t["statuscodes"],
         )
         created += 1
         time.sleep(0.3)
+
+# Update monitors whose target URL or accepted status codes drifted
+# (e.g., new probe-path annotation added on an existing ingress).
+updated = 0
+for monitor_name, t in targets_by_name.items():
+    existing = existing_external.get(monitor_name)
+    if not existing:
+        continue
+    current_url = existing.get("url")
+    current_codes = existing.get("accepted_statuscodes") or []
+    if current_url == t["url"] and current_codes == t["statuscodes"]:
+        continue
+    print(f"Updating monitor {monitor_name}: {current_url} -> {t['url']} (codes {current_codes} -> {t['statuscodes']})")
+    api.edit_monitor(
+        existing["id"],
+        url=t["url"],
+        accepted_statuscodes=t["statuscodes"],
+    )
+    updated += 1
+    time.sleep(0.3)
 
 # Remove monitors for services no longer in the list
 deleted = 0
@@ -440,7 +472,8 @@ for name, m in existing_external.items():
         time.sleep(0.3)
 
 api.disconnect()
-print(f"Sync complete: {created} created, {deleted} deleted, {len(target_names) - created} unchanged")
+unchanged = len(target_names) - created - updated
+print(f"Sync complete: {created} created, {updated} updated, {deleted} deleted, {unchanged} unchanged")
 PYEOF
               EOT
               ]
