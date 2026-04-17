@@ -17,6 +17,18 @@ variable "kube_config_path" {
   sensitive = true
 }
 
+# MySQL static application users (not rotated by Vault DB engine; baked into
+# each app's config). Codified here so future MySQL rebuilds cannot silently
+# drop them.
+variable "mysql_forgejo_password" {
+  type      = string
+  sensitive = true
+}
+variable "mysql_roundcubemail_password" {
+  type      = string
+  sensitive = true
+}
+
 resource "kubernetes_namespace" "dbaas" {
   metadata {
     name = "dbaas"
@@ -560,6 +572,59 @@ resource "kubernetes_service" "mysql" {
   }
 
   depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+}
+
+# MySQL static application users — not rotated by Vault DB engine.
+# Each app stores its password in its own config (forgejo app.ini, roundcube
+# ROUNDCUBEMAIL_DB_PASSWORD env). During the 2026-04-16 InnoDB Cluster →
+# standalone migration these users were accidentally dropped and recreated with
+# mismatched passwords; this block codifies them so a future rebuild cannot
+# silently break the apps.
+#
+# Pattern matches `null_resource.pg_terraform_state_db` below (local-exec into
+# the DB pod). We CREATE IF NOT EXISTS + ALTER USER on every apply so a
+# password rotation in Vault is re-synced on the next `scripts/tg apply`. The
+# `password_hash` trigger re-runs the provisioner when the Vault password
+# changes; the namespace/user triggers re-run if identifiers change.
+locals {
+  mysql_static_users = {
+    forgejo = {
+      database = "forgejo"
+      password = var.mysql_forgejo_password
+    }
+    roundcubemail = {
+      database = "roundcubemail"
+      password = var.mysql_roundcubemail_password
+    }
+  }
+}
+
+resource "null_resource" "mysql_static_user" {
+  for_each = local.mysql_static_users
+
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+
+  triggers = {
+    username      = each.key
+    database      = each.value.database
+    password_hash = sha256(each.value.password)
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas mysql-standalone-0 -c mysql -- \
+        env USER='${each.key}' DB='${each.value.database}' PW='${each.value.password}' \
+        bash -c '
+          mysql -uroot -p"$MYSQL_ROOT_PASSWORD" <<SQL
+          CREATE DATABASE IF NOT EXISTS \`'"$DB"'\`;
+          CREATE USER IF NOT EXISTS '"'$USER'"'@'"'%'"' IDENTIFIED WITH caching_sha2_password BY '"'$PW'"';
+          ALTER USER '"'$USER'"'@'"'%'"' IDENTIFIED WITH caching_sha2_password BY '"'$PW'"';
+          GRANT ALL PRIVILEGES ON \`'"$DB"'\`.* TO '"'$USER'"'@'"'%'"';
+          FLUSH PRIVILEGES;
+      SQL
+        '
+    EOT
+  }
 }
 
 module "nfs_mysql_backup_host" {
