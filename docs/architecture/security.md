@@ -2,7 +2,7 @@
 
 ## Overview
 
-The homelab implements defense-in-depth security at the application layer (L7) using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 5-layer anti-AI scraping defense. All security components operate in graceful degradation mode (fail-open) to prevent cascading failures. Security policies are deployed in audit mode first, then selectively enforced after validation.
+The homelab implements defense-in-depth security at the application layer (L7) using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 3-layer anti-AI scraping defense (reduced from 5 in April 2026 after removing the rewrite-body plugin). All security components operate in graceful degradation mode (fail-open) to prevent cascading failures. Security policies are deployed in audit mode first, then selectively enforced after validation.
 
 ## Architecture Diagram
 
@@ -59,7 +59,7 @@ Every incoming request passes through 6 security layers:
 1. **Cloudflare WAF** - DDoS protection, bot detection, firewall rules (external)
 2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP
 3. **CrowdSec Bouncer** - IP reputation check against LAPI (fail-open on error)
-4. **Anti-AI Scraping** - 5-layer bot defense (optional per service)
+4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
 6. **Rate Limiting** - Per-source IP rate limits (returns 429 on breach)
 7. **Retry Middleware** - Auto-retry on transient errors (2 attempts, 100ms delay)
@@ -131,9 +131,11 @@ This prevents resource exhaustion and enforces governance without manual quota m
 | `sync-tier-label` | Propagate tier label to child resources | Enforce |
 | `goldilocks-vpa-auto-mode` | Disable VPA globally (VPA off) | Enforce |
 
-### Anti-AI Scraping (5-Layer Defense)
+### Anti-AI Scraping (3 Active Layers) (Updated 2026-04-17)
 
 Enabled by default via `ingress_factory` module. Disable per-service with `anti_ai_scraping = false`.
+
+Active middleware chain: `ai-bot-block` (ForwardAuth) + `anti-ai-headers` (X-Robots-Tag). The `strip-accept-encoding` and `anti-ai-trap-links` middlewares were removed in April 2026 due to Traefik v3.6.12 Yaegi plugin incompatibility with the rewrite-body plugin.
 
 #### Layer 1: Bot Blocking (ForwardAuth)
 
@@ -148,25 +150,16 @@ Enabled by default via `ingress_factory` module. Disable per-service with `anti_
 - Instructs compliant bots to skip content
 - Lightweight, no performance impact
 
-#### Layer 3: Trap Links
+#### ~~Layer 3: Trap Links~~ (REMOVED)
 
-- JavaScript injects invisible links before `</body>`
-- Links point to honeypot endpoints
-- Legitimate browsers don't click, bots follow
-- Triggered bots get added to ban list
+Removed April 2026. The rewrite-body Traefik plugin used to inject hidden trap links broke on Traefik v3.6.12 due to Yaegi runtime bugs. The companion `strip-accept-encoding` middleware was also removed.
 
-#### Layer 4: Tarpit
+#### Layer 3 (formerly 4): Tarpit / Poison Content
 
-- Serves AI bots extremely slowly (~100 bytes/sec)
-- Wastes bot resources, makes scraping uneconomical
-- Humans see normal speed (only applies to detected bots)
-
-#### Layer 5: Poison Content
-
+- `poison-fountain` service still exists as a standalone service at `poison.viktorbarzin.me`
+- Serves AI bots extremely slowly (~100 bytes/sec tarpit)
 - CronJob every 6 hours generates fake content
-- Injects misleading/nonsense data into pages shown to bots
-- Degrades AI training data quality
-- **Requires `--http1.1` flag** to work with current HTTP/2 setup
+- Trap links are no longer injected into real pages, but bots that discover `poison.viktorbarzin.me` directly still get tarpitted and poisoned
 
 **Implementation**: See `stacks/poison-fountain/` and `stacks/platform/modules/traefik/middleware.tf`
 
@@ -286,13 +279,13 @@ spec:
 - **Better observability**: Collect violation metrics before enforcing
 - **Selective enforcement**: Move to enforce mode per-policy after validation
 
-### Why 5-Layer Anti-AI Defense?
+### Why Multi-Layer Anti-AI Defense? (Updated 2026-04-17)
 
 - **Defense in depth**: Each layer catches different bot types
 - **Compliant bots**: Layer 2 (X-Robots-Tag) handles respectful crawlers
-- **Dumb bots**: Layer 3 (trap links) catches simple scrapers
-- **Persistent bots**: Layer 4 (tarpit) makes scraping uneconomical
-- **Sophisticated bots**: Layer 5 (poison content) degrades training data
+- **Persistent bots**: Tarpit makes scraping uneconomical
+- **Poison content**: Degrades training data for bots that reach poison-fountain
+- Layer 3 (trap links via rewrite-body) was removed due to Traefik v3 plugin incompatibility
 
 ### Why Fail-Open Mode?
 
@@ -382,15 +375,16 @@ spec:
 2. Verify backend isn't returning transient errors: Check for 5xx responses
 3. Disable retry for specific service: Remove retry middleware from `ingress_factory`
 
-### Poison Content Not Injecting
+### Poison Content Not Serving (Updated 2026-04-17)
 
-**Problem**: Bots not receiving poisoned content.
+**Problem**: Bots not receiving poisoned content on `poison.viktorbarzin.me`.
+
+**Note**: Poison content is no longer injected into real pages (rewrite-body removed). It is only served directly via the `poison.viktorbarzin.me` subdomain.
 
 **Fix**:
 1. Verify CronJob running: `kubectl get cronjob -n poison-fountain`
-2. Check logs: `kubectl logs -n poison-fountain -l app=poison-content-injector`
-3. Ensure `--http1.1` flag set (required for HTTP/2 backends)
-4. Manually trigger: `kubectl create job --from=cronjob/poison-content manual-poison`
+2. Check logs: `kubectl logs -n poison-fountain -l app=poison-fountain`
+3. Manually trigger: `kubectl create job --from=cronjob/poison-content manual-poison`
 
 ## Related
 

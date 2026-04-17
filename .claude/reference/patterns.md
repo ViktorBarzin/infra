@@ -26,11 +26,12 @@ module "nfs_data" {
 ## ~~iSCSI Storage~~ (REMOVED — replaced by proxmox-lvm)
 > iSCSI via democratic-csi and TrueNAS has been fully removed (2026-04). All database storage now uses `StorageClass: proxmox-lvm` (Proxmox CSI, LVM-thin hotplug). TrueNAS has been decommissioned.
 
-## Anti-AI Scraping (5-Layer Defense)
+## Anti-AI Scraping (3 Active Layers) (Updated 2026-04-17)
 Default `anti_ai_scraping = true` in ingress_factory. Disable per-service: `anti_ai_scraping = false`.
-1. Bot blocking (ForwardAuth → poison-fountain) 2. X-Robots-Tag noai 3. Trap links before `</body>`
-4. Tarpit (~100 bytes/sec) 5. Poison content (CronJob every 6h, `--http1.1` required)
-Key files: `stacks/poison-fountain/`, `stacks/platform/modules/traefik/middleware.tf`
+1. Bot blocking (ForwardAuth → poison-fountain) 2. X-Robots-Tag noai 3. Tarpit/poison content (standalone at poison.viktorbarzin.me)
+Trap links (formerly layer 3) removed April 2026 — rewrite-body plugin broken on Traefik v3.6.12 (Yaegi bugs). `strip-accept-encoding` and `anti-ai-trap-links` middlewares deleted.
+Rybbit analytics injection now via Cloudflare Worker (`stacks/rybbit/worker/`, HTMLRewriter, wildcard route `*.viktorbarzin.me/*`, 28 site ID mappings).
+Key files: `stacks/poison-fountain/`, `stacks/rybbit/worker/`, `stacks/platform/modules/traefik/middleware.tf`
 
 ## Terragrunt Architecture
 - Root `terragrunt.hcl`: DRY providers, backend, variable loading, `generate "tiers"` block

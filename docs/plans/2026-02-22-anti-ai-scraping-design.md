@@ -1,5 +1,7 @@
 # Anti-AI Scraping System Design
 
+> **Status (Updated 2026-04-17):** Partially superseded. Layer 3 (trap links via rewrite-body plugin) removed due to Traefik v3.6.12 Yaegi plugin incompatibility. The `strip-accept-encoding` and `anti-ai-trap-links` middlewares have been deleted. Rybbit analytics injection moved from Traefik rewrite-body to a Cloudflare Worker (`infra/stacks/rybbit/worker/`). Active layers: 1 (bot-block), 2 (headers), 4 (tarpit), 5 (poison content).
+
 ## Problem
 
 AI scrapers crawl public web services to harvest training data. We want to:
@@ -9,7 +11,7 @@ AI scrapers crawl public web services to harvest training data. We want to:
 
 ## Architecture
 
-Five defense layers applied to all public services via Traefik:
+Four active defense layers applied to all public services via Traefik (Layer 3 removed April 2026):
 
 ```
 Internet -> Cloudflare -> Traefik
@@ -18,7 +20,7 @@ Internet -> Cloudflare -> Traefik
                            |
                            +-- Layer 2: Headers -> X-Robots-Tag: noai, noimageai
                            |
-                           +-- Layer 3: Rewrite-body -> inject hidden trap links into HTML
+                           +-- [REMOVED] Layer 3: Rewrite-body trap links (April 2026 — Yaegi bugs in Traefik v3.6.12)
                            |
                            +-- Layer 4: Poison service -> serve cached Poison Fountain data
                            |
@@ -68,13 +70,10 @@ All defined in `stacks/platform/modules/traefik/middleware.tf`:
 - Sets `X-Robots-Tag: noai, noimageai` on all responses
 - Added to all public services via ingress_factory
 
-**`anti-ai-trap-links` (rewrite-body plugin)**:
-- Regex: `</body>` -> injects hidden div with trap links + `</body>`
-- Links point to `https://poison.viktorbarzin.me/article/<slug>`
-- CSS: invisible to humans (`position:absolute;left:-9999px;height:0;overflow:hidden;aria-hidden=true`)
-- Only processes `text/html` responses
-- Requires strip-accept-encoding companion middleware (already exists)
-- Applied globally via ingress_factory
+**`anti-ai-trap-links` (rewrite-body plugin)** — REMOVED (Updated 2026-04-17):
+- Removed due to Traefik v3.6.12 Yaegi runtime bugs making the rewrite-body plugin unreliable
+- The companion `strip-accept-encoding` middleware was also removed (only existed for rewrite-body)
+- Trap link injection is no longer active; poison-fountain still serves tarpit content standalone
 
 ### 4. Trap subdomain: poison.viktorbarzin.me
 
@@ -88,7 +87,7 @@ All defined in `stacks/platform/modules/traefik/middleware.tf`:
 
 New variables:
 - `anti_ai_scraping` (bool, default: true) - enable all anti-AI layers
-- When true, adds to middleware chain: `ai-bot-block`, `anti-ai-headers`, `strip-accept-encoding`, `anti-ai-trap-links`
+- When true, adds to middleware chain: `ai-bot-block`, `anti-ai-headers`
 - Services can opt out with `anti_ai_scraping = false`
 
 ## Human User Protection
@@ -97,7 +96,7 @@ New variables:
 |---------|-----------|
 | Hidden links visible | CSS `position:absolute;left:-9999px;height:0;overflow:hidden` + `aria-hidden="true"` |
 | False positive blocking | Only blocks specific AI bot User-Agent strings; no browser matches these |
-| Performance overhead | ForwardAuth is a string match (<1ms). Rewrite-body already proven with Rybbit. |
+| Performance overhead | ForwardAuth is a string match (<1ms). Rybbit injected via Cloudflare Worker (not Traefik). |
 | Poison content leakage | Only served on poison.viktorbarzin.me, not linked from any navigation |
 | Slow responses | Tarpit only applies to poison.viktorbarzin.me, not to real services |
 
