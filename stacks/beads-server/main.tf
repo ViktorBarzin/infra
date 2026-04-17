@@ -280,6 +280,10 @@ resource "kubernetes_deployment" "workbench" {
             name  = "NODE_OPTIONS"
             value = "--dns-result-order=ipv4first"
           }
+          env {
+            name  = "GRAPHQLAPI_URL"
+            value = "https://dolt-workbench.viktorbarzin.me/graphql"
+          }
 
           volume_mount {
             name       = "store"
