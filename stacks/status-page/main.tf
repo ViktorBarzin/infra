@@ -212,13 +212,18 @@ for m in monitors:
     else:
         # Get latest heartbeat for current status
         mid = m["id"]
-        mon_beats = heartbeats.get(mid, [])
+        mon_beats = heartbeats.get(mid, heartbeats.get(str(mid), []))
         if mon_beats:
-            # Flatten if nested lists
-            if mon_beats and isinstance(mon_beats[0], list):
-                mon_beats = [b for sublist in mon_beats for b in sublist]
+            # Flatten nested lists (API format varies by version)
+            flat = []
+            for item in mon_beats:
+                if isinstance(item, list):
+                    flat.extend(item)
+                elif isinstance(item, dict):
+                    flat.append(item)
+            mon_beats = flat if flat else mon_beats
             latest = mon_beats[-1] if mon_beats else None
-            if latest and beat_status_is_up(latest.get("status", 0)):
+            if latest and isinstance(latest, dict) and beat_status_is_up(latest.get("status", 0)):
                 status = "up"
             else:
                 status = "down"
