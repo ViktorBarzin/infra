@@ -43,6 +43,40 @@ date: 2025-01-01
 5. Check releases page for container images
 6. Last resort: Build from Dockerfile (avoid if possible)
 
+**Classify Dockerfile State** (drives whether we contribute a PR back upstream later):
+
+| State | When | Action on deploy success |
+|---|---|---|
+| `image-used` | An official/community image worked (priority 1-5). | No upstream PR. Default case. |
+| `used-as-is` | Upstream ships a Dockerfile; it built and ran fine. | No upstream PR. |
+| `fixed-broken-upstream` | Upstream Dockerfile exists but fails to build / run; we patched it. | Open a `fix-dockerfile` PR after stability gate. |
+| `written-from-scratch` | Upstream has no Dockerfile at all; we authored one. | Open an `add-dockerfile` PR after stability gate. |
+
+Record the chosen state and supporting metadata in `modules/kubernetes/<service>/.contribution-state.json`. When we author or fix a Dockerfile, also write `modules/kubernetes/<service>/files/Dockerfile`, `.dockerignore`, and `BUILD.md` (from `templates/Dockerfile.README.md`) — these travel with the upstream PR.
+
+```json
+{
+  "upstream_repo": "owner/name",
+  "dockerfile_state": "written-from-scratch",
+  "dockerfile_path_in_infra": "modules/kubernetes/<service>/files/Dockerfile",
+  "deploy_target_url": "https://<service>.viktorbarzin.me",
+  "image_tag": "registry.viktorbarzin.me/<service>:<sha>",
+  "image_size": "<MB>",
+  "base_image": "<e.g. python:3.12-slim>",
+  "dockerfile_shape": "multi-stage, non-root, linux/amd64",
+  "deploy_verified_at": null,
+  "contribution_pr_url": null
+}
+```
+
+**Dockerfile quality bar** (when writing one ourselves — enforced before PR):
+- Multi-stage build where it makes sense (Node, Go, Rust, Python with compiled deps).
+- Explicit non-root `USER`.
+- `HEALTHCHECK` when the app exposes a known endpoint.
+- Minimal base image (alpine / distroless preferred; `-slim` otherwise).
+- No secrets baked in; runtime config via `ENV`.
+- `.dockerignore` that excludes `.git`, `node_modules`, test artifacts.
+
 **Extract Configuration**:
 - Container port (default port the app listens on)
 - Environment variables (DATABASE_URL, REDIS_HOST, SMTP, etc.)
@@ -345,6 +379,21 @@ kubectl logs -n <service> -l app=<service> --tail=50
 
 Test URL: `https://<service>.viktorbarzin.me`
 
+### 8b. Stability Gate (required when `dockerfile_state ∈ {written-from-scratch, fixed-broken-upstream}`)
+
+Before committing — and before any upstream PR in §10 — run a 10-minute stability check to catch pods that crash-loop a few minutes after Ready.
+
+```bash
+.claude/skills/setup-project/scripts/stability-gate.sh <service> <service> https://<service>.viktorbarzin.me
+```
+
+Polls pod readiness + `curl` 200 every 30s × 20 iterations. Requires 18/20 successes (tolerates 2 blips).
+
+- **Pass** → update the state file: `jq '.deploy_verified_at = (now | todate)' .contribution-state.json | sponge .contribution-state.json` → proceed to §9 and §10.
+- **Fail** → stop. Investigate via `kubectl logs`, `kubectl describe`. Do NOT commit. Do NOT fire §10. Re-run the gate after fixes.
+
+For `image-used` / `used-as-is` states, the gate is optional (app is already running a known-good image).
+
 ### 9. Commit Changes
 
 ```bash
@@ -357,6 +406,37 @@ git commit -m "Add <service> deployment
 
 [ci skip]"
 ```
+
+### 10. Contribute Dockerfile Upstream (only when `dockerfile_state ∈ {written-from-scratch, fixed-broken-upstream}`)
+
+Goal: give the community the working Dockerfile we just validated in production.
+
+**Preconditions** (script enforces):
+- `.contribution-state.json` present with a trigger state and `deploy_verified_at` set.
+- `files/Dockerfile`, `files/.dockerignore`, `files/BUILD.md` exist next to the module.
+- `GITHUB_TOKEN` in env — or `vault kv get -field=github_pat secret/viktor` is reachable.
+
+**Run**:
+```bash
+.claude/skills/setup-project/scripts/contribute-dockerfile.sh modules/kubernetes/<service>
+```
+
+**What the script does** (all via GitHub REST — `gh` CLI is sandbox-blocked):
+1. Reads `.contribution-state.json`; skips unless state is `written-from-scratch` or `fixed-broken-upstream` and no `contribution_pr_url` is already recorded.
+2. Upstream sanity checks: repo exists, public, not archived; default branch discoverable; for `written-from-scratch`, verifies a `Dockerfile` didn't land upstream while we were deploying; bails cleanly if an open PR from our fork already exists.
+3. `POST /repos/<owner>/<name>/forks` — idempotent; waits up to 30s for the fork to be ready at `ViktorBarzin/<name>`.
+4. `POST /repos/ViktorBarzin/<name>/merge-upstream` — keeps fork current with upstream default branch.
+5. Creates branch `add-dockerfile` (or `fix-dockerfile`), timestamp-suffixed if that branch already exists with unrelated commits.
+6. Commits `Dockerfile`, `.dockerignore`, `BUILD.md` via Contents API. Each commit message carries `Signed-off-by:` for DCO-enforcing repos.
+7. Opens PR against upstream with body rendered from `templates/PR_BODY.md`.
+8. Writes `contribution_pr_url` back into `.contribution-state.json` and echoes the URL.
+
+**Failure handling**:
+- Upstream archived / private / deleted → logged as SKIP, deploy success stands.
+- Fork/branch/PR already exists → treated as idempotent success; existing URL recorded.
+- GitHub 5xx → 3× exponential backoff, then hard fail with a clear message — safe to re-run the script.
+
+**After the PR opens**: the URL is in `.contribution-state.json`. Share it with the user. No automated follow-up on merge/reject — that's a manual check for now.
 
 ## Common Patterns
 
@@ -410,13 +490,17 @@ env {
 - [ ] Create NFS directory and export on TrueNAS (if persistent storage needed)
 - [ ] Verify NFS mount is accessible from k8s nodes
 - [ ] Create `modules/kubernetes/<service>/main.tf`
+- [ ] Classify `dockerfile_state` and write `.contribution-state.json`
+- [ ] If writing/fixing Dockerfile: satisfy the quality bar (multi-stage, non-root, `.dockerignore`, `BUILD.md`)
 - [ ] Update `modules/kubernetes/main.tf` (variables, DEFCON level, module block)
 - [ ] Update `main.tf` (variable, pass to module)
 - [ ] Update `terraform.tfvars` (password, Cloudflare DNS)
 - [ ] Run `terraform init` and `terraform apply`
 - [ ] Verify pods are running
 - [ ] Test the URL
+- [ ] Run stability-gate.sh — needed for contribution, optional otherwise
 - [ ] Commit changes with `[ci skip]`
+- [ ] Run contribute-dockerfile.sh if state triggers an upstream PR
 
 ## Questions to Ask User
 
