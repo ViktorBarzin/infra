@@ -263,7 +263,6 @@ module "ingress" {
   name            = "mail"
   service_name    = "roundcubemail"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "082f164faa7d"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Roundcube Mail"

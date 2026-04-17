@@ -1004,15 +1004,13 @@ resource "kubernetes_service" "phpmyadmin" {
   }
 }
 module "ingress" {
-  source                         = "../../../../modules/kubernetes/ingress_factory"
-  dns_type                       = "proxied"
-  namespace                      = kubernetes_namespace.dbaas.metadata[0].name
-  name                           = "pma"
-  tls_secret_name                = var.tls_secret_name
-  protected                      = true
-  extra_annotations              = {}
-  rybbit_site_id                 = "942c76b8bd4d"
-  custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://rybbit.viktorbarzin.me"
+  source            = "../../../../modules/kubernetes/ingress_factory"
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.dbaas.metadata[0].name
+  name              = "pma"
+  tls_secret_name   = var.tls_secret_name
+  protected         = true
+  extra_annotations = {}
 }
 
 
@@ -1514,7 +1512,6 @@ module "ingress-pgadmin" {
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  rybbit_site_id  = "7cef78e30485"
 }
 
 

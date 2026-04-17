@@ -674,13 +674,12 @@ resource "kubernetes_service" "immich-machine-learning" {
 
 module "ingress-immich" {
   source                  = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "non-proxied"
+  dns_type                = "non-proxied"
   namespace               = kubernetes_namespace.immich.metadata[0].name
   name                    = "immich"
   service_name            = "immich-server"
   port                    = 2283
   tls_secret_name         = var.tls_secret_name
-  rybbit_site_id          = "35eedb7a3d2b"
   skip_default_rate_limit = true
   extra_middlewares       = ["traefik-immich-rate-limit@kubernetescrd"]
   anti_ai_scraping        = false

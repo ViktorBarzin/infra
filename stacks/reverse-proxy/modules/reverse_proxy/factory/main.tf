@@ -37,10 +37,6 @@ variable "max_body_size" {
 variable "extra_annotations" {
   default = {}
 }
-variable "rybbit_site_id" {
-  default = null
-  type    = string
-}
 variable "custom_content_security_policy" {
   default = null
   type    = string
@@ -143,8 +139,6 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.strip_auth_headers ? "traefik-strip-auth-headers@kubernetescrd" : null,
-        var.rybbit_site_id != null ? "traefik-strip-accept-encoding@kubernetescrd" : null,
-        var.rybbit_site_id != null ? "${var.namespace}-rybbit-analytics-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"
@@ -179,33 +173,6 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
                 }
               }
             }
-          }
-        }
-      }
-    }
-  }
-}
-
-# Rybbit analytics middleware (rewrite-body plugin with content-type filtering) - created per service when rybbit_site_id is set
-resource "kubernetes_manifest" "rybbit_analytics" {
-  count = var.rybbit_site_id != null ? 1 : 0
-
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "rybbit-analytics-${var.name}"
-      namespace = var.namespace
-    }
-    spec = {
-      plugin = {
-        traefik-plugin-rewritebody = {
-          rewrites = [{
-            regex       = "</head>"
-            replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"${var.rybbit_site_id}\" defer></script></head>"
-          }]
-          monitoring = {
-            types = ["text/html"]
           }
         }
       }

@@ -548,7 +548,6 @@ module "ingress" {
   name            = "rybbit"
   service_name    = "rybbit-client"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "3c476801a777"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Rybbit"

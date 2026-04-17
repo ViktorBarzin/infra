@@ -26,7 +26,7 @@ module "tls_secret" {
 # https://pfsense.viktorbarzin.me/
 module "pfsense" {
   source           = "./factory"
-  dns_type        = "proxied"
+  dns_type         = "proxied"
   name             = "pfsense"
   external_name    = "pfsense.viktorbarzin.lan"
   tls_secret_name  = var.tls_secret_name
@@ -47,14 +47,13 @@ module "pfsense" {
     "gethomepage.dev/widget.fields" = "[\"load\", \"memory\", \"temp\", \"disk\"]"
     "gethomepage.dev/widget.wan"    = "vtnet0"
   }
-  depends_on     = [kubernetes_namespace.reverse-proxy]
-  rybbit_site_id = "b029580e5a7c"
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://nas.viktorbarzin.me/
 module "nas" {
   source           = "./factory"
-  dns_type        = "proxied"
+  dns_type         = "proxied"
   name             = "nas"
   external_name    = "nas.viktorbarzin.lan"
   port             = 5001
@@ -62,7 +61,6 @@ module "nas" {
   backend_protocol = "HTTPS"
   max_body_size    = "0m"
   depends_on       = [kubernetes_namespace.reverse-proxy]
-  rybbit_site_id   = "1e11f8449f7d"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Synology NAS"
@@ -76,7 +74,7 @@ module "nas" {
 # https://files.viktorbarzin.me/
 module "nas-files" {
   source            = "./factory"
-  dns_type        = "non-proxied"
+  dns_type          = "non-proxied"
   name              = "files"
   external_name     = "nas.viktorbarzin.lan"
   port              = 5001
@@ -92,7 +90,7 @@ module "nas-files" {
 # https://idrac.viktorbarzin.me/
 module "idrac" {
   source             = "./factory"
-  dns_type        = "proxied"
+  dns_type           = "proxied"
   name               = "idrac"
   external_name      = "idrac.viktorbarzin.lan"
   port               = 443
@@ -114,7 +112,7 @@ module "idrac" {
 # TODO: Not working yet
 module "tp-link-gateway" {
   source             = "./factory"
-  dns_type        = "proxied"
+  dns_type           = "proxied"
   name               = "gw"
   external_name      = "gw.viktorbarzin.lan"
   port               = 443
@@ -148,8 +146,7 @@ module "truenas" {
     # "gethomepage.dev/widget.enablePools" : "true"
     # "gethomepage.dev/pod-selector" : ""
   }
-  depends_on     = [kubernetes_namespace.reverse-proxy]
-  rybbit_site_id = "b66fbd3cb58a"
+  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://r730.viktorbarzin.me/
@@ -174,7 +171,7 @@ module "r730" {
 # https://proxmox.viktorbarzin.me/
 module "proxmox" {
   source           = "./factory"
-  dns_type        = "proxied"
+  dns_type         = "proxied"
   name             = "proxmox"
   external_name    = "proxmox.viktorbarzin.lan"
   port             = 8006
@@ -182,7 +179,6 @@ module "proxmox" {
   backend_protocol = "HTTPS"
   max_body_size    = "0" # unlimited
   depends_on       = [kubernetes_namespace.reverse-proxy]
-  rybbit_site_id   = "190a7ad3e1c7"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Proxmox"
@@ -217,14 +213,14 @@ module "docker-registry-ui" {
 # https://registry.viktorbarzin.me/ (Docker CLI push/pull endpoint)
 module "docker-registry-cli" {
   source           = "./factory"
-  dns_type        = "non-proxied"
+  dns_type         = "non-proxied"
   name             = "registry"
   external_name    = "docker-registry.viktorbarzin.lan"
   port             = 5050
   backend_protocol = "HTTPS"
   tls_secret_name  = var.tls_secret_name
-  protected        = false    # Docker CLI uses htpasswd, NOT Authentik
-  max_body_size    = "0"      # unlimited - Docker layers can be large
+  protected        = false # Docker CLI uses htpasswd, NOT Authentik
+  max_body_size    = "0"   # unlimited - Docker layers can be large
   depends_on       = [kubernetes_namespace.reverse-proxy]
   extra_annotations = {
     # Skip rate-limit (Docker push/pull generates many rapid requests)
@@ -237,7 +233,7 @@ module "docker-registry-cli" {
 # https://valchedrym.viktorbarzin.me/
 module "valchedrym" {
   source            = "./factory"
-  dns_type        = "proxied"
+  dns_type          = "proxied"
   name              = "valchedrym"
   external_name     = "valchedrym.viktorbarzin.lan"
   tls_secret_name   = var.tls_secret_name
@@ -303,14 +299,13 @@ resource "kubernetes_manifest" "ha_sofia_rate_limit" {
 
 module "ha-sofia" {
   source                 = "./factory"
-  dns_type        = "non-proxied"
+  dns_type               = "non-proxied"
   name                   = "ha-sofia"
   external_name          = "ha-sofia.viktorbarzin.lan"
   port                   = 8123
   tls_secret_name        = var.tls_secret_name
   depends_on             = [kubernetes_namespace.reverse-proxy]
   protected              = false
-  rybbit_site_id         = "590fc392690a"
   skip_global_rate_limit = true
   extra_middlewares = [
     "reverse-proxy-ha-sofia-rate-limit@kubernetescrd",
@@ -328,7 +323,7 @@ module "ha-sofia" {
 # https://music-assistant.viktorbarzin.me/
 module "music-assistant" {
   source                 = "./factory"
-  dns_type        = "non-proxied"
+  dns_type               = "non-proxied"
   name                   = "music-assistant"
   external_name          = "ha-sofia.viktorbarzin.lan"
   port                   = 8095
@@ -364,7 +359,7 @@ module "ha-london" {
 # https://london.viktorbarzin.me/
 module "london" {
   source           = "./factory"
-  dns_type        = "proxied"
+  dns_type         = "proxied"
   name             = "london"
   external_name    = "openwrt-london.viktorbarzin.lan"
   port             = 443
@@ -388,7 +383,7 @@ module "london" {
 }
 module "pi-lights" {
   source            = "./factory"
-  dns_type        = "proxied"
+  dns_type          = "proxied"
   name              = "pi"
   external_name     = "ha-london.viktorbarzin.lan"
   port              = 5000
@@ -416,7 +411,7 @@ module "pi-lights" {
 
 module "mbp14" {
   source            = "./factory"
-  dns_type        = "proxied"
+  dns_type          = "proxied"
   name              = "mbp14"
   external_name     = "mbp14.viktorbarzin.lan"
   port              = 4020

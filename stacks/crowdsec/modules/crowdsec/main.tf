@@ -128,7 +128,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values  = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
@@ -256,13 +256,12 @@ resource "kubernetes_service" "crowdsec-web" {
 }
 module "ingress" {
   source           = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
+  dns_type         = "proxied"
   namespace        = kubernetes_namespace.crowdsec.metadata[0].name
   name             = "crowdsec-web"
   protected        = true
   tls_secret_name  = var.tls_secret_name
   exclude_crowdsec = true
-  rybbit_site_id   = "d09137795ccc"
 }
 
 # CronJob to import public blocklists into CrowdSec

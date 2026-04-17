@@ -102,7 +102,6 @@ module "ingress" {
   namespace       = kubernetes_namespace.cyberchef.metadata[0].name
   name            = "cc"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "7c460afc68c4"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "CyberChef"

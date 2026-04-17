@@ -190,7 +190,6 @@ module "ingress" {
     "gethomepage.dev/widget.url"   = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
     "gethomepage.dev/widget.slug"  = "infra"
   }
-  rybbit_site_id = "8fef77b1f7fe"
 }
 
 # CronJob for daily SQLite backups # no longer needed as we're using the mysql

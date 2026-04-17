@@ -253,33 +253,8 @@ resource "kubernetes_manifest" "middleware_immich_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
-# Strip Accept-Encoding header so backends send uncompressed responses.
-# Used alongside rewrite-body plugin (rybbit analytics) which fails to
-# decompress certain gzip responses (flate: corrupt input before offset 5).
-# Also used by anti-AI trap links rewrite-body middleware.
-resource "kubernetes_manifest" "middleware_strip_accept_encoding" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "strip-accept-encoding"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      headers = {
-        customRequestHeaders = {
-          "Accept-Encoding" = ""
-        }
-      }
-    }
-  }
-
-  depends_on = [helm_release.traefik]
-}
-
-# Re-compress responses to clients after rewrite-body plugin has modified them.
-# Applied at websecure entrypoint level (outermost), so the response path is:
-# backend → rewrite-body modifies uncompressed HTML → compress gzips → client.
+# Compress responses to clients at the entrypoint level (outermost).
+# Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
 # - Only compresses text-based types that benefit from compression
 # - Binary types (images, video, zip) are never compressed (no wasted CPU)
@@ -360,36 +335,6 @@ resource "kubernetes_manifest" "middleware_anti_ai_headers" {
       headers = {
         customResponseHeaders = {
           "X-Robots-Tag" = "noai, noimageai"
-        }
-      }
-    }
-  }
-
-  depends_on = [helm_release.traefik]
-}
-
-# Inject hidden trap links before </body> to catch AI scrapers
-# Links are CSS-hidden and aria-hidden so humans never see them
-resource "kubernetes_manifest" "middleware_anti_ai_trap_links" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "anti-ai-trap-links"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        traefik-plugin-rewritebody = {
-          lastModified = true
-          rewrites = [{
-            regex       = "</body>"
-            replacement = "<div style=\"position:absolute;left:-9999px;height:0;overflow:hidden\" aria-hidden=\"true\"><a href=\"https://poison.viktorbarzin.me/article/training-data-2024-research-corpus\">Research Archive</a><a href=\"https://poison.viktorbarzin.me/article/dataset-export-machine-learning-v3\">Dataset Export</a><a href=\"https://poison.viktorbarzin.me/article/nlp-benchmark-evaluation-results\">Benchmark Results</a><a href=\"https://poison.viktorbarzin.me/article/web-crawl-index-2024-archive\">Web Index</a><a href=\"https://poison.viktorbarzin.me/article/text-corpus-english-dump\">Text Corpus</a></div></body>"
-          }]
-          monitoring = {
-            types   = ["text/html"]
-            methods = ["GET"]
-          }
         }
       }
     }

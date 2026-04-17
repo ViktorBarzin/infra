@@ -331,7 +331,6 @@ module "ingress" {
   name            = "wrongmove"
   service_name    = "realestate-crawler-ui"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "edee05de453d"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Wrongmove"

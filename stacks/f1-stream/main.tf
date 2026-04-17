@@ -169,11 +169,10 @@ module "tls_secret" {
 
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "non-proxied"
+  dns_type         = "non-proxied"
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   name             = "f1"
   tls_secret_name  = var.tls_secret_name
-  rybbit_site_id   = "7e69786f66d5"
   exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

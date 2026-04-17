@@ -390,8 +390,6 @@ module "calibre_ingress" {
     "gethomepage.dev/widget.password" = local.calibre_homepage_credentials["calibre-web"]["password"]
     "gethomepage.dev/pod-selector"    = ""
   }
-  rybbit_site_id                 = "17a5c7fbb077"
-  custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://rybbit.viktorbarzin.me"
 }
 
 # Stacks - Anna's Archive Download Manager
@@ -501,7 +499,6 @@ module "stacks_ingress" {
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name
   protected       = true
-  rybbit_site_id  = "ce5f8aed6bbb"
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
@@ -650,7 +647,6 @@ module "audiobookshelf_ingress" {
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "audiobookshelf"
   tls_secret_name = var.tls_secret_name
-  rybbit_site_id  = "b38fda4285df"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Audiobookshelf"
