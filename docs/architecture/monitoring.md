@@ -176,7 +176,6 @@ Uptime Kuma monitors: TCP SMTP (port 25) on `176.12.22.76` (external), IMAP (por
 - **VaultwardenBackupStale**: >8d since last backup
 - **RedisBackupStale**: >8d since last backup
 - **PrometheusBackupStale**: >32d since last backup
-- **CloudSyncStale**: >8d since last cloud sync
 - **VaultwardenIntegrityFail**: Backup integrity check failed
 
 ### Vault Paths

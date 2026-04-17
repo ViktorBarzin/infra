@@ -189,7 +189,7 @@ resource "kubernetes_config_map" "workbench_store" {
       connectionUrl = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
       hideDoltFeatures = false
       useSSL        = false
-      type          = "mysql"
+      type          = "Mysql"
     }])
   }
 }
@@ -396,7 +396,9 @@ resource "kubernetes_ingress_v1" "graphql" {
     name      = "dolt-workbench-graphql"
     namespace = kubernetes_namespace.beads.metadata[0].name
     annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-authentik-forward-auth@kubernetescrd"
+      # No Authentik on GraphQL — the main page handles auth.
+      # JS fetch() to /graphql may not pass Authentik's forward-auth
+      # (302 on POST → fetch fails → "Request timed out").
     }
   }
   spec {

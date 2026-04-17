@@ -380,13 +380,15 @@ resource "kubernetes_manifest" "middleware_anti_ai_trap_links" {
     }
     spec = {
       plugin = {
-        rewrite-body = {
+        traefik-plugin-rewritebody = {
+          lastModified = true
           rewrites = [{
             regex       = "</body>"
             replacement = "<div style=\"position:absolute;left:-9999px;height:0;overflow:hidden\" aria-hidden=\"true\"><a href=\"https://poison.viktorbarzin.me/article/training-data-2024-research-corpus\">Research Archive</a><a href=\"https://poison.viktorbarzin.me/article/dataset-export-machine-learning-v3\">Dataset Export</a><a href=\"https://poison.viktorbarzin.me/article/nlp-benchmark-evaluation-results\">Benchmark Results</a><a href=\"https://poison.viktorbarzin.me/article/web-crawl-index-2024-archive\">Web Index</a><a href=\"https://poison.viktorbarzin.me/article/text-corpus-english-dump\">Text Corpus</a></div></body>"
           }]
           monitoring = {
-            types = ["text/html"]
+            types   = ["text/html"]
+            methods = ["GET"]
           }
         }
       }

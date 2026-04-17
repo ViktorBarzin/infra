@@ -1213,32 +1213,11 @@ serverFiles:
               summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 32d)"
           - alert: PrometheusBackupNeverRun
             expr: absent(prometheus_backup_last_success_timestamp{job="prometheus-backup"})
-            for: 48h
+            for: 32d
             labels:
               severity: warning
             annotations:
-              summary: "Prometheus backup has never reported a successful run"
-          - alert: CloudSyncStale
-            expr: (time() - cloudsync_last_success_timestamp{job="cloudsync-monitor"}) > 691200
-            for: 1h
-            labels:
-              severity: critical
-            annotations:
-              summary: "Cloud Sync task {{ $labels.task_id }} is {{ $value | humanizeDuration }} old (threshold: 8d) — off-site backups may have stopped"
-          - alert: CloudSyncNeverRun
-            expr: absent(cloudsync_last_success_timestamp{job="cloudsync-monitor"})
-            for: 48h
-            labels:
-              severity: warning
-            annotations:
-              summary: "Cloud Sync monitor has never reported — check cloudsync-monitor CronJob"
-          - alert: CloudSyncFailing
-            expr: cloudsync_job_state{job="cloudsync-monitor", task_id!="2"} == 0
-            for: 6h
-            labels:
-              severity: warning
-            annotations:
-              summary: "Cloud Sync task {{ $labels.task_id }} last state was not SUCCESS"
+              summary: "Prometheus backup has never reported a successful run (sidecar runs monthly, 1st Sunday 04:00 UTC — alert only fires if absent for >32d)"
           - alert: CSIDriverCrashLoop
             expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", namespace=~"nfs-csi|proxmox-csi"} > 0
             for: 10m

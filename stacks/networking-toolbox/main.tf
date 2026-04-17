@@ -48,7 +48,7 @@ resource "kubernetes_deployment" "networking-toolbox" {
       }
       spec {
         container {
-          image = "lissy93/networking-toolbox:1.1.1"
+          image = "lissy93/networking-toolbox:1.6.0"
           name  = "networking-toolbox"
           port {
             container_port = 3000

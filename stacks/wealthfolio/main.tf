@@ -111,7 +111,7 @@ resource "kubernetes_deployment" "wealthfolio" {
       }
       spec {
         container {
-          image = "afadil/wealthfolio:v1.1.0"
+          image = "afadil/wealthfolio:3.2"
           name  = "wealthfolio"
           port {
             container_port = 8080
