@@ -334,14 +334,16 @@ module "ingress" {
   }
 }
 
-module "ingress-doh" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.technitium.metadata[0].name
-  name            = "technitium-doh"
-  tls_secret_name = var.tls_secret_name
-  host            = "dns"
-  service_name    = "technitium-web"
-}
+# DoH ingress removed — dns.viktorbarzin.me was externally unreachable and unused.
+# DNS is served on UDP/TCP port 53 via the LoadBalancer service (10.0.20.201).
+# module "ingress-doh" {
+#   source          = "../../../../modules/kubernetes/ingress_factory"
+#   namespace       = kubernetes_namespace.technitium.metadata[0].name
+#   name            = "technitium-doh"
+#   tls_secret_name = var.tls_secret_name
+#   host            = "dns"
+#   service_name    = "technitium-web"
+# }
 
 # ExternalSecret for Technitium MySQL password (Vault auto-rotation)
 resource "kubernetes_manifest" "external_secret" {
