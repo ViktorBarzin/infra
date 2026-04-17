@@ -1,0 +1,11 @@
+name = "rybbit-analytics"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# Route: all Cloudflare-proxied *.viktorbarzin.me traffic.
+# The worker only injects into HTML responses; non-HTML passes through untouched.
+# Wildcard covers all proxied subdomains. The bare domain needs its own route.
+routes = [
+  { pattern = "viktorbarzin.me/*", zone_name = "viktorbarzin.me" },
+  { pattern = "*.viktorbarzin.me/*", zone_name = "viktorbarzin.me" }
+]
