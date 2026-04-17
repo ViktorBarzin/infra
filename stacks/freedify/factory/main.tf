@@ -108,15 +108,6 @@ resource "kubernetes_deployment" "freedify" {
           image = "registry.viktorbarzin.me/freedify:${var.tag}"
           name  = "freedify"
 
-          # Patch: fix Safari iOS playback (AirPlay needs source-level fix)
-          # 1. Remove EQ auto-init on play events (audio-engine.js)
-          # 2. Remove iOS keepalive AudioContext creation (dom.js)
-          # 3. Remove visualizer's initEqualizer() call (dj.js)
-          command = ["sh", "-c"]
-          args = [
-            "sed -i '/addEventListener.*play.*handleEQResume/d' /app/static/audio-engine.js && sed -i '/iosAudioContext = new /d' /app/static/dom.js && sed -i '/initEqualizer()/d' /app/static/dj.js && exec python -m uvicorn app.main:app --host 0.0.0.0 --port $${PORT:-8000} --timeout-keep-alive 120"
-          ]
-
           port {
             container_port = 8000
           }
