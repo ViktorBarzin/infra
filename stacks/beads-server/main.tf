@@ -386,12 +386,13 @@ module "tls_secret" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.beads.metadata[0].name
-  name            = "dolt-workbench"
-  tls_secret_name = var.tls_secret_name
-  protected       = true
+  source            = "../../modules/kubernetes/ingress_factory"
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.beads.metadata[0].name
+  name              = "dolt-workbench"
+  tls_secret_name   = var.tls_secret_name
+  protected         = false
+  exclude_crowdsec  = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dolt Workbench"
@@ -595,12 +596,13 @@ resource "kubernetes_service" "beadboard" {
 }
 
 module "beadboard_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.beads.metadata[0].name
-  name            = "beadboard"
-  tls_secret_name = var.tls_secret_name
-  protected       = true
+  source            = "../../modules/kubernetes/ingress_factory"
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.beads.metadata[0].name
+  name              = "beadboard"
+  tls_secret_name   = var.tls_secret_name
+  protected         = true
+  exclude_crowdsec  = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "BeadBoard"
