@@ -185,11 +185,11 @@ resource "kubernetes_config_map" "workbench_store" {
   }
   data = {
     "store.json" = jsonencode([{
-      name          = "beads"
-      connectionUrl = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
+      name             = "beads"
+      connectionUrl    = "mysql://beads@dolt.beads-server.svc.cluster.local:3306/code"
       hideDoltFeatures = false
-      useSSL        = false
-      type          = "Mysql"
+      useSSL           = false
+      type             = "Mysql"
     }])
   }
 }
@@ -252,8 +252,18 @@ resource "kubernetes_deployment" "workbench" {
           command = ["sh", "-c", <<-EOT
             # Patch GraphQL server to listen on 0.0.0.0 (IPv4) — Node 18+ defaults to IPv6
             sed -i 's|app.listen(9002)|app.listen(9002,"0.0.0.0")|g' /app/graphql-server/dist/main.js
-            # Start PM2 (the default entrypoint)
-            exec pm2-runtime /app/process.yml
+            # Start PM2, then auto-connect to Dolt after GraphQL is ready
+            pm2-runtime /app/process.yml &
+            PM2_PID=$!
+            # Wait for GraphQL server to be ready, then auto-connect
+            for i in $(seq 1 30); do
+              if node -e "fetch('http://127.0.0.1:9002/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'{storedConnections{name}}'})}).then(r=>{if(r.ok)process.exit(0);process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
+                node -e "fetch('http://127.0.0.1:9002/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'mutation{addDatabaseConnection(connectionUrl:\"mysql://beads@dolt.beads-server.svc.cluster.local:3306/code\",name:\"beads\",hideDoltFeatures:false,useSSL:false,type:Mysql){currentDatabase}}'})}).then(r=>r.text()).then(t=>{console.log('Auto-connect:',t);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})" 2>&1
+                break
+              fi
+              sleep 1
+            done &
+            wait $PM2_PID
           EOT
           ]
 
@@ -434,14 +444,14 @@ resource "kubernetes_config_map" "beadboard_config" {
   }
   data = {
     "metadata.json" = jsonencode({
-      database          = "dolt"
-      backend           = "dolt"
-      dolt_mode         = "server"
-      dolt_server_host  = "dolt.beads-server.svc.cluster.local"
-      dolt_server_port  = 3306
-      dolt_server_user  = "root"
-      dolt_database     = "code"
-      project_id        = "a8f8bae7-ce65-4145-a5db-a13d11d297da"
+      database         = "dolt"
+      backend          = "dolt"
+      dolt_mode        = "server"
+      dolt_server_host = "dolt.beads-server.svc.cluster.local"
+      dolt_server_port = 3306
+      dolt_server_user = "root"
+      dolt_database    = "code"
+      project_id       = "a8f8bae7-ce65-4145-a5db-a13d11d297da"
     })
     "dolt-server.port" = "3306"
   }
@@ -475,8 +485,8 @@ resource "kubernetes_deployment" "beadboard" {
         }
 
         init_container {
-          name  = "seed-beads-config"
-          image = "busybox:1.36"
+          name    = "seed-beads-config"
+          image   = "busybox:1.36"
           command = ["sh", "-c", "cp /config/* /beads/ && mkdir -p /beads/templates /beads/archetypes"]
           volume_mount {
             name       = "beads-config"
