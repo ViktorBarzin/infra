@@ -373,10 +373,11 @@ def load_from_api():
                 host = rules[0].get("host")
         if not host or not host.endswith(".viktorbarzin.me"):
             continue  # skip internal-only or non-public hosts
-        if host in seen:
-            continue
-        seen.add(host)
         label = anns.get(ANNOTATION_NAME) or host.split(".")[0]
+        monitor_name = f"{PREFIX}{label}"
+        if monitor_name in seen:
+            continue  # dedupe by final monitor name, not hostname (fixes duplicate creation)
+        seen.add(monitor_name)
         targets.append({"name": label, "url": f"https://{host}"})
     return targets
 
