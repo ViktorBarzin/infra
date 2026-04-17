@@ -246,7 +246,7 @@ server:
             ls -t /backup/prometheus_*.tar.gz 2>/dev/null | tail -n +3 | xargs rm -f 2>/dev/null
 
             # Push success metric to Pushgateway for alerting
-            echo "prometheus_backup_last_success_timestamp $(date +%s)" | wget -qO- --post-file=- http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/prometheus-backup 2>/dev/null
+            printf "prometheus_backup_last_success_timestamp %s\n" "$(date +%s)" | wget -qO- --header="Content-Type: text/plain" --post-file=- http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/prometheus-backup 2>/dev/null
 
             echo "$(date) Backup complete. Files in /backup:"
             ls -lh /backup/prometheus_*.tar.gz 2>/dev/null || echo "  (none)"
