@@ -113,7 +113,7 @@ resource "kubernetes_deployment" "ollama" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down — low usage, saves resources + clears ExternalAccessDivergence alert
     selector {
       match_labels = {
         app = "ollama"

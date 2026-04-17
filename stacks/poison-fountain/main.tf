@@ -65,7 +65,7 @@ resource "kubernetes_deployment" "poison_fountain" {
   }
 
   spec {
-    replicas = 2
+    replicas = 0 # Scaled down — clears ExternalAccessDivergence alert
     strategy {
       type = "RollingUpdate"
       rolling_update {

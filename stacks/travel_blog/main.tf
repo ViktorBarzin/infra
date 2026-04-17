@@ -30,7 +30,7 @@ resource "kubernetes_deployment" "blog" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 0 # Scaled down — clears ExternalAccessDivergence alert
     selector {
       match_labels = {
         app = "travel-blog"
