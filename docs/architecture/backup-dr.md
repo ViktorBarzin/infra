@@ -72,7 +72,7 @@ graph TB
 
     subgraph Monitoring["Monitoring & Alerting"]
         Prometheus["Prometheus Alerts<br/>PostgreSQLBackupStale, MySQLBackupStale<br/>WeeklyBackupStale, OffsiteBackupSyncStale<br/>LVMSnapshotStale, BackupDiskFull<br/>VaultwardenIntegrityFail"]
-        Pushgateway["Pushgateway<br/>backup script metrics<br/>cloudsync metrics<br/>vaultwarden integrity"]
+        Pushgateway["Pushgateway<br/>backup script metrics<br/>vaultwarden integrity"]
     end
 
     PVCBackup -.->|push metrics| Pushgateway

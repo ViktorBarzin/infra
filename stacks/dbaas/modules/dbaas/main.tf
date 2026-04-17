@@ -521,7 +521,7 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
         annotations = {
           "resize.topolvm.io/threshold"     = "80%"
           "resize.topolvm.io/increase"      = "100%"
-          "resize.topolvm.io/storage_limit" = "30Gi"
+          "resize.topolvm.io/storage_limit" = "50Gi"
         }
       }
       spec {

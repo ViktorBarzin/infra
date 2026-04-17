@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Backup health overview — K8s CronJob backups and TrueNAS Cloud Sync status",
+  "description": "Backup health overview — K8s CronJob backups",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -56,11 +56,6 @@
           "expr": "time() - backup_last_success_timestamp",
           "legendFormat": "{{ job }}",
           "refId": "A"
-        },
-        {
-          "expr": "time() - cloudsync_last_success_timestamp",
-          "legendFormat": "cloudsync-{{ task_id }}",
-          "refId": "B"
         }
       ]
     },
@@ -280,106 +275,6 @@
       ]
     },
     {
-      "title": "Cloud Sync Status",
-      "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 30 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "type": "value", "options": { "1": { "text": "SUCCESS", "color": "green" }, "0": { "text": "FAILED", "color": "red" } } }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "cloudsync_job_state",
-          "legendFormat": "Task {{ task_id }}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "title": "Cloud Sync Duration",
-      "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 30 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 3600 },
-              { "color": "red", "value": 86400 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "cloudsync_duration_seconds",
-          "legendFormat": "Task {{ task_id }}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "title": "Cloud Sync Transfer Volume",
-      "type": "bargauge",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1073741824 },
-              { "color": "red", "value": 10737418240 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "showUnfilled": true
-      },
-      "targets": [
-        {
-          "expr": "cloudsync_transferred_bytes",
-          "legendFormat": "Task {{ task_id }}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
       "title": "LVM Thin Snapshots",
       "type": "row",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
@@ -565,7 +460,7 @@
           "normal": false,
           "error": true
         },
-        "alertInstanceLabelFilter": "{__alert_rule_title__=~\".*[Bb]ackup.*|.*[Ss]napshot.*|.*CloudSync.*|.*ThinPool.*\"}",
+        "alertInstanceLabelFilter": "{__alert_rule_title__=~\".*[Bb]ackup.*|.*[Ss]napshot.*|.*ThinPool.*\"}",
         "folder": { "id": null, "title": "" },
         "folderId": null
       }
@@ -609,7 +504,7 @@
       ],
       "targets": [
         {
-          "expr": "kube_cronjob_status_last_schedule_time{cronjob=~\".*backup.*|.*cloudsync.*|.*etcd.*|.*raft.*\"} * 1000",
+          "expr": "kube_cronjob_status_last_schedule_time{cronjob=~\".*backup.*|.*etcd.*|.*raft.*\"} * 1000",
           "legendFormat": "",
           "refId": "A",
           "instant": true,

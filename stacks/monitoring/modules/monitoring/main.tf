@@ -29,10 +29,6 @@ variable "grafana_admin_password" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
-variable "truenas_api_key" {
-  type      = string
-  sensitive = true
-}
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
@@ -86,126 +82,6 @@ resource "kubernetes_cron_job_v1" "monitor_prom" {
               name    = "monitor-prometheus"
               image   = "alpine"
               command = ["/bin/sh", "-c", "apk add --update curl && curl --connect-timeout 2 prometheus-server.monitoring.svc.cluster.local || curl https://webhook.viktorbarzin.me/fb/message-viktor -d 'Prometheus is down!'"]
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-# -----------------------------------------------------------------------------
-# Cloud Sync Monitor — DEPRECATED: TrueNAS decommissioned 2026-04-13
-# TODO: Remove this resource entirely once TrueNAS VM is shut down
-# -----------------------------------------------------------------------------
-resource "kubernetes_cron_job_v1" "cloudsync_monitor" {
-  metadata {
-    name      = "cloudsync-monitor"
-    namespace = kubernetes_namespace.monitoring.metadata[0].name
-  }
-  spec {
-    concurrency_policy            = "Replace"
-    failed_jobs_history_limit     = 3
-    successful_jobs_history_limit = 3
-    schedule                      = "0 */6 * * *"
-    job_template {
-      metadata {}
-      spec {
-        backoff_limit              = 2
-        ttl_seconds_after_finished = 300
-        template {
-          metadata {}
-          spec {
-            container {
-              name  = "cloudsync-monitor"
-              image = "docker.io/library/alpine"
-              command = ["/bin/sh", "-c", <<-EOT
-                set -euo pipefail
-                apk add --no-cache curl jq
-
-                # Query TrueNAS Cloud Sync tasks (TrueNAS deprecated — this monitor should be removed)
-                RESPONSE=$(curl -sf -H "Authorization: Bearer $TRUENAS_API_KEY" \
-                  "http://10.0.10.15/api/v2.0/cloudsync" 2>&1) || {
-                  echo "WARN: TrueNAS API unreachable (VM deprecated)"
-                  exit 0
-                }
-
-                # Parse each task's last successful run
-                echo "$RESPONSE" | jq -c '.[]' | while read -r task; do
-                  TASK_ID=$(echo "$task" | jq -r '.id')
-                  TASK_DESC=$(echo "$task" | jq -r '.description // "task-\(.id)"' | tr ' ' '_' | tr -cd '[:alnum:]_-')
-                  JOB_STATE=$(echo "$task" | jq -r '.job.state // "UNKNOWN"')
-                  JOB_TIME=$(echo "$task" | jq -r '.job.time_finished."$date" // 0')
-
-                  if [ "$JOB_TIME" != "0" ] && [ "$JOB_TIME" != "null" ]; then
-                    # TrueNAS returns milliseconds since epoch
-                    EPOCH_SECS=$((JOB_TIME / 1000))
-                  else
-                    EPOCH_SECS=0
-                  fi
-
-                  # Extract transfer stats from job progress description
-                  # Format: "1182 / 1182, 3.928 GiB / 3.928 GiB, 8.737 MiB/s, ..."
-                  JOB_PROGRESS=$(echo "$task" | jq -r '.job.progress.description // ""')
-                  TX_TOTAL=$(echo "$JOB_PROGRESS" | awk -F', ' '{split($2, a, " / "); print a[2]}')
-                  TX_NUM=$(echo "$TX_TOTAL" | awk '{print $1}')
-                  TX_NUM=$${TX_NUM:-0}
-                  TX_UNIT=$(echo "$TX_TOTAL" | awk '{print $2}')
-                  TX_UNIT=$${TX_UNIT:-Bytes}
-                  case "$TX_UNIT" in
-                    Bytes|B) TX_MULT=1 ;; KiB|kB) TX_MULT=1024 ;; MiB|MB) TX_MULT=1048576 ;;
-                    GiB|GB) TX_MULT=1073741824 ;; *) TX_MULT=1 ;;
-                  esac
-                  TRANSFERRED_BYTES=$(echo "$TX_NUM $TX_MULT" | awk '{printf "%.0f", $1 * $2}')
-                  JOB_STARTED=$(echo "$task" | jq -r '.job.time_started."$date" // 0')
-                  JOB_FINISHED=$(echo "$task" | jq -r '.job.time_finished."$date" // 0')
-                  if [ "$JOB_STARTED" != "0" ] && [ "$JOB_STARTED" != "null" ] && [ "$JOB_FINISHED" != "0" ] && [ "$JOB_FINISHED" != "null" ]; then
-                    SYNC_DURATION=$(( (JOB_FINISHED - JOB_STARTED) / 1000 ))
-                  else
-                    SYNC_DURATION=0
-                  fi
-
-                  echo "Task $TASK_ID ($TASK_DESC): state=$JOB_STATE, last_finished=$EPOCH_SECS, duration=$${SYNC_DURATION}s"
-
-                  # Push metrics to Pushgateway
-                  cat <<METRICS | curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/cloudsync-monitor/task_id/$TASK_ID"
-                  # HELP cloudsync_last_success_timestamp Last successful Cloud Sync completion (unix epoch)
-                  # TYPE cloudsync_last_success_timestamp gauge
-                  cloudsync_last_success_timestamp $EPOCH_SECS
-                  # HELP cloudsync_job_state Cloud Sync job state (1=SUCCESS, 0=other)
-                  # TYPE cloudsync_job_state gauge
-                  cloudsync_job_state $([ "$JOB_STATE" = "SUCCESS" ] && echo 1 || echo 0)
-                  # HELP cloudsync_duration_seconds Duration of the last Cloud Sync run
-                  # TYPE cloudsync_duration_seconds gauge
-                  cloudsync_duration_seconds $SYNC_DURATION
-                  # HELP cloudsync_transferred_bytes Bytes transferred during Cloud Sync run
-                  # TYPE cloudsync_transferred_bytes gauge
-                  cloudsync_transferred_bytes $TRANSFERRED_BYTES
-                METRICS
-                done
-
-                echo "Cloud Sync monitor complete"
-              EOT
-              ]
-              env {
-                name  = "TRUENAS_API_KEY"
-                value = var.truenas_api_key
-              }
-              resources {
-                requests = {
-                  memory = "32Mi"
-                  cpu    = "10m"
-                }
-                limits = {
-                  memory = "64Mi"
-                }
-              }
-            }
-            dns_config {
-              option {
-                name  = "ndots"
-                value = "2"
-              }
             }
           }
         }

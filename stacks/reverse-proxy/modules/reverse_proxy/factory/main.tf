@@ -173,7 +173,7 @@ resource "kubernetes_manifest" "rybbit_analytics" {
     }
     spec = {
       plugin = {
-        rewrite-body = {
+        traefik-plugin-rewritebody = {
           rewrites = [{
             regex       = "</head>"
             replacement = "<script src=\"https://rybbit.viktorbarzin.me/api/script.js\" data-site-id=\"${var.rybbit_site_id}\" defer></script></head>"
