@@ -23,6 +23,18 @@ smtpd_tls_loglevel = 1
 smtpd_client_connection_rate_limit = 10
 smtpd_client_message_rate_limit = 30
 anvil_rate_time_unit = 60s
+
+# Disable the postscreen decision cache. The default (btree) driver
+# requires an exclusive file lock for every access, and with postscreen
+# re-spawning per connection (master.cf: maxproc=1) that produces thousands
+# of 'unable to get exclusive lock' fatals per day — stalling SMTP
+# acceptance and starving inbound delivery. lmdb would avoid the lock but
+# isn't compiled into docker-mailserver 15.0.0's Postfix build
+# (postconf -m → no lmdb). Proxy:btree is unsafe because postscreen does
+# its own locking. An empty value disables the cache entirely — legitimate
+# clients pay the greet/bare-newline re-check on every new TCP session,
+# which is trivial at our volume (~100 deliveries/day).
+postscreen_cache_map =
 EOT
 }
 
