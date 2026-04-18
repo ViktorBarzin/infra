@@ -3,11 +3,6 @@ data "vault_kv_secret_v2" "secrets" {
   name  = "claude-agent-service"
 }
 
-data "vault_kv_secret_v2" "ci_secrets" {
-  mount = "secret"
-  name  = "ci/infra"
-}
-
 data "vault_kv_secret_v2" "viktor_secrets" {
   mount = "secret"
   name  = "viktor"
@@ -83,18 +78,6 @@ resource "kubernetes_manifest" "external_secret" {
     }
   }
   depends_on = [kubernetes_namespace.claude_agent]
-}
-
-# SSH key for git operations (kept for fallback)
-resource "kubernetes_secret" "ssh_key" {
-  metadata {
-    name      = "ssh-key"
-    namespace = kubernetes_namespace.claude_agent.metadata[0].name
-  }
-  data = {
-    "id_rsa" = data.vault_kv_secret_v2.ci_secrets.data["devvm_ssh_key"]
-  }
-  type = "Opaque"
 }
 
 # SOPS age key for terraform state decryption
