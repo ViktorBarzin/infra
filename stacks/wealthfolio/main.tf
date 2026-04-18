@@ -149,13 +149,18 @@ resource "kubernetes_deployment" "wealthfolio" {
             name       = "data"
             mount_path = "/data"
           }
+          # 2026-04-18 OOM after broker-sync Phase 3 landed (~700 activities
+          # across 6 accounts including Fidelity + matched cash flows). The
+          # /api/v1/net-worth + /valuations/history endpoints materialise the
+          # full history in memory for the chart; 64Mi was a Phase-0 guess
+          # that fit a 10-activity demo DB and nothing bigger.
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "1Gi"
             }
           }
         }
