@@ -24,7 +24,6 @@ const SITE_IDS = {
   "navidrome.viktorbarzin.me": "8a3844ff75ba",
   "networking-toolbox.viktorbarzin.me": "50e38577e41c",
   "nextcloud.viktorbarzin.me": "5a3bfe59a3fe",
-  "ollama.viktorbarzin.me": "e73bebea399f",
   "paperless-ngx.viktorbarzin.me": "be6d140cbed8",
   "privatebin.viktorbarzin.me": "3ae810b0476d",
   "wrongmove.viktorbarzin.me": "edee05de453d",
