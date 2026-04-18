@@ -174,9 +174,28 @@ Key behaviors observed:
 |--------|-----------|---------|
 | n8n webhook URL | `secret/diun` → `n8n_webhook_url` | DIUN → n8n trigger |
 | Agent API bearer token | `secret/claude-agent-service` → `api_bearer_token` | n8n → claude-agent-service `/execute` auth. Synced into both `claude-agent` ns (consumer) and `n8n` ns (caller) via ESO. n8n exposes it to the container as `CLAUDE_AGENT_API_TOKEN` env var. |
+| Claude OAuth (primary) | `secret/claude-agent-service` → `claude_oauth_token` | Long-lived 1-year token from `claude setup-token`. Consumed by the CLI via `CLAUDE_CODE_OAUTH_TOKEN` env var (set on the container via `envFrom`). Preferred over the short-lived `.credentials.json` — CLI skips the refresh dance entirely. Rotate yearly; alert fires 30d out. |
+| Claude OAuth (spares) | `secret/claude-agent-service-spare-{1,2}` → `claude_oauth_token` | Failover tokens. Minted alongside primary (verified Anthropic does NOT revoke earlier sessions on new mint). Swap into primary if revocation or compromise. |
 | GitHub PAT | `secret/viktor` → `github_pat` | Changelog fetch (5000 req/hr) |
 | Slack webhook | `secret/platform` → `alertmanager_slack_api_url` | Upgrade notifications |
 | Woodpecker token | `secret/viktor` → `woodpecker_token` | CI pipeline polling |
+
+## OAuth token lifecycle
+
+The CLI supports two auth modes. We use the second — long-lived.
+
+| Mode | How minted | TTL | Needs refresh? | When to use |
+|------|-----------|-----|----------------|-------------|
+| `claude login` → `.credentials.json` | Interactive browser OAuth | Access ~6h + refresh token | Yes — CLI auto-refreshes on startup if refresh token valid | Human dev machines |
+| `claude setup-token` → opaque `sk-ant-oat01-*` | Interactive browser OAuth | **1 year** | No — expires hard | **Headless / service accounts (us)** |
+
+When both are present on disk, `CLAUDE_CODE_OAUTH_TOKEN` env var wins.
+
+**Harvesting headless**: `setup-token` uses Ink (React for terminals) and needs a real PTY with **≥300-column width**. At 80-col, Ink wraps and DROPS one character at the wrap boundary (107-char invalid instead of 108-char valid). Python wrapper pattern documented in memory; we harvested 2 spare tokens into Vault on 2026-04-18 using a temporary harvester pod.
+
+**Monitoring**: CronJob `claude-oauth-expiry-monitor` (claude-agent ns, every 6h) pushes `claude_oauth_token_expiry_timestamp{path="..."}` to Pushgateway. Alerts: `ClaudeOAuthTokenExpiringSoon` (30d, warn), `ClaudeOAuthTokenCritical` (7d, crit), `ClaudeOAuthTokenMonitorStale` (48h no push, warn), `ClaudeOAuthTokenMonitorNeverRun` (metric absent, warn).
+
+**Rotation**: on alert, harvest a new token, `vault kv patch secret/claude-agent-service claude_oauth_token=<new>`, update the `claude_oauth_token_mint_epochs` local in `stacks/claude-agent-service/main.tf`, `scripts/tg apply` → alert clears on next cron tick.
 
 ## n8n workflow gotchas
 
