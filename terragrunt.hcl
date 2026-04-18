@@ -62,6 +62,10 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 4"
     }
+    authentik = {
+      source  = "goauthentik/authentik"
+      version = "~> 2024.10"
+    }
   }
 }
 
