@@ -69,6 +69,7 @@ cloudflare_provider.tf
 tiers.tf
 stacks/*/cloudflare_provider.tf
 stacks/*/tiers.tf
+stacks/*/terragrunt_rendered.json
 
 # Kubernetes config (sensitive)
 config

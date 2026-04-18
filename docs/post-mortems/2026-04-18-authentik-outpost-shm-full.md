@@ -109,9 +109,9 @@ Contributing distractions:
 
 | Priority | Action | Type | Details | Status |
 |----------|--------|------|---------|--------|
-| P1 | Prometheus alert on outpost `/dev/shm` usage > 80% | Alert | Metric: `container_fs_usage_bytes{container!="",namespace="authentik",pod=~"ak-outpost-.*"} / container_fs_limit_bytes > 0.8`. Firing threshold 15 min, severity warning. | TODO |
-| P1 | Prometheus alert on sustained 400 rate on forward-auth middleware | Alert | `increase(traefik_service_requests_total{code="400",service=~".*-viktorbarzin-me@.*"}[15m]) > 100` — catches mass-failure patterns at the Traefik level before the outpost is silently broken. | TODO |
+| P1 | Prometheus alerts on outpost `/dev/shm` fill (two thresholds) | Alert | Group `Authentik Outpost` added in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`. `AuthentikOutpostMemoryHigh` (warning, working set > 1.5 GiB for 15m) + `AuthentikOutpostMemoryCritical` (critical, > 1.8 GiB for 5m) + `AuthentikOutpostRestarts` (warning, > 2 restarts in 30m). Applied 2026-04-18 13:16 UTC; loaded in Prometheus, state=inactive. | **DONE** |
 | P1 | Uptime-Kuma meta-monitor: "N+ external monitors down simultaneously" | Alert | Either a Prometheus rule over `uptime_kuma_monitor_status == 0` counts, or a dedicated external probe. Very strong signal of shared-infra failure. | TODO |
+| P1 | Bump tmpfs `sizeLimit` from 512Mi → 2Gi | Config | Patched outpost `kubernetes_json_patches` via Authentik API. 2026-04-18 13:06 UTC. Gives ~8× growth headroom at current probe rate before needing reconsideration. | **DONE** |
 
 ### P2 — Codify the fix so it survives drift
 

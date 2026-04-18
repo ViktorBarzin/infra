@@ -1907,6 +1907,38 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} service(s) externally unreachable but internally healthy — check Cloudflare tunnel, DNS, or Traefik routing"
+      - name: "Authentik Outpost"
+        # Guards against the 2026-04-18 incident where /dev/shm filled with
+        # gorilla/sessions FileStore files (~44k files at ~1.5KB each) and the
+        # outpost returned HTTP 400 on every forward-auth request.
+        # See docs/post-mortems/2026-04-18-authentik-outpost-shm-full.md.
+        rules:
+          - alert: AuthentikOutpostMemoryHigh
+            # Working set includes /dev/shm tmpfs contents (session files).
+            # sizeLimit on the outpost emptyDir is 2Gi; warn at 75% to leave
+            # plenty of headroom for mitigation before ENOSPC.
+            expr: container_memory_working_set_bytes{namespace="authentik", pod=~"ak-outpost-.*", container="proxy"} > 1.5 * 1024 * 1024 * 1024
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Authentik outpost working set {{ $value | humanize1024 }} — /dev/shm may be filling with session files (threshold 1.5 GiB of 2 GiB sizeLimit)"
+          - alert: AuthentikOutpostMemoryCritical
+            expr: container_memory_working_set_bytes{namespace="authentik", pod=~"ak-outpost-.*", container="proxy"} > 1.8 * 1024 * 1024 * 1024
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Authentik outpost near /dev/shm fill ({{ $value | humanize1024 }}) — imminent forward-auth failure. Restart pod: kubectl -n authentik delete pod -l goauthentik.io/outpost-name=authentik-embedded-outpost"
+          - alert: AuthentikOutpostRestarts
+            # Pod restarts on a stateless outpost usually mean OOM or crash.
+            # Normal is 0; we expect one manual rollout per incident/upgrade.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="authentik", pod=~"ak-outpost-.*"}[30m]) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Authentik outpost restarted {{ $value | printf \"%.0f\" }} times in 30m — check for OOM or crash loop"
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'
