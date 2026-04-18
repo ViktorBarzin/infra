@@ -173,7 +173,16 @@ Key behaviors observed:
 | Secret | Vault Path | Purpose |
 |--------|-----------|---------|
 | n8n webhook URL | `secret/diun` → `n8n_webhook_url` | DIUN → n8n trigger |
+| Agent API bearer token | `secret/claude-agent-service` → `api_bearer_token` | n8n → claude-agent-service `/execute` auth. Synced into both `claude-agent` ns (consumer) and `n8n` ns (caller) via ESO. n8n exposes it to the container as `CLAUDE_AGENT_API_TOKEN` env var. |
 | GitHub PAT | `secret/viktor` → `github_pat` | Changelog fetch (5000 req/hr) |
 | Slack webhook | `secret/platform` → `alertmanager_slack_api_url` | Upgrade notifications |
 | Woodpecker token | `secret/viktor` → `woodpecker_token` | CI pipeline polling |
-| Dev VM SSH key | n8n credentials store → `devvm-ssh` | n8n → dev VM SSH |
+
+## n8n workflow gotchas
+
+The `DIUN Upgrade Agent` workflow is imported once into n8n's PG DB — it is **not** Terraform-managed. The JSON at `stacks/n8n/workflows/diun-upgrade.json` is a backup; the live state lives in `workflow_entity.nodes`. Drift between the two is possible.
+
+- **HTTP Request node header expressions must use template-literal form**: `=Bearer {{ $env.CLAUDE_AGENT_API_TOKEN }}` works; `='Bearer ' + $env.CLAUDE_AGENT_API_TOKEN` does NOT evaluate and sends an empty/bogus header → 401 from claude-agent-service.
+- **`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`** must be set on the n8n deployment for expressions to read `$env.*` at all.
+- **Troubleshooting 401**: the workflow will show `success` status on the webhook node but error on `Run Upgrade Agent`. Inspect in n8n UI → Executions, or query `execution_entity` + `execution_data` directly. Claude-agent-service logs will also show `POST /execute HTTP/1.1 401 Unauthorized`.
+- **Patching the live workflow** (one-off, since it's not in TF): `UPDATE workflow_entity SET nodes = REPLACE(nodes::text, OLD, NEW)::json WHERE name = 'DIUN Upgrade Agent';`
