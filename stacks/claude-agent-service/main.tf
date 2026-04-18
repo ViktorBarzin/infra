@@ -471,3 +471,100 @@ resource "kubernetes_service" "claude_agent" {
     type = "ClusterIP"
   }
 }
+
+# =============================================================================
+# Token expiry monitor
+# Long-lived CLAUDE_CODE_OAUTH_TOKEN values expire 1y after mint. We track
+# mint timestamps here — on rotation, update the map below. A CronJob pushes
+# the computed expiry_timestamp to Pushgateway, Prometheus alerts 30d out.
+# =============================================================================
+locals {
+  claude_oauth_token_mint_epochs = {
+    # unix seconds (UTC) — when `claude setup-token` finished minting
+    "primary" = 1776528429  # 2026-04-18T12:07:09Z  (TOKEN2)
+    "spare-1" = 1776528280  # 2026-04-18T12:04:40Z  (TOKEN1)
+    "spare-2" = 1776528429  # 2026-04-18T12:07:09Z  (TOKEN2 — redundant w/ primary)
+  }
+  claude_oauth_token_ttl_seconds = 365 * 24 * 60 * 60
+}
+
+resource "kubernetes_config_map" "claude_oauth_expiry" {
+  metadata {
+    name      = "claude-oauth-expiry"
+    namespace = kubernetes_namespace.claude_agent.metadata[0].name
+  }
+  data = {
+    for path, mint in local.claude_oauth_token_mint_epochs :
+    path => tostring(mint + local.claude_oauth_token_ttl_seconds)
+  }
+}
+
+resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
+  metadata {
+    name      = "claude-oauth-expiry-monitor"
+    namespace = kubernetes_namespace.claude_agent.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "17 */6 * * *" # every 6h at :17 past
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name    = "push-expiry"
+              image   = "docker.io/curlimages/curl:8.11.0"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/claude-oauth-expiry-monitor'
+                NOW=$(date +%s)
+                PAYLOAD=''
+                PAYLOAD="$${PAYLOAD}# HELP claude_oauth_token_expiry_timestamp Unix epoch when the CLAUDE_CODE_OAUTH_TOKEN for this path expires
+                "
+                PAYLOAD="$${PAYLOAD}# TYPE claude_oauth_token_expiry_timestamp gauge
+                "
+                for path in /mnt/expiry/*; do
+                  name=$(basename "$path")
+                  exp=$(cat "$path")
+                  PAYLOAD="$${PAYLOAD}claude_oauth_token_expiry_timestamp{path=\"$name\"} $exp
+                "
+                done
+                PAYLOAD="$${PAYLOAD}# HELP claude_oauth_expiry_monitor_last_push_timestamp Last time the expiry monitor pushed metrics
+                "
+                PAYLOAD="$${PAYLOAD}# TYPE claude_oauth_expiry_monitor_last_push_timestamp gauge
+                "
+                PAYLOAD="$${PAYLOAD}claude_oauth_expiry_monitor_last_push_timestamp $NOW
+                "
+                echo "$PAYLOAD"
+                echo "$PAYLOAD" | curl -sS --data-binary @- "$PG"
+                echo "pushed at $NOW"
+              EOT
+              ]
+              volume_mount {
+                name       = "expiry"
+                mount_path = "/mnt/expiry"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+            volume {
+              name = "expiry"
+              config_map {
+                name = kubernetes_config_map.claude_oauth_expiry.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1741,6 +1741,38 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Email round-trip monitor never reported - check CronJob in mailserver namespace"
+          - alert: ClaudeOAuthTokenExpiringSoon
+            expr: (claude_oauth_token_expiry_timestamp{job="claude-oauth-expiry-monitor"} - time()) < (30 * 86400)
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude OAuth token {{ $labels.path }} expires in <30 days"
+              description: "Run `claude setup-token` to mint a new 1-year token and update the corresponding Vault path + mint_epoch in stacks/claude-agent-service/main.tf."
+          - alert: ClaudeOAuthTokenCritical
+            expr: (claude_oauth_token_expiry_timestamp{job="claude-oauth-expiry-monitor"} - time()) < (7 * 86400)
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Claude OAuth token {{ $labels.path }} expires in <7 days — rotate NOW"
+              description: "The long-lived CLAUDE_CODE_OAUTH_TOKEN is within 1 week of expiry. Automated upgrades will break when it expires. Harvest via `claude setup-token` and update Vault + TF."
+          - alert: ClaudeOAuthTokenMonitorStale
+            expr: (time() - claude_oauth_expiry_monitor_last_push_timestamp) > (48 * 3600)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude OAuth expiry monitor hasn't pushed in >48h"
+              description: "CronJob claude-oauth-expiry-monitor in claude-agent ns isn't running. Check `kubectl -n claude-agent get cronjob claude-oauth-expiry-monitor`."
+          - alert: ClaudeOAuthTokenMonitorNeverRun
+            expr: absent(claude_oauth_expiry_monitor_last_push_timestamp)
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Claude OAuth expiry monitor has never pushed — CronJob not running"
+              description: "Expected `claude_oauth_expiry_monitor_last_push_timestamp` to appear once the CronJob runs. Check the CronJob in claude-agent namespace."
           - alert: HackmdDown
             expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
             for: 5m
