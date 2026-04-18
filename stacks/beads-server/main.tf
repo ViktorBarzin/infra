@@ -8,6 +8,22 @@ variable "beadboard_image_tag" {
   default = "17a38e43"
 }
 
+# Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — keep in
+# sync when the claude-agent-service image is rebuilt. Reused here because the
+# dispatcher + reaper CronJobs only need bd, curl, and jq, which that image
+# already ships.
+variable "claude_agent_service_image_tag" {
+  type    = string
+  default = "0c24c9b6"
+}
+
+# Kill switch for auto-dispatch. When false, both CronJobs are suspended. The
+# manual BeadBoard Dispatch button keeps working either way.
+variable "beads_dispatcher_enabled" {
+  type    = bool
+  default = true
+}
+
 resource "kubernetes_namespace" "beads" {
   metadata {
     name = "beads-server"
@@ -669,5 +685,276 @@ module "beadboard_ingress" {
     "gethomepage.dev/icon"         = "mdi-chart-gantt"
     "gethomepage.dev/group"        = "Core Platform"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# ── Beads auto-dispatch (dispatcher + reaper CronJobs) ──
+#
+# Flow:
+#   user: bd assign <id> agent
+#     └──> CronJob: beads-dispatcher (every 2 min)
+#            1. GET BeadBoard /api/agent-status — skip if claude-agent-service busy
+#            2. bd query 'assignee=agent AND status=open' — pick highest priority
+#            3. bd update -s in_progress  (claim; next tick won't re-pick)
+#            4. POST BeadBoard /api/agent-dispatch — reuses prompt-build + bearer flow
+#            5. bd note "dispatched: job=<id>"  (or rollback + note on failure)
+#
+#   CronJob: beads-reaper (every 10 min)
+#     └── for bead (assignee=agent, status=in_progress, updated_at > 30m):
+#           bd update -s blocked + bd note  (recover from pod crashes mid-run)
+#
+# The claude-agent-service image ships bd + jq + curl — no separate image built.
+
+resource "kubernetes_config_map" "beads_metadata" {
+  metadata {
+    name      = "beads-metadata"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  data = {
+    "metadata.json" = jsonencode({
+      database         = "dolt"
+      backend          = "dolt"
+      dolt_mode        = "server"
+      dolt_server_host = "${kubernetes_service.dolt.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
+      dolt_server_port = 3306
+      dolt_server_user = "beads"
+      dolt_database    = "code"
+      project_id       = "a8f8bae7-ce65-4145-a5db-a13d11d297da"
+    })
+  }
+}
+
+locals {
+  claude_agent_service_image = "registry.viktorbarzin.me/claude-agent-service:${var.claude_agent_service_image_tag}"
+  beadboard_internal_url     = "http://${kubernetes_service.beadboard.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
+
+  beads_script_prelude = <<-EOT
+    set -euo pipefail
+    # bd with Dolt server mode needs metadata.json in a directory it can walk.
+    # ConfigMap mounts are read-only — copy to a writable location before use.
+    mkdir -p /tmp/.beads
+    cp /etc/beads-metadata/metadata.json /tmp/.beads/metadata.json
+  EOT
+}
+
+resource "kubernetes_cron_job_v1" "beads_dispatcher" {
+  metadata {
+    name      = "beads-dispatcher"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/2 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 60
+    suspend                       = !var.beads_dispatcher_enabled
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {
+            labels = {
+              app = "beads-dispatcher"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name  = "dispatcher"
+              image = local.claude_agent_service_image
+              command = ["/bin/sh", "-c", <<-EOT
+                ${local.beads_script_prelude}
+
+                BUSY=$(curl -sf "$${BEADBOARD_URL}/api/agent-status" | jq -r '.busy // false')
+                if [ "$BUSY" != "false" ]; then
+                  echo "claude-agent-service is busy — skipping tick"
+                  exit 0
+                fi
+
+                BEAD=$(bd --db /tmp/.beads query 'assignee=agent AND status=open' --json \
+                  | jq -r '[.[] | select(.acceptance_criteria and (.acceptance_criteria | length) > 0)]
+                           | sort_by(.priority, .updated_at)[0].id // empty')
+
+                if [ -z "$BEAD" ]; then
+                  echo "no eligible beads (assignee=agent, status=open, has acceptance_criteria)"
+                  exit 0
+                fi
+
+                echo "picked bead: $BEAD"
+
+                bd --db /tmp/.beads update "$BEAD" -s in_progress
+                bd --db /tmp/.beads note   "$BEAD" "auto-dispatcher claimed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+                RESP=$(curl -sS -w '\n%%{http_code}' -X POST \
+                  -H 'Content-Type: application/json' \
+                  -d "{\"taskId\":\"$BEAD\"}" \
+                  "$${BEADBOARD_URL}/api/agent-dispatch")
+                CODE=$(printf '%s' "$RESP" | tail -n1)
+                BODY=$(printf '%s' "$RESP" | sed '$d')
+
+                if [ "$CODE" = "200" ]; then
+                  JOB_ID=$(printf '%s' "$BODY" | jq -r '.job_id // "unknown"')
+                  bd --db /tmp/.beads note "$BEAD" "dispatched: job=$JOB_ID"
+                  echo "dispatched $BEAD as job $JOB_ID"
+                else
+                  # Roll the claim back so the next tick can retry.
+                  bd --db /tmp/.beads update "$BEAD" -s open
+                  bd --db /tmp/.beads note   "$BEAD" "dispatch failed HTTP $CODE: $BODY"
+                  echo "dispatch FAILED for $BEAD: HTTP $CODE — $BODY" >&2
+                  exit 1
+                fi
+              EOT
+              ]
+              env {
+                name  = "BEADBOARD_URL"
+                value = local.beadboard_internal_url
+              }
+              env {
+                name = "API_BEARER_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "beadboard-agent-service"
+                    key  = "api_bearer_token"
+                  }
+                }
+              }
+              env {
+                name  = "BEADS_ACTOR"
+                value = "beads-dispatcher"
+              }
+              env {
+                name  = "HOME"
+                value = "/tmp"
+              }
+              volume_mount {
+                name       = "beads-metadata"
+                mount_path = "/etc/beads-metadata"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+            volume {
+              name = "beads-metadata"
+              config_map {
+                name = kubernetes_config_map.beads_metadata.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_cron_job_v1" "beads_reaper" {
+  metadata {
+    name      = "beads-reaper"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/10 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 60
+    suspend                       = !var.beads_dispatcher_enabled
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {
+            labels = {
+              app = "beads-reaper"
+            }
+          }
+          spec {
+            restart_policy = "Never"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name  = "reaper"
+              image = local.claude_agent_service_image
+              command = ["/bin/sh", "-c", <<-EOT
+                ${local.beads_script_prelude}
+
+                THRESHOLD_MIN=30
+                NOW=$(date -u +%s)
+
+                bd --db /tmp/.beads query 'assignee=agent AND status=in_progress' --json \
+                  | jq -c '.[]' \
+                  | while read -r BEAD_JSON; do
+                      ID=$(printf '%s' "$BEAD_JSON" | jq -r '.id')
+                      LAST_UPDATE=$(printf '%s' "$BEAD_JSON" | jq -r '.updated_at')
+                      # Alpine's busybox date lacks GNU -d; parse ISO-8601 with python3.
+                      LAST_TS=$(python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('$LAST_UPDATE'.replace('Z','+00:00')).timestamp()))")
+                      AGE_MIN=$(( (NOW - LAST_TS) / 60 ))
+                      if [ "$AGE_MIN" -gt "$THRESHOLD_MIN" ]; then
+                        bd --db /tmp/.beads note   "$ID" "reaper: no progress for $${AGE_MIN}m (threshold $${THRESHOLD_MIN}m) — blocking"
+                        bd --db /tmp/.beads update "$ID" -s blocked
+                        echo "REAPED $ID (stale $${AGE_MIN}m)"
+                      else
+                        echo "keeping $ID (age $${AGE_MIN}m < $${THRESHOLD_MIN}m)"
+                      fi
+                    done
+              EOT
+              ]
+              env {
+                name  = "BEADS_ACTOR"
+                value = "beads-reaper"
+              }
+              env {
+                name  = "HOME"
+                value = "/tmp"
+              }
+              volume_mount {
+                name       = "beads-metadata"
+                mount_path = "/etc/beads-metadata"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+            volume {
+              name = "beads-metadata"
+              config_map {
+                name = kubernetes_config_map.beads_metadata.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
