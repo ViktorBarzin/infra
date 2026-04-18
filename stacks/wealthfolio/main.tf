@@ -168,10 +168,63 @@ resource "kubernetes_deployment" "wealthfolio" {
             }
           }
         }
+
+        # Backup sidecar — see the big comment further down. Shares the WF
+        # data PVC (read-only) + the NFS backup target. busybox crond fires
+        # a nightly sqlite3 .backup so we have an off-cluster copy.
+        container {
+          name  = "backup"
+          image = "alpine:3.20"
+          command = ["/bin/sh", "-c", <<-EOT
+          set -eu
+          apk add --no-cache --quiet sqlite busybox-suid
+          mkdir -p /etc/crontabs
+          cat >/etc/crontabs/root <<'CRON'
+          30 4 * * * /scripts/backup.sh >>/proc/1/fd/1 2>&1
+          CRON
+          mkdir -p /scripts
+          cat >/scripts/backup.sh <<'SCRIPT'
+          #!/bin/sh
+          set -eu
+          TS=$(date +%Y-%m-%dT%H-%M-%S)
+          DIR=/backup/$TS
+          mkdir -p "$DIR"
+          sqlite3 /data/wealthfolio.db ".backup $DIR/wealthfolio.db"
+          cp /data/secrets.json "$DIR/" 2>/dev/null || true
+          # Retention — keep 30 days.
+          find /backup -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
+          echo "wealthfolio-backup: $DIR ($(du -sh $DIR | cut -f1))"
+          SCRIPT
+          chmod +x /scripts/backup.sh
+          echo "wealthfolio-backup sidecar ready; next 04:30 UTC"
+          exec crond -f -l 8
+          EOT
+          ]
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "backup"
+            mount_path = "/backup"
+          }
+          resources {
+            requests = { cpu = "5m", memory = "16Mi" }
+            limits   = { memory = "64Mi" }
+          }
+        }
         volume {
           name = "data"
           persistent_volume_claim {
             claim_name = "wealthfolio-data-encrypted"
+          }
+        }
+        volume {
+          name = "backup"
+          nfs {
+            server = var.nfs_server
+            path   = "/srv/nfs/wealthfolio-backup"
           }
         }
       }
@@ -320,3 +373,21 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+############################################################################
+# Backup — sidecar approach
+#
+# Wealthfolio has no PG/MySQL support (Diesel ORM hard-wired to SQLite per
+# upstream README). The data lives on an RWO PVC that's held 24/7 by the
+# main WF pod, so a separate backup CronJob would hit a Multi-Attach error
+# (confirmed 2026-04-18 test).
+#
+# Instead, the WF Deployment gets a backup sidecar:
+# - Shares the data PVC read-only + the NFS backup target.
+# - Runs busybox `crond` with a 04:30-daily entry.
+# - Uses `sqlite3 .backup` (WAL-safe, no downtime) to snapshot into an
+#   NFS dated folder + retains 30 days.
+#
+# See `resource "kubernetes_deployment" "wealthfolio"` above — the sidecar
+# is wired in via the deployment's container/volume blocks.
+############################################################################
