@@ -5,15 +5,6 @@ variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
 variable "sasl_passwd" {} # For sendgrid i.e relayhost
 variable "nfs_server" { type = string }
-variable "brevo_api_key" {
-  type      = string
-  sensitive = true
-}
-variable "email_monitor_imap_password" {
-  type      = string
-  sensitive = true
-}
-
 # Build the virtual-alias map, dropping aliases where BOTH the source and
 # target are real mailboxes in var.mailserver_accounts (and are different).
 # Without this filter, docker-mailserver emits two passwd-file userdb lines
@@ -564,6 +555,61 @@ resource "kubernetes_service" "mailserver" {
 # E2E Email Roundtrip Monitor
 # Sends test email via Brevo API, verifies delivery via IMAP, pushes metrics
 # =============================================================================
+# ExternalSecret syncing the probe's Vault inputs into a K8s Secret, so
+# `kubectl describe cronjob email-roundtrip-monitor` no longer leaks the
+# Brevo API key and IMAP password via `env[].value`. The two upstream Vault
+# entries both wrap the effective secret:
+#   - secret/viktor  → brevo_api_key     = base64(JSON({"api_key": "..."}))
+#   - secret/platform → mailserver_accounts = JSON({"spam@viktorbarzin.me": "<pw>", ...})
+# ESO's `target.template` (engineVersion v2) runs sprig on the raw remote
+# values so the rendered K8s Secret contains ONLY the two env vars the probe
+# actually needs, under the exact keys `BREVO_API_KEY` and
+# `EMAIL_MONITOR_IMAP_PASSWORD` so the CronJob can consume them via a single
+# `env_from { secret_ref {} }` block.
+resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "mailserver-probe-secrets"
+      namespace = kubernetes_namespace.mailserver.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "mailserver-probe-secrets"
+        template = {
+          engineVersion = "v2"
+          data = {
+            BREVO_API_KEY               = "{{ .brevo_api_key_wrapped | b64dec | fromJson | dig \"api_key\" \"\" }}"
+            EMAIL_MONITOR_IMAP_PASSWORD = "{{ .mailserver_accounts | fromJson | dig \"spam@viktorbarzin.me\" \"\" }}"
+          }
+        }
+      }
+      data = [
+        {
+          secretKey = "brevo_api_key_wrapped"
+          remoteRef = {
+            key      = "viktor"
+            property = "brevo_api_key"
+          }
+        },
+        {
+          secretKey = "mailserver_accounts"
+          remoteRef = {
+            key      = "platform"
+            property = "mailserver_accounts"
+          }
+        },
+      ]
+    }
+  }
+}
+
 resource "kubernetes_cron_job_v1" "email_roundtrip_monitor" {
   metadata {
     name      = "email-roundtrip-monitor"
@@ -695,13 +741,10 @@ sys.exit(0 if success else 1)
 '
               EOT
               ]
-              env {
-                name  = "BREVO_API_KEY"
-                value = var.brevo_api_key
-              }
-              env {
-                name  = "EMAIL_MONITOR_IMAP_PASSWORD"
-                value = var.email_monitor_imap_password
+              env_from {
+                secret_ref {
+                  name = "mailserver-probe-secrets"
+                }
               }
               resources {
                 requests = {
