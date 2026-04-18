@@ -86,6 +86,16 @@ resource "kubernetes_secret" "basic_auth" {
   }
 }
 
+resource "kubernetes_config_map" "dawarich_hook" {
+  metadata {
+    name      = "dawarich-hook"
+    namespace = kubernetes_namespace.owntracks.metadata[0].name
+  }
+  data = {
+    "dawarich-hook.lua" = file("${path.module}/dawarich-hook.lua")
+  }
+}
+
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   wait_until_bound = false
   metadata {
@@ -149,9 +159,22 @@ resource "kubernetes_deployment" "owntracks" {
             name           = "http"
             container_port = 8083
           }
+          # ot-recorder 1.0.1 has no OTR_HTTPHOOK; forwarding to Dawarich is
+          # done via a Lua hook script loaded with --lua-script. The script
+          # reads DAWARICH_API_KEY from env and fires curl fire-and-forget.
+          args = ["--lua-script", "/hook/dawarich-hook.lua", "owntracks/#"]
           env {
             name  = "OTR_PORT"
             value = "0"
+          }
+          env {
+            name = "DAWARICH_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "owntracks-secrets"
+                key  = "dawarich_api_key"
+              }
+            }
           }
 
           volume_mount {
@@ -161,6 +184,11 @@ resource "kubernetes_deployment" "owntracks" {
           volume_mount {
             name       = "data"
             mount_path = "/config"
+          }
+          volume_mount {
+            name       = "hook"
+            mount_path = "/hook"
+            read_only  = true
           }
           resources {
             requests = {
@@ -176,6 +204,12 @@ resource "kubernetes_deployment" "owntracks" {
           name = "data"
           persistent_volume_claim {
             claim_name = "owntracks-data-encrypted"
+          }
+        }
+        volume {
+          name = "hook"
+          config_map {
+            name = kubernetes_config_map.dawarich_hook.metadata[0].name
           }
         }
       }
