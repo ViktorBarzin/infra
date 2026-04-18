@@ -73,12 +73,12 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|MySQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|MySQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|HomeAssistantDown"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|HomeAssistantDown"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -1340,13 +1340,6 @@ serverFiles:
               severity: critical
             annotations:
               summary: "PostgreSQL pod {{ $labels.pod }} is not ready"
-          - alert: MySQLDown
-            expr: kube_statefulset_status_replicas_ready{namespace="dbaas", statefulset="mysql-cluster"} < 1
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "MySQL InnoDB Cluster has no ready replicas"
           - alert: RedisDown
             expr: kube_statefulset_status_replicas_ready{namespace="redis", statefulset="redis-node"} < 1
             for: 5m
@@ -1391,13 +1384,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CNPG operator down — PostgreSQL failover/management degraded"
-          - alert: MySQLOperatorDown
-            expr: (kube_deployment_status_replicas_available{namespace="mysql-operator", deployment="mysql-operator"} or on() vector(0)) < 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "MySQL operator down — InnoDB Cluster management degraded"
       - name: Cluster
         rules:
           - alert: NodeDown
