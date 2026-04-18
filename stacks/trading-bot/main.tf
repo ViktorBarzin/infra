@@ -10,7 +10,6 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
-variable "ollama_host" { type = string }
 locals {
   common_env = {
     TRADING_REDIS_URL                    = "redis://${var.redis_host}:6379/4"
@@ -18,8 +17,6 @@ locals {
     TRADING_ALPACA_BASE_URL              = "https://paper-api.alpaca.markets"
     TRADING_PAPER_TRADING                = "true"
     TRADING_REDDIT_USER_AGENT            = "trading-bot/0.1"
-    TRADING_OLLAMA_HOST                  = "http://${var.ollama_host}:11434"
-    TRADING_OLLAMA_MODEL                 = "gemma3"
     TRADING_WATCHLIST                    = "[\"AAPL\",\"TSLA\",\"NVDA\",\"MSFT\",\"GOOGL\"]"
     TRADING_BAR_TIMEFRAME                = "5Min"
     TRADING_POLL_INTERVAL_SECONDS        = "60"
