@@ -3,6 +3,12 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
+# Temporary default until GHA pipeline publishes the first 8-char SHA tag.
+variable "beadboard_image_tag" {
+  type    = string
+  default = "latest"
+}
+
 resource "kubernetes_namespace" "beads" {
   metadata {
     name = "beads-server"
@@ -386,13 +392,13 @@ module "tls_secret" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.beads.metadata[0].name
-  name              = "dolt-workbench"
-  tls_secret_name   = var.tls_secret_name
-  protected         = false
-  exclude_crowdsec  = true
+  source           = "../../modules/kubernetes/ingress_factory"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.beads.metadata[0].name
+  name             = "dolt-workbench"
+  tls_secret_name  = var.tls_secret_name
+  protected        = false
+  exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dolt Workbench"
@@ -463,6 +469,38 @@ resource "kubernetes_config_map" "beadboard_config" {
   }
 }
 
+# Pulls the claude-agent-service bearer token from Vault so BeadBoard can
+# dispatch agent jobs via the in-cluster HTTP API.
+resource "kubernetes_manifest" "beadboard_agent_service_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "beadboard-agent-service"
+      namespace = kubernetes_namespace.beads.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "beadboard-agent-service"
+      }
+      data = [
+        {
+          secretKey = "api_bearer_token"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "api_bearer_token"
+          }
+        },
+      ]
+    }
+  }
+}
+
 resource "kubernetes_deployment" "beadboard" {
   metadata {
     name      = "beadboard"
@@ -470,6 +508,9 @@ resource "kubernetes_deployment" "beadboard" {
     labels = {
       app  = "beadboard"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
     }
   }
   spec {
@@ -507,11 +548,26 @@ resource "kubernetes_deployment" "beadboard" {
 
         container {
           name  = "beadboard"
-          image = "registry.viktorbarzin.me:5050/beadboard:latest"
+          image = "registry.viktorbarzin.me:5050/beadboard:${var.beadboard_image_tag}"
 
           port {
             name           = "http"
             container_port = 3000
+          }
+
+          env {
+            name  = "CLAUDE_AGENT_SERVICE_URL"
+            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+          }
+
+          env {
+            name = "CLAUDE_AGENT_BEARER_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "beadboard-agent-service"
+                key  = "api_bearer_token"
+              }
+            }
           }
 
           volume_mount {
@@ -596,13 +652,13 @@ resource "kubernetes_service" "beadboard" {
 }
 
 module "beadboard_ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.beads.metadata[0].name
-  name              = "beadboard"
-  tls_secret_name   = var.tls_secret_name
-  protected         = true
-  exclude_crowdsec  = true
+  source           = "../../modules/kubernetes/ingress_factory"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.beads.metadata[0].name
+  name             = "beadboard"
+  tls_secret_name  = var.tls_secret_name
+  protected        = true
+  exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "BeadBoard"
