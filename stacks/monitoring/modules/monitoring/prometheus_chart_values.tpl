@@ -1787,6 +1787,30 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Privatebin has no available replicas"
+          - alert: DawarichIngestionStale
+            expr: (time() - dawarich_last_point_ingested_timestamp{user="viktor"}) > 172800
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich: no points from viktor in >2 days"
+              description: "The iOS Dawarich app likely stopped sending location points. Open the app, verify it's running, and check background location permissions. Server-side is healthy when this alert fires — the issue is client-side."
+          - alert: DawarichIngestionMonitorStale
+            expr: (time() - dawarich_ingestion_monitor_last_push_timestamp{user="viktor"}) > 129600
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich ingestion freshness monitor hasn't pushed in >36h"
+              description: "CronJob ingestion-freshness-monitor in dawarich ns isn't running or failing. Check `kubectl -n dawarich get cronjob ingestion-freshness-monitor` and recent Job logs."
+          - alert: DawarichIngestionMonitorNeverRun
+            expr: absent(dawarich_ingestion_monitor_last_push_timestamp{user="viktor"})
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich ingestion freshness monitor has never pushed"
+              description: "Expected `dawarich_ingestion_monitor_last_push_timestamp` to appear once the daily CronJob runs. Check the CronJob in dawarich namespace."
       - name: "Network Traffic (GoFlow2)"
         rules:
           - alert: GoFlow2Down
@@ -1939,6 +1963,38 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Authentik outpost restarted {{ $value | printf \"%.0f\" }} times in 30m — check for OOM or crash loop"
+      - name: Infrastructure Drift
+        # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
+        # See Wave 7 of the state-drift consolidation plan.
+        rules:
+          - alert: DriftDetectionStale
+            # Drift detection pipeline hasn't reported in 26h. Either the cron
+            # didn't fire, or the job is failing before the push step.
+            expr: time() - max(drift_detection_last_run_timestamp) > 26 * 3600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Drift detection hasn't reported in {{ $value | humanizeDuration }} — check Woodpecker pipeline 'drift-detection'"
+          - alert: DriftUnaddressed
+            # Any stack drifted for >72h without being reconciled. Either apply
+            # to bring config in line, or update HCL to match desired state.
+            expr: max(drift_stack_age_hours) > 72
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "A stack has been drifted for {{ $value | printf \"%.0f\" }}h — run scripts/tg plan across stacks to identify and reconcile"
+          - alert: DriftStacksMany
+            # More than 10 stacks drifting simultaneously usually means a
+            # systemic issue (cluster upgrade, new admission controller,
+            # provider version bump) rather than individual misconfigurations.
+            expr: drift_stack_count > 10
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} stacks drifting — likely a systemic cause (new admission webhook, provider upgrade). Check the most recent drift-detection run in Woodpecker."
 
 extraScrapeConfigs: |
   - job_name: 'proxmox-host'

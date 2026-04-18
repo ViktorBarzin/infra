@@ -42,10 +42,15 @@ steps:
           -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
 
       # ── Run terraform plan on all stacks ──
+      # Emits two timestamps per drifted stack so the Pushgateway/Prometheus
+      # side can compute drift-age-hours via `time() - drift_stack_first_seen`.
       - |
         DRIFTED=""
         CLEAN=0
         ERRORS=""
+        NOW=$(date +%s)
+        # Metrics accumulator — written once per stack, then pushed as a batch.
+        METRICS=""
 
         for stack_dir in stacks/*/; do
           stack=$(basename "$stack_dir")
@@ -56,11 +61,49 @@ steps:
           EXIT=$?
 
           case $EXIT in
-            0) echo "OK (no changes)"; CLEAN=$((CLEAN + 1)) ;;
-            1) echo "ERROR"; ERRORS="$ERRORS $stack" ;;
-            2) echo "DRIFT DETECTED"; DRIFTED="$DRIFTED $stack" ;;
+            0)
+              echo "OK (no changes)"
+              CLEAN=$((CLEAN + 1))
+              # drift_stack_state=0 means clean; age-hours irrelevant so we
+              # still push 0 so per-stack gauges don't go stale.
+              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 0\n"
+              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} 0\n"
+              ;;
+            1)
+              echo "ERROR"
+              ERRORS="$ERRORS $stack"
+              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 2\n"
+              ;;
+            2)
+              echo "DRIFT DETECTED"
+              DRIFTED="$DRIFTED $stack"
+              # Fetch first-seen timestamp from Pushgateway (preserve across runs).
+              FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
+                | awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}')
+              if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
+                FIRST_SEEN="$NOW"
+              fi
+              AGE_HOURS=$(( (NOW - FIRST_SEEN) / 3600 ))
+              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 1\n"
+              METRICS="${METRICS}drift_stack_first_seen{stack=\"$stack\"} $FIRST_SEEN\n"
+              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} $AGE_HOURS\n"
+              ;;
           esac
         done
+
+        # Summary counters — single gauge per run.
+        DRIFT_COUNT=$(echo "$DRIFTED" | wc -w)
+        ERROR_COUNT=$(echo "$ERRORS" | wc -w)
+        METRICS="${METRICS}drift_stack_count $DRIFT_COUNT\n"
+        METRICS="${METRICS}drift_error_count $ERROR_COUNT\n"
+        METRICS="${METRICS}drift_clean_count $CLEAN\n"
+        METRICS="${METRICS}drift_detection_last_run_timestamp $NOW\n"
+
+        # ── Push to Pushgateway ──
+        # One batched push keeps the run atomic: either all metrics land or none.
+        printf "%b" "$METRICS" | curl -s --data-binary @- \
+          http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/drift-detection \
+          || echo "(pushgateway unavailable, metrics lost for this run)"
 
         echo ""
         echo "=== Drift Detection Summary ==="
