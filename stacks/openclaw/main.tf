@@ -606,6 +606,10 @@ resource "kubernetes_deployment" "openclaw" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "openclaw" {
@@ -807,6 +811,10 @@ resource "kubernetes_deployment" "task_webhook" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "task_webhook" {
@@ -944,6 +952,10 @@ resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # --- CronJob: Task processor — polls Forgejo issues and triggers OpenClaw ---
@@ -1035,6 +1047,10 @@ resource "kubernetes_cron_job_v1" "task_processor" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 

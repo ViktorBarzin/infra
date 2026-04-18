@@ -188,6 +188,10 @@ resource "kubernetes_cron_job_v1" "backup-etcd" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Weekly etcd defragmentation — prevents fragmentation buildup that causes slow requests
@@ -242,6 +246,10 @@ resource "kubernetes_cron_job_v1" "defrag-etcd" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Clean up evicted/failed pods cluster-wide daily
@@ -276,6 +284,10 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 

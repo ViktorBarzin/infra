@@ -235,6 +235,10 @@ EOT
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 
@@ -261,14 +265,14 @@ resource "kubernetes_service" "meshcentral" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.meshcentral.metadata[0].name
-  name            = "meshcentral"
-  tls_secret_name = var.tls_secret_name
-  port            = 80
-  protected         = true
-  anti_ai_scraping  = false
+  source           = "../../modules/kubernetes/ingress_factory"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.meshcentral.metadata[0].name
+  name             = "meshcentral"
+  tls_secret_name  = var.tls_secret_name
+  port             = 80
+  protected        = true
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "MeshCentral"

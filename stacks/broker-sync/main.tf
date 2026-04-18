@@ -126,6 +126,10 @@ resource "kubernetes_cron_job_v1" "version_probe" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Trading212 steady-state daily sync. Phase 1 deliverable.
@@ -221,6 +225,10 @@ resource "kubernetes_cron_job_v1" "trading212" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 
@@ -347,6 +355,10 @@ resource "kubernetes_cron_job_v1" "imap" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # CSV drop-folder processor — Scottish Widows, Fidelity quarterly, Freetrade, etc.
@@ -434,6 +446,10 @@ resource "kubernetes_cron_job_v1" "csv_drop" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 
@@ -523,6 +539,10 @@ resource "kubernetes_cron_job_v1" "fx_reconcile" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Backup: snapshot sync.db / fx.db / csv-archive into NFS daily, keep 30 days.
@@ -599,6 +619,10 @@ resource "kubernetes_cron_job_v1" "backup" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 

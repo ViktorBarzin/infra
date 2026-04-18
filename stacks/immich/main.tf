@@ -782,6 +782,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # POWER TOOLS

@@ -467,6 +467,10 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_cron_job_v1" "nextcloud-backup" {
@@ -536,5 +540,9 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

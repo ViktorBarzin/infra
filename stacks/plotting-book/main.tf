@@ -87,6 +87,7 @@ resource "kubernetes_deployment" "plotting-book" {
     # DRIFT_WORKAROUND: CI pipeline owns image tag (kubectl set image from Woodpecker/GHA). Reviewed 2026-04-18.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
   spec {
@@ -311,6 +312,10 @@ resource "kubernetes_cron_job_v1" "plotting_book_backup" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 

@@ -165,6 +165,10 @@ resource "kubernetes_deployment" "technitium_secondary" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Secondary web service — internal only, used by setup Job
@@ -316,6 +320,10 @@ resource "kubernetes_deployment" "technitium_tertiary" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "technitium_tertiary_web" {
@@ -446,5 +454,9 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

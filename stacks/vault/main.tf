@@ -336,6 +336,10 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # =============================================================================
@@ -391,8 +395,8 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
   token_policies                   = [vault_policy.ci.name]
-  token_ttl                        = 604800   # 7d
-  token_period                     = 604800   # periodic: auto-renews indefinitely
+  token_ttl                        = 604800 # 7d
+  token_period                     = 604800 # periodic: auto-renews indefinitely
 }
 
 # --- ESO Policy & Role ---
@@ -420,8 +424,8 @@ resource "vault_kubernetes_auth_backend_role" "eso" {
   bound_service_account_names      = ["external-secrets"]
   bound_service_account_namespaces = ["external-secrets"]
   token_policies                   = [vault_policy.eso_reader.name]
-  token_ttl                        = 864000   # 10d (staggered from ci/openclaw)
-  token_period                     = 864000   # periodic: auto-renews indefinitely
+  token_ttl                        = 864000 # 10d (staggered from ci/openclaw)
+  token_period                     = 864000 # periodic: auto-renews indefinitely
 }
 
 # --- Woodpecker Secret Sync Policy & Role ---
@@ -441,8 +445,8 @@ resource "vault_kubernetes_auth_backend_role" "woodpecker_sync" {
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
   token_policies                   = [vault_policy.woodpecker_sync.name]
-  token_ttl                        = 691200   # 8d (staggered from others)
-  token_period                     = 691200   # periodic: auto-renews indefinitely
+  token_ttl                        = 691200 # 8d (staggered from others)
+  token_period                     = 691200 # periodic: auto-renews indefinitely
 }
 
 # --- OpenClaw Policy & Role ---
@@ -465,8 +469,8 @@ resource "vault_kubernetes_auth_backend_role" "openclaw" {
   bound_service_account_names      = ["openclaw"]
   bound_service_account_namespaces = ["openclaw"]
   token_policies                   = [vault_policy.openclaw_k8s.name]
-  token_ttl                        = 777600   # 9d (staggered from others)
-  token_period                     = 777600   # periodic: auto-renews indefinitely
+  token_ttl                        = 777600 # 9d (staggered from others)
+  token_period                     = 777600 # periodic: auto-renews indefinitely
 }
 
 # --- Terraform State Policy & Role (Claude Agent) ---
@@ -486,8 +490,8 @@ resource "vault_kubernetes_auth_backend_role" "terraform_state" {
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["claude-agent"]
   token_policies                   = [vault_policy.terraform_state.name]
-  token_ttl                        = 518400   # 6d (staggered from others: ci=7d, eso=10d, woodpecker=8d, openclaw=9d)
-  token_period                     = 518400   # periodic: auto-renews indefinitely
+  token_ttl                        = 518400 # 6d (staggered from others: ci=7d, eso=10d, woodpecker=8d, openclaw=9d)
+  token_period                     = 518400 # periodic: auto-renews indefinitely
 }
 
 # =============================================================================
@@ -503,8 +507,8 @@ resource "vault_mount" "database" {
 
 # MySQL connection — app user rotation only
 resource "vault_database_secret_backend_connection" "mysql" {
-  backend       = vault_mount.database.path
-  name          = "mysql"
+  backend = vault_mount.database.path
+  name    = "mysql"
   allowed_roles = [
     "mysql-speedtest", "mysql-wrongmove", "mysql-codimd",
     "mysql-nextcloud", "mysql-shlink", "mysql-grafana",
@@ -521,8 +525,8 @@ resource "vault_database_secret_backend_connection" "mysql" {
 
 # PostgreSQL connection — CNPG superuser
 resource "vault_database_secret_backend_connection" "postgresql" {
-  backend       = vault_mount.database.path
-  name          = "postgresql"
+  backend = vault_mount.database.path
+  name    = "postgresql"
   allowed_roles = [
     # "pg-trading",  # Commented out 2026-04-06 - trading-bot disabled
     "pg-health", "pg-linkwarden",
@@ -822,9 +826,9 @@ resource "kubernetes_namespace" "user_namespace" {
   metadata {
     name = each.value
     labels = {
-      tier                              = "4-aux"
+      tier                               = "4-aux"
       "resource-governance/custom-quota" = "true"
-      "managed-by"                      = "vault-user-onboarding"
+      "managed-by"                       = "vault-user-onboarding"
     }
   }
   lifecycle {
@@ -839,7 +843,7 @@ resource "vault_policy" "namespace_owner" {
     if user.role == "namespace-owner"
   })
 
-  name = "namespace-owner-${each.key}"
+  name   = "namespace-owner-${each.key}"
   policy = <<-EOT
     # Read/write own secrets
     path "secret/data/${each.key}" {

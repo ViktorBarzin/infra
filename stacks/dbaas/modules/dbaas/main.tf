@@ -456,6 +456,10 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Per-database MySQL backups (enables single-database restore without affecting others)
@@ -550,6 +554,10 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 
@@ -755,6 +763,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
 }
 
@@ -1283,6 +1295,10 @@ resource "kubernetes_deployment" "pgadmin" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 resource "kubernetes_service" "pgadmin" {
   metadata {
@@ -1391,6 +1407,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Per-database PostgreSQL backups (enables single-database restore without affecting others)
@@ -1497,5 +1517,9 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

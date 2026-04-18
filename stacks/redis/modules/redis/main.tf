@@ -240,6 +240,10 @@ resource "kubernetes_deployment" "haproxy" {
   }
 
   depends_on = [helm_release.redis]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # Dedicated service for HAProxy master-only routing.
@@ -371,5 +375,9 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

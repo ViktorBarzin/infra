@@ -372,6 +372,10 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # CronJob: Import devices from pfSense (Kea DHCP leases + ARP table) into phpIPAM
@@ -568,6 +572,10 @@ PYEOF
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 # CronJob: Import devices from remote sites (London + Valchedrym) via SSH
@@ -727,5 +735,9 @@ PYEOF
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }

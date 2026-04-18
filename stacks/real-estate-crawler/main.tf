@@ -158,7 +158,8 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image
+      spec[0].template[0].spec[0].container[0].image,
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
 }
@@ -304,7 +305,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image
+      spec[0].template[0].spec[0].container[0].image,
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
 }
@@ -467,6 +469,10 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
       }
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "realestate-crawler-celery-metrics" {
@@ -573,5 +579,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
 }

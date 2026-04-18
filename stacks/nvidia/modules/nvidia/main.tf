@@ -13,7 +13,7 @@ resource "kubernetes_namespace" "nvidia" {
     labels = {
       "istio-injection" : "disabled"
       tier                                    = var.tier
-      "resource-governance/custom-quota"       = "true"
+      "resource-governance/custom-quota"      = "true"
       "resource-governance/custom-limitrange" = "true"
     }
   }
@@ -181,6 +181,10 @@ resource "kubernetes_deployment" "nvidia-exporter" {
     }
   }
   depends_on = [helm_release.nvidia-gpu-operator]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
 }
 
 resource "kubernetes_service" "nvidia-exporter" {
