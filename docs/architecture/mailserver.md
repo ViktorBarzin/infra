@@ -117,6 +117,10 @@ Reverse DNS for `176.12.22.76` returns `176-12-22-76.pon.spectrumnet.bg.` (ISP-a
 - **Real client IPs**: `externalTrafficPolicy: Local` on dedicated MetalLB IP `10.0.20.202` preserves original client IPs (not SNATed to node IPs)
 - **Decisions**: CrowdSec bans/challenges attackers via firewall bouncer rules
 
+### Fail2ban Disabled (CrowdSec is the Policy)
+
+docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FAIL2BAN = "0"` at [`stacks/mailserver/modules/mailserver/main.tf:68`](../../stacks/mailserver/modules/mailserver/main.tf). CrowdSec is the cluster-wide bouncer for SSH, HTTP, and SMTP/IMAP brute-force defence — it already parses the `postfix` and `dovecot` log streams via the collections listed above and applies decisions at the LB/firewall layer. Enabling Fail2ban in-pod would create a duplicate response path (two systems racing to ban the same IP from different enforcement points), add iptables churn inside the container, and fragment the audit trail across two decision stores. Decision (2026-04-18): keep it disabled; CrowdSec owns this policy.
+
 ### Rspamd
 - Spam filtering with phishing detection and Oletools
 - DKIM signing (selector `mail`, 2048-bit RSA)
