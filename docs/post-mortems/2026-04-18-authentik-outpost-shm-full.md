@@ -111,7 +111,7 @@ Contributing distractions:
 |----------|--------|------|---------|--------|
 | P1 | Prometheus alerts on outpost `/dev/shm` fill (two thresholds) | Alert | Group `Authentik Outpost` added in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`. `AuthentikOutpostMemoryHigh` (warning, working set > 1.5 GiB for 15m) + `AuthentikOutpostMemoryCritical` (critical, > 1.8 GiB for 5m) + `AuthentikOutpostRestarts` (warning, > 2 restarts in 30m). Applied 2026-04-18 13:16 UTC; loaded in Prometheus, state=inactive. | **DONE** |
 | P1 | Uptime-Kuma meta-monitor: "N+ external monitors down simultaneously" | Alert | Either a Prometheus rule over `uptime_kuma_monitor_status == 0` counts, or a dedicated external probe. Very strong signal of shared-infra failure. | TODO |
-| P1 | Bump tmpfs `sizeLimit` from 512Mi → 2Gi | Config | Patched outpost `kubernetes_json_patches` via Authentik API. 2026-04-18 13:06 UTC. Gives ~8× growth headroom at current probe rate before needing reconsideration. | **DONE** |
+| P1 | Bump tmpfs `sizeLimit` from 512Mi → 2Gi + set explicit container memory limit 2560Mi | Config | Patched outpost `kubernetes_json_patches` via Authentik API. 2026-04-18 13:06 UTC (sizeLimit), 13:22 UTC (container limit). **Gotcha**: `sizeLimit` alone is insufficient — writes to tmpfs count against container cgroup memory, and Kyverno's `tier-defaults` LimitRange sets a default `limits.memory: 256Mi` which OOM-kills the container before tmpfs fills. Fix is to also set `containers[0].resources.limits.memory` ≥ `sizeLimit + working_set_headroom`. Verified 1.5 GB file write succeeds on the configured pod; df reports 2.0 GB tmpfs. Gives ~8× growth headroom at current probe rate. | **DONE** |
 
 ### P2 — Codify the fix so it survives drift
 
