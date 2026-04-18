@@ -61,10 +61,10 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "grampsweb-data-proxmox"
+    name      = "grampsweb-data-encrypted"
     namespace = kubernetes_namespace.grampsweb.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
@@ -74,7 +74,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -316,7 +316,7 @@ resource "kubernetes_deployment" "grampsweb" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
         }
       }
