@@ -24,7 +24,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Monthly gross / net / tax / NI",
+      "title": "Monthly cash gross / net / tax / NI (RSU stripped)",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -95,7 +95,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", gross_pay, net_pay, income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, net_pay, income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -105,7 +105,7 @@
     },
     {
       "id": 2,
-      "title": "YTD gross (this tax year) with UK band thresholds",
+      "title": "YTD cash gross (excl. RSU) with UK band thresholds",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -197,7 +197,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_gross FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay - rsu_vest) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_cash_gross FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -288,7 +288,7 @@
     },
     {
       "id": 4,
-      "title": "Latest effective rate & take-home %",
+      "title": "Effective rate & take-home % (cash-basis)",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -361,7 +361,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", ROUND(((income_tax + national_insurance)::numeric / NULLIF(gross_pay, 0)) * 100, 2) AS \"effective_rate_pct\", ROUND((net_pay::numeric / NULLIF(gross_pay, 0)) * 100, 2) AS \"take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", ROUND(((income_tax + national_insurance)::numeric / NULLIF(gross_pay - rsu_vest, 0)) * 100, 2) AS \"effective_rate_pct\", ROUND((net_pay::numeric / NULLIF(gross_pay - rsu_vest, 0)) * 100, 2) AS \"take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -540,7 +540,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT pay_date, employer, tax_year, gross_pay, income_tax, national_insurance, pension_employee, pension_employer, student_loan, COALESCE(other_deductions, '{}'::jsonb) AS other_deductions, net_pay, validated, paperless_doc_id FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date DESC"
+          "rawSql": "SELECT pay_date, employer, tax_year, gross_pay, (gross_pay - rsu_vest) AS cash_gross, rsu_vest, rsu_offset, income_tax, national_insurance, pension_employee, pension_employer, student_loan, COALESCE(other_deductions, '{}'::jsonb) AS other_deductions, net_pay, validated, paperless_doc_id FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date DESC"
         }
       ]
     },
@@ -603,6 +603,63 @@
           "editorMode": "code",
           "format": "time_series",
           "rawSql": "SELECT pay_date AS \"time\", income_tax, national_insurance, pension_employee, pension_employer, student_loan FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "RSU vest history (notional, taxed at Schwab)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1
+          },
+          "unit": "currencyGBP",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT pay_date AS \"time\", rsu_vest FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) AND rsu_vest > 0 ORDER BY pay_date"
         }
       ]
     }
