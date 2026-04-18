@@ -412,6 +412,23 @@ resource "kubernetes_deployment" "mailserver" {
             }
           }
 
+          readiness_probe {
+            tcp_socket {
+              port = 25
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+          }
+
+          liveness_probe {
+            tcp_socket {
+              port = 993
+            }
+            initial_delay_seconds = 60
+            period_seconds        = 60
+            timeout_seconds       = 15
+          }
+
         }
 
         container {
