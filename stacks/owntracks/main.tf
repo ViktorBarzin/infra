@@ -77,6 +77,7 @@ resource "kubernetes_secret" "basic_auth" {
 
   type = "Opaque"
   lifecycle {
+    # DRIFT_WORKAROUND: htpasswd bcrypt hashes are non-deterministic per apply; would cause perpetual diff. Reviewed 2026-04-18.
     ignore_changes = [data]
   }
 }

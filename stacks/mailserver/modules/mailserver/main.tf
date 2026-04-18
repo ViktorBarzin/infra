@@ -127,9 +127,10 @@ resource "kubernetes_config_map" "mailserver_config" {
     logtarget = SYSOUT
     EOF
   }
-  # Password hashes are different each time and avoid changing secret constantly. 
+  # Password hashes are different each time and avoid changing secret constantly.
   # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
   lifecycle {
+    # DRIFT_WORKAROUND: postfix-accounts.cf password hashes non-deterministic; would flap on every apply. Reviewed 2026-04-18.
     ignore_changes = [data["postfix-accounts.cf"]]
   }
 }

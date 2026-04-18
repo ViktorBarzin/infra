@@ -314,6 +314,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
     }
   }
   lifecycle {
+    # DRIFT_WORKAROUND: CI pipeline owns image tags for api + migrations containers. Reviewed 2026-04-18.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
@@ -575,6 +576,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     }
   }
   lifecycle {
+    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 6 worker containers. Reviewed 2026-04-18.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,

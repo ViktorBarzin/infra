@@ -80,6 +80,7 @@ resource "kubernetes_deployment" "plotting-book" {
     }
   }
   lifecycle {
+    # DRIFT_WORKAROUND: CI pipeline owns image tag (kubectl set image from Woodpecker/GHA). Reviewed 2026-04-18.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
     ]
