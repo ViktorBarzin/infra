@@ -33,7 +33,6 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 variable "redis_host" { type = string }
-variable "ollama_host" { type = string }
 
 
 resource "kubernetes_namespace" "ytdlp" {
@@ -284,15 +283,6 @@ resource "kubernetes_deployment" "yt_highlights" {
           env {
             name  = "TORCH_HOME"
             value = "/data/cache/torch"
-          }
-          # Ollama fallback for when OpenRouter models fail
-          env {
-            name  = "OLLAMA_URL"
-            value = "http://${var.ollama_host}:11434"
-          }
-          env {
-            name  = "OLLAMA_MODEL"
-            value = "qwen2.5:14b"
           }
           volume_mount {
             name       = "data"
