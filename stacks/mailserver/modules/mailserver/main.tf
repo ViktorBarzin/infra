@@ -14,6 +14,26 @@ variable "email_monitor_imap_password" {
   sensitive = true
 }
 
+# Build the virtual-alias map, dropping aliases where BOTH the source and
+# target are real mailboxes in var.mailserver_accounts (and are different).
+# Without this filter, docker-mailserver emits two passwd-file userdb lines
+# for the source address — its own mailbox home plus the alias target's home
+# — and Dovecot logs 'exists more than once' on every auth lookup. Aliases
+# that forward to external addresses (gmail etc.) or to self are safe.
+locals {
+  _account_set = keys(var.mailserver_accounts)
+  _virtual_lines = split("\n", format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt")))
+  postfix_virtual = join("\n", [
+    for line in local._virtual_lines : line
+    if !(
+      length(split(" ", line)) == 2 &&
+      contains(local._account_set, split(" ", line)[0]) &&
+      contains(local._account_set, split(" ", line)[1]) &&
+      split(" ", line)[0] != split(" ", line)[1]
+    )
+  ])
+}
+
 resource "kubernetes_namespace" "mailserver" {
   metadata {
     name = "mailserver"
@@ -97,7 +117,7 @@ resource "kubernetes_config_map" "mailserver_config" {
     # Actual mail settings
     "postfix-accounts.cf" = join("\n", [for user, pass in var.mailserver_accounts : "${user}|${bcrypt(pass, 6)}"])
     "postfix-main.cf"     = var.postfix_cf
-    "postfix-virtual.cf"  = format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt"))
+    "postfix-virtual.cf"  = local.postfix_virtual
 
     KeyTable      = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
     SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
