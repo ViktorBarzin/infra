@@ -17,6 +17,10 @@ resource "kubernetes_namespace" "nvidia" {
       "resource-governance/custom-limitrange" = "true"
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
 }
 
 # Custom LimitRange — overrides Kyverno tier-2-gpu default (1Gi per container)

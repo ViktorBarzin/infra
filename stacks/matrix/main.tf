@@ -13,6 +13,10 @@ resource "kubernetes_namespace" "matrix" {
       tier = local.tiers.aux
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
 }
 
 # DB credentials from Vault database engine (rotated every 24h)

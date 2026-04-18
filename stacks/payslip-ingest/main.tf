@@ -22,6 +22,10 @@ resource "kubernetes_namespace" "payslip_ingest" {
       "istio-injection" = "disabled"
     }
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
 }
 
 # App secrets sourced from multiple Vault KV keys.
