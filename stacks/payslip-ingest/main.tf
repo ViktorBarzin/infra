@@ -312,14 +312,18 @@ resource "kubernetes_config_map" "grafana_payslips_datasource" {
     "payslips-datasource.yaml" = yamlencode({
       apiVersion = 1
       datasources = [{
-        name     = "Payslips"
-        type     = "postgres"
-        access   = "proxy"
-        url      = "${var.postgresql_host}:5432"
-        database = "payslip_ingest"
-        user     = "payslip_ingest"
-        uid      = "payslips-pg"
+        name   = "Payslips"
+        type   = "postgres"
+        access = "proxy"
+        url    = "${var.postgresql_host}:5432"
+        user   = "payslip_ingest"
+        uid    = "payslips-pg"
+        # Grafana 11.2+ Postgres plugin reads the DB name from jsonData.database;
+        # the top-level `database` field is silently ignored by the frontend and
+        # triggers "you do not have default database" on every panel.
+        # See github.com/grafana/grafana#112418.
         jsonData = {
+          database        = "payslip_ingest"
           sslmode         = "disable"
           postgresVersion = 1600
           timescaledb     = false
