@@ -17,6 +17,17 @@ Given a prompt that contains EITHER:
 
 Produce EXACTLY ONE JSON object on stdout matching the schema. No prose. No markdown fences. No preamble. No trailing commentary. The final message content must be a single valid JSON object and nothing else.
 
+## RSU handling (important — Meta UK payslips)
+
+UK payslips for equity-compensated employees (e.g. Meta) report RSU vests as NOTIONAL pay for HMRC reporting only — the actual share grant + tax is handled by the broker (Schwab), which sells shares to cover withholding. On the payslip:
+
+- An EARNINGS line appears with labels like `RSU Vest`, `Restricted Stock Units`, `Stock Value`, `Notional Pay`, `Share Award`, `GSU Vest`, `Equity Vest` → populate `rsu_vest`.
+- A DEDUCTION line of equal-or-similar magnitude nets it back out. Labels: `Shares Retained`, `Stock Tax Withholding`, `RSU Offset`, `Notional Pay Offset`, `Shares Withheld` → populate `rsu_offset`.
+
+If you see either line, populate BOTH fields. Do NOT add them to `other_deductions` and do NOT let them count as regular income_tax/NI even though some templates put them near the tax block. They exist for reporting.
+
+If the payslip has no stock component, leave both as 0.
+
 ## Fast path: PAYSLIP_TEXT is present
 
 If the prompt contains `PAYSLIP_TEXT:`, the caller has already run `pdftotext -layout`. Skip Steps 1-2 entirely — the text is already in your context. Go straight to Step 3.
