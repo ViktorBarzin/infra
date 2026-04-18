@@ -330,6 +330,42 @@ resource "kubernetes_deployment" "claude_agent" {
           }
         }
 
+        # Seed beads metadata + beads-task-runner agent into runtime volumes.
+        # The Dockerfile stages these files at /usr/share/agent-seed/ (image
+        # layer, never mounted). Both /workspace (PVC) and /home/agent/.claude
+        # (emptyDir) are volume mounts that hide any image-layer content, so
+        # the files have to be copied in at pod start. Also creates the
+        # scratch directory the beads-task-runner rails expect.
+        init_container {
+          name  = "seed-beads-agent"
+          image = "${local.image}:${local.image_tag}"
+          command = ["sh", "-c", <<-EOT
+            set -e
+            mkdir -p /workspace/.beads /workspace/scratch /home/agent/.claude/agents
+            cp /usr/share/agent-seed/beads-metadata.json /workspace/.beads/metadata.json
+            cp /usr/share/agent-seed/beads-task-runner.md /home/agent/.claude/agents/beads-task-runner.md
+          EOT
+          ]
+
+          volume_mount {
+            name       = "workspace"
+            mount_path = "/workspace"
+          }
+          volume_mount {
+            name       = "claude-home"
+            mount_path = "/home/agent/.claude"
+          }
+
+          resources {
+            requests = {
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+
         container {
           name  = "claude-agent-service"
           image = "${local.image}:${local.image_tag}"
@@ -464,9 +500,9 @@ resource "kubernetes_service" "claude_agent" {
 locals {
   claude_oauth_token_mint_epochs = {
     # unix seconds (UTC) — when `claude setup-token` finished minting
-    "primary" = 1776528429  # 2026-04-18T12:07:09Z  (TOKEN2)
-    "spare-1" = 1776528280  # 2026-04-18T12:04:40Z  (TOKEN1)
-    "spare-2" = 1776528429  # 2026-04-18T12:07:09Z  (TOKEN2 — redundant w/ primary)
+    "primary" = 1776528429 # 2026-04-18T12:07:09Z  (TOKEN2)
+    "spare-1" = 1776528280 # 2026-04-18T12:04:40Z  (TOKEN1)
+    "spare-2" = 1776528429 # 2026-04-18T12:07:09Z  (TOKEN2 — redundant w/ primary)
   }
   claude_oauth_token_ttl_seconds = 365 * 24 * 60 * 60
 }
@@ -502,8 +538,8 @@ resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
           spec {
             restart_policy = "OnFailure"
             container {
-              name    = "push-expiry"
-              image   = "docker.io/curlimages/curl:8.11.0"
+              name  = "push-expiry"
+              image = "docker.io/curlimages/curl:8.11.0"
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/claude-oauth-expiry-monitor'
