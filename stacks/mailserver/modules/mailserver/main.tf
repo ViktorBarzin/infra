@@ -622,15 +622,15 @@ try:
     resp.raise_for_status()
     print(f"Sent test email via Brevo: {resp.status_code} marker={marker}")
 
-    # Step 2: Wait for delivery, retry IMAP up to 3 min
+    # Step 2: Wait for delivery, retry IMAP up to 5 min (15 x 20s)
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     found = False
-    for attempt in range(9):
+    for attempt in range(15):
         time.sleep(20)
         try:
-            imap = imaplib.IMAP4_SSL(IMAP_HOST, 993, ssl_context=ctx)
+            imap = imaplib.IMAP4_SSL(IMAP_HOST, 993, ssl_context=ctx, timeout=10)
             imap.login(IMAP_USER, IMAP_PASS)
             imap.select("INBOX")
             _, msg_ids = imap.search(None, "SUBJECT", marker)
