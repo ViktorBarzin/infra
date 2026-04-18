@@ -1169,6 +1169,20 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vaultwarden backup CronJob has never completed successfully"
+          - alert: MailserverBackupStale
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="mailserver-backup", namespace="mailserver"}) > 129600
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Mailserver backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 03:00)"
+          - alert: MailserverBackupNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="mailserver-backup", namespace="mailserver"} == 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Mailserver backup CronJob has never completed successfully"
           - alert: VaultwardenDown
             expr: (kube_deployment_status_replicas_available{namespace="vaultwarden", deployment="vaultwarden"} or on() vector(0)) < 1
             for: 5m

@@ -21,7 +21,7 @@ variable "email_monitor_imap_password" {
 # — and Dovecot logs 'exists more than once' on every auth lookup. Aliases
 # that forward to external addresses (gmail etc.) or to self are safe.
 locals {
-  _account_set = keys(var.mailserver_accounts)
+  _account_set   = keys(var.mailserver_accounts)
   _virtual_lines = split("\n", format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt")))
   postfix_virtual = join("\n", [
     for line in local._virtual_lines : line
@@ -711,6 +711,161 @@ sys.exit(0 if success else 1)
                 limits = {
                   memory = "128Mi"
                 }
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# =============================================================================
+# Mailserver Backup — Daily rsync of maildirs, mail-state, and log
+# Pattern mirrors vaultwarden-backup (pod_affinity for RWO co-location, /backup
+# write to NFS, Pushgateway metrics). Runs at 03:00 to avoid overlap with
+# mysql-backup (00:30), vaultwarden-backup (*/6h), email-roundtrip (*/20m).
+# Total loss of this PVC = all maildirs + DKIM keys gone; regenerating DKIM
+# requires DNS changes, hence backup is critical.
+# =============================================================================
+module "nfs_mailserver_backup_host" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "mailserver-backup-host"
+  namespace  = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/mailserver-backup"
+}
+
+resource "kubernetes_cron_job_v1" "mailserver-backup" {
+  metadata {
+    name      = "mailserver-backup"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 5
+    schedule                      = "0 3 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            # RWO co-location: backup pod must land on the same node as the
+            # mailserver pod because mailserver-data-encrypted is ReadWriteOnce.
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "mailserver"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            container {
+              name  = "mailserver-backup"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euxo pipefail
+                apk add --no-cache rsync
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+
+                week=$(date +"%Y-%W")
+                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                dst=/backup/$week
+                mkdir -p "$dst"
+
+                # Use --link-dest against previous week for space-efficient
+                # incrementals (unchanged files are hardlinked, not re-copied).
+                link_dest_arg=""
+                if [ -n "$prev_week" ] && [ -d "/backup/$prev_week" ]; then
+                  link_dest_arg="--link-dest=/backup/$prev_week"
+                fi
+
+                # Mailserver data layout (from deployment subPath mounts):
+                #   /var/mail       -> data (maildirs)
+                #   /var/mail-state -> state (postfix, dovecot, rspamd, dkim keys)
+                #   /var/log/mail   -> log  (mail logs)
+                for src in /var/mail /var/mail-state /var/log/mail; do
+                  [ -d "$src" ] || { echo "SKIP missing $src"; continue; }
+                  name=$(basename "$src")
+                  rsync -aH --delete $link_dest_arg "$src/" "$dst/$name/"
+                done
+
+                # Rotate — keep 8 weekly snapshots (~2 months)
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(du -sh "$dst" | awk '{print $1}')"
+
+                _out_bytes=$(du -sb "$dst" | awk '{print $1}')
+                wget -qO- --post-data "backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
+                backup_last_success_timestamp $(date +%s)
+                " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mailserver-backup" || true
+              EOT
+              ]
+              volume_mount {
+                name       = "data"
+                mount_path = "/var/mail"
+                sub_path   = "data"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "data"
+                mount_path = "/var/mail-state"
+                sub_path   = "state"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "data"
+                mount_path = "/var/log/mail"
+                sub_path   = "log"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
+                read_only  = true
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_mailserver_backup_host.claim_name
               }
             }
             dns_config {
