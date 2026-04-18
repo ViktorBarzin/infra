@@ -43,7 +43,6 @@ locals {
   mailserver_accounts = jsondecode(data.kubernetes_secret.eso_secrets.data["mailserver_accounts"])
 }
 variable "redis_host" { type = string }
-variable "ollama_host" { type = string }
 variable "mail_host" { type = string }
 
 
@@ -146,14 +145,6 @@ locals {
     {
       name  = "GRAMPSWEB_DEFAULT_FROM_EMAIL"
       value = "info@viktorbarzin.me"
-    },
-    {
-      name  = "GRAMPSWEB_LLM_BASE_URL"
-      value = "http://${var.ollama_host}:11434/v1"
-    },
-    {
-      name  = "GRAMPSWEB_LLM_MODEL"
-      value = "llama3.1"
     },
   ]
 }
