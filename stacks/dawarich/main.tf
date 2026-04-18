@@ -88,6 +88,7 @@ resource "kubernetes_deployment" "dawarich" {
         }
       }
       spec {
+        termination_grace_period_seconds = 60
 
         container {
           image = "freikin/dawarich:${var.image_version}"
@@ -200,80 +201,131 @@ resource "kubernetes_deployment" "dawarich" {
             }
           }
         }
-        # container {
-        #   image   = "freikin/dawarich:${var.image_version}"
-        #   name    = "dawarich-sidekiq"
-        #   command = ["sidekiq-entrypoint.sh"]
-        #   args    = ["bundle exec sidekiq"]
-        #   env {
-        #     name  = "REDIS_URL"
-        #     value = "redis://redis.redis.svc.cluster.local:6379"
-        #   }
-        #   env {
-        #     name  = "DATABASE_HOST"
-        #     value = "postgresql.dbaas"
-        #   }
-        #   env {
-        #     name  = "DATABASE_USERNAME"
-        #     value = "dawarich"
-        #   }
-        #   env {
-        #     name  = "DATABASE_PASSWORD"
-        #     value = data.vault_kv_secret_v2.secrets.data["db_password"]
-        #   }
-        #   env {
-        #     name  = "DATABASE_NAME"
-        #     value = "dawarich"
-        #   }
-        #   env {
-        #     name  = "MIN_MINUTES_SPENT_IN_CITY"
-        #     value = "60"
-        #   }
-        #   env {
-        #     name  = "BACKGROUND_PROCESSING_CONCURRENCY"
-        #     value = "10"
-        #   }
-        #   env {
-        #     name  = "ENABLE_TELEMETRY"
-        #     value = "true"
-        #   }
-        #   env {
-        #     name  = "APPLICATION_HOST"
-        #     value = "dawarich.viktorbarzin.me"
-        #   }
-        #   # env {
-        #   #   name  = "PROMETHEUS_EXPORTER_ENABLED"
-        #   #   value = "false"
-        #   # }
-        #   # env {
-        #   #   name  = "PROMETHEUS_EXPORTER_HOST"
-        #   #   value = "dawarich.dawarich"
-        #   # }
-        #   # env {
-        #   #   name  = "PHOTON_API_HOST"
-        #   #   value = "photon.dawarich:2322"
-        #   #   # value = "photon.komoot.io"
-        #   # }
-        #   # env {
-        #   #   name  = "PHOTON_API_USE_HTTPS"
-        #   #   value = "false"
-        #   # }
-        #   env {
-        #     name  = "GEOAPIFY_API_KEY"
-        #     value = data.vault_kv_secret_v2.secrets.data["geoapify_api_key"]
-        #   }
-        #   env {
-        #     name  = "SELF_HOSTED"
-        #     value = "true"
-        #   }
-
-        #   #   volume_mount {
-        #   #     name       = "watched"
-        #   #     mount_path = "/var/app/tmp/imports/watched"
-        #   #   }
-        # }
+        container {
+          image   = "freikin/dawarich:${var.image_version}"
+          name    = "dawarich-sidekiq"
+          command = ["sidekiq-entrypoint.sh"]
+          args    = ["bundle exec sidekiq"]
+          env {
+            name  = "REDIS_URL"
+            value = "redis://${var.redis_host}:6379"
+          }
+          env {
+            name  = "DATABASE_HOST"
+            value = var.postgresql_host
+          }
+          env {
+            name  = "DATABASE_USERNAME"
+            value = "dawarich"
+          }
+          env {
+            name = "DATABASE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "db_password"
+              }
+            }
+          }
+          env {
+            name  = "DATABASE_NAME"
+            value = "dawarich"
+          }
+          env {
+            name  = "MIN_MINUTES_SPENT_IN_CITY"
+            value = "60"
+          }
+          env {
+            name  = "TIME_ZONE"
+            value = "Europe/London"
+          }
+          env {
+            name  = "DISTANCE_UNIT"
+            value = "km"
+          }
+          env {
+            name  = "BACKGROUND_PROCESSING_CONCURRENCY"
+            value = "2"
+          }
+          env {
+            name  = "ENABLE_TELEMETRY"
+            value = "true"
+          }
+          env {
+            name  = "APPLICATION_HOSTS"
+            value = "dawarich.viktorbarzin.me"
+          }
+          # Prometheus exporter disabled until a standalone `prometheus_exporter`
+          # server sidecar is added — see follow-up bead. The client middleware
+          # pushes over TCP to PROMETHEUS_EXPORTER_HOST:PORT, it does not start
+          # a listener itself. Keeping ENABLED=false silences the reconnect
+          # log spam (~2/sec) from PrometheusExporter::Client.
+          env {
+            name  = "PROMETHEUS_EXPORTER_ENABLED"
+            value = "false"
+          }
+          env {
+            name  = "RAILS_ENV"
+            value = "production"
+          }
+          env {
+            name = "SECRET_KEY_BASE"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "secret_key_base"
+              }
+            }
+          }
+          env {
+            name  = "RAILS_LOG_TO_STDOUT"
+            value = "true"
+          }
+          env {
+            name  = "SELF_HOSTED"
+            value = "true"
+          }
+          env {
+            name = "GEOAPIFY_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "geoapify_api_key"
+              }
+            }
+          }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "768Mi"
+            }
+            limits = {
+              memory = "1Gi"
+            }
+          }
+          liveness_probe {
+            exec {
+              command = ["/bin/sh", "-c", "pgrep -f 'bundle exec sidekiq' >/dev/null"]
+            }
+            initial_delay_seconds = 90
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+          readiness_probe {
+            exec {
+              command = ["/bin/sh", "-c", "pgrep -f 'bundle exec sidekiq' >/dev/null"]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 15
+            timeout_seconds       = 5
+          }
+        }
       }
     }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 
@@ -392,5 +444,73 @@ module "ingress" {
     "gethomepage.dev/icon"         = "dawarich.png"
     "gethomepage.dev/group"        = "Smart Home"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# Paired with DawarichIngestionStale alert in monitoring/prometheus_chart_values.tpl.
+resource "kubernetes_cron_job_v1" "ingestion_freshness_monitor" {
+  metadata {
+    name      = "ingestion-freshness-monitor"
+    namespace = kubernetes_namespace.dawarich.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    schedule                      = "30 6 * * *"
+    starting_deadline_seconds     = 300
+    successful_jobs_history_limit = 1
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 3600
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "ingestion-freshness-monitor"
+              image = "docker.io/library/postgres:16-alpine"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "dawarich-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                apk add --no-cache curl >/dev/null 2>&1 || true
+
+                TS=$(PGPASSWORD=$PGPASSWORD psql -h ${var.postgresql_host} -U dawarich -d dawarich -t -A -c \
+                  "SELECT COALESCE(EXTRACT(epoch FROM MAX(created_at))::bigint, 0) FROM points WHERE user_id = 1;")
+                NOW=$(date +%s)
+
+                if [ -z "$TS" ] || [ "$TS" = "0" ]; then
+                  echo "ERROR: no points found for user_id=1"
+                  exit 1
+                fi
+
+                AGE_H=$(( (NOW - TS) / 3600 ))
+                echo "last_point_ts=$TS now=$NOW age_hours=$AGE_H"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/dawarich-ingestion-freshness/user/viktor" <<METRICS
+                # TYPE dawarich_last_point_ingested_timestamp gauge
+                dawarich_last_point_ingested_timestamp $TS
+                # TYPE dawarich_ingestion_monitor_last_push_timestamp gauge
+                dawarich_ingestion_monitor_last_push_timestamp $NOW
+                METRICS
+              EOT
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
