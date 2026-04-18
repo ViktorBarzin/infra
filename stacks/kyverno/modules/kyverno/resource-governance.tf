@@ -1025,3 +1025,131 @@ resource "kubernetes_manifest" "cleanup_failed_pods" {
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Strip CPU Limits (Kyverno Mutate)
+# -----------------------------------------------------------------------------
+# Removes resources.limits.cpu from every container and initContainer at pod
+# admission. Memory limits are preserved. Cluster policy: CFS throttling causes
+# more harm than good for bursty single-threaded workloads (Node.js, Python
+# apps). Upstream Helm charts (CrowdSec, descheduler, kubernetes-dashboard,
+# nvidia gpu-operator) still ship CPU limits — this strips them declaratively
+# so we don't have to fork values.yaml per chart.
+#
+# Scope: admission-time only. Existing pods keep their limits until restarted
+# naturally (Helm upgrade, node drain, rollout). No mutateExistingOnPolicyUpdate.
+#
+# JSON6902 remove op fails on missing paths — per-element precondition gates
+# the mutation so pods without CPU limits pass through untouched.
+
+resource "kubernetes_manifest" "mutate_strip_cpu_limits" {
+  manifest = {
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "strip-cpu-limits"
+      annotations = {
+        "policies.kyverno.io/title" = "Strip CPU Limits"
+        "policies.kyverno.io/description" = join("", [
+          "Removes resources.limits.cpu from every container and initContainer ",
+          "at pod admission. Memory limits are preserved. Cluster policy: CFS ",
+          "throttling causes more harm than good for bursty single-threaded ",
+          "workloads (Node.js, Python apps).",
+        ])
+      }
+    }
+    spec = {
+      background = false
+      rules = [
+        {
+          name = "strip-container-cpu-limit"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds      = ["Pod"]
+                  operations = ["CREATE"]
+                }
+              }
+            ]
+          }
+          preconditions = {
+            all = [
+              {
+                key      = "{{ request.object.spec.containers[?resources.limits.cpu != null] | length(@) }}"
+                operator = "GreaterThan"
+                value    = 0
+              }
+            ]
+          }
+          mutate = {
+            foreach = [
+              {
+                list = "request.object.spec.containers"
+                preconditions = {
+                  all = [
+                    {
+                      key      = "{{ element.resources.limits.cpu || '' }}"
+                      operator = "NotEquals"
+                      value    = ""
+                    }
+                  ]
+                }
+                patchesJson6902 = yamlencode([
+                  {
+                    op   = "remove"
+                    path = "/spec/containers/{{ elementIndex }}/resources/limits/cpu"
+                  }
+                ])
+              }
+            ]
+          }
+        },
+        {
+          name = "strip-initcontainer-cpu-limit"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds      = ["Pod"]
+                  operations = ["CREATE"]
+                }
+              }
+            ]
+          }
+          preconditions = {
+            all = [
+              {
+                key      = "{{ request.object.spec.initContainers[?resources.limits.cpu != null] || `[]` | length(@) }}"
+                operator = "GreaterThan"
+                value    = 0
+              }
+            ]
+          }
+          mutate = {
+            foreach = [
+              {
+                list = "request.object.spec.initContainers"
+                preconditions = {
+                  all = [
+                    {
+                      key      = "{{ element.resources.limits.cpu || '' }}"
+                      operator = "NotEquals"
+                      value    = ""
+                    }
+                  ]
+                }
+                patchesJson6902 = yamlencode([
+                  {
+                    op   = "remove"
+                    path = "/spec/initContainers/{{ elementIndex }}/resources/limits/cpu"
+                  }
+                ])
+              }
+            ]
+          }
+        },
+      ]
+    }
+  }
+}
