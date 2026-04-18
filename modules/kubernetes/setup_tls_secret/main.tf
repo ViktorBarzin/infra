@@ -18,4 +18,8 @@ resource "kubernetes_secret" "tls_secret" {
     "tls.key" = var.tls_key == "" ? file("${path.root}/secrets/privkey.pem") : var.tls_key
   }
   type = "kubernetes.io/tls"
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: the sync-tls-secret policy stamps generate.kyverno.io/* + app.kubernetes.io/managed-by labels on this generated Secret
+    ignore_changes = [metadata[0].labels]
+  }
 }
