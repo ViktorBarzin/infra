@@ -146,7 +146,7 @@ resource "kubernetes_deployment" "owntracks" {
           image = "owntracks/recorder:1.0.1"
           name  = "owntracks"
           port {
-            name           = "https"
+            name           = "http"
             container_port = 8083
           }
           env {
@@ -202,8 +202,11 @@ resource "kubernetes_service" "owntracks" {
       app = "owntracks"
     }
     port {
-      name        = "https"
-      port        = 443
+      # Recorder listens plain HTTP on 8083 (OTR_PORT=0 disables HTTPS).
+      # Port name/number drive Traefik's backend-scheme inference — must be
+      # http/80 so it doesn't try TLS against a plain socket (previous 500s).
+      name        = "http"
+      port        = 80
       target_port = 8083
       protocol    = "TCP"
     }
@@ -216,7 +219,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.owntracks.metadata[0].name
   name            = "owntracks"
   tls_secret_name = var.tls_secret_name
-  port            = 443
+  port            = 80
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.middlewares" = "owntracks-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
     "gethomepage.dev/enabled"                          = "true"
