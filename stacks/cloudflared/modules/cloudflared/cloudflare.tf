@@ -206,7 +206,7 @@ resource "cloudflare_record" "mail_tlsrpt" {
 }
 
 resource "cloudflare_record" "mail_dmarc" {
-  content  = "\"v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:e21c0ff8@dmarc.mailgun.org,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:e21c0ff8@dmarc.mailgun.org,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
+  content  = "\"v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;\""
   name     = "_dmarc.viktorbarzin.me"
   proxied  = false
   ttl      = 1
