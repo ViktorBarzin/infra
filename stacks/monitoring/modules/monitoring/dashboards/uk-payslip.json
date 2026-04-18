@@ -381,7 +381,7 @@
     "list": []
   },
   "time": {
-    "from": "now-2y",
+    "from": "now-10y",
     "to": "now"
   },
   "timepicker": {},
