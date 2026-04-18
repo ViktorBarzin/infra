@@ -3,10 +3,9 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-# Temporary default until GHA pipeline publishes the first 8-char SHA tag.
 variable "beadboard_image_tag" {
   type    = string
-  default = "latest"
+  default = "17a38e43"
 }
 
 resource "kubernetes_namespace" "beads" {
