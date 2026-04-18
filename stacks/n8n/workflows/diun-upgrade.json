@@ -38,15 +38,25 @@
     },
     {
       "parameters": {
-        "command": "='claude -p \"You are the service-upgrade agent. Read /home/wizard/code/infra/.claude/agents/service-upgrade.md for full instructions.\\n\\nUpgrade task:\\n- Image: ' + $json.body.diun_entry_image + '\\n- New tag: ' + $json.body.diun_entry_imagetag + '\\n- Hub link: ' + ($json.body.diun_entry_hublink || 'none') + '\\n\\nExecute the upgrade workflow now.\"'",
-        "cwd": "/home/wizard/code/infra"
+        "method": "POST",
+        "url": "http://claude-agent-service.claude-agent.svc.cluster.local:8080/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "='Bearer ' + $env.CLAUDE_AGENT_API_TOKEN"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: 'You are the service-upgrade agent. Read .claude/agents/service-upgrade.md for full instructions.\\n\\nUpgrade task:\\n- Image: ' + $json.body.diun_entry_image + '\\n- New tag: ' + $json.body.diun_entry_imagetag + '\\n- Hub link: ' + ($json.body.diun_entry_hublink || 'none') + '\\n\\nExecute the upgrade workflow now.', agent: '.claude/agents/service-upgrade', max_budget_usd: 10, timeout_seconds: 1800 }) }}",
+        "options": {}
       },
-      "id": "ssh-execute",
+      "id": "http-execute",
       "name": "Run Upgrade Agent",
-      "type": "n8n-nodes-base.ssh",
-      "typeVersion": 1,
-      "position": [910, 300],
-      "credentials": {"sshPassword": {"id": "REPLACE_WITH_SSH_CRED_ID", "name": "Dev VM SSH"}}
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300]
     }
   ],
   "connections": {

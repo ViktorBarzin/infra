@@ -9,52 +9,70 @@ clone:
 
 steps:
   - name: run-issue-responder
-    image: python:3.12-alpine
+    image: alpine:3.20
     commands:
-      - apk add --no-cache openssh-client curl jq
+      - apk add --no-cache curl jq
       # Authenticate to Vault via K8s SA JWT
       - |
         SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
         VAULT_RESP=$(curl -sf -X POST http://vault-active.vault.svc.cluster.local:8200/v1/auth/kubernetes/login \
-          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}")
-        VAULT_TOKEN=$(echo "$VAULT_RESP" | jq -r .auth.client_token)
-        if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+          -d "{\"role\":\"ci\",\"jwt\":\"$$SA_TOKEN\"}")
+        VAULT_TOKEN=$(echo "$$VAULT_RESP" | jq -r .auth.client_token)
+        if [ -z "$$VAULT_TOKEN" ] || [ "$$VAULT_TOKEN" = "null" ]; then
           echo "ERROR: Vault authentication failed"
           exit 1
         fi
         echo "Vault authenticated"
-      # Fetch DevVM SSH key
+      # Fetch API token for claude-agent-service
       - |
-        curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-          http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/ci/infra | \
-          jq -r '.data.data.devvm_ssh_key' > /tmp/devvm-key
-        chmod 600 /tmp/devvm-key
-        if [ ! -s /tmp/devvm-key ]; then
-          echo "ERROR: Failed to fetch DevVM SSH key"
+        AGENT_TOKEN=$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/claude-agent-service | \
+          jq -r '.data.data.api_bearer_token')
+        if [ -z "$$AGENT_TOKEN" ] || [ "$$AGENT_TOKEN" = "null" ]; then
+          echo "ERROR: Failed to fetch agent API token"
           exit 1
         fi
-        echo "SSH key fetched"
-      # SSH to DevVM and run issue-responder agent
+        echo "Agent token fetched"
+      # Submit job to claude-agent-service
       - |
         ISSUE_NUM="${ISSUE_NUMBER:-}"
         ISSUE_TITLE="${ISSUE_TITLE:-}"
         ISSUE_LABELS="${ISSUE_LABELS:-}"
         ISSUE_URL="${ISSUE_URL:-}"
 
-        if [ -z "$ISSUE_NUM" ]; then
+        if [ -z "$$ISSUE_NUM" ]; then
           echo "ERROR: No issue number provided"
           exit 1
         fi
 
-        echo "Processing issue #$ISSUE_NUM: $ISSUE_TITLE"
-        echo "Labels: $ISSUE_LABELS"
+        echo "Processing issue #$$ISSUE_NUM: $$ISSUE_TITLE"
 
-        ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
-          "cd ~/code && git -C infra stash && git -C infra pull --rebase && git -C infra stash pop 2>/dev/null; \
-           ~/.local/bin/claude -p \
-             --agent infra/.claude/agents/issue-responder \
-             --dangerously-skip-permissions \
-             --max-budget-usd 10 \
-             'Process GitHub Issue #${ISSUE_NUM}: ${ISSUE_TITLE}. Labels: ${ISSUE_LABELS}. URL: ${ISSUE_URL}. Read the issue body via GitHub API, investigate, and take appropriate action.'"
-      # Cleanup
-      - rm -f /tmp/devvm-key
+        PAYLOAD=$(jq -n \
+          --arg prompt "Process GitHub Issue #$$ISSUE_NUM: $$ISSUE_TITLE. Labels: $$ISSUE_LABELS. URL: $$ISSUE_URL. Read the issue body via GitHub API, investigate, and take appropriate action." \
+          --arg agent ".claude/agents/issue-responder" \
+          '{prompt: $prompt, agent: $agent, max_budget_usd: 10, timeout_seconds: 1800}')
+
+        RESP=$(curl -sf -X POST \
+          -H "Authorization: Bearer $$AGENT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$$PAYLOAD" \
+          http://claude-agent-service.claude-agent.svc.cluster.local:8080/execute)
+
+        JOB_ID=$(echo "$$RESP" | jq -r '.job_id')
+        echo "Job submitted: $$JOB_ID"
+      # Poll for completion (30min max)
+      - |
+        for i in $(seq 1 120); do
+          sleep 15
+          RESULT=$(curl -sf \
+            -H "Authorization: Bearer $$AGENT_TOKEN" \
+            http://claude-agent-service.claude-agent.svc.cluster.local:8080/jobs/$$JOB_ID)
+          STATUS=$(echo "$$RESULT" | jq -r '.status')
+          echo "[$$i/120] Status: $$STATUS"
+          if [ "$$STATUS" != "running" ]; then
+            echo "$$RESULT" | jq .
+            if [ "$$STATUS" = "completed" ]; then exit 0; else exit 1; fi
+          fi
+        done
+        echo "ERROR: Job timed out after 30 minutes"
+        exit 1

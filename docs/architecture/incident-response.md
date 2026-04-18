@@ -178,11 +178,11 @@ flowchart LR
     subgraph "Kubernetes Cluster"
         C -->|Yes| D[Woodpecker Pipeline]
         D --> E[Vault Auth<br/>K8s SA JWT]
-        E --> F[Fetch SSH Key]
+        E --> F[Fetch API Token]
     end
 
-    subgraph "DevVM (10.0.10.10)"
-        F --> G[SSH + Claude Code]
+    subgraph "claude-agent-service (K8s)"
+        F --> G[HTTP POST /execute]
         G --> H[issue-responder agent]
         H --> I[Investigate / Implement]
         I --> J[Comment on Issue]

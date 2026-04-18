@@ -16,10 +16,10 @@ n8n Webhook (POST /webhook/<uuid>)
   │ rate limit: max 5 upgrades per 6h window
   │
   ▼
-SSH → Dev VM (10.0.10.10)
+HTTP POST → claude-agent-service (K8s)
   │
   ▼
-claude -p "upgrade agent prompt"
+claude -p "upgrade agent prompt" (in-cluster)
   │
   ▼
 Service Upgrade Agent
@@ -54,7 +54,7 @@ Service Upgrade Agent
   - Only `status=update` (skip `new`, `unchanged`)
   - Skip databases, custom images, infra images, `:latest`
 - **Rate limiting**: Max 5 upgrades per 6-hour window using `$getWorkflowStaticData('global')`
-- **Action**: SSH to dev VM, runs `claude -p` with the upgrade agent prompt
+- **Action**: HTTP POST to `claude-agent-service.claude-agent.svc:8080/execute` with the upgrade agent prompt
 
 ### Upgrade Agent
 - **Prompt**: `.claude/agents/service-upgrade.md`

@@ -105,7 +105,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **NFS exports**: Create dir on Proxmox host (`ssh root@192.168.1.127 "mkdir -p /srv/nfs/<service>"`), add to `/etc/exports`, run `exportfs -ra`.
 
 ## Automated Service Upgrades
-- **Pipeline**: DIUN (detect) → n8n webhook (filter + rate limit) → SSH → `claude -p` (upgrade agent)
+- **Pipeline**: DIUN (detect) → n8n webhook (filter + rate limit) → HTTP POST → `claude-agent-service` (K8s) → `claude -p` (upgrade agent)
 - **Agent**: `.claude/agents/service-upgrade.md` — analyzes changelogs, backs up DBs, bumps versions, verifies health, rolls back on failure
 - **Config**: `.claude/reference/upgrade-config.json` — GitHub repo mappings, DB-backed services, skip patterns
 - **Rate limit**: Max 5 upgrades per 6h DIUN scan cycle (configured in n8n workflow)

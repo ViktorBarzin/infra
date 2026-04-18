@@ -17,7 +17,7 @@ steps:
   - name: parse-and-implement
     image: python:3.12-alpine
     commands:
-      - apk add --no-cache jq curl git openssh-client
+      - apk add --no-cache jq curl git
       - sh scripts/postmortem-pipeline.sh
 
   - name: notify-slack

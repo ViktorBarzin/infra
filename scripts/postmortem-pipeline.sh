@@ -39,26 +39,43 @@ if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
 fi
 echo "Vault authenticated"
 
-# 5. Fetch DevVM SSH key from Vault
-curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-  http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/ci/infra | \
-  jq -r '.data.data.devvm_ssh_key' > /tmp/devvm-key
-chmod 600 /tmp/devvm-key
-if [ ! -s /tmp/devvm-key ]; then
-  echo "ERROR: Failed to fetch DevVM SSH key"
+# 5. Fetch API token for claude-agent-service
+AGENT_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+  http://vault-active.vault.svc.cluster.local:8200/v1/secret/data/claude-agent-service | \
+  jq -r '.data.data.api_bearer_token')
+if [ -z "$AGENT_TOKEN" ] || [ "$AGENT_TOKEN" = "null" ]; then
+  echo "ERROR: Failed to fetch agent API token"
   exit 1
 fi
-echo "SSH key fetched"
+echo "Agent token fetched"
 
-# 6. SSH to DevVM and run Claude Code headless
+# 6. Submit to claude-agent-service
 TODOS=$(cat /tmp/todos.json)
-ssh -i /tmp/devvm-key -o StrictHostKeyChecking=no wizard@10.0.10.10 \
-  "cd ~/code && git -C infra stash && git -C infra pull && git -C infra stash pop 2>/dev/null; ~/.local/bin/claude -p \
-    --agent infra/.claude/agents/postmortem-todo-resolver \
-    --dangerously-skip-permissions \
-    --max-budget-usd 5 \
-    'Implement the auto-implementable TODOs from $PM_FILE. Parsed TODO list: $TODOS'"
+PAYLOAD=$(jq -n \
+  --arg prompt "Implement the auto-implementable TODOs from $PM_FILE. Parsed TODO list: $TODOS" \
+  --arg agent ".claude/agents/postmortem-todo-resolver" \
+  '{prompt: $prompt, agent: $agent, max_budget_usd: 5, timeout_seconds: 900}')
 
-# 7. Cleanup
-rm -f /tmp/devvm-key
-echo "Pipeline complete"
+RESP=$(curl -sf -X POST \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD" \
+  http://claude-agent-service.claude-agent.svc.cluster.local:8080/execute)
+JOB_ID=$(echo "$RESP" | jq -r '.job_id')
+echo "Job submitted: $JOB_ID"
+
+# 7. Poll for completion (15min max)
+for i in $(seq 1 60); do
+  sleep 15
+  RESULT=$(curl -sf \
+    -H "Authorization: Bearer $AGENT_TOKEN" \
+    http://claude-agent-service.claude-agent.svc.cluster.local:8080/jobs/$JOB_ID)
+  STATUS=$(echo "$RESULT" | jq -r '.status')
+  echo "[$i/60] Status: $STATUS"
+  if [ "$STATUS" != "running" ]; then
+    echo "$RESULT" | jq .
+    if [ "$STATUS" = "completed" ]; then exit 0; else exit 1; fi
+  fi
+done
+echo "ERROR: Job timed out after 15 minutes"
+exit 1
