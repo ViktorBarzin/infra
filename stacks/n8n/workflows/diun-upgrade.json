@@ -43,7 +43,7 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {"name": "Authorization", "value": "='Bearer ' + $env.CLAUDE_AGENT_API_TOKEN"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.CLAUDE_AGENT_API_TOKEN }}"},
             {"name": "Content-Type", "value": "application/json"}
           ]
         },

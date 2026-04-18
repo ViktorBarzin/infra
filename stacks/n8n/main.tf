@@ -47,6 +47,35 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+resource "kubernetes_manifest" "external_secret_claude_agent" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "claude-agent-token"
+      namespace = "n8n"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "claude-agent-token"
+      }
+      data = [{
+        secretKey = "api_bearer_token"
+        remoteRef = {
+          key      = "claude-agent-service"
+          property = "api_bearer_token"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.n8n]
+}
+
 resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
@@ -206,6 +235,19 @@ resource "kubernetes_deployment" "n8n" {
           env {
             name  = "WEBHOOK_URL"
             value = "https://n8n.viktorbarzin.me"
+          }
+          env {
+            name = "CLAUDE_AGENT_API_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "claude-agent-token"
+                key  = "api_bearer_token"
+              }
+            }
+          }
+          env {
+            name  = "N8N_BLOCK_ENV_ACCESS_IN_NODE"
+            value = "false"
           }
           volume_mount {
             name       = "data"
