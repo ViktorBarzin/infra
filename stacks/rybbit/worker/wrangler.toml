@@ -2,10 +2,43 @@ name = "rybbit-analytics"
 main = "index.js"
 compatibility_date = "2024-01-01"
 
-# Route: all Cloudflare-proxied *.viktorbarzin.me traffic.
-# The worker only injects into HTML responses; non-HTML passes through untouched.
-# Wildcard covers all proxied subdomains. The bare domain needs its own route.
+# Explicit per-host routes. Replaces the previous wildcard routes which hit all
+# ~119 proxied *.viktorbarzin.me hosts and burned the Workers free-tier quota
+# (100k/day). Only hostnames present in SITE_IDS (index.js) get a route; all
+# other proxied hosts bypass the Worker entirely.
+#
+# rybbit.viktorbarzin.me is INTENTIONALLY EXCLUDED even though it has a site ID
+# in index.js — it serves the tracker JS (/api/script.js) and event POSTs
+# (/api/track), which are JSON/JS not HTML, so the content-type guard in
+# index.js would no-op anyway. Leaving it routed would make every Rybbit event
+# spawn a Worker invocation for no value (self-amplification).
+#
+# When adding a new site to SITE_IDS in index.js, also add its route here.
 routes = [
-  { pattern = "viktorbarzin.me/*", zone_name = "viktorbarzin.me" },
-  { pattern = "*.viktorbarzin.me/*", zone_name = "viktorbarzin.me" }
+  { pattern = "viktorbarzin.me/*",                      zone_name = "viktorbarzin.me" },
+  { pattern = "www.viktorbarzin.me/*",                  zone_name = "viktorbarzin.me" },
+  { pattern = "actualbudget.viktorbarzin.me/*",         zone_name = "viktorbarzin.me" },
+  { pattern = "crowdsec.viktorbarzin.me/*",             zone_name = "viktorbarzin.me" },
+  { pattern = "cyberchef.viktorbarzin.me/*",            zone_name = "viktorbarzin.me" },
+  { pattern = "dawarich.viktorbarzin.me/*",             zone_name = "viktorbarzin.me" },
+  { pattern = "pma.viktorbarzin.me/*",                  zone_name = "viktorbarzin.me" },
+  { pattern = "pgadmin.viktorbarzin.me/*",              zone_name = "viktorbarzin.me" },
+  { pattern = "audiobookshelf.viktorbarzin.me/*",       zone_name = "viktorbarzin.me" },
+  { pattern = "calibre.viktorbarzin.me/*",              zone_name = "viktorbarzin.me" },
+  { pattern = "stacks.viktorbarzin.me/*",               zone_name = "viktorbarzin.me" },
+  { pattern = "f1.viktorbarzin.me/*",                   zone_name = "viktorbarzin.me" },
+  { pattern = "frigate.viktorbarzin.me/*",              zone_name = "viktorbarzin.me" },
+  { pattern = "highlights-immich.viktorbarzin.me/*",    zone_name = "viktorbarzin.me" },
+  { pattern = "immich.viktorbarzin.me/*",               zone_name = "viktorbarzin.me" },
+  { pattern = "mail.viktorbarzin.me/*",                 zone_name = "viktorbarzin.me" },
+  { pattern = "navidrome.viktorbarzin.me/*",            zone_name = "viktorbarzin.me" },
+  { pattern = "networking-toolbox.viktorbarzin.me/*",   zone_name = "viktorbarzin.me" },
+  { pattern = "nextcloud.viktorbarzin.me/*",            zone_name = "viktorbarzin.me" },
+  { pattern = "paperless-ngx.viktorbarzin.me/*",        zone_name = "viktorbarzin.me" },
+  { pattern = "privatebin.viktorbarzin.me/*",           zone_name = "viktorbarzin.me" },
+  { pattern = "wrongmove.viktorbarzin.me/*",            zone_name = "viktorbarzin.me" },
+  { pattern = "send.viktorbarzin.me/*",                 zone_name = "viktorbarzin.me" },
+  { pattern = "stirling-pdf.viktorbarzin.me/*",         zone_name = "viktorbarzin.me" },
+  { pattern = "uptime-kuma.viktorbarzin.me/*",          zone_name = "viktorbarzin.me" },
+  { pattern = "vaultwarden.viktorbarzin.me/*",          zone_name = "viktorbarzin.me" }
 ]
