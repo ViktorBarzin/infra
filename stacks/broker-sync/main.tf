@@ -669,7 +669,9 @@ resource "kubernetes_cron_job_v1" "fidelity" {
           spec {
             restart_policy = "OnFailure"
             # Materialise the JSON storage_state from the projected Secret
-            # onto the PVC where Playwright expects to read it.
+            # onto the PVC where Playwright expects to read it. Init container
+            # runs as root; the main broker-sync container runs as uid 10001,
+            # so we chown+chmod 600 to grant read access to the broker user.
             init_container {
               name  = "stage-storage-state"
               image = "busybox:1.36"
@@ -677,6 +679,7 @@ resource "kubernetes_cron_job_v1" "fidelity" {
               set -eu
               mkdir -p /data
               cp /secrets/fidelity_storage_state /data/fidelity_storage_state.json
+              chown 10001:10001 /data/fidelity_storage_state.json
               chmod 600 /data/fidelity_storage_state.json
               EOT
               ]
