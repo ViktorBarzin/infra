@@ -140,7 +140,9 @@ resource "cloudflare_record" "mail_domainkey" {
 }
 
 resource "cloudflare_record" "mail_spf" {
-  content  = "\"v=spf1 include:mailgun.org -all\""
+  # Brevo replaced Mailgun as the outbound relay on 2026-04-12 (see docs/architecture/mailserver.md).
+  # Soft-fail (~all) is intentional during cutover — revisit once relay delivery is stable.
+  content  = "\"v=spf1 include:spf.brevo.com ~all\""
   name     = "viktorbarzin.me"
   proxied  = false
   ttl      = 1

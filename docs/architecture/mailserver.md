@@ -1,10 +1,10 @@
 # Mail Server Architecture
 
-Last updated: 2026-04-12 (Brevo relay migration)
+Last updated: 2026-04-18 (SPF switched to Brevo; DMARC reporting address normalized)
 
 ## Overview
 
-Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Mailgun EU. Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs via `externalTrafficPolicy: Local` on a dedicated MetalLB IP.
+Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Brevo EU (`smtp-relay.brevo.com:587` — migrated from Mailgun on 2026-04-12; SPF record cut over on 2026-04-18). Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs via `externalTrafficPolicy: Local` on a dedicated MetalLB IP.
 
 ## Architecture Diagram
 
@@ -95,13 +95,13 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | MX | `viktorbarzin.me` | `mail.viktorbarzin.me` (pri 1) | Inbound mail routing |
 | A | `mail.viktorbarzin.me` | `176.12.22.76` (non-proxied) | Mail server IP |
 | AAAA | `mail.viktorbarzin.me` | `2001:470:6e:43d::2` | IPv6 (HE tunnel) |
-| TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:mailgun.org -all` | Authorize Mailgun for outbound |
-| TXT (DKIM) | `s1._domainkey` | RSA 1024-bit key | Mailgun DKIM (roundtrip probe) |
+| TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:spf.brevo.com ~all` | Authorize Brevo for outbound (soft-fail during cutover; was `include:mailgun.org -all` until 2026-04-18 Brevo migration) |
+| TXT (DKIM) | `s1._domainkey` | RSA 1024-bit key | Mailgun DKIM (roundtrip probe only — inbound testing still uses Mailgun API) |
 | TXT (DKIM) | `mail._domainkey` | RSA 2048-bit key | Rspamd self-hosted DKIM signing |
 | CNAME (DKIM) | `brevo1._domainkey` | b1.viktorbarzin-me.dkim.brevo.com | Brevo outbound DKIM (delegated) |
 | CNAME (DKIM) | `brevo2._domainkey` | b2.viktorbarzin-me.dkim.brevo.com | Brevo outbound DKIM (delegated) |
 | TXT | `viktorbarzin.me` | `brevo-code:a6ef1dd9...` | Brevo domain verification |
-| TXT (DMARC) | `_dmarc` | `p=quarantine; pct=100` | DMARC enforcement, reports to Mailgun + ondmarc |
+| TXT (DMARC) | `_dmarc` | `p=quarantine; pct=100; rua=mailto:dmarc@viktorbarzin.me` | DMARC enforcement; aggregate reports land in-domain at `dmarc@viktorbarzin.me` (tracked under code-569; current live record still points at `e21c0ff8@dmarc.mailgun.org` pending cutover) |
 | TXT (MTA-STS) | `_mta-sts` | `v=STSv1; id=20260412` | TLS enforcement for inbound |
 | TXT (TLSRPT) | `_smtp._tls` | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS failure reporting |
 
@@ -177,8 +177,8 @@ CronJob `email-roundtrip-monitor` (every 10 min):
 | `secret/platform` | `mailserver_accounts` | User credentials (JSON) |
 | `secret/platform` | `mailserver_aliases` | Postfix virtual aliases |
 | `secret/platform` | `mailserver_opendkim_key` | DKIM private key |
-| `secret/platform` | `mailserver_sasl_passwd` | Mailgun relay credentials |
-| `secret/viktor` | `mailgun_api_key` | Mailgun API for E2E probe (inbound testing) |
+| `secret/platform` | `mailserver_sasl_passwd` | Brevo relay credentials (`[smtp-relay.brevo.com]:587 <login>:<key>`) |
+| `secret/viktor` | `mailgun_api_key` | Mailgun API for E2E roundtrip probe (retained for inbound delivery testing only; not used for user mail) |
 | `secret/viktor` | `brevo_api_key` | Brevo API key (stored for reference) |
 
 ## Storage
