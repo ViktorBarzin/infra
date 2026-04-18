@@ -65,6 +65,10 @@ state/infra/
 backend.tf
 providers.tf
 .terraform.lock.hcl
+cloudflare_provider.tf
+tiers.tf
+stacks/*/cloudflare_provider.tf
+stacks/*/tiers.tf
 
 # Kubernetes config (sensitive)
 config
