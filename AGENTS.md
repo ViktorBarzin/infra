@@ -15,6 +15,49 @@
 - **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
 - **Plan all**: `cd stacks && terragrunt run --all --non-interactive -- plan`
 
+## Adopting Existing Resources — Use `import {}` Blocks, Not the CLI
+
+When bringing a live cluster/Vault/Cloudflare resource under Terraform management, use an HCL `import {}` block (Terraform 1.5+). Do **NOT** use `terraform import` on the CLI for anything landing in this repo — the CLI path leaves no audit trail and makes multi-operator adoption fragile.
+
+**Canonical workflow:**
+
+1. Write the `resource` block that matches the live object.
+2. In the same stack, add an `import {}` stanza naming the target and the provider-specific ID:
+   ```hcl
+   import {
+     to = helm_release.kured
+     id = "kured/kured"  # Helm ID format: <namespace>/<release-name>
+   }
+
+   resource "helm_release" "kured" {
+     name       = "kured"
+     namespace  = "kured"
+     repository = "https://kubereboot.github.io/charts/"
+     chart      = "kured"
+     version    = "5.7.0"
+     # ... values matching the live release
+   }
+   ```
+3. `scripts/tg plan` — every change it proposes is real divergence between HCL and live state. Iterate on values until the plan is **0 changes**.
+4. `scripts/tg apply` — the import runs alongside whatever zero-change apply you have. If your plan is 0 changes, this commits only the state-ownership transfer.
+5. After the apply lands cleanly, **delete the `import {}` block** in a follow-up commit. The resource is now fully TF-owned and the stanza would be a no-op that clutters diffs.
+
+**Why `import {}` and not `terraform import`:**
+
+- Reviewable in PRs before any state mutation. The CLI path is an out-of-band action nobody sees.
+- Plan-safe: the `import` plan step shows the exact object being adopted. Mistyped IDs or the wrong resource address are caught before apply, not after.
+- Survives state backend changes (Tier 0 SOPS vs Tier 1 PG) transparently — both work identically from the operator's perspective because both use `scripts/tg`.
+- Re-runnable: if the apply fails partway through, the `import {}` block is idempotent. The CLI path's state mutation is not.
+
+**Finding the provider-specific ID:** each provider has its own convention.
+| Resource | ID format | Example |
+|---|---|---|
+| `helm_release` | `<namespace>/<release-name>` | `kured/kured` |
+| `kubernetes_manifest` | `{"apiVersion":"...","kind":"...","metadata":{"namespace":"...","name":"..."}}` | (pass as HCL object literal) |
+| `kubernetes_<kind>_v1` | `<namespace>/<name>` for namespaced, `<name>` for cluster-scoped | `kube-system/coredns` |
+| `authentik_provider_proxy` | provider UUID | `0eecac07-97c7-443c-...` |
+| `cloudflare_record` | `<zone-id>/<record-id>` | `abc123/def456` |
+
 ## Secrets Management (SOPS)
 - **`config.tfvars`** — plaintext config (hostnames, IPs, DNS records, public keys)
 - **`secrets.sops.json`** — SOPS-encrypted secrets (passwords, tokens, SSH keys, API keys)
