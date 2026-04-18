@@ -520,3 +520,193 @@ PYEOF
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# =============================================================================
+# Internal Monitor Sync
+# Declaratively manages monitors for internal services (databases, non-HTTP
+# endpoints) that can't be discovered from ingress annotations. Idempotent:
+# looks up monitors by name, creates if missing, patches if drifted.
+#
+# Why a CronJob and not a one-shot Job:
+# - louislam/uptime-kuma has no Terraform provider (only a CLI tool).
+# - UK v2 stores monitors in MariaDB (`uptimekuma` on mysql.dbaas); if the DB
+#   is wiped/restored we must re-create them.
+# - CronJob self-heals drift (manual UI edits, UK restarts, DB restores).
+#
+# Managed monitors (name -> desired spec) are defined in local.internal_monitors
+# below. Add new internal-service monitors there.
+# =============================================================================
+
+locals {
+  internal_monitors = [
+    {
+      name                        = "MySQL Standalone (dbaas)"
+      type                        = "mysql"
+      database_connection_string  = "mysql://uptimekuma@mysql.dbaas.svc.cluster.local:3306"
+      database_password_vault_key = "uptimekuma_db_password"
+      interval                    = 60
+      retry_interval              = 60
+      max_retries                 = 2
+    },
+  ]
+}
+
+resource "kubernetes_secret" "internal_monitor_sync" {
+  metadata {
+    name      = "internal-monitor-sync"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  data = merge(
+    { UPTIME_KUMA_PASSWORD = data.vault_kv_secret_v2.viktor.data["uptime_kuma_admin_password"] },
+    {
+      for m in local.internal_monitors :
+      "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" =>
+      data.vault_kv_secret_v2.viktor.data[m.database_password_vault_key]
+    },
+  )
+}
+
+resource "kubernetes_config_map_v1" "internal_monitor_targets" {
+  metadata {
+    name      = "internal-monitor-targets"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  data = {
+    "targets.json" = jsonencode([
+      for m in local.internal_monitors : {
+        name                       = m.name
+        type                       = m.type
+        database_connection_string = m.database_connection_string
+        password_env               = "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}"
+        interval                   = m.interval
+        retry_interval             = m.retry_interval
+        max_retries                = m.max_retries
+      }
+    ])
+  }
+}
+
+resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
+  metadata {
+    name      = "internal-monitor-sync"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/10 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "sync"
+              image = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check uptime-kuma-api
+                python3 << 'PYEOF'
+import json, os, time
+from uptime_kuma_api import UptimeKumaApi, MonitorType
+
+UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
+UPTIME_KUMA_PASS = os.environ["UPTIME_KUMA_PASSWORD"]
+
+with open("/config/targets.json") as f:
+    targets = json.load(f)
+
+api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
+api.login("admin", UPTIME_KUMA_PASS)
+
+existing = {m["name"]: m for m in api.get_monitors()}
+
+for t in targets:
+    name = t["name"]
+    password = os.environ[t["password_env"]]
+    # MYSQL monitors use `databaseConnectionString` + `radiusPassword`
+    # (UK v2 re-uses the radiusPassword field for mysql auth — backwards compat).
+    desired = {
+        "type": MonitorType(t["type"]),
+        "name": name,
+        "databaseConnectionString": t["database_connection_string"],
+        "radiusPassword": password,
+        "interval": t["interval"],
+        "retryInterval": t["retry_interval"],
+        "maxretries": t["max_retries"],
+    }
+    if name not in existing:
+        print(f"Creating monitor: {name}")
+        api.add_monitor(**desired)
+        continue
+    m = existing[name]
+    drifted = (
+        m.get("databaseConnectionString") != desired["databaseConnectionString"]
+        or m.get("radiusPassword") != desired["radiusPassword"]
+        or m.get("interval") != desired["interval"]
+        or m.get("retryInterval") != desired["retryInterval"]
+        or m.get("maxretries") != desired["maxretries"]
+    )
+    if drifted:
+        print(f"Updating monitor {name} (id={m['id']})")
+        api.edit_monitor(
+            m["id"],
+            databaseConnectionString=desired["databaseConnectionString"],
+            radiusPassword=desired["radiusPassword"],
+            interval=desired["interval"],
+            retryInterval=desired["retryInterval"],
+            maxretries=desired["maxretries"],
+        )
+    else:
+        print(f"Monitor {name} (id={m['id']}) already in desired state")
+    time.sleep(0.3)
+
+api.disconnect()
+print("Internal monitor sync complete")
+PYEOF
+              EOT
+              ]
+              env_from {
+                secret_ref {
+                  name = kubernetes_secret.internal_monitor_sync.metadata[0].name
+                }
+              }
+              volume_mount {
+                name       = "config"
+                mount_path = "/config"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  memory = "128Mi"
+                  cpu    = "10m"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+            volume {
+              name = "config"
+              config_map {
+                name = kubernetes_config_map_v1.internal_monitor_targets.metadata[0].name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}

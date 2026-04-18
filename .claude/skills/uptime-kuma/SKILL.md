@@ -155,3 +155,19 @@ Common port is 80. Exceptions:
 3. Add `time.sleep(0.3)` between bulk operations to avoid overloading
 4. Homepage dashboard widget slug: `cluster-internal`
 5. Cloudflare-proxied at `uptime.viktorbarzin.me`
+
+## Terraform-Managed Monitors
+
+There is NO `louislam/uptime-kuma` Terraform provider. Two patterns exist for
+declarative monitor management in this stack:
+
+- **External HTTPS monitors** — auto-discovered from ingress annotations by the
+  `external-monitor-sync` CronJob (`*/10 * * * *`). Opt-out via
+  `uptime.viktorbarzin.me/external-monitor: "false"` on the ingress.
+- **Internal monitors (DBs, non-HTTP)** — declared in the
+  `local.internal_monitors` list in `stacks/uptime-kuma/modules/uptime-kuma/main.tf`
+  and synced by the `internal-monitor-sync` CronJob. To add one, append to the
+  list (provide `name`, `type`, `database_connection_string`,
+  `database_password_vault_key`, `interval`, `retry_interval`, `max_retries`)
+  and `scripts/tg apply`. The sync is idempotent — looks up by name, creates
+  if missing, patches if drifted. Existing monitors keep their id and history.
