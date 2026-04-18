@@ -346,7 +346,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 
@@ -466,7 +466,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 
@@ -615,7 +615,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 
@@ -876,7 +876,7 @@ resource "kubernetes_deployment" "book_search" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 

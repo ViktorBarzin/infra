@@ -193,7 +193,7 @@ resource "kubernetes_deployment" "freedify" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 

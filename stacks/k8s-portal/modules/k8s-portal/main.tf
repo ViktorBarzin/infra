@@ -115,7 +115,7 @@ resource "kubernetes_deployment" "k8s_portal" {
   lifecycle {
     # DRIFT_WORKAROUND: CI pipeline owns image tag (kubectl set image from Woodpecker/GHA); Kyverno mutates dns_config for ndots. Reviewed 2026-04-18.
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # CI updates image tag
     ]
   }

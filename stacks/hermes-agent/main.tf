@@ -374,7 +374,7 @@ resource "kubernetes_deployment" "hermes_agent" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
 }
 
