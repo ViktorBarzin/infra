@@ -1440,6 +1440,30 @@ resource "null_resource" "pg_terraform_state_db" {
   }
 }
 
+# Create payslip_ingest database for the payslip-ingest webhook service.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-payslip-ingest`, 7d rotation).
+resource "null_resource" "pg_payslip_ingest_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "payslip_ingest"
+    username = "payslip_ingest"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE payslip_ingest WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE payslip_ingest OWNER payslip_ingest"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE payslip_ingest TO payslip_ingest"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {

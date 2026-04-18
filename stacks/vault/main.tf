@@ -523,7 +523,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     # "pg-trading",  # Commented out 2026-04-06 - trading-bot disabled
     "pg-health", "pg-linkwarden",
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
-    "pg-terraform-state"
+    "pg-terraform-state", "pg-payslip-ingest"
   ]
 
   postgresql {
@@ -658,6 +658,14 @@ resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-terraform-state"
   username        = "terraform_state"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_payslip_ingest" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-payslip-ingest"
+  username        = "payslip_ingest"
   rotation_period = 604800
 }
 
