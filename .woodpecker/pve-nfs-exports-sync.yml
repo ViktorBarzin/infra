@@ -1,0 +1,63 @@
+# Sync infra/scripts/pve-nfs-exports → PVE host /etc/exports on change.
+#
+# Wave 6b of the state-drift consolidation plan: move the "scp + exportfs -ra"
+# deploy step out of runbook-human-hands and into CI so the Proxmox NFS export
+# table tracks git.
+#
+# Trigger: push to master that touches `scripts/pve-nfs-exports`. The file
+# header documents the deploy invocation; this pipeline codifies it.
+#
+# Credentials:
+#   - pve_ssh_key: Woodpecker repo-secret (ed25519 keypair provisioned
+#     2026-04-18 as `woodpecker-pve-nfs-exports-sync`). Public key lives in
+#     /root/.ssh/authorized_keys on the PVE host. Private key mirrored in
+#     Vault `secret/woodpecker/pve_ssh_key` for recovery.
+
+when:
+  - event: push
+    branch: master
+    path: scripts/pve-nfs-exports
+  - event: manual
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: deploy
+    image: alpine:3.20
+    environment:
+      PVE_SSH_KEY:
+        from_secret: pve_ssh_key
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache openssh-client curl
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$PVE_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      # Pin host key — CI's ~/.ssh/known_hosts is ephemeral, so accept-new on first pull.
+      - ssh-keyscan -t ed25519 192.168.1.127 >> ~/.ssh/known_hosts 2>/dev/null
+      # Diff what we'd ship, so pipeline logs show the intended change.
+      - echo '---diff---' && ssh -o BatchMode=yes root@192.168.1.127 "cat /etc/exports" > /tmp/remote.exports || true
+      - diff -u /tmp/remote.exports scripts/pve-nfs-exports || true
+      - echo '---applying---'
+      - scp -o BatchMode=yes scripts/pve-nfs-exports root@192.168.1.127:/etc/exports
+      - ssh -o BatchMode=yes root@192.168.1.127 "exportfs -ra && exportfs -s | head -5"
+      - echo '---done---'
+
+  - name: slack
+    image: curlimages/curl:8.11.0
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\"PVE /etc/exports sync: ${CI_PIPELINE_STATUS}\"}" \
+          "$SLACK_WEBHOOK" || true
+    when:
+      status: [success, failure]
