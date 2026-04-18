@@ -72,7 +72,7 @@ module "tls_secret" {
 module "viktor" {
   source                     = "./factory"
   name                       = "viktor"
-  tag                        = "26.3.0"
+  tag                        = "26.4.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -95,7 +95,7 @@ module "viktor" {
 module "anca" {
   source                     = "./factory"
   name                       = "anca"
-  tag                        = "26.3.0"
+  tag                        = "26.4.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -118,7 +118,7 @@ module "anca" {
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
-  tag                        = "26.3.0"
+  tag                        = "26.4.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
