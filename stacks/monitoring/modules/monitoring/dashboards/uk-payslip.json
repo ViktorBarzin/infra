@@ -23,7 +23,7 @@
       "id": 1,
       "title": "Monthly gross / net / tax / NI",
       "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "payslips-pg" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -57,7 +57,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "payslips-pg" },
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
           "rawSql": "SELECT pay_date AS \"time\", gross_pay, net_pay, income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A"
@@ -68,7 +68,7 @@
       "id": 2,
       "title": "YTD gross (this tax year) with UK band thresholds",
       "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "payslips-pg" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -111,7 +111,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "payslips-pg" },
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
           "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_gross FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A"
@@ -122,7 +122,7 @@
       "id": 3,
       "title": "Deductions breakdown per payslip",
       "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "payslips-pg" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": {
         "defaults": {
@@ -156,7 +156,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "payslips-pg" },
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
           "rawSql": "SELECT pay_date AS \"time\", income_tax, national_insurance, pension_employee, student_loan FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A"
@@ -167,7 +167,7 @@
       "id": 4,
       "title": "Latest effective rate & take-home %",
       "type": "timeseries",
-      "datasource": { "type": "postgres", "uid": "payslips-pg" },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
       "fieldConfig": {
         "defaults": {
@@ -203,7 +203,7 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres", "uid": "payslips-pg" },
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "payslips-pg" },
           "rawSql": "SELECT pay_date AS \"time\", ROUND(((income_tax + national_insurance)::numeric / NULLIF(gross_pay, 0)) * 100, 2) AS \"effective_rate_pct\", ROUND((net_pay::numeric / NULLIF(gross_pay, 0)) * 100, 2) AS \"take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A"
