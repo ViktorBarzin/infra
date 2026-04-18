@@ -597,3 +597,162 @@ resource "kubernetes_cron_job_v1" "backup" {
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Fidelity UK PlanViewer — monthly pension contribution sync
+#
+# Architecture notes:
+# - The CLI (`broker-sync fidelity-ingest`) loads storage_state.json, boots
+#   headless Chromium, scrapes the transaction history + valuation JSON, and
+#   posts DEPOSIT activities to Wealthfolio. See
+#   broker-sync/docs/providers/fidelity-planviewer.md for the seed workflow.
+# - Storage_state is staged to Vault (`secret/broker-sync` →
+#   `fidelity_storage_state`). ESO projects all broker-sync keys into the
+#   shared `broker-sync-secrets` K8s Secret; an init container writes the
+#   JSON blob to the PVC so the main container can load it.
+# - Image needs Chromium baked in — add the `fidelity-capable: "true"` label
+#   so the Dockerfile/CI treats this CronJob's pod spec as the Playwright
+#   variant. Until the Playwright image ships, keep `suspend = true`.
+# - Schedule: 05:00 UK on the 20th of each month — well after Viktor's mid-
+#   month payroll contribution has settled (finance history shows credits
+#   landing 13th-18th).
+resource "kubernetes_cron_job_v1" "fidelity" {
+  metadata {
+    name      = "broker-sync-fidelity"
+    namespace = kubernetes_namespace.broker_sync.metadata[0].name
+    labels    = { app = "broker-sync", component = "fidelity" }
+  }
+  spec {
+    schedule                      = "0 5 20 * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    # Suspended until the broker-sync image ships with Playwright + Chromium.
+    suspend = true
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = { app = "broker-sync", component = "fidelity" }
+          }
+          spec {
+            restart_policy = "OnFailure"
+            # Materialise the JSON storage_state from the projected Secret
+            # onto the PVC where Playwright expects to read it.
+            init_container {
+              name  = "stage-storage-state"
+              image = "busybox:1.36"
+              command = ["/bin/sh", "-c", <<-EOT
+              set -eu
+              mkdir -p /data
+              cp /secrets/fidelity_storage_state /data/fidelity_storage_state.json
+              chmod 600 /data/fidelity_storage_state.json
+              EOT
+              ]
+              volume_mount {
+                name       = "secrets"
+                mount_path = "/secrets"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+              }
+              resources {
+                requests = { cpu = "5m", memory = "8Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+            container {
+              name    = "broker-sync"
+              image   = local.broker_sync_image
+              command = ["broker-sync", "fidelity-ingest"]
+
+              env {
+                name  = "BROKER_SYNC_DATA_DIR"
+                value = "/data"
+              }
+              env {
+                name  = "WF_SESSION_PATH"
+                value = "/data/wealthfolio_session.json"
+              }
+              env {
+                name  = "FIDELITY_STORAGE_STATE_PATH"
+                value = "/data/fidelity_storage_state.json"
+              }
+              env {
+                name = "FIDELITY_PLAN_ID"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "fidelity_plan_id"
+                  }
+                }
+              }
+              env {
+                name = "WF_BASE_URL"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_base_url"
+                  }
+                }
+              }
+              env {
+                name = "WF_USERNAME"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_username"
+                  }
+                }
+              }
+              env {
+                name = "WF_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_password"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+              }
+              resources {
+                # Chromium is hungry — headless shell + page rendering
+                # comfortably under 1Gi, spike up to 1.2Gi during full-page
+                # screenshots.
+                requests = { cpu = "50m", memory = "512Mi" }
+                limits   = { memory = "1280Mi" }
+              }
+            }
+            volume {
+              name = "secrets"
+              secret {
+                secret_name = "broker-sync-secrets"
+                items {
+                  key  = "fidelity_storage_state"
+                  path = "fidelity_storage_state"
+                }
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
