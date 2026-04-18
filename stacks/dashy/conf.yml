@@ -382,13 +382,6 @@ sections:
         url: https://audiobookshelf.viktorbarzin.me/
         target: newtab
         id: 12_1475_audiobookshelf
-      - &ref_42
-        title: Ollama
-        description: Self-hosted ChatGPT (using llama3)
-        icon: si-openai
-        url: https://ollama.viktorbarzin.me/
-        target: newtab
-        id: 13_1475_ollama
       - &ref_43
         title: Paperless-ngx
         description: Document index
@@ -411,7 +404,6 @@ sections:
       - *ref_39
       - *ref_40
       - *ref_41
-      - *ref_42
       - *ref_43
   - name: Under Construction
     displayData:

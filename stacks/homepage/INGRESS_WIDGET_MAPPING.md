@@ -62,9 +62,6 @@ Widget-capable matches (candidate): **27**
 | `nextcloud` | `whiteboard` | `https://whiteboard.viktorbarzin.me` | `nextcloud` |
 | `ntfy` | `ntfy` | `https://ntfy.viktorbarzin.me` | `link-only` |
 | `nvidia` | `nvidia-exporter` | `https://nvidia-exporter.viktorbarzin.lan` | `link-only` |
-| `ollama` | `ollama` | `https://ollama.viktorbarzin.me` | `link-only` |
-| `ollama` | `ollama-api` | `https://ollama-api.viktorbarzin.me` | `link-only` |
-| `ollama` | `ollama-server` | `https://ollama-server.viktorbarzin.lan` | `link-only` |
 | `onlyoffice` | `onlyoffice` | `https://onlyoffice.viktorbarzin.me` | `link-only` |
 | `openclaw` | `openclaw` | `https://openclaw.viktorbarzin.me` | `link-only` |
 | `owntracks` | `owntracks` | `https://owntracks.viktorbarzin.me` | `link-only` |
