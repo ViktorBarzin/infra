@@ -74,6 +74,36 @@ resource "kubernetes_deployment" "pgbouncer" {
             container_port = 6432
           }
 
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "128Mi"
+            }
+            limits = {
+              memory = "512Mi"
+            }
+          }
+
+          readiness_probe {
+            tcp_socket {
+              port = 6432
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+            timeout_seconds       = 3
+            failure_threshold     = 3
+          }
+
+          liveness_probe {
+            tcp_socket {
+              port = 6432
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
           volume_mount {
             name       = "config"
             mount_path = "/etc/pgbouncer/pgbouncer.ini"
@@ -118,6 +148,25 @@ resource "kubernetes_deployment" "pgbouncer" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# --- 3b️⃣ PodDisruptionBudget ---
+# Protects auth against simultaneous node drains. With 3 replicas and
+# minAvailable=2, a single drain rolls cleanly; a simultaneous two-node
+# outage is correctly blocked.
+resource "kubernetes_pod_disruption_budget_v1" "pgbouncer" {
+  metadata {
+    name      = "pgbouncer"
+    namespace = "authentik"
+  }
+  spec {
+    min_available = 2
+    selector {
+      match_labels = {
+        app = "pgbouncer"
+      }
+    }
   }
 }
 

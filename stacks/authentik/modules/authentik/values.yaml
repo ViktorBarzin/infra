@@ -14,9 +14,29 @@ authentik:
     port: 6432
     user: authentik
     password: ""
+    # Persistent client-side connections (safe with PgBouncer session mode;
+    # must be < pgbouncer server_idle_timeout=600s). Cuts Django connection
+    # setup overhead off the ~70 sequential ORM ops per flow stage.
+    conn_max_age: 60
+    conn_health_checks: true
+  cache:
+    # Cache flow plans for 30m and policy evaluations for 15m. Authentik 2026.2
+    # moved cache storage from Redis to Postgres, so a TTL hit is still a
+    # SELECT — but a single indexed lookup beats re-evaluating PolicyBindings.
+    timeout_flows: 1800
+    timeout_policies: 900
+  web:
+    # Gunicorn: 3 workers × 4 threads per server pod (default 2×4).
+    # Pairs with the server memory bump to 2Gi (each worker preloads Django ~500Mi).
+    workers: 3
+    threads: 4
+  worker:
+    # Celery-equivalent worker threads per pod (default 2, renamed from
+    # AUTHENTIK_WORKER__CONCURRENCY in 2025.8).
+    threads: 4
 
 server:
-  replicas: 2
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -27,7 +47,7 @@ server:
       cpu: 100m
       memory: 1.5Gi
     limits:
-      memory: 1.5Gi
+      memory: 2Gi
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
@@ -44,12 +64,12 @@ server:
     diun.include_tags: "^202[0-9].[0-9]+.*$" # no need to annotate the worker as it uses the same image
   pdb:
     enabled: true
-    minAvailable: 1
+    minAvailable: 2
 global:
   addPrometheusAnnotations: true
 
 worker:
-  replicas: 2
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -60,7 +80,7 @@ worker:
       cpu: 100m
       memory: 1.5Gi
     limits:
-      memory: 1.5Gi
+      memory: 2Gi
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
