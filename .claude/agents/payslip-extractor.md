@@ -19,14 +19,24 @@ Produce EXACTLY ONE JSON object on stdout matching the schema. No prose. No mark
 
 ## RSU handling (important — Meta UK payslips)
 
-UK payslips for equity-compensated employees (e.g. Meta) report RSU vests as NOTIONAL pay for HMRC reporting only — the actual share grant + tax is handled by the broker (Schwab), which sells shares to cover withholding. On the payslip:
+UK payslips for equity-compensated employees (e.g. Meta) report RSU vests as NOTIONAL pay for HMRC reporting only — the broker (Schwab) sells shares to cover US-side withholding but the UK payslip ALSO runs the vest through PAYE via a grossed-up Taxable Pay line. Meta UK template:
 
-- An EARNINGS line appears with labels like `RSU Vest`, `Restricted Stock Units`, `Stock Value`, `Notional Pay`, `Share Award`, `GSU Vest`, `Equity Vest` → populate `rsu_vest`.
-- A DEDUCTION line of equal-or-similar magnitude nets it back out. Labels: `Shares Retained`, `Stock Tax Withholding`, `RSU Offset`, `Notional Pay Offset`, `Shares Withheld` → populate `rsu_offset`.
+- EARNINGS lines: `RSU Tax Offset` (grossed-up vest value) and optionally `RSU Excs Refund` (over-withheld amount returned). SUM BOTH into `rsu_vest`. Other labels seen on non-Meta templates: `RSU Vest`, `Restricted Stock Units`, `Notional Pay`, `GSU Vest`.
+- Meta's template does NOT use a matching offset deduction — `rsu_offset` should be 0. Taxable Pay is grossed up to (Total Payment + rsu_vest) so PAYE already includes the RSU share.
+- For non-Meta templates that DO use an offset (`Shares Retained`, `Notional Pay Offset`), populate `rsu_offset` with the magnitude.
 
-If you see either line, populate BOTH fields. Do NOT add them to `other_deductions` and do NOT let them count as regular income_tax/NI even though some templates put them near the tax block. They exist for reporting.
+If you see ANY of these lines, do NOT add them to `other_deductions` and do NOT let them count as regular income_tax/NI.
 
 If the payslip has no stock component, leave both as 0.
+
+## Earnings decomposition (v2)
+
+- `salary`: the basic salary/pay line (usually the first "Salary" or "Basic Pay" entry in the Earnings/Payments block).
+- `bonus`: the bonus line (`Perform Bonus`, `Bonus`, `Performance Bonus`). If absent or 0, leave as 0 — that's meaningful signal (bonus-sacrifice months). Don't invent.
+- `pension_sacrifice`: **ABSOLUTE VALUE** of any NEGATIVE pension line in the Payments block (e.g. `AE Pension EE    -600.20` → `600.20`). This is salary-sacrifice and is ALREADY subtracted from Total Payment/gross. Do not also put it in `pension_employee`.
+- `pension_employee`: use this ONLY when pension appears as a POSITIVE deduction on the Deductions side (legacy Meta variant A, or non-Meta templates). Never double-count.
+- `taxable_pay`: the "Taxable Pay" line in the summary block, THIS PERIOD column. For Meta this is the post-sacrifice + RSU-grossed-up base that PAYE is computed on. If the payslip doesn't surface a summary block, null.
+- `ytd_tax_paid`, `ytd_taxable_pay`, `ytd_gross`: YTD column values from the same summary block. Null if not present.
 
 ## Fast path: PAYSLIP_TEXT is present
 
