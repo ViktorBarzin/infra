@@ -140,6 +140,36 @@ ssh root@10.0.20.10 '
 '
 ```
 
+## Bouncing registry containers — the nginx DNS trap
+
+`docker compose up -d` on `/opt/registry/docker-compose.yml` recreates
+`registry-*` containers when their image tag changes, which assigns them
+new IPs on the `registry` bridge network. **`registry-nginx` resolves its
+upstream DNS names (`registry-private`, `registry-dockerhub`, …) ONCE at
+startup and caches the results** — it does not re-resolve after a
+recreate.
+
+Symptom if you forget: `/v2/_catalog` on `:5050` returns
+`{"repositories": []}`, `/v2/` returns 200 without auth, pulls return
+the wrong image. nginx is forwarding to a stale IP that now belongs to a
+different registry-* backend (commonly the pull-through ghcr or
+dockerhub cache, which have empty catalogs from the htpasswd-auth user's
+perspective).
+
+**Always follow a registry-* bounce with `docker restart registry-nginx`.**
+Or prevent the problem by setting a `resolver` directive in
+`nginx_registry.conf` so upstream names are re-resolved per request.
+
+```sh
+ssh root@10.0.20.10 '
+  cd /opt/registry && docker compose up -d
+  docker restart registry-nginx
+  sleep 3
+  docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}" \
+    | grep -E "registry-"
+'
+```
+
 ## Related docs
 
 - `docs/architecture/dns.md` — resolver IP assignments per subnet.
