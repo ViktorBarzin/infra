@@ -18,8 +18,9 @@ dependency "external-secrets" {
 }
 
 inputs = {
-  # 99ab188f = master HEAD with levels.fyi scraper (HTML __NEXT_DATA__) +
-  # comp_points/levels tables (alembic 0003). Built + pushed locally
-  # 2026-04-19 while the Woodpecker Forgejo webhook remains broken.
-  image_tag = "99ab188f"
+  # 92afc38d = master HEAD with levels.fyi scraper + comp_table COALESCE
+  # fix + Frankfurter FX backend (exchangerate.host free tier deprecated
+  # in 2026). Built + pushed locally 2026-04-19 while the Woodpecker
+  # Forgejo webhook remains broken.
+  image_tag = "92afc38d"
 }
