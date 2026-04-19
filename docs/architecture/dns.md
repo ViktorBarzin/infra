@@ -1,6 +1,6 @@
 # DNS Architecture
 
-Last updated: 2026-04-19 (NodeLocal DNSCache deployed — Workstream C)
+Last updated: 2026-04-19 (WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq)
 
 ## Overview
 
@@ -22,10 +22,9 @@ graph TB
     end
 
     subgraph "pfSense (10.0.20.1)"
-        pf_dnsmasq[dnsmasq<br/>Forwarder]
+        pf_unbound[Unbound<br/>Resolver<br/>auth-zone AXFR]
         pf_kea[Kea DHCP4<br/>3 subnets, 53 reservations]
         pf_ddns[Kea DHCP-DDNS<br/>RFC 2136]
-        pf_nat[NAT rdr<br/>UDP 53 → Technitium]
     end
 
     subgraph "Kubernetes Cluster"
@@ -53,18 +52,17 @@ graph TB
 
     Internet -->|DNS query| CF
     CF -->|CNAME to tunnel| CFTunnel
-    LAN -->|DNS query UDP 53| pf_nat
-    pf_nat -->|forward| LB_DNS
+    LAN -->|DNS query UDP 53| pf_unbound
     pf_kea -->|lease event| pf_ddns
     pf_ddns -->|A + PTR| LB_DNS
 
-    pf_dnsmasq -->|.viktorbarzin.lan| LB_DNS
-    pf_dnsmasq -->|public queries| CF
+    pf_unbound -->|AXFR viktorbarzin.lan| LB_DNS
+    pf_unbound -->|public queries DoT :853| CF
 
     NodeLocalDNS -->|cache miss| KubeDNSUpstream
     KubeDNSUpstream --> CoreDNS
     CoreDNS -->|.viktorbarzin.lan| ClusterIP
-    CoreDNS -->|public queries| pf_dnsmasq
+    CoreDNS -->|public queries| pf_unbound
 
     LB_DNS --> Primary
     LB_DNS --> Secondary
@@ -86,7 +84,7 @@ graph TB
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public domain management (~50 domains) |
-| pfSense dnsmasq | 10.0.20.1 | pfSense 2.7.x | DNS forwarder for management VLAN |
+| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium; DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
@@ -98,7 +96,7 @@ graph TB
 | NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
 | phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
-| pfSense | `stacks/pfsense/` | VM config (DNS config is via pfSense web UI) |
+| pfSense | `stacks/pfsense/` | VM config only (Unbound config is managed out-of-band via pfSense web UI / direct config.xml edits; see `docs/runbooks/pfsense-unbound.md`) |
 
 ## DNS Resolution Paths
 
@@ -122,39 +120,50 @@ Pod → NodeLocal DNSCache (intercepts on kube-dns:10.96.0.10)
   → cache hit: serve locally
   → cache miss: forward to kube-dns-upstream (selects CoreDNS pods directly)
      → CoreDNS: forward to pfSense (10.0.20.1), fallback 8.8.8.8, 1.1.1.1
-     → pfSense dnsmasq → Cloudflare (1.1.1.1)
+     → pfSense Unbound:
+        - .viktorbarzin.lan → local auth-zone (AXFR-cached from Technitium)
+        - public → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
 
 ### LAN Client (192.168.1.x) → Any Domain
 
 ```
 Client gets DNS=192.168.1.2 (pfSense WAN) from DHCP
-  → pfSense NAT rdr on WAN interface → Technitium LB (10.0.20.201)
-  → Technitium resolves:
-    - .viktorbarzin.lan → local zone
-    - .viktorbarzin.me (non-proxied) → recursive, then Split Horizon translates
-      176.12.22.76 → 10.0.20.200 for 192.168.1.0/24 clients
-    - other → recursive to Cloudflare DoH (1.1.1.1)
+  → pfSense Unbound listens on 192.168.1.2:53 directly (no NAT rdr)
+    - .viktorbarzin.lan → auth-zone (AXFR-cached from Technitium 10.0.20.201)
+      Survives full Technitium/K8s outage — auth-zone keeps serving from
+      /var/unbound/viktorbarzin.lan.zone with `fallback-enabled: yes`.
+    - .viktorbarzin.me (non-proxied) and other public → DoT to Cloudflare
+      (1.1.1.1 / 1.0.0.1 on port 853, SNI cloudflare-dns.com)
 ```
 
-Client source IPs are preserved (no SNAT on 192.168.1.x → 10.0.20.x path) — Technitium logs show real per-device IPs.
+**Trade-off vs. prior NAT rdr**: Split Horizon hairpin translation
+(`176.12.22.76 → 10.0.20.200` for 192.168.1.x clients) was only applied
+when queries reached Technitium via the NAT rdr. With Unbound answering
+on 192.168.1.2:53 directly, non-proxied `*.viktorbarzin.me` queries on the
+192.168.1.x LAN return the public IP, which the TP-Link AP can't hairpin.
+If hairpin is broken on LAN for a given non-proxied service, the fix is
+either (a) switch the service to proxied (via `dns_type = "proxied"`)
+or (b) add a local-data override on pfSense Unbound. The pre-Unbound
+state is documented in the `docs/runbooks/pfsense-unbound.md` rollback
+section.
 
 ### Management VLAN (10.0.10.x) → Any Domain
 
 ```
 Client gets DNS from Kea DHCP → pfSense (10.0.10.1)
-  → pfSense dnsmasq:
-    - .viktorbarzin.lan → forward to Technitium (10.0.20.201)
-    - other → forward to Cloudflare (1.1.1.1)
+  → pfSense Unbound:
+    - .viktorbarzin.lan → auth-zone (local)
+    - other → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
 
 ### K8s VLAN (10.0.20.x) → Any Domain
 
 ```
 Client gets DNS from Kea DHCP → pfSense (10.0.20.1)
-  → pfSense dnsmasq:
-    - .viktorbarzin.lan → forward to Technitium (10.0.20.201)
-    - other → forward to Cloudflare (1.1.1.1)
+  → pfSense Unbound:
+    - .viktorbarzin.lan → auth-zone (local)
+    - other → DoT to Cloudflare (1.1.1.1 / 1.0.0.1 port 853)
 ```
 
 ## Technitium DNS — Internal DNS Server
@@ -438,12 +447,25 @@ The zone-sync CronJob (runs every 30min) pushes the following to the Prometheus 
 
 ### LAN Clients Can't Resolve
 
-1. Verify pfSense NAT rule redirects UDP 53 on WAN to 10.0.20.201
-2. Check Technitium LB service: `kubectl get svc -n technitium technitium-dns`
-3. Test from LAN: `dig @192.168.1.2 idrac.viktorbarzin.lan`
-4. Check `externalTrafficPolicy: Local` — if no Technitium pod runs on the node receiving traffic, it drops
+1. Verify pfSense Unbound is running: `ssh admin@10.0.20.1 "sockstat -l -4 -p 53 | grep unbound"` — expect listeners on `192.168.1.2:53`, `10.0.10.1:53`, `10.0.20.1:53`, `127.0.0.1:53`
+2. Verify the auth-zone is loaded: `ssh admin@10.0.20.1 "unbound-control -c /var/unbound/unbound.conf list_auth_zones"` — expect `viktorbarzin.lan. serial N`
+3. Test from LAN: `dig @192.168.1.2 idrac.viktorbarzin.lan` (should return with `aa` flag)
+4. Test public upstream: `dig @192.168.1.2 example.com +dnssec` (should have `ad` flag — DoT via Cloudflare working)
+5. If auth-zone can't AXFR: check Technitium `viktorbarzin.lan` zone options → `zoneTransferNetworkACL` contains `10.0.20.1, 10.0.10.1, 192.168.1.2`
+6. See `docs/runbooks/pfsense-unbound.md` for full Unbound runbook and rollback instructions
 
 ### Hairpin NAT Not Working (LAN → *.viktorbarzin.me Fails)
+
+Since 2026-04-19 (Workstream D), pfSense Unbound answers LAN DNS queries
+directly instead of forwarding to Technitium, so the Technitium Split Horizon
+post-processing does NOT run for 192.168.1.x clients anymore. Non-proxied
+services break hairpin on LAN clients again. Options:
+
+1. **Switch service to proxied Cloudflare** (preferred) — set `dns_type = "proxied"` in the `ingress_factory` module call; DNS now resolves to Cloudflare edge, hairpin-independent.
+2. **Add a local-data override on pfSense Unbound** — under `Services → DNS Resolver → Host Overrides`, set `<service>.viktorbarzin.me → 10.0.20.200` (Traefik LB IP). This is equivalent to what Split Horizon did, applied at the resolver.
+3. **Revert to prior NAT rdr + Technitium Split Horizon** — documented in `docs/runbooks/pfsense-unbound.md` rollback section.
+
+K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` queries DO reach Technitium (e.g., from pods that query via CoreDNS → Technitium forwarding for `.viktorbarzin.me` via pfSense). Verify Technitium split-horizon app:
 
 1. Verify Split Horizon app is installed on all instances
 2. Check CronJob status: `kubectl get cronjob -n technitium technitium-split-horizon-sync`
@@ -479,6 +501,7 @@ For external `.viktorbarzin.me` records:
 ## Incident History
 
 - **2026-04-14 (SEV1)**: NFS `fsid=0` caused Technitium primary data loss on restart. Fixed by migrating all 3 instances to `proxmox-lvm-encrypted`, adding zone-sync CronJob (30min AXFR). See [post-mortem](../post-mortems/2026-04-14-nfs-fsid0-dns-vault-outage.md).
+- **2026-04-19 (hardening, not outage)**: Workstream D — pfSense Unbound replaces dnsmasq as the pfSense DNS service. Unbound AXFR-slaves `viktorbarzin.lan` from Technitium so LAN-side resolution survives a full K8s outage. WAN NAT rdr `192.168.1.2:53 → 10.0.20.201` removed (Unbound listens on WAN directly). DoT upstream via Cloudflare. See `docs/runbooks/pfsense-unbound.md` and bd `code-k0d`.
 
 ## Related
 
