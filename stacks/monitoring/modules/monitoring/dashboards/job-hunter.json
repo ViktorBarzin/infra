@@ -1,0 +1,213 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Newly-ingested roles (by fetched_at).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {"mode": "none"}
+          },
+          "thresholds": {"mode": "absolute", "steps": []}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('day', fetched_at) AT TIME ZONE 'UTC' AS time, source, COUNT(*) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "New roles per day by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Distinct open roles by source over the time window.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"hideFrom": {"legend": false, "tooltip": false, "viz": false}},
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "values": ["value"]},
+        "pieType": "donut",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT source AS metric, COUNT(DISTINCT dedup_key) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) GROUP BY source ORDER BY value DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Roles by source (deduplicated)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Top 20 companies by recent role volume.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": []}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.85,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {"displayMode": "hidden", "placement": "bottom", "showLegend": false},
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {"mode": "single", "sort": "none"},
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT c.display_name, COUNT(*) AS roles FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) GROUP BY c.display_name ORDER BY roles DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Top companies by role volume",
+      "type": "barchart"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Normalised base salary distribution (£) for roles with explicit comp.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"fillOpacity": 80, "lineWidth": 1},
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "options": {
+        "bucketOffset": 0,
+        "combine": false,
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT parsed_base_gbp::float AS base_gbp FROM job_hunter.roles WHERE parsed_base_gbp IS NOT NULL AND $__timeFilter(fetched_at)",
+          "refId": "A"
+        }
+      ],
+      "title": "Salary distribution (GBP)",
+      "type": "histogram"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Recent roles, ranked by salary-parse confidence then parsed base.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": []}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "apply_url"},
+            "properties": [
+              {"id": "custom.cellOptions", "value": {"type": "auto"}},
+              {"id": "links", "value": [{"targetBlank": true, "title": "Open", "url": "${__value.raw}"}]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "base_gbp"},
+            "properties": [{"id": "unit", "value": "currencyGBP"}]
+          }
+        ]
+      },
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 17},
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT r.posted_at, c.display_name AS company, r.title, r.location, r.remote_policy, r.parsed_base_gbp::float AS base_gbp, r.salary_parse_confidence, r.source, r.apply_url FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) ORDER BY r.salary_parse_confidence DESC NULLS LAST, r.parsed_base_gbp DESC NULLS LAST, r.posted_at DESC NULLS LAST LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Top roles",
+      "type": "table"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["job-hunter", "jobs", "careers"],
+  "templating": {"list": []},
+  "time": {"from": "now-30d", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Job Hunter",
+  "uid": "job-hunter",
+  "version": 1,
+  "weekStart": ""
+}

@@ -107,16 +107,16 @@ locals {
   # Dashboard folder assignments
   dashboard_folders = {
     # Cluster & Kubernetes
-    "api_server.json"            = "Cluster"
-    "cluster_health.json"        = "Cluster"
-    "nodes.json"                 = "Cluster"
-    "pods.json"                  = "Cluster"
-    "kube-state-metrics.json"    = "Cluster"
+    "api_server.json"         = "Cluster"
+    "cluster_health.json"     = "Cluster"
+    "nodes.json"              = "Cluster"
+    "pods.json"               = "Cluster"
+    "kube-state-metrics.json" = "Cluster"
     # Networking & DNS
-    "core_dns.json"              = "Networking"
-    "technitium-dns.json"        = "Networking"
-    "nginx_ingress.json"         = "Networking"
-    "network_traffic.json"       = "Networking"
+    "core_dns.json"        = "Networking"
+    "technitium-dns.json"  = "Networking"
+    "nginx_ingress.json"   = "Networking"
+    "network_traffic.json" = "Networking"
 
     # Hardware & Host
     "node_exporter_full.json"    = "Hardware"
@@ -126,15 +126,16 @@ locals {
     "nvidia.json"                = "Hardware"
 
     # Operations
-    "backup_health.json"         = "Operations"
-    "registry.json"              = "Operations"
-    "loki.json"                  = "Operations"
-    "k8s-audit.json"             = "Operations"
+    "backup_health.json" = "Operations"
+    "registry.json"      = "Operations"
+    "loki.json"          = "Operations"
+    "k8s-audit.json"     = "Operations"
 
     # Applications
-    "qbittorrent.json"           = "Applications"
-    "realestate-crawler.json"    = "Applications"
-    "uk-payslip.json"            = "Finance"
+    "qbittorrent.json"        = "Applications"
+    "realestate-crawler.json" = "Applications"
+    "uk-payslip.json"         = "Finance"
+    "job-hunter.json"         = "Finance"
   }
 }
 

@@ -1185,6 +1185,30 @@ resource "null_resource" "pg_payslip_ingest_db" {
   }
 }
 
+# Create job_hunter database for the job-hunter scraper service.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-job-hunter`, 7d rotation).
+resource "null_resource" "pg_job_hunter_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "job_hunter"
+    username = "job_hunter"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'job_hunter'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE job_hunter WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'job_hunter'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE job_hunter OWNER job_hunter"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE job_hunter TO job_hunter"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {
