@@ -16,3 +16,9 @@ dependency "external-secrets" {
   config_path  = "../external-secrets"
   skip_outputs = true
 }
+
+inputs = {
+  # payslip-ingest repo HEAD — includes migrations 0004 + 0005, bonus-dedup,
+  # and the Woodpecker path-filter fix. Bump on every deploy.
+  image_tag = "4f70681d"
+}
