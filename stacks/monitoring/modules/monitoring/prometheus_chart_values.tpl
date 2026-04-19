@@ -1995,13 +1995,6 @@ serverFiles:
               summary: "CoreDNS forward SERVFAIL/REFUSED rate: {{ $value | printf \"%.2f\" }}/s — upstream DNS (pfSense/public) may be unhealthy"
       - name: qbittorrent
         rules:
-          - alert: MAMMouseClass
-            expr: mam_class_code == 0
-            for: 1h
-            labels:
-              severity: critical
-            annotations:
-              summary: "MAM account is in Mouse class — tracker is refusing announces, ratio cannot recover"
           - alert: MAMCookieExpired
             expr: mam_farming_cookie_expired > 0
             for: 0m
@@ -2040,13 +2033,6 @@ serverFiles:
               severity: critical
             annotations:
               summary: "qBittorrent is disconnected from the network"
-          - alert: QBittorrentMAMUnsatisfied
-            expr: qbt_tracker_unsatisfied{tracker="mam"} > 15
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "{{ $value | printf \"%.0f\" }} MAM torrents not yet seeded 72h (limit: 20 for new members)"
 
       - name: Headscale VPN
         rules:
