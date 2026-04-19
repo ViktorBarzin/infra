@@ -68,7 +68,7 @@ resource "kubernetes_config_map" "coredns" {
           cache {
             success 10000 300 6
             denial 10000 300 60
-            serve_stale 3600s 86400s
+            serve_stale 86400s
           }
           loop
           reload
@@ -89,7 +89,7 @@ resource "kubernetes_config_map" "coredns" {
         cache {
           success 10000 300 6
           denial 10000 300 60
-          serve_stale 3600s 86400s
+          serve_stale 86400s
         }
       }
     EOF

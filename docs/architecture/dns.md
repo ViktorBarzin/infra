@@ -269,7 +269,7 @@ CoreDNS is managed via Terraform in `stacks/technitium/modules/technitium/` — 
   cache {
     success 10000 300 6
     denial 10000 300 60
-    serve_stale 3600s 86400s                        # resilience during upstream outage
+    serve_stale 86400s                        # resilience during upstream outage
   }
   loop / reload / loadbalance
 }
@@ -280,7 +280,7 @@ viktorbarzin.lan:53 {
     health_check 5s
     max_fails 2
   }
-  cache (success 10000 300, denial 10000 300, serve_stale 3600s 86400s)
+  cache (success 10000 300, denial 10000 300, serve_stale 86400s)
 }
 ```
 
