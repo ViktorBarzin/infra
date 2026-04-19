@@ -195,6 +195,85 @@ for the exact shape — tracker `1775670025`).
    `forward-addr: 1.1.1.1@853` (no `#`) which Cloudflare rejects with
    certificate hostname mismatch.
 
+## Kea DHCP-DDNS TSIG (WS E, 2026-04-19)
+
+Kea DHCP-DDNS on pfSense signs its RFC 2136 dynamic updates with an
+HMAC-SHA256 TSIG key (`kea-ddns`). Technitium's `viktorbarzin.lan` zone
+and reverse zones (`10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`,
+`1.168.192.in-addr.arpa`) require both a pfSense-source IP (10.0.20.1 /
+10.0.10.1 / 192.168.1.2) AND a valid TSIG signature.
+
+### Config locations
+
+| Side | File | Notes |
+|------|------|-------|
+| pfSense | `/usr/local/etc/kea/kea-dhcp-ddns.conf` | Hand-managed. Pre-WS-E backup: `.2026-04-19-pre-tsig`. Daemon: `kea-dhcp-ddns` (`pkill -x kea-dhcp-ddns && /usr/local/sbin/kea-dhcp-ddns -c /usr/local/etc/kea/kea-dhcp-ddns.conf -d &`) |
+| Technitium | Zone options API: `POST /api/zones/options/set?zone=<z>&updateSecurityPolicies=kea-ddns\|*.<z>\|ANY&updateNetworkACL=10.0.20.1,10.0.10.1,192.168.1.2&update=UseSpecifiedNetworkACL` | Set on primary; replicates to secondary/tertiary via AXFR |
+| Technitium settings | TSIG keys array: `POST /api/settings/set` with `tsigKeys: [{keyName: "kea-ddns", sharedSecret: <b64>, algorithmName: "hmac-sha256"}]` | Must be set on all 3 Technitium instances (primary, secondary, tertiary) |
+| Vault | `secret/viktor/kea_ddns_tsig_secret` | Authoritative copy of the base64 secret |
+
+### Rotating the TSIG key
+
+1. Generate a new base64 32-byte secret: `openssl rand -base64 32` (any base64-encoded blob of reasonable length works; HMAC-SHA256 truncates/pads internally).
+2. Write it to Vault: `vault kv patch secret/viktor kea_ddns_tsig_secret=<new-secret>`.
+3. Add the new key under a **new name** (e.g., `kea-ddns-v2`) via the Technitium settings API on all 3 instances. Do NOT overwrite `kea-ddns` while Kea still uses it — you'd orphan in-flight updates.
+4. Update `/usr/local/etc/kea/kea-dhcp-ddns.conf` on pfSense to reference both keys in `tsig-keys`, set `key-name: kea-ddns-v2` on each `forward-ddns` / `reverse-ddns` domain, restart `kea-dhcp-ddns`.
+5. Update each affected zone's `updateSecurityPolicies` to use the new key name.
+6. After a lease-renewal cycle (default Kea lease = 7200s / 2h), verify with `kubectl -n technitium exec <primary-pod> -- grep "TSIG KeyName: kea-ddns-v2" /etc/dns/logs/<today>.log`.
+7. Remove the old `kea-ddns` key from Technitium settings + Kea config.
+
+### Emergency TSIG bypass (if rotation breaks DDNS)
+
+If DDNS updates are failing and you cannot quickly fix the key, temporarily
+downgrade the zone policy to IP-ACL only (pfSense source IPs) without
+TSIG:
+
+```bash
+kubectl -n technitium port-forward pod/<primary-pod> 5380:5380 &
+TOKEN=$(curl -s -X POST http://127.0.0.1:5380/api/user/login \
+  -d "user=admin&pass=$(vault kv get -field=technitium_password secret/platform)&includeInfo=false" | jq -r .token)
+
+for Z in viktorbarzin.lan 10.0.10.in-addr.arpa 20.0.10.in-addr.arpa 1.168.192.in-addr.arpa; do
+  curl -s -X POST "http://127.0.0.1:5380/api/zones/options/set?token=$TOKEN&zone=$Z&update=UseSpecifiedNetworkACL&updateNetworkACL=10.0.20.1,10.0.10.1,192.168.1.2&updateSecurityPolicies="
+done
+```
+
+This clears `updateSecurityPolicies` while keeping the IP ACL. Updates
+now flow unsigned from pfSense IPs — **weaker** than TSIG but restores
+service. Re-enable TSIG as soon as the key issue is resolved.
+
+### Verify TSIG is enforced
+
+```bash
+# Unsigned update should fail
+nsupdate <<EOF
+server 10.0.20.201 53
+zone viktorbarzin.lan
+update delete tsig-test.viktorbarzin.lan.
+update add tsig-test.viktorbarzin.lan. 300 A 10.99.99.99
+send
+EOF
+# Expected: "update failed: REFUSED"
+
+# Signed update should succeed
+cat > /tmp/kea-ddns.key <<EOF
+key "kea-ddns" {
+    algorithm hmac-sha256;
+    secret "$(vault kv get -field=kea_ddns_tsig_secret secret/viktor)";
+};
+EOF
+nsupdate -k /tmp/kea-ddns.key <<EOF
+server 10.0.20.201 53
+zone viktorbarzin.lan
+update delete tsig-test.viktorbarzin.lan.
+update add tsig-test.viktorbarzin.lan. 300 A 10.99.99.99
+send
+EOF
+dig @10.0.20.201 +short tsig-test.viktorbarzin.lan
+# Expected: 10.99.99.99
+rm -f /tmp/kea-ddns.key
+```
+
 ## Related Docs
 
 - `docs/architecture/dns.md` — overall DNS architecture (K8s side, Technitium, CoreDNS)

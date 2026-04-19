@@ -1,6 +1,6 @@
 # Networking Architecture
 
-Last updated: 2026-04-12
+Last updated: 2026-04-19 (WS E — Kea DHCP pushes dual DNS per subnet; Kea DDNS TSIG-signed)
 
 ## Overview
 
@@ -144,14 +144,14 @@ flowchart LR
 
 ### DHCP Coverage
 
-| Subnet | DHCP Server | Reservations | DDNS | Notes |
-|--------|------------|--------------|------|-------|
-| 10.0.10.0/24 (Mgmt) | Kea on pfSense | 4 (devvm, truenas, pxe, ha) | Yes | VMs with static MACs |
-| 10.0.20.0/24 (K8s) | Kea on pfSense | 7 (master, nodes 1-5, registry) | Yes | K8s cluster nodes |
-| 192.168.1.0/24 (LAN) | Kea on pfSense | 42 (all home devices) | Yes | TP-Link is dumb AP only |
-| 10.3.2.0/24 (VPN) | Static | — | No | WireGuard peers |
-| 192.168.0.0/24 (Valchedrym) | OpenWRT | — | No | Remote site |
-| 192.168.8.0/24 (London) | GL-iNet | — | No | Remote site |
+| Subnet | DHCP Server | DNS option 6 | Reservations | DDNS | Notes |
+|--------|------------|--------------|--------------|------|-------|
+| 10.0.10.0/24 (Mgmt) | Kea on pfSense | `10.0.10.1, 94.140.14.14` | 4 (devvm, truenas, pxe, ha) | Yes (TSIG) | VMs with static MACs |
+| 10.0.20.0/24 (K8s) | Kea on pfSense | `10.0.20.1, 94.140.14.14` | 7 (master, nodes 1-5, registry) | Yes (TSIG) | K8s cluster nodes |
+| 192.168.1.0/24 (LAN) | **TP-Link AP** | `192.168.1.2, 94.140.14.14` | 42 (all home devices) | Yes | pfSense Kea WAN is disabled |
+| 10.3.2.0/24 (VPN) | Static | — | — | No | WireGuard peers |
+| 192.168.0.0/24 (Valchedrym) | OpenWRT | — | — | No | Remote site |
+| 192.168.8.0/24 (London) | GL-iNet | — | — | No | Remote site |
 
 ## How It Works
 
@@ -314,9 +314,14 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **pfSense**:
 - Config: Not Terraform-managed (pfSense web UI / config.xml)
-- DHCP: Kea DHCP4 on all 3 subnets (VLAN 10, VLAN 20, WAN/LAN 192.168.1.0/24)
+- DHCP: Kea DHCP4 on the two internal VLANs (VLAN 10 = 10.0.10.0/24, VLAN 20 = 10.0.20.0/24). WAN/192.168.1.0/24 is served by the TP-Link dumb AP — pfSense's Kea WAN subnet is disabled.
+- **DNS option 6** (per-subnet, WS E 2026-04-19):
+  - 10.0.10.0/24 → `10.0.10.1, 94.140.14.14` (internal Unbound + AdGuard Home public fallback)
+  - 10.0.20.0/24 → `10.0.20.1, 94.140.14.14`
+  - 192.168.1.0/24 → `192.168.1.2, 94.140.14.14` (served by TP-Link, unchanged by WS E)
+  - Rationale: clients survive an internal resolver outage by falling through to AdGuard (`94.140.14.14`) — confirmed via null-route drill on 2026-04-19.
 - 42 MAC→IP reservations for 192.168.1.0/24 (all known home devices)
-- DHCP DDNS: Kea DHCP-DDNS sends RFC 2136 updates to Technitium on every lease grant (forward A + reverse PTR)
+- DHCP DDNS: Kea DHCP-DDNS sends **TSIG-signed** RFC 2136 updates to Technitium (key `kea-ddns`, HMAC-SHA256; secret in Vault `secret/viktor/kea_ddns_tsig_secret`). Zone `viktorbarzin.lan` + reverse zones require both a pfSense-source IP AND a valid TSIG signature. Config: `/usr/local/etc/kea/kea-dhcp-ddns.conf` (hand-managed on pfSense; pre-WS-E backup at `kea-dhcp-ddns.conf.2026-04-19-pre-tsig`).
 - Firewall rules: Allow K8s egress, block inter-VLAN by default
 
 **Technitium**:

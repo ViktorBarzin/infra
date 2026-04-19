@@ -1,6 +1,6 @@
 # DNS Architecture
 
-Last updated: 2026-04-19 (WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq)
+Last updated: 2026-04-19 (WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview
 
@@ -212,7 +212,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | `0.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Valchedrym site |
 | `emrsn.org` | Primary (stub) | — | Returns NXDOMAIN locally (avoids 27K+ daily corporate query floods) |
 
-**Dynamic updates**: Enabled via `UseSpecifiedNetworkACL` from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2) for Kea DDNS RFC 2136 updates.
+**Dynamic updates**: Enabled via `UseSpecifiedNetworkACL` from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2) **AND require a valid TSIG signature** on `viktorbarzin.lan`, `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`. Policy: `updateSecurityPolicies = [{tsigKeyName: "kea-ddns", domain: "*.<zone>", allowedTypes: ["ANY"]}]`. Unsigned updates from the allowlisted pfSense source IPs are refused ("Dynamic Updates Security Policy"). TSIG key `kea-ddns` (HMAC-SHA256) present on primary/secondary/tertiary; secret in Vault `secret/viktor/kea_ddns_tsig_secret`. Applied 2026-04-19 (WS E, bd `code-o6j`).
 
 ### Resolver Settings
 
@@ -375,8 +375,8 @@ The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`)
 Devices get automatic DNS registration without manual intervention. See [networking.md § IPAM & DNS Auto-Registration](networking.md#ipam--dns-auto-registration) for the full data flow diagram.
 
 Summary:
-1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets)
-2. **Kea DDNS** sends RFC 2136 dynamic update to Technitium (A + PTR records) — immediate
+1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
+2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones.
 3. **phpipam-pfsense-import** CronJob (5min) pulls Kea leases + ARP table into phpIPAM
 4. **phpipam-dns-sync** CronJob (15min) pushes named phpIPAM hosts → Technitium A + PTR, pulls Technitium PTR → phpIPAM hostnames
 
@@ -502,6 +502,7 @@ For external `.viktorbarzin.me` records:
 
 - **2026-04-14 (SEV1)**: NFS `fsid=0` caused Technitium primary data loss on restart. Fixed by migrating all 3 instances to `proxmox-lvm-encrypted`, adding zone-sync CronJob (30min AXFR). See [post-mortem](../post-mortems/2026-04-14-nfs-fsid0-dns-vault-outage.md).
 - **2026-04-19 (hardening, not outage)**: Workstream D — pfSense Unbound replaces dnsmasq as the pfSense DNS service. Unbound AXFR-slaves `viktorbarzin.lan` from Technitium so LAN-side resolution survives a full K8s outage. WAN NAT rdr `192.168.1.2:53 → 10.0.20.201` removed (Unbound listens on WAN directly). DoT upstream via Cloudflare. See `docs/runbooks/pfsense-unbound.md` and bd `code-k0d`.
+- **2026-04-19 (hardening, not outage)**: Workstream E — Kea DHCP now pushes TWO DNS IPs (internal + AdGuard public fallback `94.140.14.14`) via option 6 to the internal subnets (10.0.10/24, 10.0.20/24); 192.168.1/24 was already dual-IP (served by TP-Link). Kea DHCP-DDNS now TSIG-signs its RFC 2136 updates (key `kea-ddns`, HMAC-SHA256) and the Technitium zones require both source-IP ACL AND TSIG signature. See `docs/runbooks/pfsense-unbound.md` § "Kea DHCP-DDNS TSIG" and bd `code-o6j`.
 
 ## Related
 
