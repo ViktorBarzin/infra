@@ -83,7 +83,7 @@ For secrets requiring admin access (shared infra passwords, API keys):
 | \`modules/kubernetes/nfs_volume/\` | NFS volume module (CSI-backed, soft mount) |
 | \`config.tfvars\` | Non-secret configuration (plaintext) |
 | \`secrets.sops.json\` | All secrets (SOPS-encrypted JSON) |
-| \`scripts/cluster_healthcheck.sh\` | 25-check cluster health script |
+| \`scripts/cluster_healthcheck.sh\` | 42-check cluster health script |
 | \`AGENTS.md\` | Full AI agent instructions (auto-loaded by most agents) |
 
 ### Tier System

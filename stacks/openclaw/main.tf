@@ -441,11 +441,6 @@ resource "kubernetes_deployment" "openclaw" {
             name  = "UPTIME_KUMA_PASSWORD"
             value = local.skill_secrets["uptime_kuma_password"]
           }
-          # Skill secrets - Slack
-          env {
-            name  = "SLACK_WEBHOOK_URL"
-            value = local.skill_secrets["slack_webhook"]
-          }
           # Memory API
           env {
             name  = "MEMORY_API_URL"
@@ -846,7 +841,10 @@ module "task_webhook_ingress" {
   external_monitor = false
 }
 
-# --- CronJob: Scheduled cluster health check ---
+# --- Shared ServiceAccount: grants pod-exec into the openclaw pod ---
+# Used by the task_processor CronJob (below). Previously also used by the
+# cluster_healthcheck CronJob, which has been decommissioned — the local
+# `scripts/cluster_healthcheck.sh` is now the single authoritative runner.
 
 resource "kubernetes_service_account" "healthcheck" {
   metadata {
@@ -889,76 +887,6 @@ resource "kubernetes_role_binding" "healthcheck_exec" {
   }
 }
 
-resource "kubernetes_cron_job_v1" "cluster_healthcheck" {
-  metadata {
-    name      = "cluster-healthcheck"
-    namespace = kubernetes_namespace.openclaw.metadata[0].name
-    labels = {
-      app  = "cluster-healthcheck"
-      tier = local.tiers.aux
-    }
-  }
-  spec {
-    schedule                      = "0 */8 * * *"
-    concurrency_policy            = "Forbid"
-    failed_jobs_history_limit     = 3
-    successful_jobs_history_limit = 3
-
-    job_template {
-      metadata {
-        labels = {
-          app = "cluster-healthcheck"
-        }
-      }
-      spec {
-        active_deadline_seconds = 300
-        backoff_limit           = 0
-        template {
-          metadata {
-            labels = {
-              app = "cluster-healthcheck"
-            }
-          }
-          spec {
-            service_account_name = kubernetes_service_account.healthcheck.metadata[0].name
-            restart_policy       = "Never"
-
-            container {
-              name  = "healthcheck"
-              image = "bitnami/kubectl:latest"
-              command = ["bash", "-c", <<-EOF
-                # Find the openclaw pod
-                POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-                if [ -z "$POD" ]; then
-                  echo "ERROR: OpenClaw pod not found"
-                  exit 1
-                fi
-                echo "Executing health check in pod $POD..."
-                kubectl exec -n openclaw "$POD" -c openclaw -- bash /workspace/infra/.claude/cluster-health.sh
-              EOF
-              ]
-
-              resources {
-                requests = {
-                  cpu    = "50m"
-                  memory = "64Mi"
-                }
-                limits = {
-                  memory = "64Mi"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
-  }
-}
-
 # --- CronJob: Task processor — polls Forgejo issues and triggers OpenClaw ---
 
 resource "kubernetes_cron_job_v1" "task_processor" {
@@ -983,8 +911,9 @@ resource "kubernetes_cron_job_v1" "task_processor" {
         }
       }
       spec {
-        active_deadline_seconds = 600
-        backoff_limit           = 0
+        active_deadline_seconds    = 600
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = {

@@ -99,7 +99,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - `config.tfvars` — non-secret configuration (plaintext)
 - `secrets.sops.json` — all secrets (SOPS-encrypted JSON)
 - `terraform.tfvars` — legacy secrets file (git-crypt, kept for reference)
-- `scripts/cluster_healthcheck.sh` — 25-check cluster health script
+- `scripts/cluster_healthcheck.sh` — 42-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability)
 
 ## Storage
 - **NFS** (`nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.

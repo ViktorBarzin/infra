@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 24 diagnostic checks against the Kubernetes cluster and prints
+# Runs 42 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -26,7 +26,7 @@ JSON=false
 KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=30
+TOTAL_CHECKS=42
 
 # --- Helpers ---
 info()  { [[ "$JSON" == true ]] && return 0; echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -71,14 +71,16 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --fix)        FIX=true; shift ;;
+            --no-fix)     FIX=false; shift ;;
             --quiet|-q)   QUIET=true; shift ;;
             --json)       JSON=true; shift ;;
             --kubeconfig) KUBECONFIG_PATH="$2"; shift 2 ;;
             -h|--help)
-                echo "Usage: $0 [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]"
+                echo "Usage: $0 [--fix|--no-fix] [--quiet|-q] [--json] [--kubeconfig <path>]"
                 echo ""
                 echo "Flags:"
                 echo "  --fix              Auto-remediate safe issues (delete evicted pods)"
+                echo "  --no-fix           Disable auto-remediation (default)"
                 echo "  --quiet, -q        Only show WARN and FAIL sections"
                 echo "  --json             Machine-readable JSON output"
                 echo "  --kubeconfig PATH  Override kubeconfig (default: \$(pwd)/config)"
@@ -1750,6 +1752,593 @@ else:
     json_add "hardware_exporters" "$status" "${detail:-All healthy}"
 }
 
+# --- 31. cert-manager: Certificate Readiness ---
+check_cert_manager_certificates() {
+    section 31 "cert-manager — Certificate Readiness"
+    local certs not_ready detail="" status="PASS"
+
+    certs=$($KUBECTL get certificates.cert-manager.io -A -o json 2>/dev/null) || {
+        warn "cert-manager CRDs not installed or inaccessible"
+        json_add "certmanager_certificates" "WARN" "CRDs unavailable"
+        return 0
+    }
+
+    not_ready=$(echo "$certs" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get("items", []):
+    ns = item["metadata"]["namespace"]
+    name = item["metadata"]["name"]
+    conds = item.get("status", {}).get("conditions", [])
+    ready = next((c for c in conds if c.get("type") == "Ready"), None)
+    if not ready or ready.get("status") != "True":
+        reason = ready.get("reason", "NoCondition") if ready else "NoCondition"
+        print(f"{ns}/{name}:{reason}")
+' 2>/dev/null) || true
+
+    if [[ -z "$not_ready" ]]; then
+        pass "All Certificate CRs Ready"
+        json_add "certmanager_certificates" "PASS" "All Ready"
+    else
+        [[ "$QUIET" == true ]] && section_always 31 "cert-manager — Certificate Readiness"
+        local count
+        count=$(count_lines "$not_ready")
+        while IFS= read -r line; do
+            fail "Certificate not Ready: $line"
+            detail+="$line; "
+        done <<< "$not_ready"
+        status="FAIL"
+        json_add "certmanager_certificates" "$status" "$count not Ready: $detail"
+    fi
+}
+
+# --- 32. cert-manager: Certificate Expiry (<14d) ---
+check_cert_manager_expiry() {
+    section 32 "cert-manager — Certificate Expiry (<14d)"
+    local certs expiring detail="" status="PASS"
+
+    certs=$($KUBECTL get certificates.cert-manager.io -A -o json 2>/dev/null) || {
+        warn "cert-manager CRDs not installed or inaccessible"
+        json_add "certmanager_expiry" "WARN" "CRDs unavailable"
+        return 0
+    }
+
+    expiring=$(echo "$certs" | python3 -c '
+import json, sys
+from datetime import datetime, timezone, timedelta
+data = json.load(sys.stdin)
+cutoff = datetime.now(timezone.utc) + timedelta(days=14)
+for item in data.get("items", []):
+    ns = item["metadata"]["namespace"]
+    name = item["metadata"]["name"]
+    not_after = item.get("status", {}).get("notAfter")
+    if not not_after:
+        continue
+    try:
+        expiry = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+        if expiry < cutoff:
+            days = (expiry - datetime.now(timezone.utc)).days
+            level = "FAIL" if days <= 3 else "WARN"
+            print(f"{level}:{ns}/{name}:{days}")
+    except ValueError:
+        pass
+' 2>/dev/null) || true
+
+    if [[ -z "$expiring" ]]; then
+        pass "No Certificate CRs expiring within 14 days"
+        json_add "certmanager_expiry" "PASS" "None expiring <14d"
+    else
+        [[ "$QUIET" == true ]] && section_always 32 "cert-manager — Certificate Expiry (<14d)"
+        while IFS= read -r line; do
+            local level cert_name days
+            level=$(echo "$line" | cut -d: -f1)
+            cert_name=$(echo "$line" | cut -d: -f2)
+            days=$(echo "$line" | cut -d: -f3)
+            if [[ "$level" == "FAIL" ]]; then
+                fail "Certificate $cert_name expires in ${days}d"
+                status="FAIL"
+            else
+                warn "Certificate $cert_name expires in ${days}d"
+                [[ "$status" != "FAIL" ]] && status="WARN"
+            fi
+            detail+="$cert_name=${days}d; "
+        done <<< "$expiring"
+        json_add "certmanager_expiry" "$status" "$detail"
+    fi
+}
+
+# --- 33. cert-manager: Failed CertificateRequests ---
+check_cert_manager_requests() {
+    section 33 "cert-manager — Failed CertificateRequests"
+    local requests failed detail="" status="PASS"
+
+    requests=$($KUBECTL get certificaterequests.cert-manager.io -A -o json 2>/dev/null) || {
+        warn "cert-manager CRDs not installed or inaccessible"
+        json_add "certmanager_requests" "WARN" "CRDs unavailable"
+        return 0
+    }
+
+    failed=$(echo "$requests" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get("items", []):
+    ns = item["metadata"]["namespace"]
+    name = item["metadata"]["name"]
+    conds = item.get("status", {}).get("conditions", [])
+    for c in conds:
+        if c.get("type") == "Ready" and c.get("status") == "False" and c.get("reason") == "Failed":
+            print(f"{ns}/{name}:{c.get(\"message\", \"\")[:80]}")
+            break
+' 2>/dev/null) || true
+
+    if [[ -z "$failed" ]]; then
+        pass "No failed CertificateRequests"
+        json_add "certmanager_requests" "PASS" "None failed"
+    else
+        [[ "$QUIET" == true ]] && section_always 33 "cert-manager — Failed CertificateRequests"
+        local count
+        count=$(count_lines "$failed")
+        while IFS= read -r line; do
+            fail "CertificateRequest failed: $line"
+            detail+="$line; "
+        done <<< "$failed"
+        status="FAIL"
+        json_add "certmanager_requests" "$status" "$count failed: $detail"
+    fi
+}
+
+# --- 34. Backup Freshness: Per-DB Dumps ---
+check_backup_per_db() {
+    section 34 "Backup Freshness — Per-DB Dumps"
+    local detail="" had_issue=false status="PASS"
+
+    # Freshness threshold: 25 hours
+    local now_epoch max_age_sec
+    now_epoch=$(date -u +%s)
+    max_age_sec=$((25 * 3600))
+
+    _check_cronjob_fresh() {
+        local ns="$1" cj="$2" label="$3"
+        local ts age_sec
+        ts=$($KUBECTL get cronjob -n "$ns" "$cj" -o jsonpath='{.status.lastSuccessfulTime}' 2>/dev/null || true)
+        if [[ -z "$ts" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 34 "Backup Freshness — Per-DB Dumps"
+            fail "$label: CronJob $ns/$cj has no lastSuccessfulTime"
+            detail+="${label}=no-success; "
+            had_issue=true
+            status="FAIL"
+            return 0
+        fi
+        local ts_epoch
+        ts_epoch=$(date -u -d "$ts" +%s 2>/dev/null || echo 0)
+        age_sec=$((now_epoch - ts_epoch))
+        if [[ "$age_sec" -gt "$max_age_sec" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 34 "Backup Freshness — Per-DB Dumps"
+            local age_h=$((age_sec / 3600))
+            fail "$label: last success ${age_h}h ago (>25h)"
+            detail+="${label}=${age_h}h; "
+            had_issue=true
+            status="FAIL"
+        else
+            local age_h=$((age_sec / 3600))
+            detail+="${label}=${age_h}h; "
+        fi
+    }
+
+    _check_cronjob_fresh dbaas mysql-backup-per-db mysql
+    _check_cronjob_fresh dbaas postgresql-backup-per-db pg
+
+    [[ "$had_issue" == false ]] && pass "Per-DB dumps fresh — $detail"
+    json_add "backup_per_db" "$status" "$detail"
+}
+
+# --- 35. Backup Freshness: Offsite Sync ---
+check_backup_offsite_sync() {
+    section 35 "Backup Freshness — Offsite Sync"
+    local metrics detail="" status="PASS"
+
+    metrics=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- "http://prometheus-prometheus-pushgateway:9091/metrics" 2>/dev/null || true)
+
+    if [[ -z "$metrics" ]]; then
+        [[ "$QUIET" == true ]] && section_always 35 "Backup Freshness — Offsite Sync"
+        warn "Cannot query Pushgateway"
+        json_add "backup_offsite_sync" "WARN" "Pushgateway unreachable"
+        return 0
+    fi
+
+    local age_hours
+    age_hours=$(echo "$metrics" | python3 -c '
+import sys, re, time
+ts = None
+for line in sys.stdin:
+    if line.startswith("#"):
+        continue
+    if "backup_last_success_timestamp" in line and "offsite-backup-sync" in line:
+        m = re.search(r"\s([0-9.eE+]+)\s*$", line.strip())
+        if m:
+            try:
+                ts = float(m.group(1))
+                break
+            except ValueError:
+                pass
+if ts is None:
+    print("missing")
+else:
+    age = (time.time() - ts) / 3600
+    print(f"{age:.1f}")
+' 2>/dev/null) || age_hours="error"
+
+    if [[ "$age_hours" == "missing" ]]; then
+        [[ "$QUIET" == true ]] && section_always 35 "Backup Freshness — Offsite Sync"
+        fail "backup_last_success_timestamp metric missing for offsite-backup-sync"
+        json_add "backup_offsite_sync" "FAIL" "Metric missing"
+    elif [[ "$age_hours" == "error" ]]; then
+        [[ "$QUIET" == true ]] && section_always 35 "Backup Freshness — Offsite Sync"
+        warn "Failed to parse Pushgateway metric"
+        json_add "backup_offsite_sync" "WARN" "Parse error"
+    else
+        local age_int
+        age_int=$(printf '%.0f' "$age_hours")
+        if [[ "$age_int" -gt 27 ]]; then
+            [[ "$QUIET" == true ]] && section_always 35 "Backup Freshness — Offsite Sync"
+            fail "Offsite sync last success ${age_hours}h ago (>27h)"
+            status="FAIL"
+        else
+            pass "Offsite sync last success ${age_hours}h ago"
+        fi
+        detail="age=${age_hours}h"
+        json_add "backup_offsite_sync" "$status" "$detail"
+    fi
+}
+
+# --- 36. Backup Freshness: LVM PVC Snapshots ---
+check_backup_lvm_snapshots() {
+    section 36 "Backup Freshness — LVM PVC Snapshots"
+    local snap_output detail="" status="PASS"
+
+    snap_output=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 "lvs -o lv_name,lv_time --noheadings 2>/dev/null | grep -- -snap" 2>/dev/null || true)
+
+    if [[ -z "$snap_output" ]]; then
+        [[ "$QUIET" == true ]] && section_always 36 "Backup Freshness — LVM PVC Snapshots"
+        warn "No LVM PVC snapshots found or SSH to 192.168.1.127 failed (BatchMode)"
+        json_add "backup_lvm_snapshots" "WARN" "SSH failed or no snapshots"
+        return 0
+    fi
+
+    local newest_age_hours
+    newest_age_hours=$(echo "$snap_output" | python3 -c '
+import sys, re, time
+from datetime import datetime
+newest = None
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split(None, 1)
+    if len(parts) < 2:
+        continue
+    date_str = parts[1].strip()
+    # lv_time format: "2026-04-19 03:00:01 +0000" or similar
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            ts = dt.timestamp()
+            if newest is None or ts > newest:
+                newest = ts
+            break
+        except ValueError:
+            continue
+if newest is None:
+    print("parse_error")
+else:
+    age = (time.time() - newest) / 3600
+    print(f"{age:.1f}")
+' 2>/dev/null) || newest_age_hours="error"
+
+    if [[ "$newest_age_hours" == "parse_error" || "$newest_age_hours" == "error" ]]; then
+        [[ "$QUIET" == true ]] && section_always 36 "Backup Freshness — LVM PVC Snapshots"
+        warn "Could not parse LVM snapshot timestamps"
+        json_add "backup_lvm_snapshots" "WARN" "Parse error"
+    else
+        local count age_int
+        count=$(count_lines "$snap_output")
+        age_int=$(printf '%.0f' "$newest_age_hours")
+        if [[ "$age_int" -gt 25 ]]; then
+            [[ "$QUIET" == true ]] && section_always 36 "Backup Freshness — LVM PVC Snapshots"
+            fail "Newest LVM snapshot ${newest_age_hours}h old (>25h); $count total"
+            status="FAIL"
+        else
+            pass "LVM snapshots fresh — $count total, newest ${newest_age_hours}h old"
+        fi
+        detail="count=$count newest=${newest_age_hours}h"
+        json_add "backup_lvm_snapshots" "$status" "$detail"
+    fi
+}
+
+# --- 37. Monitoring: Prometheus + Alertmanager ---
+check_monitoring_prom_am() {
+    section 37 "Monitoring — Prometheus + Alertmanager"
+    local detail="" had_issue=false status="PASS"
+
+    # Prometheus /-/ready
+    local prom_ready
+    prom_ready=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- "http://localhost:9090/-/ready" 2>/dev/null || true)
+    if echo "$prom_ready" | grep -qi "ready"; then
+        detail+="prometheus=ready; "
+    else
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 37 "Monitoring — Prometheus + Alertmanager"
+        fail "Prometheus /-/ready returned no Ready response"
+        detail+="prometheus=not-ready; "
+        had_issue=true
+        status="FAIL"
+    fi
+
+    # Alertmanager running pod count
+    local am_running
+    am_running=$($KUBECTL get pods -n monitoring --no-headers 2>/dev/null | \
+        grep alertmanager | awk '$3 == "Running"' | wc -l | tr -d ' ')
+    if [[ "$am_running" -gt 0 ]]; then
+        detail+="alertmanager=${am_running} running; "
+    else
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 37 "Monitoring — Prometheus + Alertmanager"
+        fail "Alertmanager: 0 Running pods"
+        detail+="alertmanager=none-running; "
+        had_issue=true
+        status="FAIL"
+    fi
+
+    [[ "$had_issue" == false ]] && pass "Prometheus Ready, $am_running Alertmanager pod(s) Running"
+    json_add "monitoring_prom_am" "$status" "$detail"
+}
+
+# --- 38. Monitoring: Vault Sealed Status ---
+check_monitoring_vault() {
+    section 38 "Monitoring — Vault Sealed Status"
+    local output detail="" status="PASS"
+
+    output=$($KUBECTL exec -n vault vault-0 -- \
+        sh -c 'VAULT_ADDR=http://127.0.0.1:8200 vault status' 2>&1 || true)
+
+    if [[ -z "$output" ]]; then
+        [[ "$QUIET" == true ]] && section_always 38 "Monitoring — Vault Sealed Status"
+        fail "Cannot exec vault status on vault-0"
+        json_add "monitoring_vault" "FAIL" "Exec failed"
+        return 0
+    fi
+
+    if echo "$output" | grep -qi "^Sealed[[:space:]]*false"; then
+        pass "Vault unsealed"
+        detail="sealed=false"
+        json_add "monitoring_vault" "PASS" "$detail"
+    elif echo "$output" | grep -qi "^Sealed[[:space:]]*true"; then
+        [[ "$QUIET" == true ]] && section_always 38 "Monitoring — Vault Sealed Status"
+        fail "Vault is SEALED — secrets unavailable"
+        detail="sealed=true"
+        status="FAIL"
+        json_add "monitoring_vault" "$status" "$detail"
+    else
+        [[ "$QUIET" == true ]] && section_always 38 "Monitoring — Vault Sealed Status"
+        warn "Cannot parse vault status output"
+        json_add "monitoring_vault" "WARN" "Parse error"
+    fi
+}
+
+# --- 39. Monitoring: ClusterSecretStore Ready ---
+check_monitoring_css() {
+    section 39 "Monitoring — ClusterSecretStore Ready"
+    local css not_ready detail="" status="PASS"
+
+    css=$($KUBECTL get clustersecretstore -o json 2>/dev/null) || {
+        [[ "$QUIET" == true ]] && section_always 39 "Monitoring — ClusterSecretStore Ready"
+        warn "ClusterSecretStore CRD not installed"
+        json_add "monitoring_css" "WARN" "CRD missing"
+        return 0
+    }
+
+    not_ready=$(echo "$css" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get("items", []):
+    name = item["metadata"]["name"]
+    conds = item.get("status", {}).get("conditions", [])
+    ready = next((c for c in conds if c.get("type") == "Ready"), None)
+    if not ready or ready.get("status") != "True":
+        print(f"{name}:{ready.get(\"reason\", \"NoCondition\") if ready else \"NoCondition\"}")
+' 2>/dev/null) || true
+
+    if [[ -z "$not_ready" ]]; then
+        local total
+        total=$(echo "$css" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("items",[])))' 2>/dev/null || echo "?")
+        pass "All $total ClusterSecretStores Ready"
+        json_add "monitoring_css" "PASS" "$total Ready"
+    else
+        [[ "$QUIET" == true ]] && section_always 39 "Monitoring — ClusterSecretStore Ready"
+        while IFS= read -r line; do
+            fail "ClusterSecretStore not Ready: $line"
+            detail+="$line; "
+        done <<< "$not_ready"
+        status="FAIL"
+        json_add "monitoring_css" "$status" "$detail"
+    fi
+}
+
+# --- 40. External Reachability: Cloudflared + Authentik Replicas ---
+check_external_replicas() {
+    section 40 "External — Cloudflared + Authentik Replicas"
+    local detail="" had_issue=false status="PASS"
+
+    # Cloudflared
+    local cf_json cf_ready cf_desired
+    cf_json=$($KUBECTL get deployment cloudflared -n cloudflared -o json 2>/dev/null || true)
+    if [[ -z "$cf_json" ]]; then
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 40 "External — Cloudflared + Authentik Replicas"
+        fail "Cloudflared deployment not found"
+        detail+="cloudflared=missing; "
+        had_issue=true
+        status="FAIL"
+    else
+        cf_ready=$(echo "$cf_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",{}).get("readyReplicas",0) or 0)' 2>/dev/null || echo "0")
+        cf_desired=$(echo "$cf_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("spec",{}).get("replicas",0) or 0)' 2>/dev/null || echo "0")
+        if [[ "$cf_ready" != "$cf_desired" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 40 "External — Cloudflared + Authentik Replicas"
+            fail "Cloudflared: $cf_ready/$cf_desired ready (external access degraded)"
+            detail+="cloudflared=${cf_ready}/${cf_desired}; "
+            had_issue=true
+            status="FAIL"
+        else
+            detail+="cloudflared=${cf_ready}/${cf_desired}; "
+        fi
+    fi
+
+    # Authentik server (Helm chart names the deployment goauthentik-server)
+    local auth_json auth_ready auth_desired
+    auth_json=$($KUBECTL get deployment goauthentik-server -n authentik -o json 2>/dev/null || true)
+    if [[ -z "$auth_json" ]]; then
+        [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 40 "External — Cloudflared + Authentik Replicas"
+        warn "goauthentik-server deployment not found in authentik namespace"
+        detail+="authentik=missing; "
+        had_issue=true
+        [[ "$status" != "FAIL" ]] && status="WARN"
+    else
+        auth_ready=$(echo "$auth_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",{}).get("readyReplicas",0) or 0)' 2>/dev/null || echo "0")
+        auth_desired=$(echo "$auth_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("spec",{}).get("replicas",0) or 0)' 2>/dev/null || echo "0")
+        if [[ "$auth_ready" != "$auth_desired" ]]; then
+            [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 40 "External — Cloudflared + Authentik Replicas"
+            fail "goauthentik-server: $auth_ready/$auth_desired ready (auth degraded)"
+            detail+="authentik=${auth_ready}/${auth_desired}; "
+            had_issue=true
+            status="FAIL"
+        else
+            detail+="authentik=${auth_ready}/${auth_desired}; "
+        fi
+    fi
+
+    [[ "$had_issue" == false ]] && pass "Cloudflared + authentik-server at full replicas ($detail)"
+    json_add "external_replicas" "$status" "$detail"
+}
+
+# --- 41. External Reachability: ExternalAccessDivergence Alert ---
+check_external_divergence() {
+    section 41 "External — ExternalAccessDivergence Alert"
+    local alerts result detail="" status="PASS"
+
+    alerts=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- "http://localhost:9090/api/v1/alerts" 2>/dev/null || true)
+
+    if [[ -z "$alerts" ]]; then
+        [[ "$QUIET" == true ]] && section_always 41 "External — ExternalAccessDivergence Alert"
+        warn "Cannot query Prometheus alerts"
+        json_add "external_divergence" "WARN" "Cannot query"
+        return 0
+    fi
+
+    result=$(echo "$alerts" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    alerts = data.get("data", {}).get("alerts", []) if isinstance(data, dict) else data
+    firing = [a for a in alerts
+              if a.get("labels", {}).get("alertname") == "ExternalAccessDivergence"
+              and a.get("state") == "firing"]
+    if firing:
+        hosts = [a.get("labels", {}).get("host") or a.get("labels", {}).get("service") or "?" for a in firing]
+        print(f"{len(firing)}:" + ",".join(hosts))
+    else:
+        print("0:")
+except Exception as e:
+    print(f"error:{e}")
+' 2>/dev/null) || result="error:parse"
+
+    if [[ "$result" == error:* ]]; then
+        [[ "$QUIET" == true ]] && section_always 41 "External — ExternalAccessDivergence Alert"
+        warn "Failed to parse alerts JSON: ${result#error:}"
+        json_add "external_divergence" "WARN" "Parse error"
+        return 0
+    fi
+
+    local count names
+    count=$(echo "$result" | cut -d: -f1)
+    names=$(echo "$result" | cut -d: -f2-)
+
+    if [[ "$count" -eq 0 ]]; then
+        pass "ExternalAccessDivergence not firing"
+        json_add "external_divergence" "PASS" "Not firing"
+    else
+        [[ "$QUIET" == true ]] && section_always 41 "External — ExternalAccessDivergence Alert"
+        fail "ExternalAccessDivergence firing for $count target(s): $names"
+        status="FAIL"
+        detail="$count firing: $names"
+        json_add "external_divergence" "$status" "$detail"
+    fi
+}
+
+# --- 42. External Reachability: Traefik 5xx Rate ---
+check_external_traefik_5xx() {
+    section 42 "External — Traefik 5xx Rate (15m)"
+    local query_result detail="" status="PASS"
+
+    query_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- 'http://localhost:9090/api/v1/query?query=topk(10,rate(traefik_service_requests_total{code=~%225..%22}%5B15m%5D))' 2>/dev/null || true)
+
+    if [[ -z "$query_result" ]]; then
+        [[ "$QUIET" == true ]] && section_always 42 "External — Traefik 5xx Rate (15m)"
+        warn "Cannot query Prometheus for traefik 5xx rate"
+        json_add "external_traefik_5xx" "WARN" "Query failed"
+        return 0
+    fi
+
+    local parsed
+    parsed=$(echo "$query_result" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    results = data.get("data", {}).get("result", [])
+    hot = [(r.get("metric", {}).get("service", "?"), float(r.get("value", [0, "0"])[1])) for r in results]
+    hot = [(s, v) for s, v in hot if v > 0.01]  # 1% req/s threshold
+    hot.sort(key=lambda x: -x[1])
+    if not hot:
+        print("0:")
+    else:
+        top = [f"{s}={v:.2f}/s" for s, v in hot[:5]]
+        print(f"{len(hot)}:" + "; ".join(top))
+except Exception as e:
+    print(f"error:{e}")
+' 2>/dev/null) || parsed="error:parse"
+
+    if [[ "$parsed" == error:* ]]; then
+        [[ "$QUIET" == true ]] && section_always 42 "External — Traefik 5xx Rate (15m)"
+        warn "Parse failed: ${parsed#error:}"
+        json_add "external_traefik_5xx" "WARN" "Parse error"
+        return 0
+    fi
+
+    local count top
+    count=$(echo "$parsed" | cut -d: -f1)
+    top=$(echo "$parsed" | cut -d: -f2-)
+
+    if [[ "$count" -eq 0 ]]; then
+        pass "No Traefik services with 5xx rate >0.01 req/s (last 15m)"
+        json_add "external_traefik_5xx" "PASS" "None above threshold"
+    else
+        [[ "$QUIET" == true ]] && section_always 42 "External — Traefik 5xx Rate (15m)"
+        # WARN at any 5xx; FAIL if top service >1 req/s
+        local top_rate
+        top_rate=$(echo "$top" | grep -oE '[0-9.]+/s' | head -1 | tr -d '/s')
+        if awk "BEGIN{exit !($top_rate > 1.0)}" 2>/dev/null; then
+            fail "$count Traefik service(s) with elevated 5xx: $top"
+            status="FAIL"
+        else
+            warn "$count Traefik service(s) emitting 5xx: $top"
+            status="WARN"
+        fi
+        detail="$count services: $top"
+        json_add "external_traefik_5xx" "$status" "$detail"
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -1832,6 +2421,18 @@ main() {
     check_ha_automations
     check_ha_system
     check_hardware_exporters
+    check_cert_manager_certificates
+    check_cert_manager_expiry
+    check_cert_manager_requests
+    check_backup_per_db
+    check_backup_offsite_sync
+    check_backup_lvm_snapshots
+    check_monitoring_prom_am
+    check_monitoring_vault
+    check_monitoring_css
+    check_external_replicas
+    check_external_divergence
+    check_external_traefik_5xx
     print_summary
 
     # Exit code: 2 for failures, 1 for warnings, 0 for clean
