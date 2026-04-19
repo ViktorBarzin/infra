@@ -189,10 +189,17 @@ locals {
   # External monitor defaults: on when proxied, off otherwise. Explicit bool overrides.
   effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type == "proxied")
 
+  # Emit the annotation when effective is true (positive signal), or when the
+  # caller explicitly set external_monitor=false (opt-out). When the caller
+  # leaves it null AND dns_type != "proxied", emit nothing — the sync script's
+  # default opt-in (any *.viktorbarzin.me ingress) keeps monitoring services
+  # that are publicly reachable via routes we don't manage here.
   external_monitor_annotations = local.effective_external_monitor ? merge(
     { "uptime.viktorbarzin.me/external-monitor" = "true" },
     var.external_monitor_name != null ? { "uptime.viktorbarzin.me/external-monitor-name" = var.external_monitor_name } : {},
-  ) : {}
+    ) : (var.external_monitor == false ?
+    { "uptime.viktorbarzin.me/external-monitor" = "false" } : {}
+  )
 }
 
 resource "kubernetes_ingress_v1" "proxied-ingress" {

@@ -354,13 +354,14 @@ resource "kubernetes_service" "grampsweb" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.grampsweb.metadata[0].name
-  name            = "family"
-  service_name    = "grampsweb"
-  tls_secret_name = var.tls_secret_name
-  max_body_size   = "500m"
-  protected       = true
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.grampsweb.metadata[0].name
+  name             = "family"
+  service_name     = "grampsweb"
+  tls_secret_name  = var.tls_secret_name
+  max_body_size    = "500m"
+  protected        = true
+  external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "GrampsWeb"

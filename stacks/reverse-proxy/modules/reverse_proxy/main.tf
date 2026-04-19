@@ -151,25 +151,6 @@ module "truenas" {
   depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
-# https://r730.viktorbarzin.me/
-module "r730" {
-  source           = "./factory"
-  name             = "r730"
-  external_name    = "r730.viktorbarzin.lan"
-  port             = 443
-  tls_secret_name  = var.tls_secret_name
-  backend_protocol = "HTTPS"
-  depends_on       = [kubernetes_namespace.reverse-proxy]
-  extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "R730"
-    "gethomepage.dev/description"  = "Dell PowerEdge server"
-    "gethomepage.dev/icon"         = "dell.png"
-    "gethomepage.dev/group"        = "Infrastructure"
-    "gethomepage.dev/pod-selector" = ""
-  }
-}
-
 # https://proxmox.viktorbarzin.me/
 module "proxmox" {
   source           = "./factory"
@@ -268,6 +249,7 @@ module "mladost3" {
   port              = 8080
   tls_secret_name   = var.tls_secret_name
   depends_on        = [kubernetes_namespace.reverse-proxy]
+  external_monitor  = false
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
