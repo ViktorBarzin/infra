@@ -1980,7 +1980,7 @@ serverFiles:
             annotations:
               summary: "Technitium zone-sync has not run successfully in >1h (last: {{ $value | humanizeDuration }} ago)"
           - alert: TechnitiumZoneCountMismatch
-            expr: (max(technitium_zone_count) - min(technitium_zone_count)) > 0
+            expr: (max(technitium_zone_count{instance!="primary"}) - min(technitium_zone_count{instance!="primary"})) > 0
             for: 15m
             labels:
               severity: warning
