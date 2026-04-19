@@ -422,7 +422,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, net_pay, income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, net_pay, COALESCE(cash_income_tax, income_tax) AS income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -1144,9 +1144,14 @@
                         "index": 2,
                         "text": "RSU_NO_SALARY"
                       },
+                      "NULL_CASH_TAX": {
+                        "color": "orange",
+                        "index": 3,
+                        "text": "NULL_CASH_TAX"
+                      },
                       "ok": {
                         "color": "green",
-                        "index": 3,
+                        "index": 4,
                         "text": "ok"
                       }
                     }
@@ -1217,7 +1222,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH expected AS (SELECT generate_series(DATE '2019-07-01', DATE_TRUNC('month', CURRENT_DATE), '1 month'::interval)::date AS month_start), actual AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, pay_date, salary, gross_pay, rsu_vest, paperless_doc_id FROM payslip_ingest.payslip) SELECT e.month_start, CASE WHEN a.pay_date IS NULL THEN 'MISSING' WHEN a.salary = 0 AND a.gross_pay > 5000 THEN 'ZERO_SALARY' WHEN a.rsu_vest > 0 AND a.salary = 0 THEN 'RSU_NO_SALARY' ELSE 'ok' END AS status, a.pay_date, a.salary, a.gross_pay, a.rsu_vest, a.paperless_doc_id FROM expected e LEFT JOIN actual a ON a.month_start = e.month_start WHERE e.month_start >= DATE '2019-07-01' ORDER BY e.month_start DESC"
+          "rawSql": "WITH expected AS (SELECT generate_series(DATE '2019-07-01', DATE_TRUNC('month', CURRENT_DATE), '1 month'::interval)::date AS month_start), actual AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, pay_date, salary, gross_pay, rsu_vest, cash_income_tax, income_tax, paperless_doc_id FROM payslip_ingest.payslip) SELECT e.month_start, CASE WHEN a.pay_date IS NULL THEN 'MISSING' WHEN a.salary = 0 AND a.gross_pay > 5000 THEN 'ZERO_SALARY' WHEN a.rsu_vest > 0 AND a.salary = 0 THEN 'RSU_NO_SALARY' WHEN a.rsu_vest > 0 AND a.cash_income_tax IS NULL THEN 'NULL_CASH_TAX' ELSE 'ok' END AS status, a.pay_date, a.salary, a.gross_pay, a.rsu_vest, a.cash_income_tax, a.paperless_doc_id FROM expected e LEFT JOIN actual a ON a.month_start = e.month_start WHERE e.month_start >= DATE '2019-07-01' ORDER BY e.month_start DESC"
         }
       ]
     },
