@@ -19,7 +19,7 @@
 | Service | Description | Stack |
 |---------|-------------|-------|
 | vaultwarden | Bitwarden-compatible password manager | platform |
-| redis | Shared Redis at `redis.redis.svc.cluster.local` | redis |
+| redis | Shared Redis 8.x via HAProxy at `redis-master.redis.svc.cluster.local` — 3-pod raw StatefulSet `redis-v2` (redis+sentinel+exporter per pod), quorum=2. Clients use HAProxy only, no sentinel fallback. | redis |
 | immich | Photo management (GPU) | immich |
 | nvidia | GPU device plugin | nvidia |
 | metrics-server | K8s metrics | metrics-server |

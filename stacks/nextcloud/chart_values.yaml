@@ -29,35 +29,19 @@ nextcloud:
   configs:
     zzz-redis.config.php: |
       <?php
-      // Redis with Sentinel-based master discovery
-      // Queries Sentinel to find the current master, falls back to HAProxy service
-      // which health-checks Redis nodes and routes only to the master.
-      $sentinels = [
-        ['redis-node-0.redis-headless.redis.svc.cluster.local', 26379],
-        ['redis-node-1.redis-headless.redis.svc.cluster.local', 26379],
-      ];
-      // Fallback: HAProxy master-only service (safe even if Sentinel is unavailable)
-      $redisHost = 'redis-master.redis.svc.cluster.local';
-      $redisPort = 6379;
-      foreach ($sentinels as [$sHost, $sPort]) {
-        try {
-          $s = new Redis();
-          if ($s->connect($sHost, $sPort, 0.5)) {
-            $master = $s->rawCommand('SENTINEL', 'get-master-addr-by-name', 'mymaster');
-            if ($master) {
-              $redisHost = $master[0];
-              $redisPort = (int)$master[1];
-              break;
-            }
-          }
-        } catch (\Exception $e) {}
-      }
+      // Redis via HAProxy master-only service. HAProxy (3 replicas, PDB
+      // minAvailable=2) health-checks all v2 pods via `INFO replication` and
+      // routes to the current role:master. Sentinel failover takes <30s, and
+      // HAProxy detects the new master via its 1s tcp-check interval and
+      // starts routing within ~3s of detection. Removed the old in-process
+      // sentinel-query loop on 2026-04-19 after the Redis rework — see
+      // beads code-v2b and infra/docs/architecture/databases.md.
       $CONFIG = array(
         'memcache.distributed' => '\\OC\\Memcache\\Redis',
         'memcache.locking' => '\\OC\\Memcache\\Redis',
         'redis' => array(
-          'host' => $redisHost,
-          'port' => $redisPort,
+          'host' => 'redis-master.redis.svc.cluster.local',
+          'port' => 6379,
           'password' => '',
           'timeout' => 1.5,
           'read_timeout' => 1.5,

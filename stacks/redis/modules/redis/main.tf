@@ -186,13 +186,15 @@ resource "kubernetes_config_map" "haproxy" {
         tcp-check expect rstring role:master
         tcp-check send "QUIT\r\n"
         tcp-check expect string +OK
-        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
-        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
 
       backend redis_sentinel
         balance roundrobin
-        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
-        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
+        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
+        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
+        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
     EOT
   }
 }
@@ -596,7 +598,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         init_container {
           name    = "generate-sentinel-conf"
-          image   = "docker.io/library/redis:7.4-alpine"
+          image   = "docker.io/library/redis:8-alpine"
           command = ["/bin/sh", "/bootstrap/init.sh"]
 
           resources {
@@ -622,7 +624,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         container {
           name    = "redis"
-          image   = "docker.io/library/redis:7.4-alpine"
+          image   = "docker.io/library/redis:8-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
@@ -678,7 +680,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         container {
           name    = "sentinel"
-          image   = "docker.io/library/redis:7.4-alpine"
+          image   = "docker.io/library/redis:8-alpine"
           command = ["redis-sentinel", "/shared/sentinel.conf"]
 
           port {

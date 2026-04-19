@@ -122,20 +122,18 @@ graph TB
 
 Single shared cluster for all 17 consumers (Immich, Authentik, Nextcloud, Paperless, Dawarich Sidekiq, Traefik, etc.). HAProxy (3 replicas, PDB minAvailable=2) is the sole client-facing path — clients talk only to `redis-master.redis.svc.cluster.local:6379` and HAProxy health-checks backends via `INFO replication`, routing only to `role:master`.
 
-**Current state (as of 2026-04-19, interim — parallel cluster during rework)**:
+**Current state (as of 2026-04-19, cutover complete)**:
 
-| Cluster | Pods | Source | Purpose |
-|---|---|---|---|
-| Legacy `redis-node-*` | 1 master + 1 replica (2 sentinels) | Bitnami Helm chart v25.3.2 | Serving live traffic via HAProxy |
-| New `redis-v2-*` | 3 pods, each co-locating redis + sentinel + exporter | Raw `kubernetes_stateful_set_v1` with `redis:7.4-alpine` | Standing by for REPLICAOF-based cutover |
+Active cluster: `redis-v2-*` — 3 pods, each co-locating redis + sentinel + redis_exporter, using `docker.io/library/redis:8-alpine` (8.6.2). HAProxy backends point at `redis-v2-{0,1,2}.redis-v2-headless.redis.svc.cluster.local`. DBSIZE matched between old master and new at cutover; all data (including `immich_bull:*` and `_kombu.*` queues) preserved via chained `REPLICAOF`. Steady-state probe: 45/45 PING OK. Two chaos drills (kill master, sentinel failover) passed — first drill ~12s disruption, second ~1s after hostname fix below.
 
-Both clusters live in the `redis` namespace. See `infra/stacks/redis/modules/redis/main.tf` (end-state; legacy `helm_release.redis` + `kubernetes_stateful_set_v1.redis_v2` coexist until cutover).
+Legacy `redis-node-*` StatefulSet is scaled to 0 (kept as cold rollback for 24h). Helm release `helm_release.redis` + PVCs `redis-data-redis-node-{0,1}` are pending Terraform removal in a follow-up commit (see beads follow-up task).
 
-**Target architecture (post-cutover)**:
+**Architecture**:
 
 - 3 redis pods + 3 co-located sentinels (quorum=2). Odd sentinel count eliminates split-brain.
-- `podManagementPolicy=Parallel` + init container that regenerates `sentinel.conf` on every boot by probing peer sentinels for consensus master. No persistent sentinel runtime state — can't drift out of sync with reality (root cause of 2026-04-19 PM incident).
+- `podManagementPolicy=Parallel` + init container that regenerates `sentinel.conf` on every boot by probing peer sentinels for consensus master (priority: sentinel vote → peer role:master with slaves → deterministic pod-0 fallback). No persistent sentinel runtime state — can't drift out of sync with reality (root cause of 2026-04-19 PM incident).
 - redis.conf has `include /shared/replica.conf`; the init container writes either an empty file (master) or `replicaof <master> 6379` (replicas), so pods come up already in the right role — no bootstrap race.
+- **Sentinel hostname persistence**: `sentinel resolve-hostnames yes` + `sentinel announce-hostnames yes` in the init-generated sentinel.conf are mandatory — without them, sentinel stores resolved IPs in its rewritten config, and pod-IP churn on restart breaks failover. The MONITOR command itself must be issued with a hostname and the flags must be active before MONITOR, otherwise sentinel stores an IP that goes stale the next time the pod is deleted.
 - Memory: master + replicas `requests=limits=768Mi`. Concurrent BGSAVE + AOF-rewrite fork can double RSS via COW, so headroom must cover it. `auto-aof-rewrite-percentage=200` + `auto-aof-rewrite-min-size=128mb` tune down rewrite frequency.
 - Persistence: RDB (`save 900 1 / 300 100 / 60 10000`) + AOF `appendfsync=everysec`. Disk-wear analysis on 2026-04-19 (sdb Samsung 850 EVO 1TB, 150 TBW): Redis contributes <1 GB/day cluster-wide → 40+ year runway at the 20% TBW budget.
 - `maxmemory=640mb` (83% of 768Mi limit), `maxmemory-policy=allkeys-lru`.
