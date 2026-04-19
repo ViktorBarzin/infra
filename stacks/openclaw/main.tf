@@ -837,12 +837,13 @@ resource "kubernetes_service" "task_webhook" {
 }
 
 module "task_webhook_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.openclaw.metadata[0].name
-  name            = "task-webhook"
-  tls_secret_name = var.tls_secret_name
-  host            = "task-webhook"
-  port            = 80
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.openclaw.metadata[0].name
+  name             = "task-webhook"
+  tls_secret_name  = var.tls_secret_name
+  host             = "task-webhook"
+  port             = 80
+  external_monitor = false
 }
 
 # --- CronJob: Scheduled cluster health check ---

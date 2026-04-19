@@ -295,12 +295,13 @@ resource "kubernetes_service" "torrserver-bt" {
 }
 
 module "torrserver_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.tor-proxy.metadata[0].name
-  name            = "torrserver"
-  tls_secret_name = var.tls_secret_name
-  port            = "8090"
-  protected       = true
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.tor-proxy.metadata[0].name
+  name             = "torrserver"
+  tls_secret_name  = var.tls_secret_name
+  port             = "8090"
+  protected        = true
+  external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "TorrServer"
