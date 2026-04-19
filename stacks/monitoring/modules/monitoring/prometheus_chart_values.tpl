@@ -2033,11 +2033,12 @@ serverFiles:
 extraScrapeConfigs: |
   - job_name: 'mailserver-dovecot'
     # Dovecot exporter lives on the mailserver pod; port 9166 is exposed by
-    # the mailserver Service (`dovecot-metrics`). Kube-prometheus-stack (with
-    # ServiceMonitor CRDs) isn't deployed here, so we scrape by service DNS.
+    # the dedicated ClusterIP Service `mailserver-metrics` (split from the
+    # public LB in code-izl). Kube-prometheus-stack (with ServiceMonitor
+    # CRDs) isn't deployed here, so we scrape by service DNS.
     static_configs:
       - targets:
-        - "mailserver.mailserver.svc.cluster.local:9166"
+        - "mailserver-metrics.mailserver.svc.cluster.local:9166"
     metrics_path: '/metrics'
     scrape_interval: 30s
   - job_name: 'proxmox-host'

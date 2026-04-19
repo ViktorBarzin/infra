@@ -580,6 +580,29 @@ resource "kubernetes_service" "mailserver" {
       port        = 993
       target_port = "imap-secure"
     }
+  }
+}
+
+# Split the Dovecot metrics port off the public LB and onto its own
+# ClusterIP Service. Port 9166 was only LAN-routable via 10.0.20.202
+# but was over-exposed for a Prometheus-internal metric. Addresses
+# code-izl. Prometheus scrape target follows in
+# stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl
+# (updated to `mailserver-metrics.mailserver.svc.cluster.local:9166`).
+resource "kubernetes_service" "mailserver_metrics" {
+  metadata {
+    name      = "mailserver-metrics"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    labels = {
+      app = "mailserver"
+    }
+  }
+
+  spec {
+    type = "ClusterIP"
+    selector = {
+      app = "mailserver"
+    }
 
     port {
       name        = "dovecot-metrics"
