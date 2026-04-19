@@ -37,6 +37,12 @@ steps:
     environment:
       SLACK_WEBHOOK:
         from_secret: slack_webhook
+      # Each `- |` command runs in a fresh shell, so we can't rely on an
+      # `export VAULT_ADDR=...` in the auth command persisting — pin it at
+      # step level. VAULT_TOKEN is still per-command; we persist it to
+      # ~/.vault-token (auto-read by `vault` CLI) so downstream commands
+      # don't need explicit token propagation.
+      VAULT_ADDR: http://vault-active.vault.svc.cluster.local:8200
     commands:
       # ── Skip CI commits ──
       - |
@@ -55,9 +61,17 @@ steps:
       # ── Vault auth ──
       - |
         SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
-        export VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+        VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
           -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+        if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+          echo "ERROR: Vault K8s auth failed (role=ci, ns=woodpecker)" >&2
+          exit 1
+        fi
+        # Persist for downstream `- |` blocks (each runs in a fresh shell,
+        # so exporting VAULT_TOKEN wouldn't help). `vault`, `scripts/tg`,
+        # and `scripts/state-sync` all fall through to ~/.vault-token when
+        # the env var is unset.
+        umask 077; printf '%s' "$VAULT_TOKEN" > "$HOME/.vault-token"
 
       # ── Detect changed stacks ──
       - |
