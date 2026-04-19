@@ -11,7 +11,7 @@ data "vault_kv_secret_v2" "viktor_secrets" {
 locals {
   namespace = "claude-agent"
   image     = "registry.viktorbarzin.me/claude-agent-service"
-  image_tag = "0c24c9b6"
+  image_tag = "2fd7670d"
   labels = {
     app = "claude-agent-service"
   }
