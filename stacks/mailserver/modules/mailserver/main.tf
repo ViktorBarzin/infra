@@ -740,21 +740,50 @@ email_roundtrip_duration_seconds {duration:.2f}
 # TYPE email_roundtrip_last_success_timestamp gauge
 email_roundtrip_last_success_timestamp {int(time.time()) if success else 0}
 """
-try:
-    requests.put(PUSHGATEWAY, data=metrics, timeout=10)
-    print("Pushed metrics to Pushgateway")
-except Exception as e:
-    print(f"Failed to push metrics: {e}")
+UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration))
+
+def push_with_retry(label, func, url):
+    # 3 attempts with exponential backoff (1s, 2s, 4s). Returns True on success, False otherwise.
+    # Final failure logs ERROR with URL + status code (or exception) so the pod log surfaces the drop.
+    last_status = None
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = func()
+            last_status = resp.status_code
+            if 200 <= resp.status_code < 300:
+                print(f"Pushed to {label} (attempt {attempt+1}, status {resp.status_code})")
+                return True
+            last_exc = None
+        except Exception as e:
+            last_exc = e
+            last_status = None
+        if attempt < 2:
+            time.sleep(2 ** attempt)
+    detail = f"status={last_status}" if last_exc is None else f"exception={last_exc!r}"
+    print(f"ERROR: Failed to push to {label} after 3 attempts: url={url} {detail}", file=sys.stderr)
+    return False
+
+pushgateway_ok = push_with_retry(
+    "Pushgateway",
+    lambda: requests.put(PUSHGATEWAY, data=metrics, timeout=10),
+    PUSHGATEWAY,
+)
 
 # Push to Uptime Kuma on success
+uptime_kuma_ok = True
 if success:
-    try:
-        requests.get("http://uptime-kuma.uptime-kuma.svc.cluster.local/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration)), timeout=10)
-        print("Pushed to Uptime Kuma")
-    except Exception as e:
-        print(f"Failed to push to Uptime Kuma: {e}")
+    uptime_kuma_ok = push_with_retry(
+        "Uptime Kuma",
+        lambda: requests.get(UPTIME_KUMA_URL, timeout=10),
+        UPTIME_KUMA_URL,
+    )
 
-sys.exit(0 if success else 1)
+# Exit non-zero when the round-trip itself failed, OR when BOTH push endpoints
+# failed after all retries (only possible on the success path — on failure we
+# only attempt Pushgateway, and the round-trip failure already dominates exit).
+both_pushes_failed = success and (not pushgateway_ok) and (not uptime_kuma_ok)
+sys.exit(0 if (success and not both_pushes_failed) else 1)
 '
               EOT
               ]
