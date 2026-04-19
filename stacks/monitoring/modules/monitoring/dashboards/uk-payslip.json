@@ -12,6 +12,20 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "payslips-pg"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "name": "RSU vests",
+        "target": {
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT pay_date AS time, 'RSU vest: \u00a3' || ROUND(rsu_vest)::text || ' gross / \u00a3' || ROUND(income_tax - COALESCE(cash_income_tax, income_tax))::text || ' tax withheld' AS text FROM payslip_ingest.payslip WHERE rsu_vest > 0 AND $__timeFilter(pay_date)"
+        }
       }
     ]
   },
@@ -899,6 +913,160 @@
       ]
     },
     {
+      "id": 13,
+      "title": "Monthly cash flow \u2014 tax impact (RSU excluded)",
+      "description": "Cash-only deductions. RSU PAYE excluded \u2014 it's withheld at source via sell-to-cover and never hits the bank account. See Panel 11 for full PAYE view; orange markers annotate vest months across all panels.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cash_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4162A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (cash pay)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ni"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "National Insurance"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "student_loan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8B4513"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Student Loan"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pension_employee"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employee)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "SELECT pay_date AS \"time\", COALESCE(cash_income_tax, income_tax) AS cash_income_tax, national_insurance AS ni, student_loan, pension_employee FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
       "id": 4,
       "title": "Data integrity \u2014 missing months & parser flags",
       "type": "table",
@@ -910,7 +1078,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1079,7 +1247,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -1255,7 +1423,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 58
       },
       "fieldConfig": {
         "defaults": {
@@ -1565,7 +1733,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 70
       },
       "options": {
         "monochrome": false,
@@ -1603,7 +1771,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 84
       },
       "fieldConfig": {
         "defaults": {
@@ -1761,7 +1929,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 94
       },
       "fieldConfig": {
         "defaults": {
