@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "UK payslip breakdown \u2014 gross/net/tax/NI trends, YTD progression against income tax bands, deductions split, and effective rate.",
+  "description": "UK payslip breakdown \u2014 tax-year YTD hero, monthly cash flow, effective-rate trend, data-integrity flags, and full payslip table.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -24,7 +24,127 @@
   "panels": [
     {
       "id": 1,
-      "title": "Monthly cash gross / net / tax / NI (RSU stripped)",
+      "title": "Tax-year YTD \u2014 gross / net / taxes / RSU / salary",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_cash_gross"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 12570
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50270
+                    },
+                    {
+                      "color": "red",
+                      "value": 125140
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay) OVER w AS ytd_total_gross, SUM(gross_pay - rsu_vest) OVER w AS ytd_cash_gross, SUM(salary) OVER w AS ytd_salary, SUM(rsu_vest) OVER w AS ytd_rsu, SUM(income_tax + national_insurance + student_loan) OVER w AS ytd_taxes, SUM(net_pay) OVER w AS ytd_net FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Monthly cash flow (RSU stripped)",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -34,7 +154,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -104,190 +224,7 @@
       ]
     },
     {
-      "id": 2,
-      "title": "YTD cash gross (excl. RSU) with UK band thresholds",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "YTD gross",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "line"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 12570
-              },
-              {
-                "color": "orange",
-                "value": 50270
-              },
-              {
-                "color": "red",
-                "value": 125140
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "last",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay - rsu_vest) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_cash_gross FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
-          "format": "time_series",
-          "refId": "A",
-          "rawQuery": true,
-          "editorMode": "code"
-        }
-      ]
-    },
-    {
       "id": 3,
-      "title": "Deductions breakdown per payslip",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 9
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "mean"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawSql": "SELECT pay_date AS \"time\", income_tax, national_insurance, pension_employee, student_loan FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
-          "format": "time_series",
-          "refId": "A",
-          "rawQuery": true,
-          "editorMode": "code"
-        }
-      ]
-    },
-    {
-      "id": 4,
       "title": "Effective rate & take-home % (cash-basis, YTD-corrected)",
       "type": "timeseries",
       "datasource": {
@@ -298,7 +235,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 9
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -370,6 +307,175 @@
       ]
     },
     {
+      "id": 4,
+      "title": "Data integrity \u2014 missing months & parser flags",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "right",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "month_start"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              },
+              {
+                "id": "custom.align",
+                "value": "center"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "MISSING": {
+                        "color": "red",
+                        "index": 0,
+                        "text": "MISSING"
+                      },
+                      "ZERO_SALARY": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "ZERO_SALARY"
+                      },
+                      "RSU_NO_SALARY": {
+                        "color": "red",
+                        "index": 2,
+                        "text": "RSU_NO_SALARY"
+                      },
+                      "ok": {
+                        "color": "green",
+                        "index": 3,
+                        "text": "ok"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pay_date"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "paperless_doc_id"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH expected AS (SELECT generate_series(DATE '2019-07-01', DATE_TRUNC('month', CURRENT_DATE), '1 month'::interval)::date AS month_start), actual AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, pay_date, salary, gross_pay, rsu_vest, paperless_doc_id FROM payslip_ingest.payslip) SELECT e.month_start, CASE WHEN a.pay_date IS NULL THEN 'MISSING' WHEN a.salary = 0 AND a.gross_pay > 5000 THEN 'ZERO_SALARY' WHEN a.rsu_vest > 0 AND a.salary = 0 THEN 'RSU_NO_SALARY' ELSE 'ok' END AS status, a.pay_date, a.salary, a.gross_pay, a.rsu_vest, a.paperless_doc_id FROM expected e LEFT JOIN actual a ON a.month_start = e.month_start WHERE e.month_start >= DATE '2019-07-01' ORDER BY e.month_start DESC"
+        }
+      ]
+    },
+    {
       "id": 5,
       "title": "All payslips \u2014 detailed breakdown",
       "type": "table",
@@ -381,7 +487,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -541,369 +647,6 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "SELECT pay_date, employer, tax_year, gross_pay, (gross_pay - rsu_vest) AS cash_gross, salary, bonus, rsu_vest, rsu_offset, pension_sacrifice, taxable_pay, income_tax, national_insurance, pension_employee, pension_employer, student_loan, COALESCE(other_deductions, '{}'::jsonb) AS other_deductions, net_pay, validated, paperless_doc_id FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date DESC"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "title": "All deductions (incl. pension_employer + other)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "stacking": {
-              "mode": "normal"
-            },
-            "fillOpacity": 80,
-            "lineWidth": 0,
-            "axisCenteredZero": false
-          },
-          "unit": "currencyGBP",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "right"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", income_tax, national_insurance, pension_employee, pension_employer, student_loan FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "RSU vest history (notional, taxed at Schwab)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 41
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 70,
-            "lineWidth": 1
-          },
-          "unit": "currencyGBP",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", rsu_vest FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) AND rsu_vest > 0 ORDER BY pay_date"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "title": "Earnings breakdown (salary / bonus / RSU / pension sacrifice)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 49
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "stacking": {
-              "mode": "normal"
-            },
-            "fillOpacity": 80,
-            "lineWidth": 0,
-            "axisCenteredZero": true
-          },
-          "unit": "currencyGBP",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", salary, bonus, rsu_vest, -pension_sacrifice AS pension_sacrifice FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "title": "Accurate cash effective tax rate (YTD-method vs naive)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 49
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "percent",
-          "min": 0,
-          "max": 80,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", ROUND(((income_tax - (rsu_vest * COALESCE(ytd_tax_paid / NULLIF(ytd_taxable_pay, 0), 0)))::numeric / NULLIF(gross_pay - rsu_vest, 0)) * 100, 2) AS \"cash_tax_rate_ytd\", ROUND((income_tax::numeric / NULLIF(gross_pay, 0)) * 100, 2) AS \"naive_tax_rate\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
-        }
-      ]
-    },
-    {
-      "id": 10,
-      "title": "All-in compensation (cash + RSU market value)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 58
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "stacking": {
-              "mode": "normal"
-            },
-            "fillOpacity": 80,
-            "lineWidth": 0
-          },
-          "unit": "currencyGBP",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, rsu_vest FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "title": "YTD cumulative cash gross vs total comp",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "payslips-pg"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 58
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "currencyGBP",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay - rsu_vest) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_cash_gross, SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_total_comp FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date"
         }
       ]
     }
