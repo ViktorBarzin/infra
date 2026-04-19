@@ -83,7 +83,7 @@ resource "kubernetes_deployment" "qbittorrent" {
           name  = "qbittorrent"
 
           port {
-            container_port = 8787
+            container_port = 8080
           }
           env {
             name  = "PUID"
