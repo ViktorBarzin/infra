@@ -18,8 +18,8 @@ dependency "external-secrets" {
 }
 
 inputs = {
-  # 8-char SHA from the Forgejo commit viktor/job-hunter@9c42eac9
-  # (first image built locally + pushed 2026-04-19 due to a Woodpecker
-  # v3.13 Forgejo webhook bug; bump on every deploy once CI recovers).
-  image_tag = "48f8615d"
+  # 99ab188f = master HEAD with levels.fyi scraper (HTML __NEXT_DATA__) +
+  # comp_points/levels tables (alembic 0003). Built + pushed locally
+  # 2026-04-19 while the Woodpecker Forgejo webhook remains broken.
+  image_tag = "99ab188f"
 }
