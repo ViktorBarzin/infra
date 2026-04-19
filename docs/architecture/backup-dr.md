@@ -209,7 +209,7 @@ graph LR
 | Vault Backup | Weekly Sunday 02:00, 30d | CronJob in `vault` | raft snapshot |
 | Redis Backup | Weekly Sunday 03:00, 30d | CronJob in `redis` | BGSAVE + copy |
 | Vaultwarden Integrity Check | Hourly | CronJob in `vaultwarden` | PRAGMA integrity_check → metric |
-| ~~TrueNAS Cloud Sync~~ | **DECOMMISSIONED** | Was TrueNAS Cloud Sync Task 1 | Replaced by offsite-sync-backup |
+| ~~TrueNAS Cloud Sync~~ | **DECOMMISSIONED 2026-04-13** | Was TrueNAS Cloud Sync Task 1 | Replaced by offsite-sync-backup + inotify change tracking on Proxmox host NFS |
 
 ## How It Works
 
@@ -334,14 +334,14 @@ Two-step offsite sync:
 **Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` for cleanup (removes orphaned files on Synology).
 
 **Destination**:
-- `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs` (renamed from `truenas/`)
+- `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs`
 - `Synology/Backup/Viki/nfs-ssd/` — mirrors `/srv/nfs-ssd`
 
 **Monitoring**: Pushes `offsite_backup_sync_last_success_timestamp` to Pushgateway. Alerts: `OffsiteBackupSyncStale` (>8d), `OffsiteBackupSyncFailing`.
 
-#### ~~TrueNAS Cloud Sync~~ — DECOMMISSIONED
+#### ~~TrueNAS Cloud Sync~~ — DECOMMISSIONED 2026-04-13
 
-> TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04). The `Synology/Backup/Viki/truenas/` directory was renamed to `nfs/` to reflect the new consolidated layout.
+> TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04-13). The current offsite path is inotify-change-tracked rsync from the Proxmox host NFS (`/srv/nfs`, `/srv/nfs-ssd`) to Synology.
 
 ## Configuration
 

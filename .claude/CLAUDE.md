@@ -155,9 +155,9 @@ Choose storage class based on workload type:
 
 **Default for sensitive data is proxmox-lvm-encrypted.** Use plain `proxmox-lvm` only for non-sensitive workloads. Use NFS when you need RWX, backup pipeline integration, or it's a large shared media library.
 
-**NFS servers:**
-- **Proxmox host** (192.168.1.127): Primary NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `async,insecure` options (`async` — safe with UPS + Vault Raft replication + databases on block storage; `insecure` — pfSense NATs source ports >1024 between VLANs).
-- **TrueNAS** (10.0.10.15): **Immich only** (8 PVCs). `nfs-truenas` StorageClass retained exclusively for Immich.
+**NFS server:**
+- **Proxmox host** (192.168.1.127): Sole NFS for all workloads. HDD at `/srv/nfs` (ext4 thin LV `pve/nfs-data`, 1TB). SSD at `/srv/nfs-ssd` (ext4 LV `ssd/nfs-ssd-data`, 100GB). Exports use `async,insecure` options (`async` — safe with UPS + Vault Raft replication + databases on block storage; `insecure` — pfSense NATs source ports >1024 between VLANs).
+- **`nfs-truenas` StorageClass**: Historical name retained only because SC names are immutable on PVs (48 bound PVs reference it — renaming would require mass PV churn, not worth it). Now points to the Proxmox host, identical to `nfs-proxmox`. TrueNAS (VM 9000, 10.0.10.15) operationally decommissioned 2026-04-13; VM still exists in stopped state on PVE pending user decision on deletion.
 
 **Migration note**: CSI PV `volumeAttributes` are immutable — cannot update NFS server in place. New PV/PVC pairs required (convention: append `-host` to PV name).
 
@@ -237,7 +237,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 
 **Synology layout** (`192.168.1.13:/volume1/Backup/Viki/`):
 - `pve-backup/` — PVC file backups (`pvc-data/`), SQLite backups (`sqlite-backup/`), pfSense, PVE config (synced from sda)
-- `nfs/` — mirrors `/srv/nfs` on Proxmox (inotify change-tracked rsync, renamed from `truenas/`)
+- `nfs/` — mirrors `/srv/nfs` on Proxmox (inotify change-tracked rsync)
 - `nfs-ssd/` — mirrors `/srv/nfs-ssd` on Proxmox (inotify change-tracked rsync)
 
 **App-level CronJobs** (write to Proxmox host NFS, synced to Synology via inotify):

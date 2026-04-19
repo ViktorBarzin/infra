@@ -146,8 +146,8 @@ qm shutdown 220; sleep 10
 for VMID in 102 300 103; do qm shutdown $VMID; done
 sleep 20
 
-# TrueNAS (wait for ZFS flush)
-qm shutdown 9000; sleep 60
+# TrueNAS (decommissioned 2026-04-13 — VM 9000 should already be stopped; skip if absent)
+qm shutdown 9000 2>/dev/null || true
 
 # pfSense (last — network gateway)
 qm shutdown 101; sleep 15

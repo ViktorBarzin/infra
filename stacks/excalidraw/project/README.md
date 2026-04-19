@@ -84,8 +84,8 @@ spec:
       volumes:
         - name: data
           nfs:
-            server: 10.0.10.15
-            path: /mnt/main/excalidraw
+            server: 192.168.1.127
+            path: /srv/nfs/excalidraw
 ```
 
 ### With Authentik SSO

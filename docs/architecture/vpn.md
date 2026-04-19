@@ -63,10 +63,10 @@ sequenceDiagram
     Cloudflare-->>AdGuard: A record (Cloudflare IP)
     AdGuard-->>Client: Response
 
-    Note over Client: Query: truenas.viktorbarzin.lan
+    Note over Client: Query: nextcloud.viktorbarzin.lan
     Client->>AdGuard: DNS query
     AdGuard->>Technitium: Forward (.lan domain)
-    Technitium-->>AdGuard: A record (10.0.10.15)
+    Technitium-->>AdGuard: A record (10.0.20.200)
     AdGuard-->>Client: Response
 
     Note over Client,Technitium: If Cloudflared tunnel is down:
@@ -370,14 +370,14 @@ dns_config:
 
 ### Can't Resolve .lan Domains from VPN
 
-**Symptoms**: `nslookup truenas.viktorbarzin.lan` returns `NXDOMAIN`.
+**Symptoms**: `nslookup nextcloud.viktorbarzin.lan` returns `NXDOMAIN`.
 
 **Diagnosis**: Check DNS chain: Client → AdGuard → Technitium.
 
 **Steps**:
 1. Verify AdGuard is running: `kubectl get pod -n adguard`
-2. Check AdGuard conditional forwarding: Query AdGuard directly: `nslookup truenas.viktorbarzin.lan <adguard-ip>`
-3. Check Technitium: `nslookup truenas.viktorbarzin.lan 10.0.20.101`
+2. Check AdGuard conditional forwarding: Query AdGuard directly: `nslookup nextcloud.viktorbarzin.lan <adguard-ip>`
+3. Check Technitium: `nslookup nextcloud.viktorbarzin.lan 10.0.20.101`
 
 **Common causes**:
 1. **AdGuard not forwarding .lan**: Conditional forwarding rule missing or misconfigured.

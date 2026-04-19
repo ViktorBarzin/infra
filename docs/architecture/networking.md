@@ -28,7 +28,6 @@ graph TB
 
         subgraph "VLAN 10 - Management<br/>10.0.10.0/24"
             Proxmox[Proxmox Host<br/>10.0.10.1]
-            TrueNAS[TrueNAS<br/>10.0.10.15]
             DevVM[DevVM<br/>10.0.10.10]
             Registry[Registry VM<br/>10.0.20.10]
         end
@@ -64,7 +63,6 @@ graph TB
     vmbr0 -.physical link.- eno1
     vmbr0 --> vmbr1
     vmbr1 -.VLAN 10.- Proxmox
-    vmbr1 -.VLAN 10.- TrueNAS
     vmbr1 -.VLAN 10.- DevVM
     vmbr1 -.VLAN 20.- pfSense
     vmbr1 -.VLAN 20.- Tech
@@ -146,7 +144,7 @@ flowchart LR
 
 | Subnet | DHCP Server | DNS option 6 | Reservations | DDNS | Notes |
 |--------|------------|--------------|--------------|------|-------|
-| 10.0.10.0/24 (Mgmt) | Kea on pfSense | `10.0.10.1, 94.140.14.14` | 4 (devvm, truenas, pxe, ha) | Yes (TSIG) | VMs with static MACs |
+| 10.0.10.0/24 (Mgmt) | Kea on pfSense | `10.0.10.1, 94.140.14.14` | 3 (devvm, pxe, ha) | Yes (TSIG) | VMs with static MACs |
 | 10.0.20.0/24 (K8s) | Kea on pfSense | `10.0.20.1, 94.140.14.14` | 7 (master, nodes 1-5, registry) | Yes (TSIG) | K8s cluster nodes |
 | 192.168.1.0/24 (LAN) | **TP-Link AP** | `192.168.1.2, 94.140.14.14` | 42 (all home devices) | Yes | pfSense Kea WAN is disabled |
 | 10.3.2.0/24 (VPN) | Static | — | — | No | WireGuard peers |
@@ -160,7 +158,7 @@ flowchart LR
 The Proxmox host uses a dual-bridge architecture:
 - **vmbr0**: Physical bridge on interface `eno1`, connected to upstream LAN (192.168.1.0/24). Proxmox management IP is 192.168.1.127.
 - **vmbr1**: Internal VLAN-aware bridge, acts as a trunk carrying:
-  - **VLAN 10 (Management)**: 10.0.10.0/24 — Proxmox, TrueNAS, DevVM
+  - **VLAN 10 (Management)**: 10.0.10.0/24 — Proxmox, DevVM
   - **VLAN 20 (Kubernetes)**: 10.0.20.0/24 — All K8s nodes, services, MetalLB IPs
 
 VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the upstream LAN via NAT.
@@ -369,7 +367,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 1. **Single flat network**: Simpler, but no isolation between management and workload traffic.
 2. **Routed network with physical VLANs**: Requires switch with VLAN support.
 
-**Decision**: vmbr0 (physical) + vmbr1 (VLAN trunk) gives isolation without requiring managed switches. Management traffic (Proxmox, TrueNAS) stays on VLAN 10, K8s workloads stay on VLAN 20. Failures in K8s don't affect access to Proxmox or storage.
+**Decision**: vmbr0 (physical) + vmbr1 (VLAN trunk) gives isolation without requiring managed switches. Management traffic (Proxmox, DevVM) stays on VLAN 10, K8s workloads stay on VLAN 20. Failures in K8s don't affect access to Proxmox or storage.
 
 ### Why Cloudflared Tunnel Instead of Port Forwarding?
 

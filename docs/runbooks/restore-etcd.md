@@ -7,7 +7,7 @@
 
 ## Backup Location
 - NFS: `/mnt/main/etcd-backup/etcd-snapshot-YYYYMMDD-HHMMSS.db`
-- Replicated to Synology NAS (192.168.1.13) via TrueNAS ZFS replication
+- Replicated to Synology NAS (192.168.1.13) via Proxmox host offsite-sync-backup (inotify-driven rsync)
 - Retention: 30 days
 - Schedule: Daily at 00:00
 

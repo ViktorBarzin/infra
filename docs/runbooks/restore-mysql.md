@@ -130,7 +130,7 @@ kubectl rollout restart deployment -n <namespace>
 
 ## Alternative: Restore from sda Backup
 
-If TrueNAS NFS is unavailable but the PVE host is accessible:
+If the Proxmox host NFS mount is unavailable but the PVE host itself is accessible:
 
 ```bash
 # 1. SSH to PVE host
@@ -148,17 +148,17 @@ kubectl run mysql-restore --rm -it --image=mysql \
 
 ## Alternative: Restore from Synology (if PVE host is down)
 
-If both TrueNAS and PVE host are unavailable:
+If the PVE host itself is unavailable:
 
 ```bash
 # 1. SSH to Synology NAS
 ssh Administrator@192.168.1.13
 
 # 2. Navigate to backup directory
-cd /volume1/Backup/Viki/pve-backup/nfs-mirror/mysql-backup/
+cd /volume1/Backup/Viki/nfs/mysql-backup/
 
 # 3. Copy dump to a temporary location accessible from cluster
-# (e.g., via rsync to a surviving node, or restore TrueNAS first)
+# (e.g., via rsync to a surviving node, or restore PVE host first)
 ```
 
 ## Estimated Time

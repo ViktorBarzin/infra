@@ -85,7 +85,6 @@ Widget-capable matches (candidate): **27**
 | `reverse-proxy` | `proxmox` | `https://proxmox.viktorbarzin.me` | `link-only` |
 | `reverse-proxy` | `r730` | `https://r730.viktorbarzin.me` | `link-only` |
 | `reverse-proxy` | `registry` | `https://registry.viktorbarzin.me` | `link-only` |
-| `reverse-proxy` | `truenas` | `https://truenas.viktorbarzin.me` | `truenas` |
 | `reverse-proxy` | `valchedrym` | `https://valchedrym.viktorbarzin.me` | `link-only` |
 | `rybbit` | `rybbit` | `https://rybbit.viktorbarzin.me` | `link-only` |
 | `send` | `send` | `https://send.viktorbarzin.me` | `link-only` |

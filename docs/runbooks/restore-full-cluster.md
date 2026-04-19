@@ -8,8 +8,8 @@ Last updated: 2026-04-06
 - Proxmox host failure requiring fresh VM provisioning
 
 ## Prerequisites
-- Proxmox host (192.168.1.127) accessible
-- TrueNAS NFS server (10.0.10.15) accessible — or Synology NAS (192.168.1.13) for backups
+- Proxmox host (192.168.1.127) accessible, with NFS exports on `/srv/nfs` and `/srv/nfs-ssd`
+- Synology NAS (192.168.1.13) accessible for offsite backup restore if the PVE host backup disk is also lost
 - sda backup disk mounted at `/mnt/backup` on PVE host (or restore from Synology first)
 - Git repo with infra code
 - SOPS age keys for state decryption (`~/.config/sops/age/keys.txt`)

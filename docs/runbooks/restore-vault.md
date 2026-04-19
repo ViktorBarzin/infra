@@ -93,7 +93,7 @@ kubectl get externalsecrets -A | grep -v "SecretSynced"
 
 ## Alternative: Restore from sda Backup
 
-If TrueNAS NFS is unavailable but the PVE host is accessible:
+If the Proxmox host NFS mount is unavailable but the PVE host itself is accessible:
 
 ```bash
 # 1. SSH to PVE host
@@ -115,17 +115,17 @@ vault operator raft snapshot restore -force ./vault-raft-YYYYMMDD-HHMMSS.db
 
 ## Alternative: Restore from Synology (if PVE host is down)
 
-If both TrueNAS and PVE host are unavailable:
+If the PVE host itself is unavailable:
 
 ```bash
 # 1. SSH to Synology NAS
 ssh Administrator@192.168.1.13
 
 # 2. Navigate to backup directory
-cd /volume1/Backup/Viki/pve-backup/nfs-mirror/vault-backup/
+cd /volume1/Backup/Viki/nfs/vault-backup/
 
 # 3. Copy snapshot to local workstation
-scp Administrator@192.168.1.13:/volume1/Backup/Viki/pve-backup/nfs-mirror/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db ./
+scp Administrator@192.168.1.13:/volume1/Backup/Viki/nfs/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db ./
 
 # 4. Restore via port-forward (same as above)
 ```

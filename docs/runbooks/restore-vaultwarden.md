@@ -104,9 +104,9 @@ lvchange -an pve/$LV_NAME
 kubectl scale deployment vaultwarden -n vaultwarden --replicas=1
 ```
 
-## Alternative: Restore from sda NFS Mirror
+## Alternative: Restore from sda Backup Mirror
 
-If TrueNAS NFS is unavailable but PVE host is accessible:
+If the Proxmox host NFS mount is unavailable but the PVE host itself is accessible:
 
 ```bash
 # 1. SSH to PVE host

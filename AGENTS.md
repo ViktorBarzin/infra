@@ -105,7 +105,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **NFS** (`nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
 - **proxmox-lvm-encrypted** (`proxmox-lvm-encrypted` StorageClass): **Default for all sensitive data** — databases, auth, email, passwords, git repos, health data. LUKS2 encryption via Proxmox CSI. Passphrase in Vault, backup key on PVE host.
 - **proxmox-lvm** (`proxmox-lvm` StorageClass): For non-sensitive stateful apps (configs, caches, tools). Proxmox CSI driver.
-- **NFS server**: Proxmox host at 192.168.1.127. HDD NFS at `/srv/nfs` (2TB ext4 LV `pve/nfs-data`), SSD NFS at `/srv/nfs-ssd` (100GB ext4 LV `ssd/nfs-ssd-data`). Exports use `async` mode (safe with UPS + databases on block storage). TrueNAS (10.0.10.15) decommissioned.
+- **NFS server**: Proxmox host at 192.168.1.127 (sole NFS). HDD NFS at `/srv/nfs` (2TB ext4 LV `pve/nfs-data`), SSD NFS at `/srv/nfs-ssd` (100GB ext4 LV `ssd/nfs-ssd-data`). Exports use `async` mode (safe with UPS + databases on block storage). TrueNAS (VM 9000, 10.0.10.15) decommissioned 2026-04-13. Legacy `nfs-truenas` StorageClass name retained (48 PVs bind it; SC names are immutable on PVs) but now points to the Proxmox host, identical to `nfs-proxmox`.
 - **SQLite on NFS is unreliable** (fsync issues) — always use proxmox-lvm or local disk for databases.
 - **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
 - **NFS export directory must exist** on the Proxmox host before Terraform can create the PV.
@@ -113,7 +113,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **daily-backup** (Daily 05:00): Auto-discovered BACKUP_DIRS (glob), auto SQLite backup (magic number + `?mode=ro`), pfSense, PVE config. No NFS mirror step (NFS syncs directly to Synology via inotify).
 - **offsite-sync-backup** (Daily 06:00): Step 1: sda→Synology `pve-backup/`. Step 2: NFS→Synology `nfs/`+`nfs-ssd/` via `rsync --files-from` (inotify change log). Monthly full `--delete`.
 - **nfs-change-tracker.service**: inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log`. Incremental syncs complete in seconds.
-- **Synology layout** (`/volume1/Backup/Viki/`): `pve-backup/` (from sda), `nfs/` (from `/srv/nfs`), `nfs-ssd/` (from `/srv/nfs-ssd`). `truenas/` renamed to `nfs/`, `pve-backup/nfs-mirror/` removed.
+- **Synology layout** (`/volume1/Backup/Viki/`): `pve-backup/` (from sda), `nfs/` (from `/srv/nfs`), `nfs-ssd/` (from `/srv/nfs-ssd`).
 
 ## Shared Variables (never hardcode)
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`

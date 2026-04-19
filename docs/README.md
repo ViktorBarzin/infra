@@ -20,7 +20,7 @@ This repository contains the configuration and documentation for a homelab Kuber
 | [Overview](architecture/overview.md) | Infrastructure overview, hardware specs, VM inventory, and service catalog |
 | [Networking](architecture/networking.md) | Network topology, VLANs, routing, and firewall rules |
 | [VPN](architecture/vpn.md) | Headscale mesh VPN and Cloudflare Tunnel configuration |
-| [Storage](architecture/storage.md) | TrueNAS NFS, democratic-csi, and persistent volume management |
+| [Storage](architecture/storage.md) | Proxmox host NFS, Proxmox CSI (LVM-thin + LUKS2), and persistent volume management |
 | [Authentication](architecture/authentication.md) | Authentik SSO, OIDC flows, and service integration |
 | [Security](architecture/security.md) | CrowdSec IPS, Kyverno policies, and security controls |
 | [Monitoring](architecture/monitoring.md) | Prometheus, Grafana, Loki, and observability stack |

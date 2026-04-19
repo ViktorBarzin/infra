@@ -80,8 +80,6 @@ def sofia():
                 pfsense >> k8s_switch
             with Cluster('Management Network'):
                 mgt_switch = Switch()
-                # Truenas
-                truenas = Storage("Truenas")
                 # pxe server
                 pxe_server = Rack("PXE Server")
                 # HA
@@ -91,7 +89,6 @@ def sofia():
                     devvm_vpn_client = VPN("Tailscale Client")
                     vpn_clients["devvm"] = devvm_vpn_client
 
-                mgt_switch >> truenas
                 mgt_switch >> pxe_server
                 mgt_switch >> home_assistant
                 mgt_switch >> devvm

@@ -92,7 +92,7 @@ graph TB
 | 203 | k8s-node3 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 204 | k8s-node4 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 220 | docker-registry | 4 | 4GB | vmbr1:vlan20 | 10.0.20.10 | Private Docker registry |
-| ~~9000~~ | ~~truenas~~ | — | — | — | ~~10.0.10.15~~ | **DECOMMISSIONED** — NFS now served by Proxmox host (192.168.1.127) |
+| ~~9000~~ | ~~truenas~~ | — | — | — | ~~10.0.10.15~~ | **DECOMMISSIONED 2026-04-13** — NFS now served by Proxmox host (192.168.1.127). VM still exists in stopped state on PVE pending user decision on deletion. |
 
 ### Kubernetes Cluster
 
@@ -213,7 +213,7 @@ Secrets are stored in HashiCorp Vault under `secret/`:
 
 **Rationale**:
 - **Flexibility**: Easy to snapshot, clone, and roll back VMs during upgrades
-- **Isolation**: Management network (TrueNAS, devvm) separated from Kubernetes
+- **Isolation**: Management network (devvm) separated from Kubernetes
 - **GPU passthrough**: Can dedicate GPU to a single node without tainting the entire host
 - **Multi-purpose**: Same physical host can run non-K8s VMs (pfSense, Home Assistant)
 
