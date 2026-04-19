@@ -552,6 +552,8 @@ locals {
       type                        = "mysql"
       database_connection_string  = "mysql://uptimekuma@mysql.dbaas.svc.cluster.local:3306"
       database_password_vault_key = "uptimekuma_db_password"
+      hostname                    = null
+      port                        = null
       interval                    = 60
       retry_interval              = 60
       max_retries                 = 2
@@ -565,6 +567,23 @@ locals {
       type                        = "redis"
       database_connection_string  = "redis://redis-master.redis.svc.cluster.local:6379"
       database_password_vault_key = null
+      hostname                    = null
+      port                        = null
+      interval                    = 60
+      retry_interval              = 30
+      max_retries                 = 3
+    },
+    {
+      # TP-Link home router upstream of pfSense. Complements the
+      # `[External] gw` HTTPS monitor: this one checks the router
+      # directly on 443, so we can tell a Cloudflare/tunnel outage
+      # apart from the router itself being unreachable.
+      name                        = "TP-Link Gateway (192.168.1.1)"
+      type                        = "port"
+      database_connection_string  = null
+      database_password_vault_key = null
+      hostname                    = "192.168.1.1"
+      port                        = 443
       interval                    = 60
       retry_interval              = 30
       max_retries                 = 3
@@ -599,6 +618,8 @@ resource "kubernetes_config_map_v1" "internal_monitor_targets" {
         name                       = m.name
         type                       = m.type
         database_connection_string = m.database_connection_string
+        hostname                   = m.hostname
+        port                       = m.port
         password_env               = m.database_password_vault_key != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
         interval                   = m.interval
         retry_interval             = m.retry_interval
@@ -648,41 +669,41 @@ existing = {m["name"]: m for m in api.get_monitors()}
 
 for t in targets:
     name = t["name"]
+    mtype = MonitorType(t["type"])
     # MYSQL uses `databaseConnectionString` + `radiusPassword` (UK v2 re-uses
     # radiusPassword for mysql auth — backwards compat). Redis has auth
-    # disabled on the cluster, so password_env is null.
+    # disabled on the cluster, so password_env is null. PORT monitors use
+    # hostname + port directly.
     desired = {
-        "type": MonitorType(t["type"]),
+        "type": mtype,
         "name": name,
-        "databaseConnectionString": t["database_connection_string"],
         "interval": t["interval"],
         "retryInterval": t["retry_interval"],
         "maxretries": t["max_retries"],
     }
-    if t.get("password_env"):
-        desired["radiusPassword"] = os.environ[t["password_env"]]
+    if mtype == MonitorType.PORT:
+        desired["hostname"] = t["hostname"]
+        desired["port"] = t["port"]
+    else:
+        desired["databaseConnectionString"] = t["database_connection_string"]
+        if t.get("password_env"):
+            desired["radiusPassword"] = os.environ[t["password_env"]]
     if name not in existing:
         print(f"Creating monitor: {name}")
         api.add_monitor(**desired)
         continue
     m = existing[name]
-    drifted = (
-        m.get("databaseConnectionString") != desired["databaseConnectionString"]
-        or m.get("interval") != desired["interval"]
-        or m.get("retryInterval") != desired["retryInterval"]
-        or m.get("maxretries") != desired["maxretries"]
-        or ("radiusPassword" in desired and m.get("radiusPassword") != desired["radiusPassword"])
-    )
+    drift_fields = ["interval", "retryInterval", "maxretries"]
+    if mtype == MonitorType.PORT:
+        drift_fields += ["hostname", "port"]
+    else:
+        drift_fields += ["databaseConnectionString"]
+        if "radiusPassword" in desired:
+            drift_fields += ["radiusPassword"]
+    drifted = any(m.get(f) != desired.get(f) for f in drift_fields)
     if drifted:
         print(f"Updating monitor {name} (id={m['id']})")
-        edit_kwargs = {
-            "databaseConnectionString": desired["databaseConnectionString"],
-            "interval": desired["interval"],
-            "retryInterval": desired["retryInterval"],
-            "maxretries": desired["maxretries"],
-        }
-        if "radiusPassword" in desired:
-            edit_kwargs["radiusPassword"] = desired["radiusPassword"]
+        edit_kwargs = {f: desired[f] for f in drift_fields if f in desired}
         api.edit_monitor(m["id"], **edit_kwargs)
     else:
         print(f"Monitor {name} (id={m['id']}) already in desired state")

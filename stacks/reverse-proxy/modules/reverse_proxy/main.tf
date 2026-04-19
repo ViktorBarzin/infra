@@ -112,13 +112,11 @@ module "idrac" {
   depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
-# Can either listen on https or http; can't do both :/
-# TODO: Not working yet
 module "tp-link-gateway" {
   source             = "./factory"
   dns_type           = "proxied"
   name               = "gw"
-  external_name      = "gw.viktorbarzin.lan"
+  backend_ip         = "192.168.1.1"
   port               = 443
   tls_secret_name    = var.tls_secret_name
   backend_protocol   = "HTTPS"

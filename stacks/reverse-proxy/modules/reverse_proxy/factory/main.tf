@@ -14,7 +14,16 @@ variable "name" {}
 variable "namespace" {
   default = "reverse-proxy"
 }
-variable "external_name" {}
+variable "external_name" {
+  type        = string
+  default     = null
+  description = "DNS name for ExternalName Service. Mutually exclusive with backend_ip."
+}
+variable "backend_ip" {
+  type        = string
+  default     = null
+  description = "IP address backend. When set, creates a selector-less Service + EndpointSlice pointing at this IP. Mutually exclusive with external_name — use for hosts that aren't in Technitium (e.g. upstream gateways)."
+}
 variable "port" {
   default = "80"
 }
@@ -95,7 +104,14 @@ variable "public_ipv6" {
 }
 
 
+locals {
+  use_backend_ip = var.backend_ip != null
+  port_name      = var.backend_protocol == "HTTPS" ? "https-${var.name}" : "${var.name}-web"
+}
+
+# ExternalName flavor — used when the backend is addressable by DNS.
 resource "kubernetes_service" "proxied-service" {
+  count = local.use_backend_ip ? 0 : 1
   metadata {
     name      = var.name
     namespace = var.namespace
@@ -109,12 +125,64 @@ resource "kubernetes_service" "proxied-service" {
     external_name = var.external_name
 
     port {
-      name        = var.backend_protocol == "HTTPS" ? "https-${var.name}" : "${var.name}-web"
+      name        = local.port_name
       port        = var.port
       protocol    = "TCP"
       target_port = var.port
     }
   }
+}
+
+# IP-backend flavor — selector-less Service + manually-managed EndpointSlice.
+# Used for upstreams that have no DNS entry in Technitium (e.g. 192.168.1.1).
+resource "kubernetes_service" "ip-backend-service" {
+  count = local.use_backend_ip ? 1 : 0
+  metadata {
+    name      = var.name
+    namespace = var.namespace
+    labels = {
+      "app" = var.name
+    }
+  }
+
+  spec {
+    type = "ClusterIP"
+    port {
+      name        = local.port_name
+      port        = var.port
+      protocol    = "TCP"
+      target_port = var.port
+    }
+  }
+}
+
+resource "kubernetes_manifest" "ip_backend_endpointslice" {
+  count = local.use_backend_ip ? 1 : 0
+  manifest = {
+    apiVersion = "discovery.k8s.io/v1"
+    kind       = "EndpointSlice"
+    metadata = {
+      name      = var.name
+      namespace = var.namespace
+      labels = {
+        "kubernetes.io/service-name" = var.name
+        "app"                        = var.name
+      }
+    }
+    addressType = "IPv4"
+    ports = [{
+      name     = local.port_name
+      port     = tonumber(var.port)
+      protocol = "TCP"
+    }]
+    endpoints = [{
+      addresses = [var.backend_ip]
+      conditions = {
+        ready = true
+      }
+    }]
+  }
+  depends_on = [kubernetes_service.ip-backend-service]
 }
 
 locals {
