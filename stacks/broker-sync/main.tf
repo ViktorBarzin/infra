@@ -105,7 +105,7 @@ resource "kubernetes_cron_job_v1" "version_probe" {
       metadata {}
       spec {
         backoff_limit              = 1
-        ttl_seconds_after_finished = 300
+        ttl_seconds_after_finished = 86400
         template {
           metadata {
             labels = { app = "broker-sync", component = "version-probe" }
@@ -246,7 +246,12 @@ resource "kubernetes_cron_job_v1" "imap" {
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 5
-    suspend                       = true # enable in Phase 2
+    # Unsuspended 2026-04-19 for RSU vest ground-truth ingestion — the parser
+    # now detects Schwab Release Confirmations and scaffolds VestEvents; the
+    # postgres sink that persists them into payslip_ingest.rsu_vest_events is
+    # pending a real-email fixture and cross-service DB grant (see
+    # follow-up beads task filed under the RSU tax spike fix epic).
+    suspend = false
     job_template {
       metadata {}
       spec {
