@@ -134,6 +134,11 @@ resource "kubernetes_config_map" "mailserver_config" {
     # Increase max IMAP connections per user+IP - all Roundcube connections come from same pod IP
     "dovecot.cf"  = <<-EOF
     mail_max_userip_connections = 50
+    # Throttle IMAP auth brute-force. CrowdSec handles the network-level
+    # ban, this adds defense in depth at the auth layer — each failed
+    # attempt waits 5s before responding, stretching a 1000-password
+    # dictionary attack from <1s to ~85min. Addresses code-9mi.
+    auth_failure_delay = 5s
     EOF
     fail2ban_conf = <<-EOF
     [DEFAULT]
