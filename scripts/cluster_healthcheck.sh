@@ -1242,9 +1242,17 @@ check_overcommit() {
 HA_CACHE_DIR=""
 
 ha_sofia_available() {
-    if [[ -z "${HOME_ASSISTANT_SOFIA_URL:-}" ]] || [[ -z "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]]; then
-        return 1
+    if [[ -z "${HOME_ASSISTANT_SOFIA_URL:-}" ]]; then
+        export HOME_ASSISTANT_SOFIA_URL="https://ha-sofia.viktorbarzin.me"
     fi
+    if [[ -z "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]]; then
+        if command -v vault >/dev/null 2>&1 && [[ -n "${VAULT_TOKEN:-}${HOME:-}" ]]; then
+            local t
+            t=$(vault kv get -field=haos_api_token secret/viktor 2>/dev/null || true)
+            [[ -n "$t" ]] && export HOME_ASSISTANT_SOFIA_TOKEN="$t"
+        fi
+    fi
+    [[ -n "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]] || return 1
     return 0
 }
 
@@ -1752,14 +1760,25 @@ else:
     json_add "hardware_exporters" "$status" "${detail:-All healthy}"
 }
 
+# Returns 0 if cert-manager CRDs are installed, 1 otherwise.
+cert_manager_installed() {
+    $KUBECTL get crd certificates.cert-manager.io -o name >/dev/null 2>&1
+}
+
 # --- 31. cert-manager: Certificate Readiness ---
 check_cert_manager_certificates() {
     section 31 "cert-manager — Certificate Readiness"
     local certs not_ready detail="" status="PASS"
 
+    if ! cert_manager_installed; then
+        pass "cert-manager not installed — N/A"
+        json_add "certmanager_certificates" "PASS" "N/A (cert-manager not installed)"
+        return 0
+    fi
+
     certs=$($KUBECTL get certificates.cert-manager.io -A -o json 2>/dev/null) || {
-        warn "cert-manager CRDs not installed or inaccessible"
-        json_add "certmanager_certificates" "WARN" "CRDs unavailable"
+        warn "cert-manager CRDs installed but API query failed"
+        json_add "certmanager_certificates" "WARN" "API query failed"
         return 0
     }
 
@@ -1797,9 +1816,15 @@ check_cert_manager_expiry() {
     section 32 "cert-manager — Certificate Expiry (<14d)"
     local certs expiring detail="" status="PASS"
 
+    if ! cert_manager_installed; then
+        pass "cert-manager not installed — N/A"
+        json_add "certmanager_expiry" "PASS" "N/A (cert-manager not installed)"
+        return 0
+    fi
+
     certs=$($KUBECTL get certificates.cert-manager.io -A -o json 2>/dev/null) || {
-        warn "cert-manager CRDs not installed or inaccessible"
-        json_add "certmanager_expiry" "WARN" "CRDs unavailable"
+        warn "cert-manager CRDs installed but API query failed"
+        json_add "certmanager_expiry" "WARN" "API query failed"
         return 0
     }
 
@@ -1852,9 +1877,15 @@ check_cert_manager_requests() {
     section 33 "cert-manager — Failed CertificateRequests"
     local requests failed detail="" status="PASS"
 
+    if ! cert_manager_installed; then
+        pass "cert-manager not installed — N/A"
+        json_add "certmanager_requests" "PASS" "N/A (cert-manager not installed)"
+        return 0
+    fi
+
     requests=$($KUBECTL get certificaterequests.cert-manager.io -A -o json 2>/dev/null) || {
-        warn "cert-manager CRDs not installed or inaccessible"
-        json_add "certmanager_requests" "WARN" "CRDs unavailable"
+        warn "cert-manager CRDs installed but API query failed"
+        json_add "certmanager_requests" "WARN" "API query failed"
         return 0
     }
 
@@ -1998,7 +2029,7 @@ check_backup_lvm_snapshots() {
     local snap_output detail="" status="PASS"
 
     snap_output=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-        root@192.168.1.127 "lvs -o lv_name,lv_time --noheadings 2>/dev/null | grep -- -snap" 2>/dev/null || true)
+        root@192.168.1.127 "lvs -o lv_name,lv_time --noheadings 2>/dev/null | grep _snap" 2>/dev/null || true)
 
     if [[ -z "$snap_output" ]]; then
         [[ "$QUIET" == true ]] && section_always 36 "Backup Freshness — LVM PVC Snapshots"
