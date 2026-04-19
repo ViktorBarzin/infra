@@ -148,6 +148,24 @@ resource "kubernetes_config_map" "haproxy" {
         timeout server  30s
         timeout check   3s
 
+      # Dynamic DNS resolution via cluster CoreDNS. Without this, haproxy
+      # resolves server hostnames once at startup and caches forever, so
+      # when redis-node-X pods restart and get new IPs, haproxy keeps
+      # connecting to the old (dead) IPs and returns "Connection refused"
+      # until haproxy itself is restarted. This caused an immich outage
+      # on 2026-04-19 after a redis pod cycle.
+      resolvers kubernetes
+        nameserver coredns kube-dns.kube-system.svc.cluster.local:53
+        resolve_retries 3
+        timeout resolve 1s
+        timeout retry   1s
+        hold other      10s
+        hold refused    10s
+        hold nx         10s
+        hold timeout    10s
+        hold valid      10s
+        hold obsolete   10s
+
       frontend redis_front
         bind *:6379
         default_backend redis_master
@@ -167,13 +185,13 @@ resource "kubernetes_config_map" "haproxy" {
         tcp-check expect rstring role:master
         tcp-check send "QUIT\r\n"
         tcp-check expect string +OK
-        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2
-        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2
+        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
 
       backend redis_sentinel
         balance roundrobin
-        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:26379 check inter 5s
-        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:26379 check inter 5s
+        server redis-node-0 redis-node-0.redis-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
+        server redis-node-1 redis-node-1.redis-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
     EOT
   }
 }
@@ -197,6 +215,11 @@ resource "kubernetes_deployment" "haproxy" {
       metadata {
         labels = {
           app = "redis-haproxy"
+        }
+        annotations = {
+          # Roll the deployment whenever haproxy.cfg content changes so a
+          # config update (e.g. DNS resolver tweaks) actually takes effect.
+          "checksum/config" = sha256(kubernetes_config_map.haproxy.data["haproxy.cfg"])
         }
       }
       spec {
