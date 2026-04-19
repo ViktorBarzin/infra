@@ -246,19 +246,38 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_income_tax"
+              "options": "ytd_cash_income_tax"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "red"
+                  "fixedColor": "#C4162A"
                 }
               },
               {
                 "id": "displayName",
-                "value": "Income Tax"
+                "value": "Income Tax (cash pay)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_rsu_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0652E"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (RSU-attributed)"
               }
             ]
           },
@@ -360,7 +379,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(income_tax) OVER w AS ytd_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(student_loan) OVER w AS ytd_student_loan, SUM(rsu_offset) OVER w AS ytd_rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(student_loan) OVER w AS ytd_student_loan, SUM(rsu_offset) OVER w AS ytd_rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -1221,7 +1240,195 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH agg AS (SELECT COALESCE(SUM(salary), 0) AS salary, COALESCE(SUM(bonus), 0) AS bonus, COALESCE(SUM(rsu_vest), 0) AS rsu_vest, COALESCE(SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)), 0) AS other_income, COALESCE(SUM(net_pay), 0) AS net_pay, COALESCE(SUM(income_tax), 0) AS income_tax, COALESCE(SUM(national_insurance), 0) AS ni, COALESCE(SUM(pension_employee), 0) AS pension, COALESCE(SUM(student_loan), 0) AS student_loan, COALESCE(SUM(rsu_offset), 0) AS rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date)) SELECT 'Salary' AS source, 'Gross' AS target, salary AS value FROM agg WHERE salary > 0 UNION ALL SELECT 'Bonus', 'Gross', bonus FROM agg WHERE bonus > 0 UNION ALL SELECT 'RSU', 'Gross', rsu_vest FROM agg WHERE rsu_vest > 0 UNION ALL SELECT 'Other income', 'Gross', other_income FROM agg WHERE other_income > 0 UNION ALL SELECT 'Gross', 'Net pay', net_pay FROM agg WHERE net_pay > 0 UNION ALL SELECT 'Gross', 'Income Tax', income_tax FROM agg WHERE income_tax > 0 UNION ALL SELECT 'Gross', 'National Insurance', ni FROM agg WHERE ni > 0 UNION ALL SELECT 'Gross', 'Pension', pension FROM agg WHERE pension > 0 UNION ALL SELECT 'Gross', 'Student Loan', student_loan FROM agg WHERE student_loan > 0 UNION ALL SELECT 'Gross', 'RSU Offset', rsu_offset FROM agg WHERE rsu_offset > 0"
+          "rawSql": "WITH agg AS (SELECT COALESCE(SUM(salary), 0) AS salary, COALESCE(SUM(bonus), 0) AS bonus, COALESCE(SUM(rsu_vest), 0) AS rsu_vest, COALESCE(SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)), 0) AS other_income, COALESCE(SUM(net_pay), 0) AS net_pay, COALESCE(SUM(COALESCE(cash_income_tax, income_tax)), 0) AS cash_income_tax, COALESCE(SUM(income_tax - COALESCE(cash_income_tax, income_tax)), 0) AS rsu_income_tax, COALESCE(SUM(national_insurance), 0) AS ni, COALESCE(SUM(pension_employee), 0) AS pension, COALESCE(SUM(student_loan), 0) AS student_loan, COALESCE(SUM(rsu_offset), 0) AS rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date)) SELECT 'Salary' AS source, 'Gross' AS target, salary AS value FROM agg WHERE salary > 0 UNION ALL SELECT 'Bonus', 'Gross', bonus FROM agg WHERE bonus > 0 UNION ALL SELECT 'RSU', 'Gross', rsu_vest FROM agg WHERE rsu_vest > 0 UNION ALL SELECT 'Other income', 'Gross', other_income FROM agg WHERE other_income > 0 UNION ALL SELECT 'Gross', 'Net pay', net_pay FROM agg WHERE net_pay > 0 UNION ALL SELECT 'Gross', 'Income Tax (cash)', cash_income_tax FROM agg WHERE cash_income_tax > 0 UNION ALL SELECT 'Gross', 'Income Tax (RSU)', rsu_income_tax FROM agg WHERE rsu_income_tax > 0 UNION ALL SELECT 'Gross', 'National Insurance', ni FROM agg WHERE ni > 0 UNION ALL SELECT 'Gross', 'Pension', pension FROM agg WHERE pension > 0 UNION ALL SELECT 'Gross', 'Student Loan', student_loan FROM agg WHERE student_loan > 0 UNION ALL SELECT 'Gross', 'RSU Offset', rsu_offset FROM agg WHERE rsu_offset > 0"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "P60 reconciliation \u2014 HMRC annual vs summed payslips",
+      "description": "Per-tax-year comparison of the figures HMRC printed on the P60 vs what we summed from individual payslips. Delta columns: |\u0394|<1 green (exact match), 1-50 yellow (rounding), >50 red (missing month or parser drift). Always shows all years \u2014 ignores the time picker.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "custom": {
+            "align": "right",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^delta_"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "green", "value": -1 },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 50 },
+                    { "color": "red", "value": -50 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tax_year" },
+            "properties": [
+              { "id": "unit", "value": "string" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "employer" },
+            "properties": [
+              { "id": "unit", "value": "string" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tax_code" },
+            "properties": [
+              { "id": "unit", "value": "string" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "paperless_doc_id" },
+            "properties": [
+              { "id": "unit", "value": "none" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT p.tax_year, p.employer, p.gross_pay AS p60_gross, c.sum_gross AS computed_gross, (p.gross_pay - c.sum_gross) AS delta_gross, p.income_tax AS p60_tax, c.sum_tax AS computed_tax, (p.income_tax - c.sum_tax) AS delta_tax, p.national_insurance AS p60_ni, c.sum_ni AS computed_ni, (p.national_insurance - c.sum_ni) AS delta_ni, p.tax_code, p.paperless_doc_id FROM payslip_ingest.p60_reference p LEFT JOIN LATERAL (SELECT COALESCE(SUM(gross_pay), 0) AS sum_gross, COALESCE(SUM(income_tax), 0) AS sum_tax, COALESCE(SUM(national_insurance), 0) AS sum_ni FROM payslip_ingest.payslip WHERE tax_year = p.tax_year) c ON true ORDER BY p.tax_year DESC"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "HMRC Tax Year Reconciliation \u2014 Individual Tax API",
+      "description": "Latest snapshot from HMRC Individual Tax API v1.1 vs SUM(payslip.income_tax) per tax year. Delta > \u00a310 turns red \u2014 that's parser drift vs HMRC's held figures, the authoritative ground truth. Shown only for years where hmrc-sync has pulled a snapshot.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "custom": {
+            "align": "right",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "^delta_" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "green", "value": -10 },
+                    { "color": "red", "value": 10 },
+                    { "color": "red", "value": -10 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tax_year" },
+            "properties": [
+              { "id": "unit", "value": "string" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "employer_paye_ref" },
+            "properties": [
+              { "id": "unit", "value": "string" },
+              { "id": "custom.align", "value": "left" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "snapshot_date" },
+            "properties": [
+              { "id": "unit", "value": "dateTimeAsIso" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (tax_year, employer_paye_ref) tax_year, employer_paye_ref, snapshot_date, gross_pay, income_tax, ni_contributions FROM hmrc_sync.tax_year_snapshot ORDER BY tax_year, employer_paye_ref, snapshot_date DESC), summed AS (SELECT tax_year, COALESCE(SUM(gross_pay), 0) AS sum_gross, COALESCE(SUM(income_tax), 0) AS sum_tax, COALESCE(SUM(national_insurance), 0) AS sum_ni FROM payslip_ingest.payslip GROUP BY tax_year) SELECT l.tax_year, l.employer_paye_ref, l.snapshot_date, l.gross_pay AS hmrc_gross, s.sum_gross AS computed_gross, (l.gross_pay - s.sum_gross) AS delta_gross, l.income_tax AS hmrc_tax, s.sum_tax AS computed_tax, (l.income_tax - s.sum_tax) AS delta_tax, l.ni_contributions AS hmrc_ni, s.sum_ni AS computed_ni, (l.ni_contributions - s.sum_ni) AS delta_ni FROM latest l LEFT JOIN summed s ON s.tax_year = l.tax_year ORDER BY l.tax_year DESC"
         }
       ]
     }
