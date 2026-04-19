@@ -178,8 +178,8 @@
     },
     {
       "id": 7,
-      "title": "YTD uses \u2014 deductions + take-home",
-      "description": "Year-to-date cumulative breakdown of where the gross went. Stacked \u2014 top equals gross_pay. Green = take-home; red/orange = taxes; purple = pension; teal = RSU offset.",
+      "title": "YTD uses \u2014 where gross went",
+      "description": "Year-to-date cumulative breakdown of where the gross went. Stacked \u2014 top equals gross_pay minus student loan and RSU offset (both small; shown on Panel 8 Sankey). Green = take-home; red = cash income tax; orange = RSU-attributed income tax + NI; purple = pension.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -318,44 +318,6 @@
                 "value": "Pension (employee)"
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ytd_student_loan"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#8B4513"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Student Loan"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ytd_rsu_offset"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#2AA198"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "RSU Offset"
-              }
-            ]
           }
         ]
       },
@@ -379,7 +341,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(student_loan) OVER w AS ytd_student_loan, SUM(rsu_offset) OVER w AS ytd_rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
