@@ -24,7 +24,8 @@
   "panels": [
     {
       "id": 1,
-      "title": "Tax-year YTD \u2014 gross / net / taxes / RSU / salary",
+      "title": "YTD sources \u2014 income composition",
+      "description": "Year-to-date cumulative breakdown of gross pay by source. Stacked \u2014 top of the stack equals gross_pay. Reset at each tax-year boundary.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -32,7 +33,7 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 0
       },
@@ -43,22 +44,17 @@
           },
           "unit": "currencyGBP",
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
             "axisPlacement": "auto",
-            "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 70,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "lineWidth": 2,
-            "pointSize": 5,
+            "lineWidth": 1,
+            "pointSize": 4,
             "scaleDistribution": {
               "type": "linear"
             },
@@ -66,7 +62,7 @@
             "spanNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"
@@ -77,38 +73,76 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_cash_gross"
+              "options": "ytd_salary"
             },
             "properties": [
               {
-                "id": "custom.thresholdsStyle",
+                "id": "color",
                 "value": {
-                  "mode": "line"
+                  "mode": "fixed",
+                  "fixedColor": "green"
                 }
               },
               {
-                "id": "thresholds",
+                "id": "displayName",
+                "value": "Salary"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_bonus"
+            },
+            "properties": [
+              {
+                "id": "color",
                 "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 12570
-                    },
-                    {
-                      "color": "orange",
-                      "value": 50270
-                    },
-                    {
-                      "color": "red",
-                      "value": 125140
-                    }
-                  ]
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
                 }
+              },
+              {
+                "id": "displayName",
+                "value": "Bonus"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_rsu"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "RSU (notional)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_other"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Other / residual"
               }
             ]
           }
@@ -134,7 +168,199 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(gross_pay) OVER w AS ytd_total_gross, SUM(gross_pay - rsu_vest) OVER w AS ytd_cash_gross, SUM(salary) OVER w AS ytd_salary, SUM(rsu_vest) OVER w AS ytd_rsu, SUM(income_tax + national_insurance + student_loan) OVER w AS ytd_taxes, SUM(net_pay) OVER w AS ytd_net FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(salary) OVER w AS ytd_salary, SUM(bonus) OVER w AS ytd_bonus, SUM(rsu_vest) OVER w AS ytd_rsu, SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)) OVER w AS ytd_other FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "YTD uses \u2014 deductions + take-home",
+      "description": "Year-to-date cumulative breakdown of where the gross went. Stacked \u2014 top equals gross_pay. Green = take-home; red/orange = taxes; purple = pension; teal = RSU offset.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_net"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Net (take-home)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_ni"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "National Insurance"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_pension_employee"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employee)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_student_loan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8B4513"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Student Loan"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_rsu_offset"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2AA198"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "RSU Offset"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(income_tax) OVER w AS ytd_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(student_loan) OVER w AS ytd_student_loan, SUM(rsu_offset) OVER w AS ytd_rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -225,7 +451,8 @@
     },
     {
       "id": 3,
-      "title": "Effective rate & take-home % (cash-basis, YTD-corrected)",
+      "title": "Effective rate & take-home % (YTD cumulative)",
+      "description": "YTD-cumulative rates. PAYE rate uses reported taxable_pay as the base; all-deductions rate uses gross_pay. Computed from cumulative SUM over the tax year, so vest-month RSU tax is blended proportionally with RSU value \u2014 no per-slip attribution hack, no spikes.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -298,7 +525,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", ROUND((((income_tax - (rsu_vest * COALESCE(ytd_tax_paid / NULLIF(ytd_taxable_pay, 0), 0))) + national_insurance)::numeric / NULLIF(gross_pay - rsu_vest, 0)) * 100, 2) AS \"effective_rate_pct\", ROUND((net_pay::numeric / NULLIF(gross_pay - rsu_vest, 0)) * 100, 2) AS \"take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", ROUND(((SUM(income_tax) OVER w)::numeric / NULLIF(SUM(COALESCE(taxable_pay, gross_pay)) OVER w, 0)) * 100, 2) AS \"ytd_paye_rate_pct\", ROUND((((SUM(income_tax) OVER w) + (SUM(national_insurance) OVER w) + (SUM(student_loan) OVER w))::numeric / NULLIF(SUM(gross_pay) OVER w, 0)) * 100, 2) AS \"ytd_all_deductions_pct\", ROUND(((SUM(net_pay) OVER w)::numeric / NULLIF(SUM(gross_pay) OVER w, 0)) * 100, 2) AS \"ytd_take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -957,6 +1184,44 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "SELECT pay_date, tax_year, gross_pay, ytd_gross AS ytd_gross_reported, SUM(gross_pay) OVER w AS ytd_gross_computed, (ytd_gross - SUM(gross_pay) OVER w) AS delta_gross, taxable_pay, ytd_taxable_pay AS ytd_taxable_reported, SUM(taxable_pay) OVER w AS ytd_taxable_computed, (ytd_taxable_pay - SUM(taxable_pay) OVER w) AS delta_taxable, income_tax, ytd_tax_paid AS ytd_tax_reported, SUM(income_tax) OVER w AS ytd_tax_computed, (ytd_tax_paid - SUM(income_tax) OVER w) AS delta_tax FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) AND ytd_gross IS NOT NULL WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date DESC"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Sankey \u2014 where the money went",
+      "description": "Income sources flow into gross, then out to deductions and take-home. Aggregated over the selected time range (use the time picker to scope to a single tax year).",
+      "type": "netsage-sankey-panel",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "options": {
+        "monochrome": false,
+        "monochromeColor": "#7294d4",
+        "showHeader": true,
+        "displayValues": "show",
+        "valueFormat": "currencyGBP",
+        "nodeWidth": 20,
+        "nodePadding": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH agg AS (SELECT COALESCE(SUM(salary), 0) AS salary, COALESCE(SUM(bonus), 0) AS bonus, COALESCE(SUM(rsu_vest), 0) AS rsu_vest, COALESCE(SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)), 0) AS other_income, COALESCE(SUM(net_pay), 0) AS net_pay, COALESCE(SUM(income_tax), 0) AS income_tax, COALESCE(SUM(national_insurance), 0) AS ni, COALESCE(SUM(pension_employee), 0) AS pension, COALESCE(SUM(student_loan), 0) AS student_loan, COALESCE(SUM(rsu_offset), 0) AS rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date)) SELECT 'Salary' AS source, 'Gross' AS target, salary AS value FROM agg WHERE salary > 0 UNION ALL SELECT 'Bonus', 'Gross', bonus FROM agg WHERE bonus > 0 UNION ALL SELECT 'RSU', 'Gross', rsu_vest FROM agg WHERE rsu_vest > 0 UNION ALL SELECT 'Other income', 'Gross', other_income FROM agg WHERE other_income > 0 UNION ALL SELECT 'Gross', 'Net pay', net_pay FROM agg WHERE net_pay > 0 UNION ALL SELECT 'Gross', 'Income Tax', income_tax FROM agg WHERE income_tax > 0 UNION ALL SELECT 'Gross', 'National Insurance', ni FROM agg WHERE ni > 0 UNION ALL SELECT 'Gross', 'Pension', pension FROM agg WHERE pension > 0 UNION ALL SELECT 'Gross', 'Student Loan', student_loan FROM agg WHERE student_loan > 0 UNION ALL SELECT 'Gross', 'RSU Offset', rsu_offset FROM agg WHERE rsu_offset > 0"
         }
       ]
     }

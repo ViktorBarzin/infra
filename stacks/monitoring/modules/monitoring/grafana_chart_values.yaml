@@ -5,6 +5,8 @@ deploymentStrategy:
     maxUnavailable: 1
 replicas: 1
 adminPassword: "${grafana_admin_password}"
+plugins:
+  - netsage-sankey-panel
 resources:
   requests:
     cpu: 50m
