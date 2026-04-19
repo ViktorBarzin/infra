@@ -147,8 +147,24 @@ resource "kubernetes_config_map" "mailserver_config" {
     logtarget = SYSOUT
     EOF
   }
-  # Password hashes are different each time and avoid changing secret constantly.
-  # Either 1.Create consistent hashes or 2.Find a way to ignore_changes on per password
+  # bcrypt() generates a fresh salt on every evaluation, so the hash line
+  # differs each plan run. ignore_changes is the pragmatic workaround.
+  #
+  # INVARIANT (code-7ns, decision 2026-04-19): if a password in Vault
+  # (secret/platform.mailserver_accounts) is rotated, ignore_changes WILL
+  # mask that rotation — TF will not re-render the ConfigMap and the pod
+  # will keep accepting the old password until the ConfigMap is force-
+  # taintned (`terraform taint module.mailserver.kubernetes_config_map
+  # .postfix-accounts-cf`) or the resource is addressed explicitly on
+  # apply (`-replace=...`). Currently there is NO automatic Vault
+  # rotation for mailserver_accounts, so this is acceptable. If automatic
+  # rotation is ever added, replace this ignore_changes with either:
+  #   (a) deterministic hashing (bcrypt with a stable salt derived from
+  #       the user string — loses per-user salt uniqueness but keeps TF
+  #       convergent), or
+  #   (b) render postfix-accounts.cf from a K8s Secret synced by ESO
+  #       (CRD consumed by a dedicated volume mount; docker-mailserver
+  #       loads it at pod start).
   lifecycle {
     # DRIFT_WORKAROUND: postfix-accounts.cf password hashes non-deterministic; would flap on every apply. Reviewed 2026-04-18.
     ignore_changes = [data["postfix-accounts.cf"]]
