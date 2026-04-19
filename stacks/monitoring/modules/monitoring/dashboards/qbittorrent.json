@@ -434,6 +434,223 @@
       ],
       "title": "Transfer Speed (Global)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "id": 103,
+      "title": "MAM Profile (from jsonLoad.php)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "color": "red",    "text": "Mouse" },
+              "1": { "color": "orange", "text": "Vole" },
+              "2": { "color": "yellow", "text": "User" },
+              "3": { "color": "green",  "text": "Power User" },
+              "4": { "color": "green",  "text": "Elite" },
+              "5": { "color": "blue",   "text": "Torrent Master" },
+              "6": { "color": "blue",   "text": "Power TM" },
+              "7": { "color": "purple", "text": "Elite TM" },
+              "8": { "color": "purple", "text": "VIP" }
+            } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 2 }
+          ] }
+        }
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 40 },
+      "id": 20,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [{ "expr": "mam_class_code", "legendFormat": "Class" }],
+      "title": "MAM Class",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "orange", "value": 0.8 },
+            { "color": "green", "value": 1.2 }
+          ] },
+          "decimals": 3
+        }
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 40 },
+      "id": 21,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [{ "expr": "mam_ratio", "legendFormat": "Ratio" }],
+      "title": "MAM Ratio (profile)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 5000 }
+          ] }
+        }
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 40 },
+      "id": 22,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [{ "expr": "mam_bp_balance", "legendFormat": "BP" }],
+      "title": "MAM Bonus Points",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "decbytes" } },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 40 },
+      "id": 23,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        { "expr": "mam_downloaded_bytes", "legendFormat": "Downloaded" },
+        { "expr": "mam_uploaded_bytes", "legendFormat": "Uploaded" }
+      ],
+      "title": "MAM Transfer (profile)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "transparent", "value": null },
+            { "color": "orange", "value": 500 }
+          ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+      "id": 24,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        { "expr": "mam_bp_balance", "legendFormat": "BP Balance" },
+        { "expr": "mam_bp_needed_gib * 500", "legendFormat": "Next-run cost (BP)" }
+      ],
+      "title": "BP Balance vs Reserve",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": { "mode": "normal" }
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+      "id": 25,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "mam_janitor_deleted_per_run",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "title": "Janitor Deletions per Run (by reason)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 54 },
+      "id": 26,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        { "expr": "mam_janitor_preserved_hnr", "legendFormat": "Preserved (H&R <72h)" },
+        { "expr": "mam_janitor_skipped_active", "legendFormat": "Skipped (in-progress)" },
+        { "expr": "mam_janitor_dry_run", "legendFormat": "Dry-run mode" }
+      ],
+      "title": "Janitor State",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 54 },
+      "id": 27,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        { "expr": "mam_farming_grabbed", "legendFormat": "Last run grabbed" },
+        { "expr": "mam_farming_total_seeding", "legendFormat": "Total in farming" },
+        { "expr": "sum by (reason) (mam_grabber_skipped_reason)", "legendFormat": "Grabber skipped: {{reason}}" }
+      ],
+      "title": "Grabber State",
+      "type": "stat"
     }
   ],
   "refresh": "1m",

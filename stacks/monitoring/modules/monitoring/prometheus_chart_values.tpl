@@ -1884,16 +1884,47 @@ serverFiles:
               summary: "High DNS SERVFAIL rate: {{ $value | printf \"%.0f\" }} failures detected"
       - name: qbittorrent
         rules:
-          - alert: QBittorrentMAMRatioLow
-            expr: qbt_tracker_ratio{tracker="mam"} < 1.0
+          - alert: MAMMouseClass
+            expr: mam_class_code == 0
             for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "MAM account is in Mouse class — tracker is refusing announces, ratio cannot recover"
+          - alert: MAMCookieExpired
+            expr: mam_farming_cookie_expired > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MAM session cookie has expired — refresh `mam_id` in Vault servarr/mam_id"
+          - alert: MAMRatioBelowOne
+            expr: mam_ratio < 1.0
+            for: 24h
             labels:
               severity: warning
             annotations:
-              summary: "MAM ratio is {{ $value | printf \"%.2f\" }} (must be >= 1.0)"
+              summary: "MAM ratio is {{ $value | printf \"%.2f\" }} for 24h (target: >= 1.0)"
+          - alert: MAMFarmingStuck
+            expr: |
+              increase(mam_farming_grabbed[4h]) == 0
+              and mam_farming_total_seeding < 150
+              and mam_ratio >= 1.2
+            for: 4h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Grabber has added 0 torrents in 4h despite healthy ratio ({{ $value | printf \"%.2f\" }})"
+          - alert: MAMJanitorStuckBacklog
+            expr: mam_janitor_skipped_active > 400
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Janitor is skipping {{ $value | printf \"%.0f\" }} in-progress torrents — queue not draining"
           - alert: QBittorrentDisconnected
             expr: qbt_connected == 0
-            for: 5m
+            for: 10m
             labels:
               severity: critical
             annotations:
@@ -1977,6 +2008,37 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Authentik outpost restarted {{ $value | printf \"%.0f\" }} times in 30m — check for OOM or crash loop"
+          - alert: AuthentikOutpostDevShmFull
+            # Direct filesystem measure of the /dev/shm emptyDir sizeLimit.
+            # The 2026-04-18 incident went undetected for 40h because working-set
+            # memory lags tmpfs fill (files count against memory but not always
+            # against working set). This rule catches the underlying cause.
+            # See docs/post-mortems/2026-04-18-authentik-outpost-shm-full.md.
+            expr: container_fs_usage_bytes{namespace="authentik", pod=~"ak-outpost-.*"} / container_fs_limit_bytes{namespace="authentik", pod=~"ak-outpost-.*"} > 0.8
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Authentik outpost filesystem at {{ $value | humanizePercentage }} on {{ $labels.pod }} — session files filling tmpfs, forward-auth imminent failure"
+          - alert: AuthentikOutpostForwardAuth400Spike
+            # Sudden 400 spike from the outpost means forward-auth is broken
+            # for all protected services. The /dev/shm ENOSPC class of failures
+            # manifests as the outpost returning 400 on /outpost.goauthentik.io/auth/traefik.
+            expr: sum by (service) (increase(traefik_service_requests_total{code="400", service=~"authentik-authentik-outpost.*"}[5m])) > 10
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Authentik outpost returning {{ $value | printf \"%.0f\" }} 400s in 5m on {{ $labels.service }} — forward-auth broken for all 43 protected services"
+          - alert: AuthentikServerReplicasMismatch
+            # With 3 replicas + PDB minAvailable=2, a sustained drop to <3
+            # means a node is unschedulable, image pull failing, or quota hit.
+            expr: (kube_deployment_spec_replicas{namespace="authentik", deployment="goauthentik-server"} - kube_deployment_status_replicas_available{namespace="authentik", deployment="goauthentik-server"}) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Authentik server has {{ $value }} unavailable replica(s) for 15m — check pod events"
       # Mailserver Dovecot alerts were removed with the exporter in
       # code-1ik (viktorbarzin/dovecot_exporter incompatible with
       # Dovecot 2.3 stats architecture). Re-add the rule group if a

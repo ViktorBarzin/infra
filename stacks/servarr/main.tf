@@ -86,6 +86,15 @@ module "qbittorrent" {
   homepage_credentials = local.homepage_credentials
 }
 
+module "mam_farming" {
+  source    = "./mam-farming"
+  namespace = kubernetes_namespace.servarr.metadata[0].name
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    module.qbittorrent,
+  ]
+}
+
 module "flaresolverr" {
   source          = "./flaresolverr"
   tls_secret_name = var.tls_secret_name

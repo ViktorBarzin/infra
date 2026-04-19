@@ -113,6 +113,15 @@ resource "kubernetes_deployment" "qbittorrent" {
             name       = "audiobooks"
             mount_path = "/audiobooks"
           }
+          resources {
+            requests = {
+              memory = "512Mi"
+              cpu    = "50m"
+            }
+            limits = {
+              memory = "1Gi"
+            }
+          }
         }
         volume {
           name = "data"
@@ -289,21 +298,26 @@ tracker_stats = defaultdict(lambda: {
 })
 
 for t in torrents:
+    category = (t.get("category") or "").lower()
     tracker_url = t.get("tracker", "")
-    if not tracker_url:
-        domain = "unknown"
-    else:
+    domain = ""
+    if tracker_url:
         try:
-            domain = urlparse(tracker_url).hostname or "unknown"
+            domain = (urlparse(tracker_url).hostname or "").lower()
         except Exception:
-            domain = "unknown"
+            domain = ""
 
-    if "myanonamouse" in domain or "mam" in domain.lower():
+    # Category is the only signal for queuedDL torrents whose announces
+    # haven't happened yet (tracker field is empty). Map those first so
+    # hundreds of MAM torrents don't collect under "unknown".
+    if category == "mam-farming" or "myanonamouse" in domain or "mam" in domain:
         label = "mam"
-    elif "audiobookbay" in domain or "abb" in domain.lower():
+    elif category.startswith("abb") or "audiobookbay" in domain or "abb" in domain:
         label = "audiobookbay"
-    else:
+    elif domain:
         label = domain.replace(".", "_")
+    else:
+        label = "unknown"
 
     s = tracker_stats[label]
     s["uploaded"] += t.get("uploaded", 0)
