@@ -21,5 +21,5 @@ inputs = {
   # 8-char SHA from the Forgejo commit viktor/job-hunter@9c42eac9
   # (first image built locally + pushed 2026-04-19 due to a Woodpecker
   # v3.13 Forgejo webhook bug; bump on every deploy once CI recovers).
-  image_tag = "9c42eac9"
+  image_tag = "48f8615d"
 }
