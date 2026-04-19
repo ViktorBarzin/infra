@@ -40,6 +40,18 @@ INDEX_MEDIA_TYPES = (
     "application/vnd.docker.distribution.manifest.list.v2+json",
 )
 
+# Only the private R/W registry is authoritative for every child of every
+# index it stores — we pushed those indexes ourselves, so a missing child is
+# always a bug (the 2026-04-13 + 2026-04-19 failure mode).
+#
+# Pull-through caches (dockerhub, ghcr, quay, k8s, kyverno) are ALLOWED to
+# have missing children: they only fetch what someone actually pulls.
+# Uncached arm64 / arm / attestation variants of a multi-platform index are
+# normal partial state, not orphans. Scanning them generates hundreds of
+# false-positive warnings — noise that would mask the real signal from the
+# private registry. Scan 2 is therefore private-only.
+INDEX_SCAN_REGISTRIES = ("private",)
+
 total_layer_removed = 0
 total_layer_checked = 0
 total_index_scanned = 0
@@ -90,8 +102,8 @@ for registry_name in sorted(os.listdir(BASE)):
                     shutil.rmtree(os.path.join(root, digest_dir))
                 total_layer_removed += 1
 
-        # --- Scan 2: orphan OCI-index children --------------------------------
-        elif root.endswith("/_manifests/revisions/sha256"):
+        # --- Scan 2: orphan OCI-index children (private registry only) --------
+        elif root.endswith("/_manifests/revisions/sha256") and registry_name in INDEX_SCAN_REGISTRIES:
             repo = root.replace(repos_dir + "/", "").replace("/_manifests/revisions/sha256", "")
 
             for digest_dir in os.listdir(root):
