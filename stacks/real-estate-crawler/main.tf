@@ -217,7 +217,7 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           "kubernetes.io/cluster-service" = "true"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
         }
       }
       spec {
@@ -395,7 +395,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           app = "realestate-crawler-celery"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
         }
       }
       spec {
@@ -524,7 +524,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           app = "realestate-crawler-celery-beat"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
         }
       }
       spec {

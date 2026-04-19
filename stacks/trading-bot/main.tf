@@ -252,7 +252,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
           app = "trading-bot-frontend"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis-master.redis:6379"
         }
       }
       spec {
@@ -353,7 +353,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           app = "trading-bot-workers"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis-master.redis:6379"
         }
       }
       spec {

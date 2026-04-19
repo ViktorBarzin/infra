@@ -180,7 +180,7 @@ resource "kubernetes_deployment" "grampsweb" {
           app = "grampsweb"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "redis-master.redis:6379"
         }
       }
       spec {

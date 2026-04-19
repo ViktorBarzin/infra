@@ -142,7 +142,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
           app = "onlyoffice-document-server"
         }
         annotations = {
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
         }
       }
       spec {

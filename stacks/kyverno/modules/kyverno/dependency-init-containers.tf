@@ -7,7 +7,7 @@
 #
 # Usage:
 #   annotations:
-#     dependency.kyverno.io/wait-for: "postgresql.dbaas:5432,redis.redis:6379"
+#     dependency.kyverno.io/wait-for: "postgresql.dbaas:5432,redis-master.redis:6379"
 #
 # Each comma-separated entry becomes a busybox init container that runs
 # `nc -z <host> <port>` in a loop until the dependency is reachable.

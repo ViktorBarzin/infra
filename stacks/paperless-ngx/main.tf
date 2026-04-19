@@ -117,7 +117,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
         annotations = {
           "diun.enable"                    = "true"
           "diun.include_tags"              = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
         }
       }
       spec {

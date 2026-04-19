@@ -201,7 +201,7 @@ resource "kubernetes_deployment" "affine" {
         annotations = {
           "diun.enable"                    = "true"
           "diun.include_tags"              = "^\\d+\\.\\d+\\.\\d+$"
-          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis.redis:6379"
+          "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432,redis-master.redis:6379"
         }
       }
       spec {
