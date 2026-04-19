@@ -42,34 +42,58 @@ resource "null_resource" "technitium_readiness_gate" {
         kubectl -n $NS rollout status deploy/$d --timeout=180s
       done
 
-      # 2. Per-pod API + DNS check (via kubectl exec on the pod itself — no
-      #    ephemeral debug pods, no iamge pull, no zombies).
+      # 2. Per-pod DNS check. Technitium pods have `dig` but no HTTP client,
+      #    so we probe the DNS answer directly — if the pod can resolve
+      #    idrac.viktorbarzin.lan from its local zone data, the server is
+      #    functional.
       PODS=$(kubectl -n $NS get pod -l dns-server=true -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
       if [ -z "$PODS" ]; then
         echo "ERROR: no dns-server=true pods found"
         exit 1
       fi
 
+      # Zone load can take tens of seconds after a memory-bump rollout, so retry
+      # up to 6 times with 10s backoff before giving up.
       for POD in $PODS; do
-        echo "-> API check on $POD"
-        if ! kubectl -n $NS exec "$POD" -- wget -qO- --timeout=10 "http://127.0.0.1:5380/api/stats/get?token=&type=LastHour" | grep -q '"status":"ok"'; then
-          echo "ERROR: API check failed on $POD"
+        echo "-> dig @127.0.0.1 idrac.viktorbarzin.lan on $POD"
+        OK=0
+        for TRY in 1 2 3 4 5 6; do
+          ANSWER=$(kubectl -n $NS exec "$POD" -- dig +short +time=5 +tries=2 @127.0.0.1 idrac.viktorbarzin.lan A 2>&1 || true)
+          if echo "$ANSWER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            OK=1; break
+          fi
+          echo "   attempt $TRY: no A record yet, sleeping 10s"
+          sleep 10
+        done
+        if [ "$OK" -eq 0 ]; then
+          echo "ERROR: pod $POD never returned an A record for idrac.viktorbarzin.lan (last: $ANSWER)"
           exit 1
         fi
       done
 
-      # 3. Zone-count parity — use the three web services from within any
-      #    running technitium pod (has wget) to avoid spawning probe pods.
-      FIRST_POD=$(echo "$PODS" | head -1)
-      COUNTS=""
-      for SVC in technitium-web technitium-secondary-web technitium-tertiary-web; do
-        COUNT=$(kubectl -n $NS exec "$FIRST_POD" -- sh -c "wget -qO- --timeout=10 'http://$SVC:5380/api/zones/list?token=' | tr ',' '\n' | grep -c '\"name\":' || true" 2>/dev/null | tail -1)
-        echo "-> $SVC zone count: $${COUNT:-unknown}"
-        COUNTS="$COUNTS $COUNT"
-      done
-      UNIQ=$(echo $COUNTS | tr ' ' '\n' | sort -u | wc -l)
+      # 3. Zone-count parity via an ephemeral curl pod (technitium image has
+      #    no HTTP client). Pod auto-deletes on success via --rm.
+      JOB_NAME="readiness-probe-$RANDOM"
+      CHECK_SCRIPT='
+        set -e
+        for SVC in technitium-web technitium-secondary-web technitium-tertiary-web; do
+          COUNT=$(curl -sf --max-time 10 http://$SVC:5380/api/zones/list?token= | tr "," "\n" | grep -c "\"name\":" || true)
+          printf "%s %s\n" "$SVC" "$${COUNT:-0}"
+        done
+      '
+      RESULT=$(kubectl -n $NS run $JOB_NAME --rm -i --restart=Never --quiet \
+        --image=curlimages/curl:latest --image-pull-policy=IfNotPresent \
+        --timeout=60s -- sh -c "$CHECK_SCRIPT" 2>/dev/null || true)
+      echo "$RESULT"
+
+      COUNTS=$(echo "$RESULT" | awk '{print $2}' | grep -E '^[0-9]+$')
+      if [ -z "$COUNTS" ]; then
+        echo "ERROR: zone-count probe returned no valid counts"
+        exit 1
+      fi
+      UNIQ=$(echo "$COUNTS" | sort -u | wc -l)
       if [ "$UNIQ" -gt 1 ]; then
-        echo "ERROR: zone counts differ across instances:$COUNTS"
+        echo "ERROR: zone counts differ across instances"
         exit 1
       fi
 
