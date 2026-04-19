@@ -974,3 +974,162 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
   }
 }
 
+# =============================================================================
+# Roundcube Backup — Daily rsync of html + enigma PVCs to NFS
+# Roundcube uses two encrypted RWO PVCs (see roundcubemail.tf):
+#   - roundcubemail-html-encrypted   → /var/www/html (plugins, user sessions, skin overrides)
+#   - roundcubemail-enigma-encrypted → /var/roundcube/enigma (user-uploaded PGP keys)
+# Losing either one = users lose plugin state + have to re-import PGP keys.
+# Mirrors the mailserver-backup pattern but:
+#   - pod_affinity targets app=roundcubemail (both PVCs attach to the
+#     Roundcube pod, not mailserver)
+#   - schedule offset by +10m (03:10) so two NFS-writers don't overlap
+#   - writes to /srv/nfs/roundcube-backup/<YYYY-WW>/{html,enigma}/
+# =============================================================================
+module "nfs_roundcube_backup_host" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "roundcube-backup-host"
+  namespace  = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/roundcube-backup"
+}
+
+resource "kubernetes_cron_job_v1" "roundcube-backup" {
+  metadata {
+    name      = "roundcube-backup"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    # +10 min offset vs mailserver-backup (03:00) to avoid NFS contention.
+    schedule                      = "10 3 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            # RWO co-location: Roundcube PVCs are ReadWriteOnce; the backup
+            # pod must land on the same node as the Roundcube pod (single
+            # replica, Recreate strategy — see roundcubemail.tf).
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "roundcubemail"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            container {
+              name  = "roundcube-backup"
+              image = "docker.io/library/alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -euxo pipefail
+                apk add --no-cache rsync
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+
+                week=$(date +"%Y-%W")
+                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                dst=/backup/$week
+                mkdir -p "$dst"
+
+                # Use --link-dest against previous week for space-efficient
+                # incrementals (unchanged files are hardlinked, not re-copied).
+                link_dest_arg=""
+                if [ -n "$prev_week" ] && [ -d "/backup/$prev_week" ]; then
+                  link_dest_arg="--link-dest=/backup/$prev_week"
+                fi
+
+                # Roundcube data layout (from deployment volume mounts in roundcubemail.tf):
+                #   /src/html   -> roundcubemail-html-encrypted   (html PVC)
+                #   /src/enigma -> roundcubemail-enigma-encrypted (enigma PVC, PGP keys)
+                for src in /src/html /src/enigma; do
+                  [ -d "$src" ] || { echo "SKIP missing $src"; continue; }
+                  name=$(basename "$src")
+                  rsync -aH --delete $link_dest_arg "$src/" "$dst/$name/"
+                done
+
+                # Rotate — keep 8 weekly snapshots (~2 months)
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(du -sh "$dst" | awk '{print $1}')"
+
+                _out_bytes=$(du -sb "$dst" | awk '{print $1}')
+                wget -qO- --post-data "backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
+                backup_last_success_timestamp $(date +%s)
+                " "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/roundcube-backup" || true
+              EOT
+              ]
+              volume_mount {
+                name       = "html"
+                mount_path = "/src/html"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "enigma"
+                mount_path = "/src/enigma"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "html"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.roundcube_html_encrypted.metadata[0].name
+                read_only  = true
+              }
+            }
+            volume {
+              name = "enigma"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.roundcube_enigma_encrypted.metadata[0].name
+                read_only  = true
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_roundcube_backup_host.claim_name
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
