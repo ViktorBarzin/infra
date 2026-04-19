@@ -72,17 +72,18 @@ resource "helm_release" "redis" {
         }
       }
 
-      # 64Mi was too tight: replica OOMed during PSYNC full resync
-      # (master steady-state 21Mi + COW during AOF rewrite + RDB transfer
-      # buffer pushed replica RSS past 64Mi, causing 120 restart loops over
-      # 5+ days before bump to 256Mi).
+      # 256Mi was too tight once the working set crossed ~200Mi: BGSAVE
+      # fork during a replica full PSYNC doubled RSS via COW and pushed
+      # the master past 256Mi → OOMKilled (exit 137), HAProxy flapped,
+      # every redis client (Paperless, Immich, Authentik) saw connection
+      # resets. 512Mi gives ~2x headroom on the current 204Mi RDB.
       resources = {
         requests = {
           cpu    = "100m"
-          memory = "256Mi"
+          memory = "512Mi"
         }
         limits = {
-          memory = "256Mi"
+          memory = "512Mi"
         }
       }
     }
@@ -104,10 +105,10 @@ resource "helm_release" "redis" {
       resources = {
         requests = {
           cpu    = "50m"
-          memory = "256Mi"
+          memory = "512Mi"
         }
         limits = {
-          memory = "256Mi"
+          memory = "512Mi"
         }
       }
     }
