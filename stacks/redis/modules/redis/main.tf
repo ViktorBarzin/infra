@@ -286,7 +286,11 @@ resource "kubernetes_service" "redis_master" {
 # This runs on every apply to ensure the Helm chart's service is always corrected.
 resource "null_resource" "patch_redis_service" {
   triggers = {
-    always = timestamp()
+    # Re-patch only when a Helm upgrade (chart version bump) or an HAProxy
+    # config change could have reset the selector / rotated HAProxy pods.
+    # timestamp() would force-replace on every apply, hiding real drift.
+    chart_version  = helm_release.redis.version
+    haproxy_config = sha256(kubernetes_config_map.haproxy.data["haproxy.cfg"])
   }
 
   provisioner "local-exec" {

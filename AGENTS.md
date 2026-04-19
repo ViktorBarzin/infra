@@ -118,6 +118,20 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 ## Shared Variables (never hardcode)
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
+## Redis Service Naming (read before wiring a new consumer)
+
+The Redis stack (`stacks/redis/`) exposes three distinct entry points. Pick the one that matches the client's connection pattern — the wrong one causes READONLY errors or silent connection drops.
+
+| Endpoint | Port(s) | Use for | Backed by |
+|----------|---------|---------|-----------|
+| `redis-master.redis.svc.cluster.local` | 6379 (redis), 26379 (sentinel) | **Default for new services.** Write-safe — HAProxy health-checks nodes and routes only to the current master. Matches `var.redis_host`. | `kubernetes_service.redis_master` → HAProxy → Bitnami StatefulSet |
+| `redis-node-{0,1,2}.redis-headless.redis.svc.cluster.local` | 26379 | **Long-lived connections (PUBSUB, BLPOP, MONITOR, Sidekiq).** Use a sentinel-aware client with master name `mymaster`. Example: `stacks/nextcloud/chart_values.yaml:32-54`. | Bitnami-created headless service → pod DNS |
+| `redis.redis.svc.cluster.local` | 6379 | **Do NOT use.** Helm chart's default service — selector patched by `null_resource.patch_redis_service` to match `redis-haproxy`, so today it behaves like `redis-master`. This patch is load-bearing but temporary; consumers hard-coded on this name are tracked in a beads follow-up (T0). | Bitnami chart (patched) |
+
+**HAProxy's `timeout client 30s` closes idle raw Redis connections** — any client that holds a connection open for pub/sub, blocking commands, or replication streams MUST use the sentinel path. Uptime Kuma's Redis monitor hit this limit and had to be re-pointed at the sentinel endpoint (see memory id=748).
+
+**When onboarding a new service:** start from `redis-master.redis.svc.cluster.local:6379` via `var.redis_host`. Only reach for sentinel discovery if the client library supports it natively (ioredis, redis-py Sentinel, go-redis FailoverClient, Sidekiq `sentinels` array) AND the workload uses long-lived connections.
+
 ## Kyverno Drift Suppression (`# KYVERNO_LIFECYCLE_V1`)
 
 Kyverno's admission webhook mutates every pod with a `dns_config { option { name = "ndots"; value = "2" } }` block (fixes NxDomain search-domain floods — see `k8s-ndots-search-domain-nxdomain-flood` skill). Terraform does not manage that field, so without suppression every pod-owning resource shows perpetual `spec[0].template[0].spec[0].dns_config` drift.
