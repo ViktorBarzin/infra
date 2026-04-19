@@ -79,7 +79,7 @@ resource "kubernetes_deployment" "qbittorrent" {
       }
       spec {
         container {
-          image = "lscr.io/linuxserver/qbittorrent:5.0.4"
+          image = "lscr.io/linuxserver/qbittorrent:5.1.4"
           name  = "qbittorrent"
 
           port {
