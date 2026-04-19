@@ -60,17 +60,26 @@ unaddressed.
  └─> For each repository, keeps the last 10 tags by mtime, rmtrees the rest.
      This walks `_manifests/tags/<tag>` directly, bypassing the registry API.
          │
-         ├─> [2] registry:2 garbage-collect runs weekly (Sun 03:25 for the
-         │    private registry). Walks live manifests through refcounts, but
-         │    distribution/distribution#3324 showed this walker has historical
-         │    bugs with OCI image-index children — it can decrement a shared
-         │    child's refcount below 1 and delete the blob even while the
-         │    index that references it is still referenced.
+         ├─> [2] Subtle on-disk asymmetry: a registry:2 tag rmtree removes
+         │    BOTH the `_manifests/tags/<tag>/` dir AND — on 2.8.x — the
+         │    per-repo revision-link files under
+         │    `<repo>/_manifests/revisions/sha256/<child-digest>/link` for
+         │    every child referenced by that tag's index. The raw blob data
+         │    under `/var/lib/registry/docker/registry/v2/blobs/sha256/<.>/data`
+         │    is NOT touched — GC owns that, and GC only runs Sunday.
          │
-         └─> [3] Result: the `infra-ci:latest` index is intact
-              (`_manifests/revisions/sha256/<A>/data` present on disk), but
-              its `.manifests[0].digest` — the `linux/amd64` child — points
-              to a `blobs/sha256/98/98f718c8…/` whose `data` file is gone.
+         ├─> [3] If ANOTHER tag's index still references one of those same
+         │    children (common — successive rebuilds share layers), the child
+         │    blob survives. But the revision-link is gone, so the registry
+         │    API can no longer map `<repo>/manifests/sha256:<child>` back
+         │    to the blob. HEAD → 404, even though the bytes are on disk.
+         │    distribution/distribution#3324 is the upstream class of this bug.
+         │
+         └─> [4] Result: the surviving index (e.g. `infra-ci:5319f03e`) is
+              intact on disk, its children's blob data files are intact on
+              disk, but HEAD `/v2/infra-ci/manifests/sha256:98f718c8…`
+              returns 404. The registry has the bytes, but cannot find them
+              through the API because the per-repo link bridge is gone.
 
 [pull] containerd resolves `infra-ci:latest`
          │
@@ -80,6 +89,14 @@ unaddressed.
               └─> containerd fails the pull with "manifest unknown"
                     └─> woodpecker exit 126
 ```
+
+> **Detection-gotcha** uncovered 2026-04-19 while implementing
+> `fix-broken-blobs.sh`: a scan that checks `/blobs/sha256/<child>/data` for
+> presence is NOT equivalent to "can the registry serve this child?" The
+> authoritative check is whether
+> `<repo>/_manifests/revisions/sha256/<child>/link` exists. The script
+> was rewritten to check the per-repo link file after the HTTP probe
+> caught 38 real orphans the filesystem scan had reported clean.
 
 ## Why Existing Remediation Missed It
 

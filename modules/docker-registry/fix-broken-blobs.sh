@@ -118,22 +118,33 @@ for registry_name in sorted(os.listdir(BASE)):
 
                 total_index_scanned += 1
 
+                # Per-repo revision links — serving a child manifest via the API
+                # requires <repo>/_manifests/revisions/sha256/<child-digest>/link
+                # to exist. The blob data alone is not enough: cleanup-tags.sh
+                # rmtrees tag dirs (which on 2.8.x also orphans the per-repo
+                # revision links for index children), while the upstream blob
+                # data survives in /blobs/. That's exactly the 2026-04-19
+                # failure mode — the probe sees 404 even though the blob file
+                # is still on disk.
+                revisions_root = os.path.dirname(root)  # …/_manifests/revisions
                 for child in manifest.get("manifests", []):
                     child_digest = child.get("digest", "")
                     if not child_digest.startswith("sha256:"):
                         continue
                     child_hex = child_digest[len("sha256:"):]
-                    child_blob = os.path.join(blobs_root, child_hex[:2], child_hex, "data")
-                    if os.path.isfile(child_blob):
+                    child_link = os.path.join(revisions_root, "sha256", child_hex, "link")
+                    if os.path.isfile(child_link):
                         continue
 
                     platform = child.get("platform", {})
                     arch = platform.get("architecture", "?")
                     os_ = platform.get("os", "?")
+                    child_blob = os.path.join(blobs_root, child_hex[:2], child_hex, "data")
+                    blob_state = "blob-data-present" if os.path.isfile(child_blob) else "blob-data-gone"
                     print(
                         f"WARNING [{registry_name}/{repo}] ORPHAN INDEX: "
                         f"{digest_dir[:12]} references missing child {child_hex[:12]} "
-                        f"({arch}/{os_}) — rebuild required, will not auto-repair"
+                        f"({arch}/{os_}, {blob_state}) — registry returns 404, rebuild required"
                     )
                     total_index_orphans += 1
 
