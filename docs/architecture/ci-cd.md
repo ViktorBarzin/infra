@@ -102,7 +102,8 @@ Woodpecker API uses numeric IDs (not owner/name):
 1. **Containerd hosts.toml** redirects pulls from docker.io and ghcr.io to pull-through cache at `10.0.20.10`
 2. **Pull-through cache** serves cached images from LAN, fetches from upstream on cache miss
 3. **Kyverno ClusterPolicy** auto-syncs `registry-credentials` Secret to all namespaces for private registry access
-4. **Private registry** (`registry.viktorbarzin.me`) uses htpasswd auth, credentials stored in Vault
+4. **Private registry** (`registry.viktorbarzin.me`) uses htpasswd auth, credentials stored in Vault. Runs `registry:2.8.3` (pinned — floating `registry:2` was the root cause of the 2026-04-13 + 2026-04-19 orphan-index incidents; see `docs/post-mortems/2026-04-19-registry-orphan-index.md`).
+5. **Integrity probe** (`registry-integrity-probe` CronJob in `monitoring` ns, every 15m) walks `/v2/_catalog` → tags → indexes → child manifests via HEAD and pushes `registry_manifest_integrity_failures` to Pushgateway; alerts `RegistryManifestIntegrityFailure` / `RegistryIntegrityProbeStale` / `RegistryCatalogInaccessible` page on broken state. Authoritative check (HTTP API, not filesystem).
 
 ### Infra Pipelines (Woodpecker-only)
 
@@ -111,7 +112,14 @@ Woodpecker API uses numeric IDs (not owner/name):
 | default | `.woodpecker/default.yml` | Terragrunt apply on push |
 | renew-tls | `.woodpecker/renew-tls.yml` | Certbot renewal cron |
 | build-cli | `.woodpecker/build-cli.yml` | Build and push to dual registries |
+| build-ci-image | `.woodpecker/build-ci-image.yml` | Build `infra-ci` tooling image (triggered by `ci/Dockerfile` change or manual); post-push HEADs every blob via `verify-integrity` step to catch orphan-index pushes |
 | k8s-portal | `.woodpecker/k8s-portal.yml` | Path-filtered build for k8s-portal subdirectory |
+| registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` to `/opt/registry/` on `10.0.20.10` when any managed file changes; bounces containers + nginx per `docs/runbooks/registry-vm.md` |
+| pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE host |
+| postmortem-todos | `.woodpecker/postmortem-todos.yml` | Auto-resolve safe TODOs from new `docs/post-mortems/*.md` via headless Claude agent |
+| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift detection |
+| issue-automation | `.woodpecker/issue-automation.yml` | Triage + respond to `ViktorBarzin/infra` GitHub issues |
+| provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 
 ## Configuration
 

@@ -63,6 +63,7 @@ graph TB
 | External Monitor Sync | Python 3.12 | `stacks/uptime-kuma/` | CronJob (10min) syncs `[External]` monitors from `cloudflare_proxied_names` |
 | dcgm-exporter | Configurable resources | `stacks/monitoring/modules/monitoring/` | NVIDIA GPU metrics collection |
 | Email Roundtrip Probe | Python 3.12 | `stacks/mailserver/modules/mailserver/` | E2E email delivery verification via Mailgun API + IMAP |
+| Registry Integrity Probe | Alpine 3.20 + curl/jq | `stacks/monitoring/modules/monitoring/main.tf` | CronJob every 15m: walks `/v2/_catalog` on `registry.viktorbarzin.me:5050`, HEADs every tagged manifest + index child; emits `registry_manifest_integrity_*` metrics to Pushgateway. Catches orphan OCI-index state that filesystem scans miss. |
 
 ## How It Works
 
@@ -159,6 +160,11 @@ spec:
 - **EmailRoundtripFailing**: E2E email probe returning failure for >30m
 - **EmailRoundtripStale**: No successful email round-trip in >40m
 - **EmailRoundtripNeverRun**: Email probe has never reported (40m)
+
+#### Registry Integrity Alerts
+- **RegistryManifestIntegrityFailure**: Private registry serving 404 for manifests it advertises (orphan OCI-index children) — fires after 30m of `registry_manifest_integrity_failures > 0`. Remediation: rebuild affected image per `docs/runbooks/registry-rebuild-image.md`.
+- **RegistryIntegrityProbeStale**: Probe hasn't reported in >1h (CronJob broken)
+- **RegistryCatalogInaccessible**: Probe cannot fetch `/v2/_catalog` (auth failure or registry down)
 
 The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 min) in the `mailserver` namespace that:
 1. Sends a test email via Mailgun HTTP API to `smoke-test@viktorbarzin.me`
