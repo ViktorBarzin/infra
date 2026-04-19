@@ -921,20 +921,20 @@
           "unit": "currencyGBP",
           "custom": {
             "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 70,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "lineWidth": 1,
+            "lineWidth": 0,
             "pointSize": 4,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
+            "showPoints": "never",
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -1028,7 +1028,8 @@
         "legend": {
           "calcs": [
             "last",
-            "max"
+            "max",
+            "sum"
           ],
           "displayMode": "table",
           "placement": "bottom"
