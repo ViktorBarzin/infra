@@ -12,6 +12,13 @@ smtp_tls_security_level = encrypt
 smtpd_tls_cert_file=/tmp/ssl/tls.crt
 smtpd_tls_key_file=/tmp/ssl/tls.key
 smtpd_use_tls=yes
+# Require STARTTLS before any AUTH command on the SMTPD listener.
+# Without this, a misconfigured client that skips STARTTLS would send
+# PLAIN/LOGIN creds in the clear. docker-mailserver's default does NOT
+# enforce this at the main.cf level for submission (587).
+# Note: smtpd_sasl_auth_only (sometimes cited) is NOT a real Postfix
+# parameter — only smtpd_tls_auth_only is. Addresses code-vnw.
+smtpd_tls_auth_only = yes
 header_size_limit = 4096000
 
 # Debug mail tls
