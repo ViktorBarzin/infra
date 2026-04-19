@@ -1133,3 +1133,222 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
   }
 }
 
+
+# =============================================================================
+# Spam mailbox targeted retention (code-oy4)
+#
+# The @viktorbarzin.me catch-all routes to spam@viktorbarzin.me. Unbounded
+# growth (~43 MiB baseline on 2026-04-18, 519 messages, top sender
+# tldrnewsletter.com = 138 msgs / 8.2 MiB) makes it painful to triage.
+# Profile (2026-04-18):
+#   - 502/519 messages older than 14 days (97 %)
+#   - 342/519 carry List-Unsubscribe:     (66 %)
+#   -  21/519 carry Precedence: bulk      ( 4 %)
+#   - 177/519 carry neither marker (= human-ish, 34 %)
+#
+# Strategy (user-signed-off 2026-04-18, do NOT blind-age-expunge):
+#   - Messages older than 14 days carrying List-Unsubscribe OR
+#     Precedence: bulk|list|junk OR Auto-Submitted: auto-* -> DELETE
+#   - Messages older than 90 days with no automated-sender marker
+#     -> DELETE (long-tail human forwards)
+#   - Everything else -> KEEP
+#
+# Implementation: kubectl exec into the mailserver pod because the
+# Maildir lives on a RWO encrypted PVC; a sibling CronJob would fail to
+# attach the volume while the mailserver pod holds it. Pattern mirrors
+# the `nextcloud-watchdog` in stacks/nextcloud/main.tf.
+# =============================================================================
+resource "kubernetes_service_account" "spam_retention" {
+  metadata {
+    name      = "spam-retention"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "spam_retention" {
+  metadata {
+    name      = "spam-retention"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list", "get"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "spam_retention" {
+  metadata {
+    name      = "spam-retention"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.spam_retention.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.spam_retention.metadata[0].name
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "spam_retention" {
+  metadata {
+    name      = "spam-retention"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+  }
+  spec {
+    schedule                      = "17 */4 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 2
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 300
+    job_template {
+      metadata {}
+      spec {
+        active_deadline_seconds    = 600
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.spam_retention.metadata[0].name
+            restart_policy       = "Never"
+            container {
+              name  = "spam-retention"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/bash", "-c", <<-EOF
+                set -euo pipefail
+
+                POD=$(kubectl -n mailserver get pods -l app=mailserver -o jsonpath='{.items[0].metadata.name}')
+                if [ -z "$POD" ]; then
+                  echo "ERROR: no mailserver pod found" >&2
+                  exit 1
+                fi
+                echo "Targeting pod $POD"
+
+                # Stream the retention script to python3 inside the mailserver
+                # container via stdin. Keeping the logic in Python avoids the
+                # POSIX-sh/awk fragility around stat(1) differences and header
+                # matching.
+                kubectl -n mailserver exec -i "$POD" -c docker-mailserver -- python3 - <<'PYEOF'
+                import os
+                import re
+                import sys
+                import time
+
+                SPAM = "/var/mail/viktorbarzin.me/spam/cur"
+                # Retention thresholds, in days, one per rule.
+                AUTOMATED_MAX_AGE_DAYS = 14
+                HUMAN_MAX_AGE_DAYS     = 90
+                HEADER_SCAN_BYTES      = 65536
+
+                AUTO_PATTERNS = (
+                    re.compile(rb"^list-unsubscribe:", re.IGNORECASE),
+                    re.compile(rb"^precedence:\s*(bulk|list|junk)", re.IGNORECASE),
+                    re.compile(rb"^auto-submitted:\s*auto-", re.IGNORECASE),
+                )
+
+                def is_automated(path):
+                    try:
+                        with open(path, "rb") as fh:
+                            head = fh.read(HEADER_SCAN_BYTES)
+                    except OSError:
+                        return False
+                    hdr, _, _ = head.partition(b"\r\n\r\n")
+                    if hdr == head:
+                        hdr, _, _ = head.partition(b"\n\n")
+                    for line in hdr.splitlines():
+                        for pat in AUTO_PATTERNS:
+                            if pat.search(line):
+                                return True
+                    return False
+
+                if not os.path.isdir(SPAM):
+                    print(f"SKIP: {SPAM} does not exist")
+                    sys.exit(0)
+
+                now = time.time()
+                scanned = auto_deleted = human_deleted = kept = errors = 0
+
+                for entry in sorted(os.listdir(SPAM)):
+                    path = os.path.join(SPAM, entry)
+                    try:
+                        st = os.stat(path)
+                    except OSError:
+                        errors += 1
+                        continue
+                    if not os.path.isfile(path):
+                        continue
+                    scanned += 1
+                    age_days = (now - st.st_mtime) / 86400
+                    automated = is_automated(path)
+
+                    if automated and age_days > AUTOMATED_MAX_AGE_DAYS:
+                        try:
+                            os.unlink(path)
+                            auto_deleted += 1
+                        except OSError:
+                            errors += 1
+                        continue
+                    if (not automated) and age_days > HUMAN_MAX_AGE_DAYS:
+                        try:
+                            os.unlink(path)
+                            human_deleted += 1
+                        except OSError:
+                            errors += 1
+                        continue
+                    kept += 1
+
+                # Metric lines (Pushgateway-compatible format). The parent
+                # kubectl wrapper logs them for now; Pushgateway integration
+                # is a follow-up.
+                print(f"spam_retention_scanned_total {scanned}")
+                print(f"spam_retention_auto_deleted_total {auto_deleted}")
+                print(f"spam_retention_human_deleted_total {human_deleted}")
+                print(f"spam_retention_kept_total {kept}")
+                print(f"spam_retention_errors_total {errors}")
+
+                sys.exit(1 if errors else 0)
+                PYEOF
+
+                # Refresh Dovecot index so IMAP sees the deletions immediately.
+                kubectl -n mailserver exec "$POD" -c docker-mailserver -- \
+                  doveadm force-resync -u spam@viktorbarzin.me INBOX/spam || true
+
+                echo "Retention pass complete"
+              EOF
+              ]
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
