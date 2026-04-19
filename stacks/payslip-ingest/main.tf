@@ -32,7 +32,20 @@ resource "kubernetes_namespace" "payslip_ingest" {
 # Seed these manually in Vault before applying:
 #   secret/paperless-ngx          -> property `api_token`
 #   secret/claude-agent-service   -> property `api_bearer_token`
-#   secret/payslip-ingest         -> property `webhook_bearer_token`
+#   secret/payslip-ingest         -> properties:
+#                                     - `webhook_bearer_token`
+#                                     - `actualbudget_api_key` (same value as
+#                                       actualbudget-http-api-viktor random
+#                                       api-key — fetch via `kubectl get pods
+#                                       -n actualbudget -l
+#                                       app=actualbudget-http-api-viktor -o
+#                                       jsonpath={.items[0].spec.containers[0].env}`
+#                                       and grep API_KEY)
+#                                     - `actualbudget_encryption_password`
+#                                       (same as Viktor's budget password in
+#                                       secret/actualbudget/credentials[viktor])
+#                                     - `actualbudget_budget_sync_id`
+#                                       (same as Viktor's sync_id)
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -77,6 +90,27 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "payslip-ingest"
             property = "webhook_bearer_token"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_API_KEY"
+          remoteRef = {
+            key      = "payslip-ingest"
+            property = "actualbudget_api_key"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_ENCRYPTION_PASSWORD"
+          remoteRef = {
+            key      = "payslip-ingest"
+            property = "actualbudget_encryption_password"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_BUDGET_SYNC_ID"
+          remoteRef = {
+            key      = "payslip-ingest"
+            property = "actualbudget_budget_sync_id"
           }
         },
       ]
@@ -286,6 +320,85 @@ resource "kubernetes_service" "payslip_ingest" {
       target_port = 8080
     }
   }
+}
+
+# Daily sync of Meta payroll deposits from ActualBudget's http-api sidecar.
+# Populates payslip_ingest.external_meta_deposits so Panel 14 can overlay bank
+# deposits against payslip.net_pay — catches parser drift on net_pay.
+resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
+  metadata {
+    name      = "actualbudget-payroll-sync"
+    namespace = kubernetes_namespace.payslip_ingest.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 2 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    starting_deadline_seconds     = 300
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name    = "sync"
+              image   = local.image
+              command = ["python", "-m", "payslip_ingest", "sync-meta-deposits"]
+
+              env_from {
+                secret_ref {
+                  name = "payslip-ingest-secrets"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "payslip-ingest-db-creds"
+                }
+              }
+
+              env {
+                name  = "ACTUALBUDGET_HTTP_API_URL"
+                value = "http://budget-http-api-viktor.actualbudget.svc.cluster.local"
+              }
+
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
 }
 
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource password.

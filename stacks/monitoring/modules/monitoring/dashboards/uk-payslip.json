@@ -2033,6 +2033,131 @@
           "rawSql": "WITH latest AS (SELECT DISTINCT ON (tax_year, employer_paye_ref) tax_year, employer_paye_ref, snapshot_date, gross_pay, income_tax, ni_contributions FROM hmrc_sync.tax_year_snapshot ORDER BY tax_year, employer_paye_ref, snapshot_date DESC), summed AS (SELECT tax_year, COALESCE(SUM(gross_pay), 0) AS sum_gross, COALESCE(SUM(income_tax), 0) AS sum_tax, COALESCE(SUM(national_insurance), 0) AS sum_ni FROM payslip_ingest.payslip GROUP BY tax_year) SELECT l.tax_year, l.employer_paye_ref, l.snapshot_date, l.gross_pay AS hmrc_gross, s.sum_gross AS computed_gross, (l.gross_pay - s.sum_gross) AS delta_gross, l.income_tax AS hmrc_tax, s.sum_tax AS computed_tax, (l.income_tax - s.sum_tax) AS delta_tax, l.ni_contributions AS hmrc_ni, s.sum_ni AS computed_ni, (l.ni_contributions - s.sum_ni) AS delta_ni FROM latest l LEFT JOIN summed s ON s.tax_year = l.tax_year ORDER BY l.tax_year DESC"
         }
       ]
+    },
+    {
+      "id": 14,
+      "title": "Meta payroll: bank deposit vs payslip net pay",
+      "description": "Cross-check between ActualBudget bank deposits (META/FACEBOOK payee) and payslip net_pay. |delta| > \u00a350 flags likely parser or bank-sync drift. Synced daily 02:00 UTC.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 160
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deposit_sum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Bank deposit (ActualBudget)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payslip_net_pay"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Payslip net pay"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delta"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Delta (deposit \u2212 payslip)"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "WITH deposits AS (SELECT DATE_TRUNC('month', deposit_date)::date AS month_start, SUM(amount) AS deposit_sum FROM payslip_ingest.external_meta_deposits GROUP BY 1), payslip_net AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, SUM(net_pay) AS payslip_net_pay FROM payslip_ingest.payslip GROUP BY 1) SELECT COALESCE(p.month_start, d.month_start) AS \"time\", d.deposit_sum, p.payslip_net_pay, COALESCE(d.deposit_sum, 0) - COALESCE(p.payslip_net_pay, 0) AS delta FROM deposits d FULL OUTER JOIN payslip_net p ON p.month_start = d.month_start WHERE $__timeFilter(COALESCE(p.month_start, d.month_start)) ORDER BY \"time\"",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
     }
   ],
   "refresh": "5m",
