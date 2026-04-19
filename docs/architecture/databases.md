@@ -122,13 +122,9 @@ graph TB
 
 Single shared cluster for all 17 consumers (Immich, Authentik, Nextcloud, Paperless, Dawarich Sidekiq, Traefik, etc.). HAProxy (3 replicas, PDB minAvailable=2) is the sole client-facing path — clients talk only to `redis-master.redis.svc.cluster.local:6379` and HAProxy health-checks backends via `INFO replication`, routing only to `role:master`.
 
-**Current state (as of 2026-04-19, cutover complete)**:
-
-Active cluster: `redis-v2-*` — 3 pods, each co-locating redis + sentinel + redis_exporter, using `docker.io/library/redis:8-alpine` (8.6.2). HAProxy backends point at `redis-v2-{0,1,2}.redis-v2-headless.redis.svc.cluster.local`. DBSIZE matched between old master and new at cutover; all data (including `immich_bull:*` and `_kombu.*` queues) preserved via chained `REPLICAOF`. Steady-state probe: 45/45 PING OK. Two chaos drills (kill master, sentinel failover) passed — first drill ~12s disruption, second ~1s after hostname fix below.
-
-Legacy `redis-node-*` StatefulSet is scaled to 0 (kept as cold rollback for 24h). Helm release `helm_release.redis` + PVCs `redis-data-redis-node-{0,1}` are pending Terraform removal in a follow-up commit (see beads follow-up task).
-
 **Architecture**:
+
+3 pods in StatefulSet `redis-v2`, each co-locating redis + sentinel + redis_exporter, using `docker.io/library/redis:8-alpine` (8.6.2). HAProxy (3 replicas, PDB minAvailable=2) routes clients to the current master via 1s `INFO replication` tcp-checks. Full context behind the April 2026 rework in beads `code-v2b`.
 
 - 3 redis pods + 3 co-located sentinels (quorum=2). Odd sentinel count eliminates split-brain.
 - `podManagementPolicy=Parallel` + init container that regenerates `sentinel.conf` on every boot by probing peer sentinels for consensus master (priority: sentinel vote → peer role:master with slaves → deterministic pod-0 fallback). No persistent sentinel runtime state — can't drift out of sync with reality (root cause of 2026-04-19 PM incident).

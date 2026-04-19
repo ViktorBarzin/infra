@@ -1355,15 +1355,12 @@ serverFiles:
             annotations:
               summary: "PostgreSQL pod {{ $labels.pod }} is not ready"
           - alert: RedisDown
-            # Covers both the legacy Bitnami StatefulSet (redis-node) and the
-            # new raw StatefulSet (redis-v2) during the 2026-04-19 migration.
-            # Drop the redis-node branch after helm_release.redis is removed.
-            expr: (sum(kube_statefulset_status_replicas_ready{namespace="redis", statefulset=~"redis-node|redis-v2"}) or on() vector(0)) < 1
+            expr: (kube_statefulset_status_replicas_ready{namespace="redis", statefulset="redis-v2"} or on() vector(0)) < 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Redis has no ready replicas across both clusters"
+              summary: "Redis has no ready replicas"
           - alert: RedisMemoryPressure
             expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.85
             for: 5m

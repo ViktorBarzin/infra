@@ -21,116 +21,12 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# Redis with Sentinel HA via Bitnami Helm chart
-# Architecture: 1 master + 1 replica + 2 sentinels (one per node)
-# Sentinel automatically promotes a replica if master fails
-# HAProxy sits in front and routes only to the current master (see below)
-resource "helm_release" "redis" {
-  namespace        = kubernetes_namespace.redis.metadata[0].name
-  create_namespace = false
-  name             = "redis"
-  atomic           = true
-  timeout          = 600
-
-  repository = "oci://10.0.20.10:5000/bitnamicharts"
-  chart      = "redis"
-  version    = "25.3.2"
-
-  values = [yamlencode({
-    architecture = "replication"
-
-    auth = {
-      enabled = false
-    }
-
-    sentinel = {
-      enabled         = true
-      quorum          = 2
-      masterSet       = "mymaster"
-      automateCluster = true
-
-      resources = {
-        requests = {
-          cpu    = "50m"
-          memory = "64Mi"
-        }
-        limits = {
-          memory = "64Mi"
-        }
-      }
-    }
-
-    master = {
-      persistence = {
-        enabled      = true
-        storageClass = "proxmox-lvm-encrypted"
-        size         = "2Gi"
-        annotations = {
-          "resize.topolvm.io/threshold"     = "80%"
-          "resize.topolvm.io/increase"      = "50%"
-          "resize.topolvm.io/storage_limit" = "10Gi"
-        }
-      }
-
-      # 256Mi was too tight once the working set crossed ~200Mi: BGSAVE
-      # fork during a replica full PSYNC doubled RSS via COW and pushed
-      # the master past 256Mi → OOMKilled (exit 137), HAProxy flapped,
-      # every redis client (Paperless, Immich, Authentik) saw connection
-      # resets. 512Mi gives ~2x headroom on the current 204Mi RDB.
-      resources = {
-        requests = {
-          cpu    = "100m"
-          memory = "512Mi"
-        }
-        limits = {
-          memory = "512Mi"
-        }
-      }
-    }
-
-    replica = {
-      replicaCount = 2
-
-      persistence = {
-        enabled      = true
-        storageClass = "proxmox-lvm-encrypted"
-        size         = "2Gi"
-        annotations = {
-          "resize.topolvm.io/threshold"     = "80%"
-          "resize.topolvm.io/increase"      = "50%"
-          "resize.topolvm.io/storage_limit" = "10Gi"
-        }
-      }
-
-      resources = {
-        requests = {
-          cpu    = "50m"
-          memory = "512Mi"
-        }
-        limits = {
-          memory = "512Mi"
-        }
-      }
-    }
-
-    # Metrics for Prometheus
-    metrics = {
-      enabled = false
-    }
-
-    # Disable the Helm chart's ClusterIP service — we manage our own
-    # that points to HAProxy (master-only routing). The headless service
-    # is still needed for StatefulSet pod DNS resolution.
-    nameOverride = "redis"
-  })]
-}
-
-# HAProxy-based master-only proxy for simple redis:// clients.
-# Health-checks each Redis node via INFO replication and only routes
-# to the current master. On Sentinel failover, HAProxy detects the
-# new master within seconds via its health check interval.
-# Previously this was a K8s Service that routed to all nodes, causing
-# READONLY errors when clients hit a replica.
+# HAProxy-based master-only proxy for the 17 Redis consumers.
+# Health-checks each redis-v2 pod via `INFO replication` and only routes
+# to the current master. On Sentinel failover, HAProxy detects the new
+# master within ~3s via its 1s tcp-check interval. 3 replicas + PDB
+# minAvailable=2 — HAProxy is the sole client-facing path since the
+# 2026-04-19 redis rework (see beads code-v2b), so it needs its own HA.
 
 resource "kubernetes_config_map" "haproxy" {
   metadata {
@@ -273,7 +169,6 @@ resource "kubernetes_deployment" "haproxy" {
     }
   }
 
-  depends_on = [helm_release.redis]
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
@@ -310,30 +205,6 @@ resource "kubernetes_service" "redis_master" {
   depends_on = [kubernetes_deployment.haproxy]
 }
 
-# The Helm chart creates a `redis` Service that selects all nodes (master + replica),
-# causing READONLY errors when clients hit the replica. We patch it post-Helm to
-# route through HAProxy instead, which health-checks and routes only to the master.
-# This runs on every apply to ensure the Helm chart's service is always corrected.
-resource "null_resource" "patch_redis_service" {
-  triggers = {
-    # Re-patch only when a Helm upgrade (chart version bump) or an HAProxy
-    # config change could have reset the selector / rotated HAProxy pods.
-    # timestamp() would force-replace on every apply, hiding real drift.
-    chart_version  = helm_release.redis.version
-    haproxy_config = sha256(kubernetes_config_map.haproxy.data["haproxy.cfg"])
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      kubectl --kubeconfig=${abspath("${path.module}/../../../../config")} \
-        patch svc redis -n redis --type='json' \
-        -p='[{"op":"replace","path":"/spec/selector","value":{"app":"redis-haproxy"}}]'
-    EOT
-  }
-
-  depends_on = [helm_release.redis, kubernetes_deployment.haproxy]
-}
-
 module "nfs_backup_host" {
   source     = "../../../../modules/kubernetes/nfs_volume"
   name       = "redis-backup-host"
@@ -342,30 +213,30 @@ module "nfs_backup_host" {
   nfs_path   = "/srv/nfs/redis-backup"
 }
 
-#### Redis v2 — parallel 3-node raw StatefulSet (target architecture)
+#### Redis — 3-node raw StatefulSet (MySQL standalone precedent)
 #
-# Built alongside the Bitnami helm_release.redis so data can migrate via
-# REPLICAOF with <60s cutover downtime (see session plan / beads code-v2b).
+# Pattern: raw `kubernetes_stateful_set_v1` + official image, no Bitnami Helm
+# chart (deprecated by Broadcom Aug 2025; the atomic-Helm trap broke the old
+# cluster's memory-bump roll during the 2026-04-19 AM incident).
 #
-# Pattern: MySQL standalone precedent (stacks/dbaas/modules/dbaas/main.tf,
-# 2026-04-16 migration) — raw kubernetes_stateful_set_v1 + official image,
-# no Bitnami Helm chart (deprecated by Broadcom Aug 2025; atomic-Helm trap
-# caused the 2026-04-04 memory-bump deadlock).
-#
-# Design choices driven by incident cluster in April 2026:
+# Design driven by three April 2026 incidents (see beads code-v2b):
 #   - 3 sentinels (odd count, quorum=2) — eliminates the split-brain class
-#     that caused the 2026-04-19 PM incident (2 sentinels, stale master state).
+#     that caused the 2026-04-19 PM incident (2 sentinels, no majority).
 #   - Init container regenerates sentinel.conf on every boot by probing
 #     peers for role:master — no persistent sentinel runtime state, so stale
 #     entries can never resurface across pod restarts.
+#   - `sentinel resolve-hostnames yes` + `sentinel announce-hostnames yes`
+#     — without both set BEFORE the first MONITOR, sentinel stores resolved
+#     IPs and failover breaks when pod IPs churn on restart.
 #   - podManagementPolicy=Parallel — all 3 pods start together, avoiding the
 #     "sentinel-0 elects before -2 booted" ordering bug.
-#   - Memory 768Mi (up from 512Mi) — concurrent BGSAVE + AOF-rewrite fork can
-#     double RSS via COW. auto-aof-rewrite-percentage 200 + min-size 128mb
-#     tune down rewrite frequency.
+#   - Memory 768Mi (up from the old 256→512Mi) — concurrent BGSAVE + AOF-rewrite
+#     fork can double RSS via COW. auto-aof-rewrite-percentage 200 + min-size
+#     128mb tune down rewrite frequency.
 #   - Persistence: RDB snapshots + AOF everysec. Measured <1 GB/day write
 #     volume (2026-04-19 disk-wear analysis) → 40+ year SSD runway.
-#   - HAProxy remains sole client-facing path for all 17 consumers.
+#   - Image `redis:8-alpine` (8.6.2) — must match what the Bitnami legacy
+#     cluster ran, otherwise PSYNC fails with "Can't handle RDB format 13".
 
 resource "kubernetes_config_map" "redis_v2_conf" {
   metadata {
