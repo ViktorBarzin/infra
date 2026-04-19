@@ -1,10 +1,10 @@
 # Mail Server Architecture
 
-Last updated: 2026-04-18 (SPF switched to Brevo; DMARC reporting address normalized)
+Last updated: 2026-04-19 (code-yiu Phase 6: MetalLB LB retired; traffic now enters via pfSense HAProxy with PROXY v2)
 
 ## Overview
 
-Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Brevo EU (`smtp-relay.brevo.com:587` — migrated from Mailgun on 2026-04-12; SPF record cut over on 2026-04-18). Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs via `externalTrafficPolicy: Local` on a dedicated MetalLB IP.
+Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubernetes. Inbound mail arrives directly via MX record to the home IP on port 25. Outbound mail relays through Brevo EU (`smtp-relay.brevo.com:587` — migrated from Mailgun on 2026-04-12; SPF record cut over on 2026-04-18). Roundcubemail provides webmail access. CrowdSec protects SMTP/IMAP from brute-force attacks using real client IPs: pfSense HAProxy injects the PROXY v2 header on each backend connection so the mailserver pod sees the true source IP despite kube-proxy SNAT. See [`runbooks/mailserver-pfsense-haproxy.md`](../runbooks/mailserver-pfsense-haproxy.md) for ops details.
 
 ## Architecture Diagram
 
@@ -12,9 +12,10 @@ Self-hosted email for `viktorbarzin.me` using docker-mailserver 15.0.0 on Kubern
 graph TB
     subgraph "Inbound Mail"
         SENDER[Sending MTA] -->|MX lookup| MX[mail.viktorbarzin.me:25]
-        MX -->|176.12.22.76:25| PF[pfSense NAT]
-        PF -->|10.0.20.202:25| MLB[MetalLB<br/>ETP: Local]
-        MLB --> POSTFIX[Postfix MTA]
+        MX -->|176.12.22.76:25| PF[pfSense NAT rdr]
+        PF -->|10.0.20.1:25| HAP[pfSense HAProxy<br/>send-proxy-v2]
+        HAP -->|k8s-node:30125| KP[kube-proxy<br/>ETP: Cluster]
+        KP -->|pod:2525 PROXY v2| POSTFIX[Postfix MTA<br/>postscreen]
     end
 
     subgraph "Mail Processing"
@@ -36,7 +37,7 @@ graph TB
     end
 
     subgraph "Security"
-        MLB -->|Real client IPs| CS_AGENT[CrowdSec Agent<br/>postfix + dovecot parsers]
+        POSTFIX -->|Real client IPs<br/>from PROXY v2 header| CS_AGENT[CrowdSec Agent<br/>postfix + dovecot parsers]
         CS_AGENT --> CS_LAPI[CrowdSec LAPI]
     end
 
@@ -64,9 +65,12 @@ graph TB
 ```
 Internet → MX: mail.viktorbarzin.me (priority 1)
          → A record: 176.12.22.76 (non-proxied Cloudflare DNS-only)
-         → pfSense NAT: port 25 → 10.0.20.202:25
-         → MetalLB (dedicated IP, ETP: Local — preserves real client IPs)
-         → Postfix → Rspamd (spam + DKIM + DMARC check) → Dovecot → mailbox
+         → pfSense NAT rdr: WAN:{25,465,587,993} → 10.0.20.1:{same}
+         → pfSense HAProxy (TCP mode, send-proxy-v2 on backend)
+         → k8s-node:{30125..30128} NodePort (mailserver-proxy, ETP: Cluster)
+         → kube-proxy → pod alt listener (2525/4465/5587/10993)
+         → Postfix postscreen / smtpd / Dovecot parses PROXY v2 header
+         → Rspamd (spam + DKIM + DMARC) → Dovecot → mailbox
 ```
 
 No backup MX. If the server is down, sender MTAs queue and retry for 4-5 days per SMTP standards (RFC 5321).
@@ -114,7 +118,7 @@ Reverse DNS for `176.12.22.76` returns `176-12-22-76.pon.spectrumnet.bg.` (ISP-a
 ### CrowdSec Integration
 - **Collections**: `crowdsecurity/postfix` + `crowdsecurity/dovecot` (installed)
 - **Log acquisition**: CrowdSec agents parse mailserver pod logs for brute-force patterns
-- **Real client IPs**: `externalTrafficPolicy: Local` on dedicated MetalLB IP `10.0.20.202` preserves original client IPs (not SNATed to node IPs)
+- **Real client IPs**: pfSense HAProxy injects PROXY v2 header on each backend connection; Postfix (`postscreen_upstream_proxy_protocol=haproxy` / `smtpd_upstream_proxy_protocol=haproxy` on alt ports) + Dovecot (`haproxy = yes` on alt IMAPS listener) parse it to recover the true source IP despite kube-proxy SNAT. Replaces the pre-2026-04-19 MetalLB `10.0.20.202` ETP:Local scheme (see code-yiu)
 - **Decisions**: CrowdSec bans/challenges attackers via firewall bouncer rules
 
 ### Fail2ban Disabled (CrowdSec is the Policy)
@@ -158,9 +162,10 @@ CronJob `email-roundtrip-monitor` (every 10 min):
 | EmailRoundtripNeverRun | Metric absent for 40m | warning |
 
 ### Uptime Kuma Monitors
-- TCP SMTP on `176.12.22.76:25` (external, 60s interval)
-- TCP IMAP on `10.0.20.202:993` (internal)
-- E2E Push monitor (receives push from roundtrip probe)
+- TCP SMTP on `176.12.22.76:25` — full external path (DNS → WAN → pfSense HAProxy → mailserver)
+- TCP `mailserver.svc:{587,993}` — intra-cluster ClusterIP path
+- TCP `10.0.20.1:{25,993}` — pfSense HAProxy health (post code-yiu Phase 6)
+- E2E Push monitor (receives push from `email-roundtrip-monitor` probe)
 
 ### Dovecot Exporter
 - Sidecar container in mailserver pod, port 9166
@@ -210,17 +215,19 @@ CronJob `email-roundtrip-monitor` (every 10 min):
 - **Decision**: Rspamd replaces both SpamAssassin and OpenDKIM in a single component
 - **Tradeoff**: Higher memory usage (~150-200MB) but simpler stack
 
-### Dedicated MetalLB IP for CrowdSec
-- **Decision**: Mailserver gets `10.0.20.202` (separate from shared `10.0.20.200`) with `externalTrafficPolicy: Local`
-- **Why**: Shared IP with ETP: Cluster SNATs away real client IPs, making CrowdSec detections and Postfix rate limiting useless
-- **Tradeoff**: Uses one extra IP from the MetalLB pool. Requires separate pfSense NAT rule.
+### Client-IP Preservation (pfSense HAProxy + PROXY v2)
+- **Current (2026-04-19, bd code-yiu)**: pfSense HAProxy listens on `10.0.20.1:{25,465,587,993}`, forwards to k8s NodePort 30125-30128 with `send-proxy-v2` on each backend connection. The mailserver pod exposes parallel listeners (2525/4465/5587/10993) that REQUIRE the PROXY v2 header, while the stock ports 25/465/587/993 stay PROXY-free for intra-cluster traffic (Roundcube, probe). The mailserver Service is ClusterIP-only; ETP is no longer a concern for external traffic.
+- **Historical (2026-04-12 → 2026-04-19)**: Dedicated MetalLB IP `10.0.20.202` with `externalTrafficPolicy: Local` — required pod/speaker colocation; kube-proxy preserved client IP only when pod was on the same node as the advertising speaker.
+- **Why switched**: ETP:Local made the mailserver's single replica drop inbound mail silently during pod reschedule (30-60s GARP flip). HAProxy with `send-proxy-v2` lets the pod reschedule to any node and recover IP-preservation through the header.
+- **Tradeoff**: pfSense now runs HAProxy (one more service in the firewall's responsibility); alt container ports + extra Service are ~80 lines of Terraform. The win is HA without IP-preservation compromise.
+- **Runbook**: [`runbooks/mailserver-pfsense-haproxy.md`](../runbooks/mailserver-pfsense-haproxy.md).
 
 ## Troubleshooting
 
 ### Inbound mail not arriving
 1. Check MX: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
 2. Check port 25: `nc -zw5 mail.viktorbarzin.me 25`
-3. Check pfSense NAT rule: port 25 → `10.0.20.202:25`
+3. Check pfSense NAT rule: port 25 → `10.0.20.1:25` (pfSense HAProxy VIP, post code-yiu Phase 4)
 4. Check Postfix logs: `kubectl logs -n mailserver deploy/mailserver -c docker-mailserver | grep -E 'from=|reject'`
 5. Check if CrowdSec is blocking the sender: `kubectl exec -n crowdsec deploy/crowdsec-lapi -- cscli decisions list`
 

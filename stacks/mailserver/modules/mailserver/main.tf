@@ -624,6 +624,13 @@ resource "kubernetes_deployment" "mailserver" {
 }
 
 resource "kubernetes_service" "mailserver" {
+  # code-yiu Phase 6: downgraded from LoadBalancer (MetalLB 10.0.20.202,
+  # ETP: Local) to ClusterIP on 2026-04-19. External mail now enters via
+  # pfSense HAProxy → kubernetes_service.mailserver_proxy NodePort → alt
+  # PROXY-speaking listeners. This Service exists only for intra-cluster
+  # clients (Roundcube pod, email-roundtrip-monitor CronJob) that talk to
+  # `mailserver.mailserver.svc.cluster.local:{25,465,587,993}` on the
+  # stock (PROXY-free) container listeners.
   metadata {
     name      = "mailserver"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
@@ -631,15 +638,10 @@ resource "kubernetes_service" "mailserver" {
     labels = {
       app = "mailserver"
     }
-
-    annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.202"
-    }
   }
 
   spec {
-    type                    = "LoadBalancer"
-    external_traffic_policy = "Local"
+    type = "ClusterIP"
     selector = {
       app = "mailserver"
     }
