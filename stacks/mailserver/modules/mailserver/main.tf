@@ -139,6 +139,24 @@ resource "kubernetes_config_map" "mailserver_config" {
     # attempt waits 5s before responding, stretching a 1000-password
     # dictionary attack from <1s to ~85min. Addresses code-9mi.
     auth_failure_delay = 5s
+
+    # code-yiu Phase 5: alt IMAPS listener on :10993 that REQUIRES the
+    # HAProxy PROXY v2 wire format. pfSense HAProxy injects the header
+    # on backend connects via k8s-node:30128 → kube-proxy → pod :10993.
+    # Real client IP recovered from header despite kube-proxy SNAT.
+    # The stock :993 listener stays PROXY-free for internal clients
+    # (Roundcube, email-roundtrip-monitor) on the mailserver ClusterIP.
+    # haproxy_trusted_networks = source IPs allowed to *send* PROXY v2.
+    # Post kube-proxy SNAT the source is the k8s node IP (10.0.20.101-104);
+    # allow-list the whole VLAN 20 node subnet.
+    haproxy_trusted_networks = 10.0.20.0/24
+    service imap-login {
+      inet_listener imaps_proxy {
+        port = 10993
+        ssl = yes
+        haproxy = yes
+      }
+    }
     EOF
     fail2ban_conf = <<-EOF
     [DEFAULT]
@@ -192,22 +210,60 @@ resource "kubernetes_config_map" "mailserver_user_patches" {
   data = {
     "user-patches.sh" = <<-EOT
       #!/bin/bash
-      # code-yiu: append PROXY-speaking alt SMTP listener on :2525 to master.cf.
-      # Runs in parallel to stock :25 postscreen (which stays PROXY-free for
-      # internal clients). pfSense HAProxy injects PROXY v2 on connections to
-      # k8s-node:NodePort → kube-proxy → pod :2525. Real client IP recovered
-      # from PROXY header despite kube-proxy SNAT.
+      # code-yiu Phase 5: append PROXY-speaking alt listeners to Postfix master.cf:
+      #   :2525  postscreen (alt :25)   — injected with PROXY v2 by pfSense HAProxy
+      #   :4465  smtpd (alt :465 SMTPS) — ditto, wrappermode TLS
+      #   :5587  smtpd (alt :587 submission) — ditto
+      # Stock :25/:465/:587 stay in parallel (no PROXY required) so internal
+      # Roundcube/probe traffic on mailserver.svc ClusterIP keeps working.
+      # Dovecot alt IMAPS listener on :10993 is configured via dovecot.cf
+      # (not here) because that's a Dovecot config, not a Postfix master.cf.
       set -euxo pipefail
       MASTER_CF=/etc/postfix/master.cf
-      SENTINEL='# code-yiu:2525'
+      SENTINEL='# code-yiu:alt-proxy'
       if ! grep -qF "$SENTINEL" "$MASTER_CF"; then
         cat >> "$MASTER_CF" <<'PFXEOF'
 
-      # code-yiu:2525 — PROXY-speaking postscreen listener for pfSense HAProxy backend.
-      2525      inet  n       -       y       -       1       postscreen
-        -o syslog_name=postfix/smtpd-proxy
+      # code-yiu:alt-proxy — PROXY-speaking alt listeners for pfSense HAProxy backend pool.
+      # Mirrors stock docker-mailserver submission/submissions options (incl. SASL via
+      # Dovecot's /dev/shm/sasl-auth.sock) but with PROXY v2 upstream. chroot=n so the
+      # SASL path is readable from the smtpd process (sockets live outside /var/spool).
+      2525      inet  n       -       n       -       1       postscreen
+        -o syslog_name=postfix/smtpd-proxy25
         -o postscreen_upstream_proxy_protocol=haproxy
         -o postscreen_upstream_proxy_timeout=5s
+      4465      inet  n       -       n       -       -       smtpd
+        -o syslog_name=postfix/smtpd-proxy465
+        -o smtpd_tls_wrappermode=yes
+        -o smtpd_sasl_auth_enable=yes
+        -o smtpd_sasl_type=dovecot
+        -o smtpd_tls_auth_only=yes
+        -o smtpd_reject_unlisted_recipient=no
+        -o smtpd_sasl_authenticated_header=yes
+        -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+        -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+        -o smtpd_sender_restrictions=$mua_sender_restrictions
+        -o smtpd_discard_ehlo_keywords=
+        -o milter_macro_daemon_name=ORIGINATING
+        -o cleanup_service_name=sender-cleanup
+        -o smtpd_upstream_proxy_protocol=haproxy
+        -o smtpd_upstream_proxy_timeout=5s
+      5587      inet  n       -       n       -       -       smtpd
+        -o syslog_name=postfix/smtpd-proxy587
+        -o smtpd_tls_security_level=encrypt
+        -o smtpd_sasl_auth_enable=yes
+        -o smtpd_sasl_type=dovecot
+        -o smtpd_tls_auth_only=yes
+        -o smtpd_reject_unlisted_recipient=no
+        -o smtpd_sasl_authenticated_header=yes
+        -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+        -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+        -o smtpd_sender_restrictions=$mua_sender_restrictions
+        -o smtpd_discard_ehlo_keywords=
+        -o milter_macro_daemon_name=ORIGINATING
+        -o cleanup_service_name=sender-cleanup
+        -o smtpd_upstream_proxy_protocol=haproxy
+        -o smtpd_upstream_proxy_timeout=5s
       PFXEOF
       fi
     EOT
@@ -455,10 +511,27 @@ resource "kubernetes_deployment" "mailserver" {
             container_port = 993
             protocol       = "TCP"
           }
-          # code-yiu Phase 1a: alt PROXY-speaking SMTP listener.
+          # code-yiu Phase 5: alt PROXY-speaking listeners.
+          # Postfix: 2525 (postscreen), 4465 (smtps), 5587 (submission).
+          # Dovecot: 10993 (imaps). All require PROXY v2 from pfSense HAProxy.
           port {
             name           = "smtp-proxy"
             container_port = 2525
+            protocol       = "TCP"
+          }
+          port {
+            name           = "smtps-proxy"
+            container_port = 4465
+            protocol       = "TCP"
+          }
+          port {
+            name           = "sub-proxy"
+            container_port = 5587
+            protocol       = "TCP"
+          }
+          port {
+            name           = "imaps-proxy"
+            container_port = 10993
             protocol       = "TCP"
           }
           env_from {
@@ -636,6 +709,27 @@ resource "kubernetes_service" "mailserver_proxy" {
       port        = 25
       target_port = 2525
       node_port   = 30125
+    }
+    port {
+      name        = "smtps-proxy"
+      protocol    = "TCP"
+      port        = 465
+      target_port = 4465
+      node_port   = 30126
+    }
+    port {
+      name        = "sub-proxy"
+      protocol    = "TCP"
+      port        = 587
+      target_port = 5587
+      node_port   = 30127
+    }
+    port {
+      name        = "imaps-proxy"
+      protocol    = "TCP"
+      port        = 993
+      target_port = 10993
+      node_port   = 30128
     }
   }
 }
