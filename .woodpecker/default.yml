@@ -123,6 +123,7 @@ steps:
 
       # ── Apply platform stacks (serial, with Vault advisory locks) ──
       - |
+        FAILED_PLATFORM_STACKS=""
         if [ -s .platform_apply ]; then
           echo "=== Applying platform stacks (serial, locked) ==="
           while read -r stack; do
@@ -137,6 +138,7 @@ steps:
               else
                 echo "$OUTPUT" | tail -5
                 echo "[$stack] FAILED (exit $EXIT)"
+                FAILED_PLATFORM_STACKS="$FAILED_PLATFORM_STACKS $stack"
               fi
             else
               echo "$OUTPUT" | tail -3
@@ -144,9 +146,12 @@ steps:
             fi
           done < .platform_apply
         fi
+        # Deferred until after app stacks so both lists get a chance to run.
+        echo "$FAILED_PLATFORM_STACKS" > .platform_failed
 
       # ── Apply app stacks (serial, with Vault advisory locks) ──
       - |
+        FAILED_APP_STACKS=""
         if [ -s .app_apply ]; then
           echo "=== Applying app stacks (serial, locked) ==="
           while read -r stack; do
@@ -161,12 +166,22 @@ steps:
               else
                 echo "$OUTPUT" | tail -5
                 echo "[$stack] FAILED (exit $EXIT)"
+                FAILED_APP_STACKS="$FAILED_APP_STACKS $stack"
               fi
             else
               echo "$OUTPUT" | tail -3
               echo "[$stack] OK"
             fi
           done < .app_apply
+        fi
+        # Fail the step loudly so the pipeline `default` workflow state
+        # reflects reality — the service-upgrade agent and CI alert cascade
+        # both rely on this (see bd code-e1x). Lock-skipped stacks are NOT
+        # counted as failures.
+        FAILED_PLATFORM=$(cat .platform_failed 2>/dev/null | tr -d ' ')
+        if [ -n "$FAILED_PLATFORM" ] || [ -n "$FAILED_APP_STACKS" ]; then
+          echo "=== FAILED STACKS: platform=[$FAILED_PLATFORM ] apps=[$FAILED_APP_STACKS ] ==="
+          exit 1
         fi
 
       # ── Commit and push state changes ──

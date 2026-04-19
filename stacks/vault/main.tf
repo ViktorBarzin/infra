@@ -394,9 +394,14 @@ resource "vault_kubernetes_auth_backend_role" "ci" {
   role_name                        = "ci"
   bound_service_account_names      = ["default"]
   bound_service_account_namespaces = ["woodpecker"]
-  token_policies                   = [vault_policy.ci.name]
-  token_ttl                        = 604800 # 7d
-  token_period                     = 604800 # periodic: auto-renews indefinitely
+  # terraform_state policy grants `database/static-creds/pg-terraform-state`
+  # read — scripts/tg needs this to fetch the Tier-1 PG backend password.
+  # Without it, CI's per-stack `tg apply` dies with
+  # `ERROR: Cannot read PG credentials from Vault` and the default.yml
+  # apply-loop swallows the exit code (set +e) — fixed in bd code-e1x.
+  token_policies = [vault_policy.ci.name, vault_policy.terraform_state.name]
+  token_ttl      = 604800 # 7d
+  token_period   = 604800 # periodic: auto-renews indefinitely
 }
 
 # --- ESO Policy & Role ---
