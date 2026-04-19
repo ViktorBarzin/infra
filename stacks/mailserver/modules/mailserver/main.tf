@@ -230,7 +230,8 @@ resource "kubernetes_deployment" "mailserver" {
     template {
       metadata {
         annotations = {
-          # "diun.enable" = "true"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^latest$"
         }
         labels = {
           "app"  = "mailserver"
@@ -433,7 +434,7 @@ resource "kubernetes_deployment" "mailserver" {
 
         container {
           name  = "dovecot-exporter"
-          image = "viktorbarzin/dovecot_exporter:latest"
+          image = "viktorbarzin/dovecot_exporter@sha256:1114224c9bf0261ca8e9949a6b42d3c5a2c923d34ca4593f6b62f034daf14fc5"
           command = [
             "/dovecot_exporter/exporter",
             "--dovecot.socket-path=/var/run/dovecot/stats-reader"
