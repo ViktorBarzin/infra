@@ -140,6 +140,34 @@ ssh root@10.0.20.10 '
 '
 ```
 
+## Auto-sync pipeline
+
+Changes to `modules/docker-registry/{docker-compose.yml, fix-broken-blobs.sh,
+cleanup-tags.sh, nginx_registry.conf, config-private.yml}` deploy
+automatically via `.woodpecker/registry-config-sync.yml`:
+
+- Fires on `push` to master touching any of those paths, or via `manual`
+  event (Woodpecker UI / API).
+- SCPs every managed file to `/opt/registry/` on `10.0.20.10`.
+- Bounces containers + nginx when a compose-visible file changed; leaves
+  them alone when only scripts changed (cron picks up automatically).
+- Runs a dry-run `fix-broken-blobs.sh` at the end to verify the registry
+  is still coherent.
+
+SSH credentials: Woodpecker repo-secret `registry_ssh_key` (ed25519,
+provisioned 2026-04-19). Public key at `/root/.ssh/authorized_keys` on
+`10.0.20.10`. Private key mirrored at `secret/woodpecker/registry_ssh_key`
+in Vault (subkeys `private_key` / `public_key` / `known_hosts_entry`).
+
+Manual override if you need to sync right now:
+
+```sh
+curl -sf -X POST \
+  -H "Authorization: Bearer $WOODPECKER_TOKEN" \
+  "https://ci.viktorbarzin.me/api/repos/1/pipelines" \
+  -d '{"branch":"master"}' | jq .number
+```
+
 ## Bouncing registry containers — the nginx DNS trap
 
 `docker compose up -d` on `/opt/registry/docker-compose.yml` recreates
