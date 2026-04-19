@@ -12,20 +12,6 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
-      },
-      {
-        "datasource": {
-          "type": "grafana-postgresql-datasource",
-          "uid": "payslips-pg"
-        },
-        "enable": true,
-        "iconColor": "orange",
-        "name": "RSU vests",
-        "target": {
-          "rawQuery": true,
-          "format": "table",
-          "rawSql": "SELECT pay_date AS time, 'RSU vest: \u00a3' || ROUND(rsu_vest)::text || ' gross / \u00a3' || ROUND(income_tax - COALESCE(cash_income_tax, income_tax))::text || ' tax withheld' AS text FROM payslip_ingest.payslip WHERE rsu_vest > 0 AND $__timeFilter(pay_date)"
-        }
       }
     ]
   },
@@ -915,7 +901,7 @@
     {
       "id": 13,
       "title": "Monthly cash flow \u2014 tax impact (RSU excluded)",
-      "description": "Cash-only deductions. RSU PAYE excluded \u2014 it's withheld at source via sell-to-cover and never hits the bank account. See Panel 11 for full PAYE view; orange markers annotate vest months across all panels.",
+      "description": "Cash-only deductions. RSU PAYE excluded \u2014 it's withheld at source via sell-to-cover and never hits the bank account. See Panel 11 for the full PAYE view including RSU-attributed tax.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
