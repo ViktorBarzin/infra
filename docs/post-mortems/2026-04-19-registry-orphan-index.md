@@ -190,3 +190,57 @@ unaddressed.
 - **Runbook**: `docs/runbooks/registry-rebuild-image.md` (new).
 - **Hot-fix commits**: `a05d63ee`, `6371e75e`, `c113be4d`.
 - **Upstream bug class**: `distribution/distribution#3324`.
+
+## 2026-04-19 — Bulk cleanup sweep (beads code-8hk + code-jh3c)
+
+Same failure class, broader scope. The `registry-integrity-probe`
+surfaced 38 broken manifest references persisting after the 04-19
+infra-ci fix. `beads-dispatcher` + `beads-reaper` CronJobs were stuck
+`ImagePullBackOff` on `claude-agent-service:0c24c9b6` for >6h. All 34
+affected `repo:tag` pairs were OCI indexes whose `linux/amd64` child
+manifests were absent from blob storage (same orphan pattern).
+
+**Action taken**:
+1. Bumped `beads-server/main.tf` var default `claude_agent_service_image_tag`
+   from `0c24c9b6` → `2fd7670d` (the canonical tag in
+   `claude-agent-service/main.tf`), reused — same image already healthy
+   on the registry. `scripts/tg apply` on `beads-server`. Deleted the
+   stuck Jobs so new CronJob ticks could fire.
+2. Enumerated 34 broken `(repo, tag, parent_digest)` triples via HTTP
+   probe using `registry-probe-credentials` K8s Secret. Deleted each
+   via `DELETE /v2/<repo>/manifests/<digest>` (33× 202, 1× 404 —
+   claude-agent-service:latest pointed at an already-deleted digest).
+3. Ran `docker exec registry-private /bin/registry garbage-collect
+   /etc/docker/registry/config.yml` — reclaimed ~3GB of orphan blob
+   storage.
+4. Rebuilt the 3 in-use broken tags (all 3 OCI-index parents pointed
+   at missing children, so no cached copies would survive pod
+   reschedule):
+   - `freedify:latest` / `freedify:c803de02` — built on registry VM
+     directly (no CI pipeline exists for this image; python FastAPI).
+   - `beadboard:17a38e43` / `beadboard:latest` — GHA
+     `workflow_dispatch` failed at registry login (missing
+     `REGISTRY_USERNAME`/`REGISTRY_PASSWORD` GH secrets). Built on
+     registry VM directly as the fallback. GitHub secret gap is a
+     follow-up — beads `code-8hk` notes it.
+   - `priority-pass-backend:ae1420a0` / `priority-pass-frontend:ae1420a0`
+     — Woodpecker pipeline #8 on repo 81. Pipeline `kubectl set image`'d
+     the Deployment to `ae1420a0` (drift vs TF `v5`/`v8` defaults, but
+     that drift is pre-existing, not introduced by this cleanup).
+   - `wealthfolio-sync:latest` — **not rebuilt**. Monthly CronJob (next
+     run 2026-05-01), no source tree or CI pipeline available in the
+     monorepo; deferred for separate follow-up.
+
+**Post-cleanup state**:
+- Probe: 39 tags, 0 failures. `registry_manifest_integrity_failures{} = 0`.
+- Alert `RegistryManifestIntegrityFailure` cleared (was firing for
+  5h 32m).
+- No `ImagePullBackOff` pods anywhere in the cluster.
+- 28 of 34 deleted manifests were **dangling tags not referenced by any
+  workload** — old `382d6b1*`, `v2`-`v7`, `yt-fallback`, etc. Safe
+  deletes, no rebuilds needed.
+
+**Permanent fix still in flight**: Phase 2/3 of this post-mortem
+(post-push verification in CI, atomic `cleanup-tags.sh`) — not
+addressed by this cleanup. The probe continues to be the
+authoritative detector.

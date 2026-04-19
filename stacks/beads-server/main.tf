@@ -14,7 +14,7 @@ variable "beadboard_image_tag" {
 # already ships.
 variable "claude_agent_service_image_tag" {
   type    = string
-  default = "0c24c9b6"
+  default = "2fd7670d"
 }
 
 # Kill switch for auto-dispatch. When false, both CronJobs are suspended. The
