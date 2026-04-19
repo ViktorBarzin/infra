@@ -1,6 +1,19 @@
 # Mailserver PROXY protocol — research & decision
 
-Last updated: 2026-04-18
+Last updated: 2026-04-18 (original research). **Outcome implemented 2026-04-19 — see [UPDATE](#update-2026-04-19) below.**
+
+> ## UPDATE (2026-04-19)
+>
+> This doc describes the research that led to the Phase-6 rollout. **Option C
+> (pfSense HAProxy + PROXY v2)** was chosen and is now live. Operational
+> state, cutover history, bootstrap, and rollback procedures live in
+> [`mailserver-pfsense-haproxy.md`](mailserver-pfsense-haproxy.md).
+>
+> This file is retained as a decision record — it explains *why* Option A
+> (pod-pinning via nodeSelector) was rejected mid-session in favour of
+> Option C, and documents the MetalLB upstream limitation (PROXY injection
+> is explicitly won't-implement). Future debates of "why don't we just pin
+> the pod?" should land here first.
 
 ## TL;DR
 
