@@ -34,7 +34,11 @@ You receive these parameters in your invocation:
 - **Infra repo**: `/home/wizard/code/infra`
 - **Config**: `/home/wizard/code/infra/.claude/reference/upgrade-config.json`
 - **Kubeconfig**: `/home/wizard/code/infra/config`
-- **Vault**: Authenticate with `vault login -method=oidc` if needed. Secrets at `secret/viktor` and `secret/platform`.
+- **Secrets (env-var contract)**: You run in the `claude-agent-service` pod, which has NO Vault CLI auth — do NOT call `vault kv get`. The following env vars are pre-loaded via `envFrom: claude-agent-secrets`:
+  - `GITHUB_TOKEN` — PAT for GitHub API (changelog fetch) and `git push`
+  - `WOODPECKER_API_TOKEN` — bearer for `ci.viktorbarzin.me/api/...`
+  - `SLACK_WEBHOOK_URL` — full Slack webhook URL for status messages
+  - Anything else (e.g. `kubectl`) uses the pod's ServiceAccount or in-repo git-crypt-unlocked secrets.
 - **Git remote**: `origin` → `github.com/ViktorBarzin/infra.git`
 
 ## NEVER Do
@@ -118,7 +122,6 @@ cat /home/wizard/code/infra/.claude/reference/upgrade-config.json
 3. **For Helm charts**: Check `helm_chart_repo_overrides` for the chart repository URL
 4. If auto-detect fails, verify the repo exists:
    ```bash
-   GITHUB_TOKEN=$(vault kv get -field=github_pat secret/viktor)
    curl -sf -H "Authorization: token $GITHUB_TOKEN" \
      "https://api.github.com/repos/${DETECTED_REPO}" > /dev/null
    ```
@@ -128,7 +131,6 @@ cat /home/wizard/code/infra/.claude/reference/upgrade-config.json
 ## Step 3: Fetch Changelogs via GitHub API
 
 ```bash
-GITHUB_TOKEN=$(vault kv get -field=github_pat secret/viktor)
 curl -s -H "Authorization: token $GITHUB_TOKEN" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100"
 ```
@@ -171,11 +173,9 @@ Scan all intermediate release notes for breaking change indicators from the conf
 ## Step 5: Slack Notification — Starting
 
 ```bash
-SLACK_WEBHOOK=$(vault kv get -field=alertmanager_slack_api_url secret/platform)
-
 curl -s -X POST -H 'Content-type: application/json' \
   --data "{\"text\":\"[Upgrade Agent] Starting: *${STACK}* ${OLD_VERSION} -> ${NEW_VERSION} (risk: ${RISK})\"}" \
-  "$SLACK_WEBHOOK"
+  "$SLACK_WEBHOOK_URL"
 ```
 
 For CAUTION risk, include breaking change excerpts in the Slack message.
@@ -266,23 +266,28 @@ UPGRADE_SHA=$(git rev-parse HEAD)
 
 ## Step 9: Wait for Woodpecker CI
 
-The commit triggers the `app-stacks.yml` pipeline (or `default.yml` for platform stacks).
+The commit triggers one pipeline that runs multiple **workflows** in parallel — e.g. `default` (terragrunt apply) and `build-cli` (builds the infra CLI image). Only the `default` workflow gates your upgrade; the other workflows may be unrelated and sometimes fail without breaking anything on the cluster (current example: `build-cli` push to `registry.viktorbarzin.me:5050` is known-broken as of 2026-04-19).
+
+**Do not read the overall pipeline `status`** — it reports `failure` whenever *any* workflow fails. Read the `default` workflow's `state` instead.
 
 ```bash
-WOODPECKER_TOKEN=$(vault kv get -field=woodpecker_token secret/viktor)
+# Find the pipeline for our commit
+curl -s -H "Authorization: Bearer $WOODPECKER_API_TOKEN" \
+  "https://ci.viktorbarzin.me/api/repos/1/pipelines?page=1&per_page=10" \
+  | jq --arg sha "$UPGRADE_SHA" '.[] | select(.commit==$sha) | .number'
+# → $PIPELINE_NUMBER
+
+# Fetch detail (includes workflows[])
+curl -s -H "Authorization: Bearer $WOODPECKER_API_TOKEN" \
+  "https://ci.viktorbarzin.me/api/repos/1/pipelines/$PIPELINE_NUMBER" \
+  | jq '.workflows[] | select(.name=="default") | .state'
+# → "running" | "pending" | "success" | "failure" | "error" | "killed"
 ```
 
-Poll for the pipeline triggered by our commit:
-```bash
-# Get latest pipeline
-curl -s -H "Authorization: Bearer $WOODPECKER_TOKEN" \
-  "https://ci.viktorbarzin.me/api/repos/1/pipelines?page=1&per_page=5"
-```
+Poll every 30 seconds until the `default` workflow's `state` is terminal (`success`, `failure`, `error`, `killed`). Timeout after 15 minutes.
 
-Find the pipeline matching our commit SHA. Poll every 30 seconds until status is `success`, `failure`, `error`, or `killed`. Timeout after 15 minutes.
-
-**If CI fails** → proceed to Step 10 (rollback).
-**If CI succeeds** → proceed to verification.
+**If `default` state is `success`** → proceed to Step 10 (verification), regardless of other workflows' state.
+**If `default` state is terminal-and-not-success, or the poll times out** → proceed to Step 10b (rollback).
 
 ## Step 10: Verify
 
@@ -341,7 +346,7 @@ Re-run verification checks to confirm rollback succeeded. If rollback verificati
 ```bash
 curl -s -X POST -H 'Content-type: application/json' \
   --data '{"text":"[Upgrade Agent] CRITICAL: Rollback of *${STACK}* also failed. Manual intervention required."}' \
-  "$SLACK_WEBHOOK"
+  "$SLACK_WEBHOOK_URL"
 ```
 
 ## Step 11: Report Results
@@ -350,14 +355,14 @@ curl -s -X POST -H 'Content-type: application/json' \
 ```bash
 curl -s -X POST -H 'Content-type: application/json' \
   --data "{\"text\":\"[Upgrade Agent] SUCCESS: *${STACK}* upgraded ${OLD_VERSION} -> ${NEW_VERSION}\nVerification: pods ready, HTTP OK${UPTIME_KUMA_MSG}\nCommit: ${UPGRADE_SHA}\"}" \
-  "$SLACK_WEBHOOK"
+  "$SLACK_WEBHOOK_URL"
 ```
 
 ### On failure + rollback
 ```bash
 curl -s -X POST -H 'Content-type: application/json' \
   --data "{\"text\":\"[Upgrade Agent] FAILED + ROLLED BACK: *${STACK}* ${OLD_VERSION} -> ${NEW_VERSION}\nReason: ${FAILURE_REASON}\nRollback commit: ${ROLLBACK_SHA}\nRollback status: ${ROLLBACK_STATUS}\"}" \
-  "$SLACK_WEBHOOK"
+  "$SLACK_WEBHOOK_URL"
 ```
 
 ## Edge Cases
