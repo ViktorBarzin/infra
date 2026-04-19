@@ -171,23 +171,48 @@ resource "kubernetes_config_map" "mailserver_config" {
   }
 }
 
-# resource "kubernetes_config_map" "user_patches" {
-#   metadata {
-#     name      = "user-patches"
-#    namespace = kubernetes_namespace.mailserver.metadata[0].name
-#     labels = {
-#       "app" = "mailserver"
-#     }
-#   }
+# code-yiu Phase 1a: user-patches.sh appends alt PROXY-speaking listeners to
+# Postfix master.cf at container startup. docker-mailserver runs
+# /tmp/docker-mailserver/user-patches.sh after initial config generation, so
+# our append lands on every fresh pod. Idempotent guard prevents double-append
+# on in-place container restarts. Dovecot extensions are in the dovecot.cf
+# ConfigMap entry (no patches.sh entry needed).
+resource "kubernetes_config_map" "mailserver_user_patches" {
+  metadata {
+    name      = "mailserver-user-patches"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    labels = {
+      app = "mailserver"
+    }
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
 
-#   data = {
-#     user_patches = <<EOF
-# #!/bin/bash
-# cp -f /tmp/dovecot.key /etc/dovecot/ssl/dovecot.key
-# cp -f /tmp/dovecot.crt /etc/dovecot/ssl/dovecot.pem 
-#     EOF
-#   }
-# }
+  data = {
+    "user-patches.sh" = <<-EOT
+      #!/bin/bash
+      # code-yiu: append PROXY-speaking alt SMTP listener on :2525 to master.cf.
+      # Runs in parallel to stock :25 postscreen (which stays PROXY-free for
+      # internal clients). pfSense HAProxy injects PROXY v2 on connections to
+      # k8s-node:NodePort → kube-proxy → pod :2525. Real client IP recovered
+      # from PROXY header despite kube-proxy SNAT.
+      set -euxo pipefail
+      MASTER_CF=/etc/postfix/master.cf
+      SENTINEL='# code-yiu:2525'
+      if ! grep -qF "$SENTINEL" "$MASTER_CF"; then
+        cat >> "$MASTER_CF" <<'PFXEOF'
+
+      # code-yiu:2525 — PROXY-speaking postscreen listener for pfSense HAProxy backend.
+      2525      inet  n       -       y       -       1       postscreen
+        -o syslog_name=postfix/smtpd-proxy
+        -o postscreen_upstream_proxy_protocol=haproxy
+        -o postscreen_upstream_proxy_timeout=5s
+      PFXEOF
+      fi
+    EOT
+  }
+}
 
 resource "kubernetes_secret" "opendkim_key" {
   metadata {
@@ -401,6 +426,15 @@ resource "kubernetes_deployment" "mailserver" {
             sub_path   = "fail2ban_conf"
             read_only  = true
           }
+          # code-yiu Phase 1a: user-patches.sh runs at container startup to
+          # append PROXY-speaking listeners to master.cf (see
+          # kubernetes_config_map.mailserver_user_patches).
+          volume_mount {
+            name       = "user-patches"
+            mount_path = "/tmp/docker-mailserver/user-patches.sh"
+            sub_path   = "user-patches.sh"
+            read_only  = true
+          }
           port {
             name           = "smtp"
             container_port = 25
@@ -419,6 +453,12 @@ resource "kubernetes_deployment" "mailserver" {
           port {
             name           = "imap-secure"
             container_port = 993
+            protocol       = "TCP"
+          }
+          # code-yiu Phase 1a: alt PROXY-speaking SMTP listener.
+          port {
+            name           = "smtp-proxy"
+            container_port = 2525
             protocol       = "TCP"
           }
           env_from {
@@ -487,12 +527,14 @@ resource "kubernetes_deployment" "mailserver" {
           #   fs_type       = "ext4"
           # }
         }
-        # volume {
-        #   name = "user-patches"
-        #   config_map {
-        #     name = "user-patches"
-        #   }
-        # }
+        # code-yiu Phase 1a
+        volume {
+          name = "user-patches"
+          config_map {
+            name         = kubernetes_config_map.mailserver_user_patches.metadata[0].name
+            default_mode = "0755"
+          }
+        }
         volume {
           name = "var-run-dovecot"
           empty_dir {}
@@ -566,6 +608,37 @@ resource "kubernetes_service" "mailserver" {
 # emits, so the scrape was a no-op. If a working exporter is ever
 # re-introduced, add back: ClusterIP Service exposing port 9166
 # with selector app=mailserver.
+
+# code-yiu Phase 1a: NodePort Service for pfSense HAProxy backend connections.
+# External SMTP flow post-cutover:
+#   Client → pfSense WAN:25 → pfSense HAProxy → k8s-node:30125 (NodePort
+#   targeting container :2525 on any node, ETP: Cluster) → pod postscreen
+#   with PROXY v2 parsing → real client IP in maillog.
+# Internal flow (Roundcube, probe) stays on the mailserver ClusterIP Service
+# hitting container :25 without PROXY — unchanged.
+resource "kubernetes_service" "mailserver_proxy" {
+  metadata {
+    name      = "mailserver-proxy"
+    namespace = kubernetes_namespace.mailserver.metadata[0].name
+    labels = {
+      app = "mailserver"
+    }
+  }
+  spec {
+    type                    = "NodePort"
+    external_traffic_policy = "Cluster"
+    selector = {
+      app = "mailserver"
+    }
+    port {
+      name        = "smtp-proxy"
+      protocol    = "TCP"
+      port        = 25
+      target_port = 2525
+      node_port   = 30125
+    }
+  }
+}
 
 # =============================================================================
 # E2E Email Roundtrip Monitor
@@ -728,17 +801,24 @@ except Exception as e:
     duration = time.time() - start
     print(f"ERROR: {e}")
 
-# Push metrics to Pushgateway
-metrics = f"""# HELP email_roundtrip_success Whether the last e2e email probe succeeded
-# TYPE email_roundtrip_success gauge
-email_roundtrip_success {success}
-# HELP email_roundtrip_duration_seconds Duration of the last e2e email probe
-# TYPE email_roundtrip_duration_seconds gauge
-email_roundtrip_duration_seconds {duration:.2f}
-# HELP email_roundtrip_last_success_timestamp Unix timestamp of last successful probe
-# TYPE email_roundtrip_last_success_timestamp gauge
-email_roundtrip_last_success_timestamp {int(time.time()) if success else 0}
-"""
+# Push metrics to Pushgateway. On failure we omit email_roundtrip_last_success_timestamp
+# and POST (not PUT) so the prior successful timestamp is preserved — otherwise pushing 0
+# makes EmailRoundtripStale fire immediately alongside EmailRoundtripFailing.
+metric_lines = [
+    "# HELP email_roundtrip_success Whether the last e2e email probe succeeded",
+    "# TYPE email_roundtrip_success gauge",
+    f"email_roundtrip_success {success}",
+    "# HELP email_roundtrip_duration_seconds Duration of the last e2e email probe",
+    "# TYPE email_roundtrip_duration_seconds gauge",
+    f"email_roundtrip_duration_seconds {duration:.2f}",
+]
+if success:
+    metric_lines += [
+        "# HELP email_roundtrip_last_success_timestamp Unix timestamp of last successful probe",
+        "# TYPE email_roundtrip_last_success_timestamp gauge",
+        f"email_roundtrip_last_success_timestamp {int(time.time())}",
+    ]
+metrics = "\n".join(metric_lines) + "\n"
 UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local/api/push/hLtyRKgeZO?status=up&msg=OK&ping=" + str(int(duration))
 
 def push_with_retry(label, func, url):
@@ -765,7 +845,7 @@ def push_with_retry(label, func, url):
 
 pushgateway_ok = push_with_retry(
     "Pushgateway",
-    lambda: requests.put(PUSHGATEWAY, data=metrics, timeout=10),
+    lambda: requests.post(PUSHGATEWAY, data=metrics, timeout=10),
     PUSHGATEWAY,
 )
 
