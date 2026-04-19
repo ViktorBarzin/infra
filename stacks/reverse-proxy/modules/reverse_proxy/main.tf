@@ -301,43 +301,101 @@ resource "kubernetes_manifest" "ha_sofia_rate_limit" {
   }
 }
 
+# Per-service retry — bumps default (attempts=2) to 3 so transient DNS/connect
+# stalls on the ha-sofia.viktorbarzin.lan ExternalName are absorbed before
+# surfacing a 502. Drives bd code-rd1 Phase 2.2.
+resource "kubernetes_manifest" "ha_sofia_retry" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "ha-sofia-retry"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      retry = {
+        attempts        = 3
+        initialInterval = "100ms"
+      }
+    }
+  }
+}
+
+# Per-service ServersTransport — overrides the global 60s dialTimeout
+# (set for Immich) with 500ms so a stall fails fast and the retry middleware
+# kicks in instead of blocking the connection for seconds. Drives bd
+# code-rd1 Phase 2.3.
+resource "kubernetes_manifest" "ha_sofia_transport" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = "ha-sofia-transport"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      forwardingTimeouts = {
+        dialTimeout           = "500ms"
+        responseHeaderTimeout = "30s"
+        idleConnTimeout       = "90s"
+      }
+    }
+  }
+}
+
 module "ha-sofia" {
-  source                 = "./factory"
-  dns_type               = "non-proxied"
-  name                   = "ha-sofia"
-  external_name          = "ha-sofia.viktorbarzin.lan"
-  port                   = 8123
-  tls_secret_name        = var.tls_secret_name
-  depends_on             = [kubernetes_namespace.reverse-proxy]
+  source          = "./factory"
+  dns_type        = "non-proxied"
+  name            = "ha-sofia"
+  external_name   = "ha-sofia.viktorbarzin.lan"
+  port            = 8123
+  tls_secret_name = var.tls_secret_name
+  # depends_on on the retry/transport manifests avoids a dangling-reference
+  # window that would 404 ha-sofia traffic (memory 768: 2026-04-17 P0 outage).
+  depends_on = [
+    kubernetes_namespace.reverse-proxy,
+    kubernetes_manifest.ha_sofia_retry,
+    kubernetes_manifest.ha_sofia_transport,
+  ]
   protected              = false
   skip_global_rate_limit = true
   extra_middlewares = [
     "reverse-proxy-ha-sofia-rate-limit@kubernetescrd",
+    "reverse-proxy-ha-sofia-retry@kubernetescrd",
   ]
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Home Assistant Sofia"
-    "gethomepage.dev/description"  = "Smart home hub"
-    "gethomepage.dev/icon"         = "home-assistant.png"
-    "gethomepage.dev/group"        = "Smart Home"
-    "gethomepage.dev/pod-selector" = ""
+    "gethomepage.dev/enabled"                                = "true"
+    "gethomepage.dev/name"                                   = "Home Assistant Sofia"
+    "gethomepage.dev/description"                            = "Smart home hub"
+    "gethomepage.dev/icon"                                   = "home-assistant.png"
+    "gethomepage.dev/group"                                  = "Smart Home"
+    "gethomepage.dev/pod-selector"                           = ""
+    "traefik.ingress.kubernetes.io/service.serverstransport" = "reverse-proxy-ha-sofia-transport@kubernetescrd"
   }
 }
 
 # https://music-assistant.viktorbarzin.me/
 module "music-assistant" {
-  source                 = "./factory"
-  dns_type               = "non-proxied"
-  name                   = "music-assistant"
-  external_name          = "ha-sofia.viktorbarzin.lan"
-  port                   = 8095
-  tls_secret_name        = var.tls_secret_name
-  depends_on             = [kubernetes_namespace.reverse-proxy]
+  source          = "./factory"
+  dns_type        = "non-proxied"
+  name            = "music-assistant"
+  external_name   = "ha-sofia.viktorbarzin.lan"
+  port            = 8095
+  tls_secret_name = var.tls_secret_name
+  depends_on = [
+    kubernetes_namespace.reverse-proxy,
+    kubernetes_manifest.ha_sofia_retry,
+    kubernetes_manifest.ha_sofia_transport,
+  ]
   protected              = false
   skip_global_rate_limit = true
   extra_middlewares = [
     "reverse-proxy-ha-sofia-rate-limit@kubernetescrd",
+    "reverse-proxy-ha-sofia-retry@kubernetescrd",
   ]
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/service.serverstransport" = "reverse-proxy-ha-sofia-transport@kubernetescrd"
+  }
 }
 
 # https://ha-london.viktorbarzin.me/
