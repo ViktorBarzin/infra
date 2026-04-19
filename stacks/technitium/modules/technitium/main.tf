@@ -171,10 +171,10 @@ resource "kubernetes_deployment" "technitium" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
           port {

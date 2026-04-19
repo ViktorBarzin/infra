@@ -116,10 +116,10 @@ resource "kubernetes_deployment" "technitium_secondary" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
           port {
@@ -271,10 +271,10 @@ resource "kubernetes_deployment" "technitium_tertiary" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "1Gi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
           port {
