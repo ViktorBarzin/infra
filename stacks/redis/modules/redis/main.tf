@@ -72,13 +72,17 @@ resource "helm_release" "redis" {
         }
       }
 
+      # 64Mi was too tight: replica OOMed during PSYNC full resync
+      # (master steady-state 21Mi + COW during AOF rewrite + RDB transfer
+      # buffer pushed replica RSS past 64Mi, causing 120 restart loops over
+      # 5+ days before bump to 256Mi).
       resources = {
         requests = {
           cpu    = "100m"
-          memory = "64Mi"
+          memory = "256Mi"
         }
         limits = {
-          memory = "64Mi"
+          memory = "256Mi"
         }
       }
     }
@@ -100,10 +104,10 @@ resource "helm_release" "redis" {
       resources = {
         requests = {
           cpu    = "50m"
-          memory = "64Mi"
+          memory = "256Mi"
         }
         limits = {
-          memory = "64Mi"
+          memory = "256Mi"
         }
       }
     }
