@@ -133,7 +133,7 @@ SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "automation")
 
 # Redis configuration
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis.redis.svc.cluster.local:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis-master.redis.svc.cluster.local:6379/0")
 REDIS_PREFIX = "yt-highlights:"
 
 # Paths

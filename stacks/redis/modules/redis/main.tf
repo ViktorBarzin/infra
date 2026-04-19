@@ -366,10 +366,10 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
 
                 TIMESTAMP=$(date +%Y%m%d-%H%M)
                 # Trigger a fresh RDB save on the master
-                redis-cli -h redis.redis BGSAVE
+                redis-cli -h redis-master.redis BGSAVE
                 sleep 5
                 # Copy the RDB via redis-cli --rdb
-                redis-cli -h redis.redis --rdb /backup/redis-$TIMESTAMP.rdb
+                redis-cli -h redis-master.redis --rdb /backup/redis-$TIMESTAMP.rdb
                 # Rotate — 28-day retention
                 find /backup -name 'redis-*.rdb' -type f -mtime +28 -delete
 

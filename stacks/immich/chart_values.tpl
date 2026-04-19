@@ -9,7 +9,7 @@ defaultPodOptions:
 
 env:
   # REDIS_HOSTNAME: '{{ printf "%s-redis-master" .Release.Name }}'
-  REDIS_HOSTNAME: "redis.redis.svc.cluster.local"
+  REDIS_HOSTNAME: "redis-master.redis.svc.cluster.local"
   # DB_HOSTNAME: "postgresql.dbaas"
   # DB_USERNAME: "immich"
   # DB_DATABASE_NAME: "immich"
