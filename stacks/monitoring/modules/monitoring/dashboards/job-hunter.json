@@ -197,12 +197,192 @@
       ],
       "title": "Top roles",
       "type": "table"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Per-company median base salary broken out by seniority level (comp_points, GBP).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": []},
+          "unit": "currencyGBP"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 29},
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT c.display_name AS company, l.slug AS level, percentile_cont(0.5) WITHIN GROUP (ORDER BY cp.base_gbp) AS p50_base_gbp, COUNT(*) AS n FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON cp.company_id = c.id LEFT JOIN job_hunter.levels l ON cp.level_id = l.id WHERE cp.base_gbp IS NOT NULL AND cp.location_bucket IN (${location:sqlstring}) AND (c.slug = ANY(string_to_array(${company:sqlstring}, ',')) OR ${company:sqlstring} = 'all') GROUP BY c.display_name, l.slug ORDER BY c.display_name, l.rank NULLS LAST",
+          "refId": "A"
+        }
+      ],
+      "title": "Per-company salary by level (p50 base)",
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "p50 total comp (base + bonus + RSU/year + sign-on/year) per (company, level).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "continuous-GrYlRd"},
+          "custom": {"align": "center", "cellOptions": {"type": "color-background"}},
+          "unit": "currencyGBP"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 39},
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT c.display_name AS company, l.slug AS level, percentile_cont(0.5) WITHIN GROUP (ORDER BY COALESCE(cp.base_gbp, 0) + COALESCE(cp.bonus_gbp, 0) + COALESCE(cp.rsu_annual_gbp, 0) + COALESCE(cp.signon_gbp, 0)) AS p50_total_gbp FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON cp.company_id = c.id LEFT JOIN job_hunter.levels l ON cp.level_id = l.id WHERE cp.base_gbp IS NOT NULL AND cp.location_bucket IN (${location:sqlstring}) GROUP BY c.display_name, l.slug ORDER BY c.display_name",
+          "refId": "A"
+        }
+      ],
+      "title": "Total comp heatmap (p50, GBP)",
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "Comp-datapoint ingestion volume by source.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "stacking": {"mode": "normal"}
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 39},
+      "id": 8,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('day', fetched_at) AT TIME ZONE 'UTC' AS time, source, COUNT(*) AS value FROM job_hunter.comp_points WHERE $__timeFilter(fetched_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Comp-point volume by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "description": "p50 base salary trend by (company, level) for top 5 companies.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "auto"
+          },
+          "unit": "currencyGBP"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 49},
+      "id": 9,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH ranked AS (SELECT c.slug AS company_slug, COUNT(*) AS n FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON cp.company_id = c.id WHERE cp.base_gbp IS NOT NULL AND cp.location_bucket IN (${location:sqlstring}) GROUP BY c.slug ORDER BY n DESC LIMIT 5) SELECT date_trunc('month', cp.effective_date)::timestamp AS time, c.display_name || ' / ' || COALESCE(l.slug, 'unknown') AS metric, percentile_cont(0.5) WITHIN GROUP (ORDER BY cp.base_gbp) AS value FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON cp.company_id = c.id LEFT JOIN job_hunter.levels l ON cp.level_id = l.id WHERE cp.base_gbp IS NOT NULL AND cp.effective_date IS NOT NULL AND cp.location_bucket IN (${location:sqlstring}) AND c.slug IN (SELECT company_slug FROM ranked) AND (l.slug = ${level:sqlstring} OR ${level:sqlstring} = 'all') GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Base-salary trend (p50) — top 5 companies",
+      "type": "timeseries"
     }
   ],
   "refresh": "",
   "schemaVersion": 39,
   "tags": ["job-hunter", "jobs", "careers"],
-  "templating": {"list": []},
+  "templating": {"list": [
+    {
+      "current": {"selected": true, "text": ["london"], "value": ["london"]},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "definition": "SELECT DISTINCT location_bucket FROM job_hunter.comp_points ORDER BY 1",
+      "includeAll": false,
+      "label": "Location",
+      "multi": true,
+      "name": "location",
+      "options": [],
+      "query": "SELECT DISTINCT location_bucket FROM job_hunter.comp_points ORDER BY 1",
+      "refresh": 1,
+      "regex": "",
+      "type": "query"
+    },
+    {
+      "current": {"selected": true, "text": "senior", "value": "senior"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "definition": "SELECT slug FROM job_hunter.levels WHERE company_id IS NULL ORDER BY rank",
+      "includeAll": true,
+      "allValue": "all",
+      "label": "Level",
+      "multi": false,
+      "name": "level",
+      "options": [],
+      "query": "SELECT slug FROM job_hunter.levels WHERE company_id IS NULL ORDER BY rank",
+      "refresh": 1,
+      "regex": "",
+      "type": "query"
+    },
+    {
+      "current": {"selected": true, "text": "all", "value": "all"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
+      "definition": "SELECT slug FROM job_hunter.companies ORDER BY slug",
+      "includeAll": true,
+      "allValue": "all",
+      "label": "Company",
+      "multi": true,
+      "name": "company",
+      "options": [],
+      "query": "SELECT slug FROM job_hunter.companies ORDER BY slug",
+      "refresh": 1,
+      "regex": "",
+      "type": "query"
+    }
+  ]},
   "time": {"from": "now-30d", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
