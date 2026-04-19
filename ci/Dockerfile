@@ -1,5 +1,7 @@
 FROM alpine:3.20
 
+# Rebuild 2026-04-19 — previous :latest index referenced missing blobs (404 on 98f718c8 / 27d5ab83)
+
 # Pin versions to match CI requirements
 ARG TERRAFORM_VERSION=1.5.7
 ARG TERRAGRUNT_VERSION=0.99.4
