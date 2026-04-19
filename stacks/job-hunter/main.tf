@@ -61,11 +61,32 @@ resource "kubernetes_manifest" "external_secret" {
           }
         }
       }
-      dataFrom = [{
-        extract = {
-          key = "job-hunter"
-        }
-      }]
+      data = [
+        {
+          secretKey = "WEBHOOK_BEARER_TOKEN"
+          remoteRef = { key = "job-hunter", property = "webhook_bearer_token" }
+        },
+        {
+          secretKey = "CDIO_API_KEY"
+          remoteRef = { key = "job-hunter", property = "cdio_api_key" }
+        },
+        {
+          secretKey = "SMTP_USERNAME"
+          remoteRef = { key = "job-hunter", property = "smtp_username" }
+        },
+        {
+          secretKey = "SMTP_PASSWORD"
+          remoteRef = { key = "job-hunter", property = "smtp_password" }
+        },
+        {
+          secretKey = "DIGEST_TO_ADDRESS"
+          remoteRef = { key = "job-hunter", property = "digest_to_address" }
+        },
+        {
+          secretKey = "DIGEST_FROM_ADDRESS"
+          remoteRef = { key = "job-hunter", property = "digest_from_address" }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.job_hunter]
