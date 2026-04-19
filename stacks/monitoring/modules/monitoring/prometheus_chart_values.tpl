@@ -1977,26 +1977,10 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Authentik outpost restarted {{ $value | printf \"%.0f\" }} times in 30m — check for OOM or crash loop"
-      - name: Mailserver Dovecot
-        # Dovecot exporter on mailserver:9166 exposes connection-count gauges.
-        # The Dovecot IMAP login service is capped by `mail_max_userip_connections`
-        # (50 per user-IP in the deployed config); fire at 85% so we can tune
-        # before real users get ECONNREFUSED.
-        rules:
-          - alert: DovecotConnectionsNearLimit
-            expr: max(dovecot_imap_connected_users) >= 42
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Dovecot IMAP connections near cap ({{ $value | printf \"%.0f\" }} / 50) — review mail_max_userip_connections or investigate noisy client"
-          - alert: DovecotExporterDown
-            expr: up{job="mailserver-dovecot"} == 0
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Dovecot exporter unreachable for 10m — check mailserver pod health + port 9166"
+      # Mailserver Dovecot alerts were removed with the exporter in
+      # code-1ik (viktorbarzin/dovecot_exporter incompatible with
+      # Dovecot 2.3 stats architecture). Re-add the rule group if a
+      # working exporter is introduced.
       - name: Infrastructure Drift
         # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
         # See Wave 7 of the state-drift consolidation plan.
@@ -2031,16 +2015,11 @@ serverFiles:
               summary: "{{ $value | printf \"%.0f\" }} stacks drifting — likely a systemic cause (new admission webhook, provider upgrade). Check the most recent drift-detection run in Woodpecker."
 
 extraScrapeConfigs: |
-  - job_name: 'mailserver-dovecot'
-    # Dovecot exporter lives on the mailserver pod; port 9166 is exposed by
-    # the dedicated ClusterIP Service `mailserver-metrics` (split from the
-    # public LB in code-izl). Kube-prometheus-stack (with ServiceMonitor
-    # CRDs) isn't deployed here, so we scrape by service DNS.
-    static_configs:
-      - targets:
-        - "mailserver-metrics.mailserver.svc.cluster.local:9166"
-    metrics_path: '/metrics'
-    scrape_interval: 30s
+  # The `mailserver-dovecot` scrape job was retired in code-1ik together
+  # with the Dovecot exporter. docker-mailserver 15.0.0's Dovecot 2.3
+  # doesn't emit the old_stats protocol the exporter expected, so the
+  # scrape only ever returned `dovecot_up{scope="user"} 0`. Re-add here
+  # if a working exporter is introduced.
   - job_name: 'proxmox-host'
     static_configs:
       - targets:
