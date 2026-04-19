@@ -1,6 +1,6 @@
 # DNS Architecture
 
-Last updated: 2026-04-15
+Last updated: 2026-04-19
 
 ## Overview
 
@@ -254,26 +254,41 @@ Config is synced to all 3 Technitium instances by CronJob `technitium-split-hori
 
 ## CoreDNS Configuration
 
-CoreDNS is managed via a Terraform `kubernetes_config_map` resource in `stacks/technitium/modules/technitium/main.tf`.
+CoreDNS is managed via Terraform in `stacks/technitium/modules/technitium/` — the Corefile ConfigMap lives in `main.tf`, and scaling/PDB are in `coredns.tf` (a `kubernetes_deployment_v1_patch` against the kubeadm-managed Deployment).
 
 ```
 .:53 {
   errors / health / ready
   kubernetes cluster.local in-addr.arpa ip6.arpa  # K8s service discovery
   prometheus :9153                                  # Metrics
-  forward . 10.0.20.1 8.8.8.8 1.1.1.1             # pfSense → Google → Cloudflare
-  cache (success 10000 300, denial 10000 300)
+  forward . 10.0.20.1 8.8.8.8 1.1.1.1 {
+      policy sequential                             # try upstreams in order
+      health_check 5s                               # mark unhealthy in 5s
+      max_fails 2
+  }
+  cache {
+    success 10000 300 6
+    denial 10000 300 60
+    serve_stale 3600s 86400s                        # resilience during upstream outage
+  }
   loop / reload / loadbalance
 }
 
 viktorbarzin.lan:53 {
   template: .*\..*\.viktorbarzin\.lan\.$ → NXDOMAIN  # ndots:5 junk filter
-  forward . 10.96.0.53                                # Technitium ClusterIP
-  cache (success 10000 300, denial 10000 300)
+  forward . 10.96.0.53 {                             # Technitium ClusterIP
+    health_check 5s
+    max_fails 2
+  }
+  cache (success 10000 300, denial 10000 300, serve_stale 3600s 86400s)
 }
 ```
 
+**Scaling**: 3 replicas, `required` anti-affinity on `kubernetes.io/hostname` (spread across 3 distinct nodes). PodDisruptionBudget `coredns` with `minAvailable=2`.
+
 **Kyverno ndots injection**: A Kyverno policy injects `ndots:2` on all pods cluster-wide to reduce search domain expansion noise. The template regex is a second layer of defense for any queries that still get expanded.
+
+**Failover behaviour**: With `policy sequential` on the root forward block, CoreDNS tries pfSense first; if `health_check 5s` detects pfSense as down, it fails over to 8.8.8.8 then 1.1.1.1 within ~5s rather than timing out per-query. Combined with `serve_stale`, pods keep resolving cached names for up to 24h even with full upstream failure.
 
 ## Cloudflare DNS — External Domains
 
@@ -360,8 +375,27 @@ Vault DB engine rotates password
 | Metric Source | Dashboard | Alerts |
 |---------------|-----------|--------|
 | Technitium query logs (PostgreSQL) | Grafana `technitium-dns.json` | — |
-| CoreDNS Prometheus metrics (:9153) | Grafana CoreDNS dashboard | — |
+| CoreDNS Prometheus metrics (:9153) | Grafana CoreDNS dashboard | `CoreDNSErrors`, `CoreDNSForwardFailureRate` |
+| Technitium zone-sync CronJob (Pushgateway) | — | `TechnitiumZoneSyncFailed`, `TechnitiumZoneSyncStale`, `TechnitiumZoneCountMismatch` |
+| Technitium DNS pod availability | — | `TechnitiumDNSDown` |
+| `dns-anomaly-monitor` CronJob (Pushgateway) | — | `DNSQuerySpike`, `DNSQueryRateDropped`, `DNSHighErrorRate` |
 | Uptime Kuma | External monitors for all proxied domains | ExternalAccessDivergence (15min) |
+
+### Metrics pushed by `technitium-zone-sync`
+
+The zone-sync CronJob (runs every 30min) pushes the following to the Prometheus Pushgateway under `job=technitium-zone-sync`:
+
+| Metric | Labels | Meaning |
+|--------|--------|---------|
+| `technitium_zone_sync_status` | — | 0 = last run succeeded, 1 = at least one zone failed to create |
+| `technitium_zone_sync_failures` | — | Number of zones that failed to create this run |
+| `technitium_zone_sync_last_run` | — | Unix timestamp of last run (used by `TechnitiumZoneSyncStale`) |
+| `technitium_zone_count` | `instance=primary\|<replica-host>` | Zone count on each Technitium instance (drives `TechnitiumZoneCountMismatch`) |
+
+### DNS alert rewrites
+
+- `DNSQuerySpike` was previously broken: it compared current queries against `dns_anomaly_avg_queries`, which was computed from a per-pod `/tmp/dns_avg` file. Each CronJob run started with a fresh `/tmp`, so `NEW_AVG == TOTAL_QUERIES` every time and the spike condition could never fire. Rewritten to use `avg_over_time(dns_anomaly_total_queries[1h] offset 15m)` which compares against the actual 1h Prometheus history.
+- `DNSQueryRateDropped` (new): fires when query rate drops below 50% of 1h average — upstream clients may be failing to reach Technitium.
 
 ## Troubleshooting
 

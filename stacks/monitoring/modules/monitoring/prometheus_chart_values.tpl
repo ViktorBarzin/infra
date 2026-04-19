@@ -1868,13 +1868,24 @@ serverFiles:
               summary: "NetFlow processing delay p50: {{ $value | printf \"%.0f\" }}s — softflowd may be overloaded"
       - name: "DNS Anomaly Detection"
         rules:
+          # Spike detection: compare current value against its own 1h history via
+          # avg_over_time. Previous version compared against dns_anomaly_avg_queries
+          # which was computed from a per-pod /tmp file and always equalled the
+          # current value (fresh /tmp each run), so the alert could never fire.
           - alert: DNSQuerySpike
-            expr: dns_anomaly_total_queries > 2 * dns_anomaly_avg_queries and dns_anomaly_total_queries > 1000
+            expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and dns_anomaly_total_queries > 1000
             for: 0m
             labels:
               severity: warning
             annotations:
-              summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x average)"
+              summary: "DNS query spike: {{ $value | printf \"%.0f\" }} queries (>2x 1h avg)"
+          - alert: DNSQueryRateDropped
+            expr: dns_anomaly_total_queries < 0.5 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and avg_over_time(dns_anomaly_total_queries[1h] offset 15m) > 1000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "DNS query volume dropped: {{ $value | printf \"%.0f\" }} queries (<50% of 1h avg) — upstream clients may be failing to reach Technitium"
           - alert: DNSHighErrorRate
             expr: dns_anomaly_server_failure > 100
             for: 0m
@@ -1882,6 +1893,34 @@ serverFiles:
               severity: warning
             annotations:
               summary: "High DNS SERVFAIL rate: {{ $value | printf \"%.0f\" }} failures detected"
+          - alert: TechnitiumZoneSyncFailed
+            expr: technitium_zone_sync_status != 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Technitium zone-sync CronJob has reported failure for 30m — replicas may be missing zones"
+          - alert: TechnitiumZoneSyncStale
+            expr: (time() - technitium_zone_sync_last_run) > 3600
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Technitium zone-sync has not run successfully in >1h (last: {{ $value | humanizeDuration }} ago)"
+          - alert: TechnitiumZoneCountMismatch
+            expr: (max(technitium_zone_count) - min(technitium_zone_count)) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Technitium zone counts differ across instances (max-min delta: {{ $value | printf \"%.0f\" }}) — replica has drifted from primary"
+          - alert: CoreDNSForwardFailureRate
+            expr: sum(rate(coredns_forward_responses_total{rcode=~"SERVFAIL|REFUSED"}[5m])) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CoreDNS forward SERVFAIL/REFUSED rate: {{ $value | printf \"%.2f\" }}/s — upstream DNS (pfSense/public) may be unhealthy"
       - name: qbittorrent
         rules:
           - alert: MAMMouseClass

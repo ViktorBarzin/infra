@@ -60,10 +60,15 @@ resource "kubernetes_config_map" "coredns" {
               ttl 30
           }
           prometheus :9153
-          forward . 10.0.20.1 8.8.8.8 1.1.1.1
+          forward . 10.0.20.1 8.8.8.8 1.1.1.1 {
+              policy sequential
+              health_check 5s
+              max_fails 2
+          }
           cache {
             success 10000 300 6
             denial 10000 300 60
+            serve_stale 3600s 86400s
           }
           loop
           reload
@@ -77,10 +82,14 @@ resource "kubernetes_config_map" "coredns" {
           rcode NXDOMAIN
           fallthrough
         }
-        forward . 10.96.0.53 # Technitium ClusterIP (technitium-dns-internal)
+        forward . 10.96.0.53 {
+          health_check 5s
+          max_fails 2
+        }
         cache {
           success 10000 300 6
           denial 10000 300 60
+          serve_stale 3600s 86400s
         }
       }
     EOF
@@ -161,11 +170,11 @@ resource "kubernetes_deployment" "technitium" {
           name  = "technitium"
           resources {
             requests = {
-              cpu    = "25m"
-              memory = "512Mi"
+              cpu    = "100m"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
@@ -220,6 +229,10 @@ resource "kubernetes_deployment" "technitium" {
         }
       }
     }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
 }
 

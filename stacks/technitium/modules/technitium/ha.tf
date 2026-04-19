@@ -115,11 +115,11 @@ resource "kubernetes_deployment" "technitium_secondary" {
           }
           resources {
             requests = {
-              cpu    = "25m"
-              memory = "512Mi"
+              cpu    = "100m"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
@@ -270,11 +270,11 @@ resource "kubernetes_deployment" "technitium_tertiary" {
           }
           resources {
             requests = {
-              cpu    = "25m"
-              memory = "512Mi"
+              cpu    = "100m"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
@@ -391,44 +391,90 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                 set -e
                 PRIMARY="http://technitium-primary.technitium.svc.cluster.local:5380"
                 REPLICAS="http://technitium-secondary-web.technitium.svc.cluster.local:5380 http://technitium-tertiary-web.technitium.svc.cluster.local:5380"
+                PUSHGW="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/technitium-zone-sync"
+
+                # Track overall status — non-zero if any zone fails to create
+                OVERALL_STATUS=0
+                FAIL_COUNT=0
+                SYNCED=0
 
                 # Login to primary
                 P_TOKEN=$(curl -sf "$PRIMARY/api/user/login?user=$TECH_USER&pass=$TECH_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-                if [ -z "$P_TOKEN" ]; then echo "ERROR: Cannot login to primary"; exit 1; fi
+                if [ -z "$P_TOKEN" ]; then echo "ERROR: Cannot login to primary"; OVERALL_STATUS=1; fi
 
-                # Get zones from primary (excluding default zones that don't need replication)
-                curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | \
-                  grep -v -E '^(localhost|0\.in-addr\.arpa|127\.in-addr\.arpa|255\.in-addr\.arpa|1\.0\.0.*ip6\.arpa)$$' > /tmp/primary_zones.txt
-                echo "Primary has $(wc -l < /tmp/primary_zones.txt) zones to replicate"
+                if [ "$OVERALL_STATUS" -eq 0 ]; then
+                  # Get zones from primary (excluding default zones that don't need replication)
+                  curl -sf "$PRIMARY/api/zones/list?token=$P_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | \
+                    grep -v -E '^(localhost|0\.in-addr\.arpa|127\.in-addr\.arpa|255\.in-addr\.arpa|1\.0\.0.*ip6\.arpa)$$' > /tmp/primary_zones.txt
+                  PRIMARY_COUNT=$(wc -l < /tmp/primary_zones.txt)
+                  echo "Primary has $PRIMARY_COUNT zones to replicate"
 
-                # Enable zone transfers on primary for all zones
-                while read -r zone; do
-                  curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" > /dev/null || true
-                done < /tmp/primary_zones.txt
-
-                # Sync to each replica
-                SYNCED=0
-                for REPLICA in $REPLICAS; do
-                  R_TOKEN=$(curl -sf "$REPLICA/api/user/login?user=$TECH_USER&pass=$TECH_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-                  if [ -z "$R_TOKEN" ]; then echo "WARN: Cannot login to $REPLICA, skipping"; continue; fi
-
-                  # Get existing zones on this replica
-                  curl -sf "$REPLICA/api/zones/list?token=$R_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/replica_zones.txt
-
+                  # Enable zone transfers on primary for all zones
                   while read -r zone; do
-                    if grep -qx "$zone" /tmp/replica_zones.txt; then
-                      # Zone exists — just resync
-                      curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" > /dev/null || true
-                    else
-                      # New zone — create as Secondary and sync
-                      echo "NEW: Creating $zone on $REPLICA"
-                      curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" > /dev/null || true
-                      SYNCED=$((SYNCED + 1))
-                    fi
+                    curl -sf "$PRIMARY/api/zones/options/set?token=$P_TOKEN&zone=$zone&zoneTransfer=Allow" > /dev/null || true
                   done < /tmp/primary_zones.txt
-                done
 
-                echo "Zone sync complete. $$SYNCED new zone(s) created."
+                  # Sync to each replica
+                  for REPLICA in $REPLICAS; do
+                    R_NAME=$(echo "$REPLICA" | sed 's|http://||; s|-web.*||')
+                    R_TOKEN=$(curl -sf "$REPLICA/api/user/login?user=$TECH_USER&pass=$TECH_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+                    if [ -z "$R_TOKEN" ]; then
+                      echo "ERROR: Cannot login to $REPLICA"
+                      OVERALL_STATUS=1
+                      FAIL_COUNT=$((FAIL_COUNT + 1))
+                      # Push replica zone_count=0 so divergence alert fires
+                      printf 'technitium_zone_count{instance="%s"} 0\n' "$R_NAME" | \
+                        curl -sf --data-binary @- "$PUSHGW/instance/$R_NAME" || true
+                      continue
+                    fi
+
+                    # Get existing zones on this replica
+                    curl -sf "$REPLICA/api/zones/list?token=$R_TOKEN" | tr ',' '\n' | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' > /tmp/replica_zones.txt
+                    REPLICA_COUNT=$(wc -l < /tmp/replica_zones.txt)
+
+                    while read -r zone; do
+                      if grep -qx "$zone" /tmp/replica_zones.txt; then
+                        # Zone exists — just resync
+                        curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" > /dev/null || true
+                      else
+                        # New zone — create as Secondary and validate response
+                        echo "NEW: Creating $zone on $REPLICA"
+                        RESP=$(curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" || echo '{"status":"error"}')
+                        if echo "$RESP" | grep -q '"status":"ok"'; then
+                          SYNCED=$((SYNCED + 1))
+                        else
+                          echo "ERROR: Failed to create $zone on $REPLICA: $RESP"
+                          OVERALL_STATUS=1
+                          FAIL_COUNT=$((FAIL_COUNT + 1))
+                        fi
+                      fi
+                    done < /tmp/primary_zones.txt
+
+                    # Push per-replica zone count
+                    printf 'technitium_zone_count{instance="%s"} %s\n' "$R_NAME" "$REPLICA_COUNT" | \
+                      curl -sf --data-binary @- "$PUSHGW/instance/$R_NAME" || true
+                  done
+
+                  # Push primary zone count
+                  printf 'technitium_zone_count{instance="primary"} %s\n' "$PRIMARY_COUNT" | \
+                    curl -sf --data-binary @- "$PUSHGW/instance/primary" || true
+                fi
+
+                # Push overall status (0=ok, 1=fail) + last-run timestamp
+                cat <<METRICS | curl -sf --data-binary @- "$PUSHGW" || true
+                # HELP technitium_zone_sync_status Zone sync job status (0=ok, 1=fail)
+                # TYPE technitium_zone_sync_status gauge
+                technitium_zone_sync_status $OVERALL_STATUS
+                # HELP technitium_zone_sync_failures Zones that failed to create this run
+                # TYPE technitium_zone_sync_failures gauge
+                technitium_zone_sync_failures $FAIL_COUNT
+                # HELP technitium_zone_sync_last_run Timestamp of last zone-sync run
+                # TYPE technitium_zone_sync_last_run gauge
+                technitium_zone_sync_last_run $(date +%s)
+                METRICS
+
+                echo "Zone sync complete. $SYNCED new zone(s) created. $FAIL_COUNT failures. status=$OVERALL_STATUS"
+                exit $OVERALL_STATUS
               SCRIPT
               ]
               env {
