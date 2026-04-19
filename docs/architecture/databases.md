@@ -120,9 +120,31 @@ graph TB
 
 ### Redis
 
-- Shared instance at `redis.redis.svc.cluster.local`
-- Used for caching and session storage
-- No persistence (ephemeral)
+Single shared cluster for all 17 consumers (Immich, Authentik, Nextcloud, Paperless, Dawarich Sidekiq, Traefik, etc.). HAProxy (3 replicas, PDB minAvailable=2) is the sole client-facing path — clients talk only to `redis-master.redis.svc.cluster.local:6379` and HAProxy health-checks backends via `INFO replication`, routing only to `role:master`.
+
+**Current state (as of 2026-04-19, interim — parallel cluster during rework)**:
+
+| Cluster | Pods | Source | Purpose |
+|---|---|---|---|
+| Legacy `redis-node-*` | 1 master + 1 replica (2 sentinels) | Bitnami Helm chart v25.3.2 | Serving live traffic via HAProxy |
+| New `redis-v2-*` | 3 pods, each co-locating redis + sentinel + exporter | Raw `kubernetes_stateful_set_v1` with `redis:7.4-alpine` | Standing by for REPLICAOF-based cutover |
+
+Both clusters live in the `redis` namespace. See `infra/stacks/redis/modules/redis/main.tf` (end-state; legacy `helm_release.redis` + `kubernetes_stateful_set_v1.redis_v2` coexist until cutover).
+
+**Target architecture (post-cutover)**:
+
+- 3 redis pods + 3 co-located sentinels (quorum=2). Odd sentinel count eliminates split-brain.
+- `podManagementPolicy=Parallel` + init container that regenerates `sentinel.conf` on every boot by probing peer sentinels for consensus master. No persistent sentinel runtime state — can't drift out of sync with reality (root cause of 2026-04-19 PM incident).
+- redis.conf has `include /shared/replica.conf`; the init container writes either an empty file (master) or `replicaof <master> 6379` (replicas), so pods come up already in the right role — no bootstrap race.
+- Memory: master + replicas `requests=limits=768Mi`. Concurrent BGSAVE + AOF-rewrite fork can double RSS via COW, so headroom must cover it. `auto-aof-rewrite-percentage=200` + `auto-aof-rewrite-min-size=128mb` tune down rewrite frequency.
+- Persistence: RDB (`save 900 1 / 300 100 / 60 10000`) + AOF `appendfsync=everysec`. Disk-wear analysis on 2026-04-19 (sdb Samsung 850 EVO 1TB, 150 TBW): Redis contributes <1 GB/day cluster-wide → 40+ year runway at the 20% TBW budget.
+- `maxmemory=640mb` (83% of 768Mi limit), `maxmemory-policy=allkeys-lru`.
+- Weekly RDB backup to NFS (`/srv/nfs/redis-backup/`, Sunday 03:00, 28-day retention, pushes Pushgateway metrics).
+- Auth disabled this phase — NetworkPolicy is the isolation layer. Enabling `requirepass` + rolling creds to all 17 clients is a planned follow-up.
+
+**Observability** (redis-v2 only): `oliver006/redis_exporter:v1.62.0` sidecar per pod on port 9121, auto-scraped via Prometheus pod annotation. Alerts: `RedisDown`, `RedisMemoryPressure`, `RedisEvictions`, `RedisReplicationLagHigh`, `RedisForkLatencyHigh`, `RedisAOFRewriteLong`, `RedisReplicasMissing`, `RedisBackupStale`, `RedisBackupNeverSucceeded`.
+
+**Why this design** — three incidents in April 2026 drove the rework: (a) 2026-04-04 service selector routed reads+writes to master+replica causing `READONLY` errors; (b) 2026-04-19 AM master OOMKilled during BGSAVE+PSYNC with the 256Mi limit too tight for a 204 MB working set under COW amplification; (c) 2026-04-19 PM sentinel runtime state drifted (only 2 sentinels, no majority) and routed writes to a slave. See beads epic `code-v2b` for the full plan and linked challenger analyses.
 
 ### SQLite (Per-App)
 

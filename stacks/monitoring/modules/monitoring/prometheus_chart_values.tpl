@@ -1355,12 +1355,65 @@ serverFiles:
             annotations:
               summary: "PostgreSQL pod {{ $labels.pod }} is not ready"
           - alert: RedisDown
-            expr: kube_statefulset_status_replicas_ready{namespace="redis", statefulset="redis-node"} < 1
+            # Covers both the legacy Bitnami StatefulSet (redis-node) and the
+            # new raw StatefulSet (redis-v2) during the 2026-04-19 migration.
+            # Drop the redis-node branch after helm_release.redis is removed.
+            expr: (sum(kube_statefulset_status_replicas_ready{namespace="redis", statefulset=~"redis-node|redis-v2"}) or on() vector(0)) < 1
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Redis has no ready replicas"
+              summary: "Redis has no ready replicas across both clusters"
+          - alert: RedisMemoryPressure
+            expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} using {{ $value | humanizePercentage }} of maxmemory — eviction imminent"
+          - alert: RedisEvictions
+            # allkeys-lru is configured so evictions under cache pressure are
+            # expected, but sustained evictions mean we're thrashing — raise it.
+            expr: rate(redis_evicted_keys_total{namespace="redis"}[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} evicting keys ({{ $value }} keys/s)"
+          - alert: RedisReplicationLagHigh
+            expr: redis_connected_slave_lag_seconds{namespace="redis"} > 30
+            for: 3m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis replica {{ $labels.slave_ip }} lagging {{ $value }}s behind master"
+          - alert: RedisForkLatencyHigh
+            # latest_fork_usec > 500ms means BGSAVE fork is stalling the main
+            # thread long enough to drop client requests. COW pressure or
+            # constrained memory headroom are the usual causes.
+            expr: redis_latest_fork_usec{namespace="redis"} > 500000
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} fork took {{ $value }}us (>500ms) — investigate memory headroom"
+          - alert: RedisAOFRewriteLong
+            expr: redis_aof_rewrite_in_progress{namespace="redis"} == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis pod {{ $labels.pod }} AOF rewrite running >10m — COW memory risk, investigate"
+          - alert: RedisReplicasMissing
+            # redis-v2 StatefulSet should always have 3 replicas connected to
+            # the master (2 replicas + itself). <2 connected_slaves means one
+            # replica is unreachable or still syncing.
+            expr: redis_connected_slaves{namespace="redis", pod=~"redis-v2-.*"} < 2 and redis_instance_info{namespace="redis", pod=~"redis-v2-.*", role="master"} == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis master {{ $labels.pod }} has only {{ $value }} connected replicas (expected 2)"
           - alert: HeadscaleDown
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m
