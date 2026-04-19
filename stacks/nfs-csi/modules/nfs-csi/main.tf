@@ -75,6 +75,11 @@ resource "helm_release" "nfs_csi_driver" {
   })]
 }
 
+# Historical name retained for PV compatibility — 48 bound PVs reference
+# storageClassName: nfs-truenas. The actual backend is the Proxmox host NFS
+# (var.nfs_server = 192.168.1.127) since TrueNAS was decommissioned
+# 2026-04-13. SC names are immutable on PVs, so renaming would require
+# migrating every PV. Not worth the churn for a cosmetic change.
 resource "kubernetes_storage_class" "nfs_truenas" {
   metadata {
     name = "nfs-truenas"

@@ -53,7 +53,7 @@ singleBinary:
   persistence:
     enabled: true
     size: 50Gi
-    storageClass: "iscsi-truenas"
+    storageClass: "proxmox-lvm"
   extraVolumes:
     - name: wal
       emptyDir:

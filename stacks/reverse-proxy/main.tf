@@ -12,7 +12,6 @@ locals {
 module "reverse-proxy" {
   source                 = "./modules/reverse_proxy"
   tls_secret_name        = var.tls_secret_name
-  truenas_homepage_token = local.homepage_credentials["reverse_proxy"]["truenas_token"]
   pfsense_homepage_token = local.homepage_credentials["reverse_proxy"]["pfsense_token"]
   haos_homepage_token    = try(local.homepage_credentials["home_assistant"]["token"], "")
 }

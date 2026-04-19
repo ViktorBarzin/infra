@@ -2,7 +2,6 @@
 # outside of K8S but would be nice to use the Nginx-ingress
 
 variable "tls_secret_name" {}
-variable "truenas_homepage_token" {}
 variable "pfsense_homepage_token" {}
 variable "haos_homepage_token" {
   type      = string
@@ -124,31 +123,6 @@ module "tp-link-gateway" {
   protected          = true
   strip_auth_headers = true
   extra_annotations  = { "gethomepage.dev/enabled" = "false" }
-}
-
-# https://truenas.viktorbarzin.me/
-module "truenas" {
-  source          = "./factory"
-  dns_type        = "proxied"
-  name            = "truenas"
-  external_name   = "truenas.viktorbarzin.lan"
-  port            = 80
-  tls_secret_name = var.tls_secret_name
-  max_body_size   = "0m"
-
-  extra_annotations = {
-    "gethomepage.dev/enabled" : "true"
-    "gethomepage.dev/description" : "TrueNAS"
-    "gethomepage.dev/group" : "Infrastructure"
-    "gethomepage.dev/icon" : "truenas.png"
-    "gethomepage.dev/name" : "TrueNAS"
-    "gethomepage.dev/widget.type" : "truenas"
-    "gethomepage.dev/widget.url" : "https://truenas.viktorbarzin.lan"
-    "gethomepage.dev/widget.key" : var.truenas_homepage_token
-    # "gethomepage.dev/widget.enablePools" : "true"
-    # "gethomepage.dev/pod-selector" : ""
-  }
-  depends_on = [kubernetes_namespace.reverse-proxy]
 }
 
 # https://proxmox.viktorbarzin.me/

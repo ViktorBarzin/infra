@@ -46,7 +46,7 @@ locals {
 
 # To create a new deployment:
 /**
-  1. Export a new nfs share with {name} in truenas
+  1. Create a subdirectory for {name} under /srv/nfs on the Proxmox host (192.168.1.127)
   2. Add {name} as proxied cloudflare route (tfvars)
   3. Add module here
 */
@@ -83,6 +83,7 @@ module "viktor" {
   tier                       = local.tiers.edge
   enable_http_api            = true
   enable_bank_sync           = true
+  storage_size               = "4Gi"
   budget_encryption_password = lookup(local.credentials["viktor"], "password", null)
   sync_id                    = lookup(local.credentials["viktor"], "sync_id", null)
   homepage_annotations = {

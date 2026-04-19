@@ -265,12 +265,6 @@ sections:
         url: https://redis.viktorbarzin.me/
         target: newtab
         id: 6_1364_redis
-      - &ref_28
-        title: Truenas
-        description: Network Storage VM
-        icon: si-truenas
-        url: http://truenas.viktorbarzin.me/ui/dashboard
-        id: 7_1364_truenas
     icon: si-adminer
     filteredItems:
       - *ref_21
@@ -280,7 +274,6 @@ sections:
       - *ref_25
       - *ref_26
       - *ref_27
-      - *ref_28
   - name: Public Services
     displayData:
       sortBy: alphabetical

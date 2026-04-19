@@ -44,7 +44,7 @@ locals {
 
 # To create a new deployment:
 /**
-  1. Export a new nfs share with {name} in truenas at /mnt/main/freedify/{name}
+  1. Create a subdirectory {name} under /srv/nfs/freedify on the Proxmox host (192.168.1.127)
   2. Add {name} as proxied cloudflare route (tfvars)
   3. Add module here
 */
