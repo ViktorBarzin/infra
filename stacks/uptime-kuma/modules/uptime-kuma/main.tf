@@ -556,6 +556,19 @@ locals {
       retry_interval              = 60
       max_retries                 = 2
     },
+    {
+      # HAProxy service in redis ns health-checks INFO replication and
+      # only routes to the current Sentinel-elected master, so this
+      # survives failover. Bitnami chart has auth disabled, so no
+      # password_vault_key.
+      name                        = "Redis"
+      type                        = "redis"
+      database_connection_string  = "redis://redis-master.redis.svc.cluster.local:6379"
+      database_password_vault_key = null
+      interval                    = 60
+      retry_interval              = 30
+      max_retries                 = 3
+    },
   ]
 }
 
@@ -570,6 +583,7 @@ resource "kubernetes_secret" "internal_monitor_sync" {
       for m in local.internal_monitors :
       "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" =>
       data.vault_kv_secret_v2.viktor.data[m.database_password_vault_key]
+      if m.database_password_vault_key != null
     },
   )
 }
@@ -585,7 +599,7 @@ resource "kubernetes_config_map_v1" "internal_monitor_targets" {
         name                       = m.name
         type                       = m.type
         database_connection_string = m.database_connection_string
-        password_env               = "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}"
+        password_env               = m.database_password_vault_key != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
         interval                   = m.interval
         retry_interval             = m.retry_interval
         max_retries                = m.max_retries
@@ -634,18 +648,19 @@ existing = {m["name"]: m for m in api.get_monitors()}
 
 for t in targets:
     name = t["name"]
-    password = os.environ[t["password_env"]]
-    # MYSQL monitors use `databaseConnectionString` + `radiusPassword`
-    # (UK v2 re-uses the radiusPassword field for mysql auth — backwards compat).
+    # MYSQL uses `databaseConnectionString` + `radiusPassword` (UK v2 re-uses
+    # radiusPassword for mysql auth — backwards compat). Redis has auth
+    # disabled on the cluster, so password_env is null.
     desired = {
         "type": MonitorType(t["type"]),
         "name": name,
         "databaseConnectionString": t["database_connection_string"],
-        "radiusPassword": password,
         "interval": t["interval"],
         "retryInterval": t["retry_interval"],
         "maxretries": t["max_retries"],
     }
+    if t.get("password_env"):
+        desired["radiusPassword"] = os.environ[t["password_env"]]
     if name not in existing:
         print(f"Creating monitor: {name}")
         api.add_monitor(**desired)
@@ -653,21 +668,22 @@ for t in targets:
     m = existing[name]
     drifted = (
         m.get("databaseConnectionString") != desired["databaseConnectionString"]
-        or m.get("radiusPassword") != desired["radiusPassword"]
         or m.get("interval") != desired["interval"]
         or m.get("retryInterval") != desired["retryInterval"]
         or m.get("maxretries") != desired["maxretries"]
+        or ("radiusPassword" in desired and m.get("radiusPassword") != desired["radiusPassword"])
     )
     if drifted:
         print(f"Updating monitor {name} (id={m['id']})")
-        api.edit_monitor(
-            m["id"],
-            databaseConnectionString=desired["databaseConnectionString"],
-            radiusPassword=desired["radiusPassword"],
-            interval=desired["interval"],
-            retryInterval=desired["retryInterval"],
-            maxretries=desired["maxretries"],
-        )
+        edit_kwargs = {
+            "databaseConnectionString": desired["databaseConnectionString"],
+            "interval": desired["interval"],
+            "retryInterval": desired["retryInterval"],
+            "maxretries": desired["maxretries"],
+        }
+        if "radiusPassword" in desired:
+            edit_kwargs["radiusPassword"] = desired["radiusPassword"]
+        api.edit_monitor(m["id"], **edit_kwargs)
     else:
         print(f"Monitor {name} (id={m['id']}) already in desired state")
     time.sleep(0.3)
