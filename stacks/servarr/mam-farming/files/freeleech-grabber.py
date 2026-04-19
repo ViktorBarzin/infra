@@ -26,10 +26,18 @@ GRABBED_IDS_FILE = "/data/grabbed_ids.txt"
 MIN_MB = int(os.environ.get("MIN_MB", "50"))
 MAX_MB = int(os.environ.get("MAX_MB", "1024"))
 LEECHER_FLOOR = int(os.environ.get("LEECHER_FLOOR", "1"))
-SEEDER_CEILING = int(os.environ.get("SEEDER_CEILING", "50"))
+# MAM's catalogue is well-seeded by design — a ceiling of 50 rejected ~99%
+# of candidates in live testing. 200 still filters out truly oversupplied
+# swarms while keeping enough working-set to grab 3-5 titles per run.
+SEEDER_CEILING = int(os.environ.get("SEEDER_CEILING", "200"))
 GRAB_PER_RUN = int(os.environ.get("GRAB_PER_RUN", "5"))
 MAX_TORRENTS = int(os.environ.get("MAX_TORRENTS", "500"))
-RATIO_FLOOR = float(os.environ.get("RATIO_FLOOR", "1.2"))
+# The guard's real job is to prevent the Mouse-class death spiral (see RC1
+# in the original recovery plan). Once class > Mouse, MAM serves peer
+# lists normally and demand-first filtering (leechers>=1) keeps new grabs
+# upload-positive. Keep a low floor as a tripwire for catastrophic dips
+# rather than a steady-state block.
+RATIO_FLOOR = float(os.environ.get("RATIO_FLOOR", "0.5"))
 REQUEST_SLEEP = float(os.environ.get("REQUEST_SLEEP", "3"))
 
 CLASS_CODES = {
@@ -46,8 +54,9 @@ CLASS_CODES = {
 
 
 def parse_size(s):
+    # MAM pretty-prints sizes with thousands separators (e.g. "1,002.9 MiB").
     units = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4}
-    parts = s.split()
+    parts = s.replace(",", "").split()
     if len(parts) != 2:
         return 0
     return int(float(parts[0]) * units.get(parts[1], 1))
