@@ -264,11 +264,14 @@ resource "kubernetes_deployment" "mailserver" {
           name              = "docker-mailserver"
           image             = "docker.io/mailserver/docker-mailserver:15.0.0"
           image_pull_policy = "IfNotPresent"
-          security_context {
-            capabilities {
-              add = ["NET_ADMIN"]
-            }
-          }
+          # NET_ADMIN was originally required by docker-mailserver's
+          # Fail2ban (iptables ban actions). Fail2ban is DISABLED in this
+          # stack (ENABLE_FAIL2BAN=0, see above) — CrowdSec owns the
+          # brute-force policy. The capability is therefore unnecessary.
+          # Dropping it 2026-04-19 (code-4mu). If mail flow regresses,
+          # `kubectl logs -n mailserver -l app=mailserver -c docker-mailserver`
+          # will show permission-denied errors — revert if observed.
+          security_context {}
 
           lifecycle {
             post_start {
