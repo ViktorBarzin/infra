@@ -42,10 +42,13 @@ resource "null_resource" "technitium_readiness_gate" {
         kubectl -n $NS rollout status deploy/$d --timeout=180s
       done
 
-      # 2. Per-pod DNS check. Technitium pods have `dig` but no HTTP client,
-      #    so we probe the DNS answer directly — if the pod can resolve
-      #    idrac.viktorbarzin.lan from its local zone data, the server is
-      #    functional.
+      # 2. Per-pod DNS check + content parity. Technitium pods have `dig` but
+      #    no HTTP client, so we use DNS directly. Each pod must return an A
+      #    record for idrac.viktorbarzin.lan, AND the answer must match across
+      #    all three instances. This catches:
+      #    - Zone not loaded on an instance (NXDOMAIN / empty)
+      #    - Zone drift between primary and replicas (different A record)
+      #    The AXFR chain means all three should converge on the same value.
       PODS=$(kubectl -n $NS get pod -l dns-server=true -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
       if [ -z "$PODS" ]; then
         echo "ERROR: no dns-server=true pods found"
@@ -54,53 +57,31 @@ resource "null_resource" "technitium_readiness_gate" {
 
       # Zone load can take tens of seconds after a memory-bump rollout, so retry
       # up to 6 times with 10s backoff before giving up.
+      ANSWERS=""
       for POD in $PODS; do
         echo "-> dig @127.0.0.1 idrac.viktorbarzin.lan on $POD"
-        OK=0
+        ANSWER=""
         for TRY in 1 2 3 4 5 6; do
           ANSWER=$(kubectl -n $NS exec "$POD" -- dig +short +time=5 +tries=2 @127.0.0.1 idrac.viktorbarzin.lan A 2>&1 || true)
           if echo "$ANSWER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-            OK=1; break
+            break
           fi
           echo "   attempt $TRY: no A record yet, sleeping 10s"
           sleep 10
+          ANSWER=""
         done
-        if [ "$OK" -eq 0 ]; then
-          echo "ERROR: pod $POD never returned an A record for idrac.viktorbarzin.lan (last: $ANSWER)"
+        if [ -z "$ANSWER" ]; then
+          echo "ERROR: pod $POD never returned an A record for idrac.viktorbarzin.lan"
           exit 1
         fi
+        echo "   $POD → $ANSWER"
+        ANSWERS="$ANSWERS $ANSWER"
       done
 
-      # 3. Zone-count parity via an ephemeral curl pod (technitium image has
-      #    no HTTP client). Pod auto-deletes on success via --rm.
-      JOB_NAME="readiness-probe-$RANDOM"
-      CHECK_SCRIPT='
-        set -e
-        for SVC in technitium-web technitium-secondary-web technitium-tertiary-web; do
-          COUNT=$(curl -sf --max-time 10 http://$SVC:5380/api/zones/list?token= | tr "," "\n" | grep -c "\"name\":" || true)
-          printf "%s %s\n" "$SVC" "$${COUNT:-0}"
-        done
-      '
-      RESULT=$(kubectl -n $NS run $JOB_NAME --rm -i --restart=Never --quiet \
-        --image=curlimages/curl:latest --image-pull-policy=IfNotPresent \
-        --timeout=60s -- sh -c "$CHECK_SCRIPT" 2>/dev/null || true)
-      echo "$RESULT"
-
-      COUNTS=$(echo "$RESULT" | awk '{print $2}' | grep -E '^[0-9]+$')
-      if [ -z "$COUNTS" ]; then
-        echo "ERROR: zone-count probe returned no valid counts"
-        exit 1
-      fi
-      # Sanity: Technitium always has built-in zones (localhost, reverse ptrs).
-      # All-zeros means the probe failed to reach the API, not a true parity pass.
-      MIN=$(echo "$COUNTS" | sort -n | head -1)
-      if [ "$MIN" -eq 0 ]; then
-        echo "ERROR: zone-count probe returned 0 for at least one instance — probe likely failed to reach API"
-        exit 1
-      fi
-      UNIQ=$(echo "$COUNTS" | sort -u | wc -l)
+      # 3. Content parity — all three instances must agree on the A record.
+      UNIQ=$(echo "$ANSWERS" | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l)
       if [ "$UNIQ" -gt 1 ]; then
-        echo "ERROR: zone counts differ across instances"
+        echo "ERROR: instances returned different A records for idrac.viktorbarzin.lan: $ANSWERS"
         exit 1
       fi
 
