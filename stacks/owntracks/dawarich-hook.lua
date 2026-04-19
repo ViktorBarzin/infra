@@ -58,6 +58,10 @@ function otr_hook(topic, _type, data)
     otr.log("dawarich-bridge: DAWARICH_API_KEY missing — dropping point")
     return
   end
+  -- Strip the base64 user avatar: ot-recorder appends a ~120KB `face` field
+  -- to enriched payloads which pushes the curl command past ARG_MAX (code=7
+  -- "Argument list too long"). Dawarich doesn't need it.
+  data.face = nil
   local url = "https://dawarich.viktorbarzin.me/api/v1/owntracks/points?api_key=" .. api_key
   local payload = to_json(data)
   local cmd = table.concat({
@@ -67,7 +71,12 @@ function otr_hook(topic, _type, data)
     escape_shell_single(url),
     "&",
   }, " ")
-  local ok = os.execute(cmd)
-  otr.log(string.format("dawarich-bridge: tst=%s lat=%s lon=%s ok=%s",
-    tostring(data.tst), tostring(data.lat), tostring(data.lon), tostring(ok)))
+  local ok, reason, code = os.execute(cmd)
+  if not ok then
+    otr.log("dawarich-bridge: FAIL tst=" .. tostring(data.tst) ..
+            " reason=" .. tostring(reason) .. " code=" .. tostring(code) ..
+            " cmd=" .. cmd)
+  else
+    otr.log("dawarich-bridge: ok tst=" .. tostring(data.tst))
+  end
 end
