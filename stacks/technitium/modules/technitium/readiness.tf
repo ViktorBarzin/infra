@@ -91,6 +91,13 @@ resource "null_resource" "technitium_readiness_gate" {
         echo "ERROR: zone-count probe returned no valid counts"
         exit 1
       fi
+      # Sanity: Technitium always has built-in zones (localhost, reverse ptrs).
+      # All-zeros means the probe failed to reach the API, not a true parity pass.
+      MIN=$(echo "$COUNTS" | sort -n | head -1)
+      if [ "$MIN" -eq 0 ]; then
+        echo "ERROR: zone-count probe returned 0 for at least one instance — probe likely failed to reach API"
+        exit 1
+      fi
       UNIQ=$(echo "$COUNTS" | sort -u | wc -l)
       if [ "$UNIQ" -gt 1 ]; then
         echo "ERROR: zone counts differ across instances"
