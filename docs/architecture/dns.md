@@ -1,10 +1,10 @@
 # DNS Architecture
 
-Last updated: 2026-04-19
+Last updated: 2026-04-19 (NodeLocal DNSCache deployed — Workstream C)
 
 ## Overview
 
-DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage with zone replication via AXFR every 30 minutes.
+DNS is served by a split architecture: **Technitium DNS** handles internal resolution (`.viktorbarzin.lan`) and recursive lookups, while **Cloudflare DNS** manages all public domains (`.viktorbarzin.me`). Kubernetes pods use **CoreDNS** which forwards to Technitium for internal zones. All three Technitium instances run on encrypted block storage with zone replication via AXFR every 30 minutes. A **NodeLocal DNSCache** DaemonSet runs on every node and transparently intercepts pod DNS traffic, caching responses locally so pods keep resolving even during CoreDNS, Technitium, or pfSense disruptions.
 
 ## Architecture Diagram
 
@@ -29,7 +29,9 @@ graph TB
     end
 
     subgraph "Kubernetes Cluster"
+        NodeLocalDNS[NodeLocal DNSCache<br/>DaemonSet, 5 nodes<br/>169.254.20.10 + 10.96.0.10]
         CoreDNS[CoreDNS<br/>kube-system<br/>.:53 + viktorbarzin.lan:53]
+        KubeDNSUpstream[kube-dns-upstream<br/>ClusterIP, selects CoreDNS pods]
 
         subgraph "Technitium HA (namespace: technitium)"
             Primary[Primary<br/>technitium]
@@ -59,6 +61,8 @@ graph TB
     pf_dnsmasq -->|.viktorbarzin.lan| LB_DNS
     pf_dnsmasq -->|public queries| CF
 
+    NodeLocalDNS -->|cache miss| KubeDNSUpstream
+    KubeDNSUpstream --> CoreDNS
     CoreDNS -->|.viktorbarzin.lan| ClusterIP
     CoreDNS -->|public queries| pf_dnsmasq
 
@@ -80,6 +84,7 @@ graph TB
 |-----------|----------|---------|---------|
 | Technitium DNS | K8s namespace `technitium` | 14.3.0 | Primary internal DNS + recursive resolver |
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
+| NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public domain management (~50 domains) |
 | pfSense dnsmasq | 10.0.20.1 | pfSense 2.7.x | DNS forwarder for management VLAN |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
@@ -90,6 +95,7 @@ graph TB
 | Stack | Path | DNS Resources |
 |-------|------|---------------|
 | Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 4 CronJobs, CoreDNS ConfigMap |
+| NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
 | phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
 | pfSense | `stacks/pfsense/` | VM config (DNS config is via pfSense web UI) |
@@ -99,10 +105,12 @@ graph TB
 ### K8s Pod → Internal Domain (.viktorbarzin.lan)
 
 ```
-Pod → CoreDNS (kube-dns:53)
-  → template: if 2+ labels before .viktorbarzin.lan → NXDOMAIN (ndots:5 junk filter)
-  → forward to Technitium ClusterIP (10.96.0.53)
-  → Technitium resolves from viktorbarzin.lan zone
+Pod → NodeLocal DNSCache (intercepts on kube-dns:10.96.0.10)
+  → cache hit: serve locally (TTL 30s / stale up to 86400s via CoreDNS upstream)
+  → cache miss: forward to kube-dns-upstream (selects CoreDNS pods directly)
+     → CoreDNS: template matches 2+ labels before .viktorbarzin.lan → NXDOMAIN
+     → CoreDNS: forward to Technitium ClusterIP (10.96.0.53)
+     → Technitium resolves from viktorbarzin.lan zone
 ```
 
 The ndots:5 template in CoreDNS short-circuits queries like `www.cloudflare.com.viktorbarzin.lan` (caused by K8s search domain expansion) by returning NXDOMAIN for any query with 2+ labels before `.viktorbarzin.lan`. Only single-label queries (e.g., `idrac.viktorbarzin.lan`) reach Technitium.
@@ -110,9 +118,11 @@ The ndots:5 template in CoreDNS short-circuits queries like `www.cloudflare.com.
 ### K8s Pod → Public Domain
 
 ```
-Pod → CoreDNS (kube-dns:53)
-  → forward to pfSense (10.0.20.1), fallback 8.8.8.8, 1.1.1.1
-  → pfSense dnsmasq → Cloudflare (1.1.1.1)
+Pod → NodeLocal DNSCache (intercepts on kube-dns:10.96.0.10)
+  → cache hit: serve locally
+  → cache miss: forward to kube-dns-upstream (selects CoreDNS pods directly)
+     → CoreDNS: forward to pfSense (10.0.20.1), fallback 8.8.8.8, 1.1.1.1
+     → pfSense dnsmasq → Cloudflare (1.1.1.1)
 ```
 
 ### LAN Client (192.168.1.x) → Any Domain
@@ -251,6 +261,23 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 - **Not affected**: 10.0.x.x and K8s clients (reach public IP via pfSense outbound NAT normally)
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
+
+## NodeLocal DNSCache
+
+A DaemonSet in `kube-system` (`node-local-dns`, image `registry.k8s.io/dns/k8s-dns-node-cache:1.23.1`) runs on every node including the control plane. Each pod uses `hostNetwork: true` + `NET_ADMIN` and installs iptables NOTRACK rules so it transparently serves DNS on both:
+
+- **169.254.20.10** — the canonical link-local IP from the upstream docs
+- **10.96.0.10** — the `kube-dns` ClusterIP, so existing pods (which already use this as their nameserver) hit the on-node cache with no kubelet change
+
+Cache misses go to a separate `kube-dns-upstream` ClusterIP service (not `kube-dns`, to avoid looping back to ourselves) that selects the CoreDNS pods directly via `k8s-app=kube-dns`.
+
+Priority class is `system-node-critical`; tolerations are permissive (`operator: Exists`) so the DaemonSet runs on tainted master and other reserved nodes. Kyverno `dns_config` drift is suppressed via `ignore_changes` on the DaemonSet.
+
+**Caching**: `cluster.local:53` caches 9984 success / 9984 denial entries with 30s/5s TTLs. Other zones cache 30s. If CoreDNS is killed, nodes keep answering cached names — verified on 2026-04-19 by deleting all three CoreDNS pods and running `dig @169.254.20.10 idrac.viktorbarzin.lan` + `dig @169.254.20.10 github.com` from a pod (both returned answers).
+
+**Kubelet clusterDNS**: **Unchanged** — still `10.96.0.10`. NodeLocal DNSCache co-listens on that IP so traffic interception is transparent; switching kubelet to `169.254.20.10` would require a rolling reconfigure of every node and provides no additional cache benefit over transparent mode.
+
+**Metrics**: A headless Service `node-local-dns` (ClusterIP `None`) exposes each pod on port `9253` for Prometheus scraping (annotated `prometheus.io/scrape=true`).
 
 ## CoreDNS Configuration
 
@@ -401,11 +428,13 @@ The zone-sync CronJob (runs every 30min) pushes the following to the Prometheus 
 
 ### DNS Not Resolving Internal Domains
 
-1. Check Technitium pods: `kubectl get pod -n technitium`
-2. Check all 3 are healthy: `kubectl get pod -n technitium -l dns-server=true`
-3. Test from a pod: `kubectl exec -it <pod> -- nslookup idrac.viktorbarzin.lan 10.96.0.53`
-4. Check CoreDNS logs: `kubectl logs -n kube-system -l k8s-app=kube-dns`
-5. Verify ClusterIP service: `kubectl get svc -n technitium technitium-dns-internal`
+1. Check NodeLocal DNSCache pods first — pod queries go through these: `kubectl -n kube-system get pod -l k8s-app=node-local-dns -o wide`
+2. Check Technitium pods: `kubectl get pod -n technitium`
+3. Check all 3 are healthy: `kubectl get pod -n technitium -l dns-server=true`
+4. Test via NodeLocal DNSCache from a pod: `kubectl exec -it <pod> -- dig @169.254.20.10 idrac.viktorbarzin.lan`
+5. Bypass NodeLocal DNSCache (test CoreDNS directly): `kubectl exec -it <pod> -- dig @<kube-dns-upstream-ClusterIP> idrac.viktorbarzin.lan` (`kubectl get svc -n kube-system kube-dns-upstream`)
+6. Check CoreDNS logs: `kubectl logs -n kube-system -l k8s-app=kube-dns`
+7. Verify ClusterIP service: `kubectl get svc -n technitium technitium-dns-internal`
 
 ### LAN Clients Can't Resolve
 
