@@ -23,6 +23,14 @@ steps:
           username: viktorbarzin
           password:
             from_secret: dockerhub-pat
+        # Private registry on :5050 requires htpasswd auth since 2026-03-22.
+        # Without this, buildx pushes the second repo but blob HEAD comes
+        # back 401 → pipeline fails → CI false-negative (see bd code-12b).
+        - registry: registry.viktorbarzin.me:5050
+          username:
+            from_secret: registry_user
+          password:
+            from_secret: registry_password
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
