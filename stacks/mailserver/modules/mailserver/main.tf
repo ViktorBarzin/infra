@@ -139,6 +139,17 @@ resource "kubernetes_config_map" "mailserver_config" {
     # attempt waits 5s before responding, stretching a 1000-password
     # dictionary attack from <1s to ~85min. Addresses code-9mi.
     auth_failure_delay = 5s
+    # NOTE (code-vnc 2026-04-19): `viktorbarzin/dovecot_exporter`
+    # expects the legacy old_stats FIFO wire protocol. Dovecot 2.3 still
+    # supports the `old_stats` plugin, but docker-mailserver 15.0.0
+    # ships `service stats` (new architecture) as the default. Mixing
+    # the two — enabling old_stats + declaring `service old-stats
+    # unix_listener stats-reader` — makes `doveadm stats dump` fail
+    # with "Failed to read VERSION line" and the exporter loops on
+    # "Input does not provide any columns". A real fix requires either
+    # a newer exporter that speaks Dovecot 2.3 `doveadm-server` /
+    # HTTP stats, or retiring the exporter entirely. Tracked as a
+    # follow-up task.
     EOF
     fail2ban_conf = <<-EOF
     [DEFAULT]
