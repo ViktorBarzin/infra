@@ -515,6 +515,390 @@
       ]
     },
     {
+      "id": 11,
+      "title": "Tax & pension \u2014 monthly",
+      "description": "Per-month deductions and pension contributions. Stacked \u2014 top equals total tax + pension (both sides). Red = cash income tax; orange = RSU-attributed income tax; amber = NI; brown = student loan; purple = employee pension; light purple = employer pension (paid on top of salary).",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cash_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4162A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (cash pay)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rsu_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0652E"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (RSU-attributed)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ni"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "National Insurance"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "student_loan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8B4513"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Student Loan"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pension_employee"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employee)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pension_employer"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CE96D8"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employer)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "SELECT pay_date AS \"time\", COALESCE(cash_income_tax, income_tax) AS cash_income_tax, income_tax - COALESCE(cash_income_tax, income_tax) AS rsu_income_tax, national_insurance AS ni, student_loan, pension_employee, pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Tax & pension \u2014 YTD cumulative",
+      "description": "Year-to-date cumulative tax and pension. Same series and colors as the monthly panel; resets on 6-April tax year boundary.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_cash_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4162A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (cash pay)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_rsu_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0652E"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (RSU-attributed)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_ni"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "National Insurance"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_student_loan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8B4513"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Student Loan"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_pension_employee"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employee)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_pension_employer"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CE96D8"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (employer)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "SELECT pay_date AS \"time\", SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(student_loan) OVER w AS ytd_student_loan, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(pension_employer) OVER w AS ytd_pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
       "id": 4,
       "title": "Data integrity \u2014 missing months & parser flags",
       "type": "table",
@@ -526,7 +910,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 29
       },
       "fieldConfig": {
         "defaults": {
@@ -695,7 +1079,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -871,7 +1255,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 49
       },
       "fieldConfig": {
         "defaults": {
@@ -1181,7 +1565,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 61
       },
       "options": {
         "monochrome": false,
@@ -1219,7 +1603,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 75
       },
       "fieldConfig": {
         "defaults": {
@@ -1252,42 +1636,93 @@
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "green", "value": -1 },
-                    { "color": "yellow", "value": 1 },
-                    { "color": "red", "value": 50 },
-                    { "color": "red", "value": -50 }
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": -1
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 50
+                    },
+                    {
+                      "color": "red",
+                      "value": -50
+                    }
                   ]
                 }
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "tax_year" },
+            "matcher": {
+              "id": "byName",
+              "options": "tax_year"
+            },
             "properties": [
-              { "id": "unit", "value": "string" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "employer" },
+            "matcher": {
+              "id": "byName",
+              "options": "employer"
+            },
             "properties": [
-              { "id": "unit", "value": "string" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "tax_code" },
+            "matcher": {
+              "id": "byName",
+              "options": "tax_code"
+            },
             "properties": [
-              { "id": "unit", "value": "string" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "paperless_doc_id" },
+            "matcher": {
+              "id": "byName",
+              "options": "paperless_doc_id"
+            },
             "properties": [
-              { "id": "unit", "value": "none" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           }
         ]
@@ -1295,7 +1730,9 @@
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false }
+        "footer": {
+          "show": false
+        }
       },
       "targets": [
         {
@@ -1324,7 +1761,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 85
       },
       "fieldConfig": {
         "defaults": {
@@ -1336,41 +1773,83 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byRegexp", "options": "^delta_" },
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^delta_"
+            },
             "properties": [
-              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "green", "value": -10 },
-                    { "color": "red", "value": 10 },
-                    { "color": "red", "value": -10 }
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": -10
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": -10
+                    }
                   ]
                 }
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "tax_year" },
+            "matcher": {
+              "id": "byName",
+              "options": "tax_year"
+            },
             "properties": [
-              { "id": "unit", "value": "string" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "employer_paye_ref" },
+            "matcher": {
+              "id": "byName",
+              "options": "employer_paye_ref"
+            },
             "properties": [
-              { "id": "unit", "value": "string" },
-              { "id": "custom.align", "value": "left" }
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "snapshot_date" },
+            "matcher": {
+              "id": "byName",
+              "options": "snapshot_date"
+            },
             "properties": [
-              { "id": "unit", "value": "dateTimeAsIso" }
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
             ]
           }
         ]
@@ -1378,7 +1857,9 @@
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false }
+        "footer": {
+          "show": false
+        }
       },
       "targets": [
         {
