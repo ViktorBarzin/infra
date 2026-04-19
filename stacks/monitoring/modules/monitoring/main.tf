@@ -29,6 +29,14 @@ variable "grafana_admin_password" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
+variable "registry_user" {
+  type      = string
+  sensitive = true
+}
+variable "registry_password" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
@@ -214,6 +222,195 @@ resource "kubernetes_cron_job_v1" "dns_anomaly_monitor" {
                 value = "2"
               }
             }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Registry manifest-integrity probe — HEADs every tag in the private R/W
+# registry's catalog, walks multi-platform image indexes, and reports blob
+# availability. Catches the orphan-index failure mode seen 2026-04-13 and
+# 2026-04-19 before downstream pipelines hit it.
+# See: docs/post-mortems/2026-04-19-registry-orphan-index.md
+# -----------------------------------------------------------------------------
+resource "kubernetes_secret" "registry_probe_credentials" {
+  metadata {
+    name      = "registry-probe-credentials"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  type = "Opaque"
+  data = {
+    REG_USER = var.registry_user
+    REG_PASS = var.registry_password
+  }
+}
+
+resource "kubernetes_cron_job_v1" "registry_integrity_probe" {
+  metadata {
+    name      = "registry-integrity-probe"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/15 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "registry-integrity-probe"
+              image = "docker.io/library/alpine:3.20"
+              env {
+                name = "REG_USER"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.registry_probe_credentials.metadata[0].name
+                    key  = "REG_USER"
+                  }
+                }
+              }
+              env {
+                name = "REG_PASS"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.registry_probe_credentials.metadata[0].name
+                    key  = "REG_PASS"
+                  }
+                }
+              }
+              env {
+                name  = "REGISTRY_HOST"
+                value = "10.0.20.10:5050"
+              }
+              env {
+                name  = "REGISTRY_INSTANCE"
+                value = "registry.viktorbarzin.me:5050"
+              }
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/registry-integrity-probe"
+              }
+              env {
+                name  = "TAGS_PER_REPO"
+                value = "5"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                apk add --no-cache curl jq >/dev/null
+
+                REG="$REGISTRY_HOST"
+                INSTANCE="$REGISTRY_INSTANCE"
+                AUTH="$REG_USER:$REG_PASS"
+                ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+
+                push() {
+                  # Prometheus pushgateway — body ends with blank line. Ignore push errors.
+                  curl -sf --max-time 10 --data-binary @- "$PUSHGATEWAY" >/dev/null 2>&1 || true
+                }
+
+                CATALOG=$(curl -sk -u "$AUTH" --max-time 30 "https://$REG/v2/_catalog?n=1000" || echo "")
+                REPOS=$(echo "$CATALOG" | jq -r '.repositories[]?' 2>/dev/null || echo "")
+
+                if [ -z "$REPOS" ]; then
+                  echo "ERROR: empty catalog or auth failure — cannot probe"
+                  NOW=$(date +%s)
+                  push <<METRICS
+                # TYPE registry_manifest_integrity_catalog_accessible gauge
+                registry_manifest_integrity_catalog_accessible{instance="$INSTANCE"} 0
+                # TYPE registry_manifest_integrity_last_run_timestamp gauge
+                registry_manifest_integrity_last_run_timestamp{instance="$INSTANCE"} $NOW
+                METRICS
+                  exit 1
+                fi
+
+                FAIL=0
+                REPOS_N=0
+                TAGS_N=0
+                INDEXES_N=0
+
+                printf '%s\n' $REPOS > /tmp/repos.txt
+                while IFS= read -r repo; do
+                  [ -z "$repo" ] && continue
+                  REPOS_N=$((REPOS_N + 1))
+
+                  TAGS_JSON=$(curl -sk -u "$AUTH" --max-time 15 "https://$REG/v2/$repo/tags/list" || echo "")
+                  echo "$TAGS_JSON" | jq -r '.tags[]?' 2>/dev/null | tail -n "$TAGS_PER_REPO" > /tmp/tags.txt || true
+
+                  while IFS= read -r tag; do
+                    [ -z "$tag" ] && continue
+                    TAGS_N=$((TAGS_N + 1))
+
+                    HTTP=$(curl -sk -u "$AUTH" -o /tmp/m.json -w '%%{http_code}' \
+                      -H "Accept: $ACCEPT" --max-time 15 \
+                      "https://$REG/v2/$repo/manifests/$tag")
+                    if [ "$HTTP" != "200" ]; then
+                      echo "FAIL: $repo:$tag manifest HTTP $HTTP"
+                      FAIL=$((FAIL + 1))
+                      continue
+                    fi
+
+                    MT=$(jq -r '.mediaType // empty' /tmp/m.json 2>/dev/null || echo "")
+                    if echo "$MT" | grep -Eq 'manifest\.list|image\.index'; then
+                      INDEXES_N=$((INDEXES_N + 1))
+                      jq -r '.manifests[].digest' /tmp/m.json > /tmp/children.txt 2>/dev/null || true
+                      while IFS= read -r d; do
+                        [ -z "$d" ] && continue
+                        CH=$(curl -sk -u "$AUTH" -o /dev/null -w '%%{http_code}' \
+                          -H "Accept: $ACCEPT" --max-time 10 -I \
+                          "https://$REG/v2/$repo/manifests/$d")
+                        if [ "$CH" != "200" ]; then
+                          echo "FAIL: $repo:$tag index child $d HTTP $CH"
+                          FAIL=$((FAIL + 1))
+                        fi
+                      done < /tmp/children.txt
+                    fi
+                  done < /tmp/tags.txt
+                done < /tmp/repos.txt
+
+                NOW=$(date +%s)
+                push <<METRICS
+                # TYPE registry_manifest_integrity_failures gauge
+                registry_manifest_integrity_failures{instance="$INSTANCE"} $FAIL
+                # TYPE registry_manifest_integrity_catalog_accessible gauge
+                registry_manifest_integrity_catalog_accessible{instance="$INSTANCE"} 1
+                # TYPE registry_manifest_integrity_repos_checked gauge
+                registry_manifest_integrity_repos_checked{instance="$INSTANCE"} $REPOS_N
+                # TYPE registry_manifest_integrity_tags_checked gauge
+                registry_manifest_integrity_tags_checked{instance="$INSTANCE"} $TAGS_N
+                # TYPE registry_manifest_integrity_indexes_checked gauge
+                registry_manifest_integrity_indexes_checked{instance="$INSTANCE"} $INDEXES_N
+                # TYPE registry_manifest_integrity_last_run_timestamp gauge
+                registry_manifest_integrity_last_run_timestamp{instance="$INSTANCE"} $NOW
+                METRICS
+
+                echo "Probe complete: $FAIL failures across $REPOS_N repos / $TAGS_N tags / $INDEXES_N indexes"
+                if [ "$FAIL" -gt 0 ]; then exit 1; fi
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "48Mi"
+                }
+                limits = {
+                  memory = "96Mi"
+                }
+              }
+            }
+            restart_policy = "OnFailure"
           }
         }
       }

@@ -30,5 +30,7 @@ module "monitoring" {
   haos_api_token                = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
   pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
   grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
+  registry_user                 = data.vault_kv_secret_v2.viktor.data["registry_user"]
+  registry_password             = data.vault_kv_secret_v2.viktor.data["registry_password"]
   tier                          = local.tiers.cluster
 }

@@ -1,12 +1,14 @@
 # Build the CI tools Docker image used by all infra pipelines.
-# Triggers on changes to ci/Dockerfile only (push to master).
+# Triggers on push that touches ci/Dockerfile, or manual (API/UI) so
+# rebuilds after a registry incident don't need a cosmetic Dockerfile edit.
 
 when:
-  event: push
-  branch: master
-  path:
-    include:
-      - 'ci/Dockerfile'
+  - event: push
+    branch: master
+    path:
+      include:
+        - 'ci/Dockerfile'
+  - event: manual
 
 steps:
   - name: build-and-push
@@ -26,6 +28,83 @@ steps:
             from_secret: registry_user
           password:
             from_secret: registry_password
+
+  # Post-push integrity check. Re-resolves the image we just pushed and HEADs
+  # every blob it references — top-level manifest (index or single), each child
+  # platform manifest, each config blob, each layer blob. If any returns !=200
+  # the pipeline fails loudly here so we never ship a broken index downstream.
+  # Historical context: 2026-04-13 and 2026-04-19 incidents both shipped indexes
+  # whose platform/attestation children had been GC-orphaned on the registry VM.
+  - name: verify-integrity
+    image: alpine:3.20
+    environment:
+      REG_USER:
+        from_secret: registry_user
+      REG_PASS:
+        from_secret: registry_password
+    commands:
+      - apk add --no-cache curl jq
+      - REG=registry.viktorbarzin.me:5050
+      - REPO=infra-ci
+      - SHA=${CI_COMMIT_SHA:0:8}
+      - AUTH="$REG_USER:$REG_PASS"
+      - |
+        set -euo pipefail
+        ACCEPT='Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+
+        fetch_manifest() {
+          # Prints the body to $2, returns the HTTP code as stdout.
+          curl -sk -u "$AUTH" -H "$ACCEPT" \
+            -o "$2" -w '%{http_code}' \
+            "https://$REG/v2/$REPO/manifests/$1"
+        }
+        head_blob() {
+          curl -sk -u "$AUTH" -o /dev/null -w '%{http_code}' \
+            -I "https://$REG/v2/$REPO/blobs/$1"
+        }
+
+        verify_single_manifest() {
+          local ref="$1" tmp=/tmp/m-$$.json
+          local rc cfg
+          rc=$(fetch_manifest "$ref" "$tmp")
+          if [ "$rc" != "200" ]; then
+            echo "FAIL: manifest $ref returned HTTP $rc"; return 1
+          fi
+          cfg=$(jq -r '.config.digest // empty' "$tmp")
+          if [ -n "$cfg" ]; then
+            rc=$(head_blob "$cfg")
+            [ "$rc" = "200" ] || { echo "FAIL: config blob $cfg returned HTTP $rc"; return 1; }
+          fi
+          jq -r '.layers[]?.digest' "$tmp" > /tmp/layers-$$.txt
+          while IFS= read -r layer; do
+            [ -z "$layer" ] && continue
+            rc=$(head_blob "$layer")
+            [ "$rc" = "200" ] || { echo "FAIL: layer blob $layer returned HTTP $rc"; return 1; }
+          done < /tmp/layers-$$.txt
+          return 0
+        }
+
+        echo "=== Verifying push integrity for $REPO:$SHA ==="
+        TOP=/tmp/top-$$.json
+        rc=$(fetch_manifest "$SHA" "$TOP")
+        [ "$rc" = "200" ] || { echo "FAIL: top manifest :$SHA returned HTTP $rc"; exit 1; }
+
+        MT=$(jq -r '.mediaType // empty' "$TOP")
+        echo "Top-level media type: ${MT:-<unset>}"
+
+        if echo "$MT" | grep -Eq 'manifest\.list|image\.index'; then
+          jq -r '.manifests[].digest' "$TOP" > /tmp/children-$$.txt
+          echo "Multi-platform index: $(wc -l </tmp/children-$$.txt) child manifest(s)"
+          while IFS= read -r d; do
+            echo "--- child $d ---"
+            verify_single_manifest "$d" || exit 1
+          done < /tmp/children-$$.txt
+        else
+          echo "Single-platform manifest — verifying directly"
+          verify_single_manifest "$SHA" || exit 1
+        fi
+
+        echo "=== All manifests + blobs verified. Push integrity intact. ==="
 
   - name: slack
     image: curlimages/curl

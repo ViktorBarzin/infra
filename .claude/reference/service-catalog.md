@@ -137,3 +137,18 @@ jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
 - `*.viktor.actualbudget` - Actualbudget factory instances
 - `*.freedify` - Freedify factory instances
 - `mailserver.*` - Mail server components (antispam, admin)
+
+## Key Runbooks
+
+Operational surfaces that aren't k8s services (VMs, pipelines, host-side
+procedures) are documented in `infra/docs/runbooks/`:
+
+| Surface | Runbook |
+|---|---|
+| Private Docker registry VM (10.0.20.10) | [registry-vm.md](../../docs/runbooks/registry-vm.md) |
+| Rebuild after orphan-index incident | [registry-rebuild-image.md](../../docs/runbooks/registry-rebuild-image.md) |
+| PVE host operations (backups, LVM) | [proxmox-host.md](../../docs/runbooks/proxmox-host.md) |
+| NFS prerequisites and CSI mount options | [nfs-prerequisites.md](../../docs/runbooks/nfs-prerequisites.md) |
+| pfSense + Unbound DNS | [pfsense-unbound.md](../../docs/runbooks/pfsense-unbound.md) |
+| Mailserver PROXY-protocol / HAProxy | [mailserver-pfsense-haproxy.md](../../docs/runbooks/mailserver-pfsense-haproxy.md) |
+| Technitium apply flow | [technitium-apply.md](../../docs/runbooks/technitium-apply.md) |

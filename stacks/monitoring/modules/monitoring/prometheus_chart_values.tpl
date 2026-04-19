@@ -1471,6 +1471,28 @@ serverFiles:
               severity: info
             annotations:
               summary: "Registry cache hit rate: {{ $value | printf \"%.0f\" }}% (threshold: 25%)"
+          - alert: RegistryManifestIntegrityFailure
+            expr: registry_manifest_integrity_failures > 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Registry has {{ $value }} broken manifest reference(s) — orphan index or missing blob"
+              description: "The registry-integrity-probe CronJob in the monitoring namespace found {{ $value }} manifest/blob references that return non-200 on the private registry. Almost certainly an orphan OCI-index child from the cleanup-tags.sh+GC race. Rebuild the affected image per docs/runbooks/registry-rebuild-image.md and investigate which tag(s) the probe logs flagged."
+          - alert: RegistryIntegrityProbeStale
+            expr: time() - registry_manifest_integrity_last_run_timestamp > 3600
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Registry integrity probe has not reported in >1h — CronJob may be broken"
+          - alert: RegistryCatalogInaccessible
+            expr: registry_manifest_integrity_catalog_accessible == 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Registry probe cannot fetch /v2/_catalog — auth failure or registry down"
           - alert: NodeHighCPUUsage
             expr: pve_cpu_usage_ratio * 100 > 60
             for: 6h
