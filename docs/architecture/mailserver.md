@@ -231,7 +231,7 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 |-------|-----------|----------|
 | MailServerDown | No replicas for 5m | warning |
 | EmailRoundtripFailing | Probe failing for 30m | warning |
-| EmailRoundtripStale | No success in >40m | warning |
+| EmailRoundtripStale | No success in >80m (60m threshold + for:20m) | warning |
 | EmailRoundtripNeverRun | Metric absent for 40m | warning |
 
 ### Uptime Kuma Monitors

@@ -158,7 +158,7 @@ spec:
 
 #### Email Monitoring Alerts
 - **EmailRoundtripFailing**: E2E email probe returning failure for >30m
-- **EmailRoundtripStale**: No successful email round-trip in >40m
+- **EmailRoundtripStale**: No successful email round-trip in >80m (60m threshold + for:20m)
 - **EmailRoundtripNeverRun**: Email probe has never reported (40m)
 
 #### Registry Integrity Alerts
