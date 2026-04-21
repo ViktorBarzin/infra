@@ -73,7 +73,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -726,6 +726,7 @@ serverFiles:
             for: 30m
             labels:
               severity: info
+              subsystem: gpu
             annotations:
               summary: "GPU power: {{ $value | printf \"%.0f\" }}W (threshold: 50W)"
           - alert: HighUtilization
@@ -777,6 +778,7 @@ serverFiles:
             for: 60m
             labels:
               severity: info
+              subsystem: r730
             annotations:
               summary: "Server power: {{ $value | printf \"%.0f\" }}W (threshold: 300W)"
           - alert: UsingInverterEnergyForTooLong
@@ -1411,7 +1413,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Redis master {{ $labels.pod }} has only {{ $value }} connected replicas (expected 2)"
-          - alert: HeadscaleDown
+          - alert: HeadscaleReplicasMismatch
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m
             labels:
@@ -1815,7 +1817,7 @@ serverFiles:
               summary: "Email round-trip probe failing. Check MX DNS, Postfix, Mailgun API, and IMAP."
           - alert: EmailRoundtripStale
             expr: (time() - email_roundtrip_last_success_timestamp{job="email-roundtrip-monitor"}) > 3600
-            for: 10m
+            for: 20m
             labels:
               severity: warning
             annotations:
