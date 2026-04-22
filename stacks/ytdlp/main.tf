@@ -227,7 +227,7 @@ resource "kubernetes_deployment" "yt_highlights" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key    = "nvidia.com/gpu"

@@ -139,7 +139,7 @@ The Kubernetes cluster consists of 5 nodes:
 - **k8s-node1 (201)**: 16c/32GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
 - **k8s-node2-4 (202-204)**: 8c/32GB workers running general-purpose workloads
 
-GPU passthrough on node1 uses PCIe device 0000:06:00.0, with Kubernetes taint `nvidia.com/gpu=true:NoSchedule` and label `gpu=true` to ensure only GPU-requesting pods schedule there.
+GPU passthrough on node1 uses PCIe device 0000:06:00.0. The NVIDIA GPU Operator's gpu-feature-discovery auto-labels whichever node carries the card with `nvidia.com/gpu.present=true`; `null_resource.gpu_node_config` taints the same set of nodes with `nvidia.com/gpu=true:PreferNoSchedule`. No hostname is hardcoded — moving the card to a different node requires no Terraform edits.
 
 ### Service Organization
 

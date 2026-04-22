@@ -138,7 +138,7 @@ Kyverno auto-generates LimitRange + ResourceQuota per namespace based on tier la
 
 - **Proxmox**: 192.168.1.127 (Dell R730, 22c/44t, 142GB RAM)
 - **Nodes**: k8s-master (10.0.20.100), node1 (GPU, Tesla T4), node2-4
-- **GPU workloads**: \`node_selector = { "gpu": "true" }\` + toleration \`nvidia.com/gpu\`
+- **GPU workloads**: \`node_selector = { "nvidia.com/gpu.present" : "true" }\` + toleration \`nvidia.com/gpu\` (label auto-applied by gpu-feature-discovery, no hostname pins)
 - **Pull-through cache**: 10.0.20.10 — use versioned image tags (cache serves stale :latest manifests)
 - **MySQL InnoDB Cluster**: 3 instances on iSCSI
 - **SMTP**: \`var.mail_host\` port 587 STARTTLS

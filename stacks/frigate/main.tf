@@ -87,7 +87,7 @@ resource "kubernetes_deployment" "frigate" {
       }
       spec {
         node_selector = {
-          "gpu" : true
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"

@@ -63,18 +63,25 @@ resource "kubernetes_resource_quota" "nvidia_quota" {
   }
 }
 
-# Apply GPU taint and label to ensure only GPU workloads run on GPU node
+# Apply GPU taint dynamically based on NFD-discovered GPU nodes. The
+# NFD label `feature.node.kubernetes.io/pci-10de.present=true` is
+# auto-applied on any node with an NVIDIA PCI device (vendor 0x10de),
+# so the taint follows the card if it moves between nodes. Workload
+# nodeSelectors key off `nvidia.com/gpu.present=true` (applied by
+# gpu-feature-discovery once the operator is up).
 resource "null_resource" "gpu_node_config" {
   provisioner "local-exec" {
     command = <<-EOT
-      kubectl taint nodes k8s-node1 nvidia.com/gpu=true:PreferNoSchedule --overwrite
-      kubectl label nodes k8s-node1 gpu=true --overwrite
+      set -euo pipefail
+      for node in $(kubectl get nodes -l feature.node.kubernetes.io/pci-10de.present=true -o jsonpath='{.items[*].metadata.name}'); do
+        kubectl taint nodes "$node" nvidia.com/gpu=true:PreferNoSchedule --overwrite
+      done
     EOT
   }
 
-  # Re-run if namespace changes (proxy for cluster changes)
   triggers = {
-    namespace = kubernetes_namespace.nvidia.metadata[0].name
+    namespace    = kubernetes_namespace.nvidia.metadata[0].name
+    command_hash = "dynamic-taint-v1"
   }
 }
 
@@ -141,7 +148,7 @@ resource "kubernetes_deployment" "nvidia-exporter" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"
@@ -604,7 +611,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
         service_account_name = kubernetes_service_account.gpu_pod_exporter.metadata[0].name
 
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
 
         toleration {

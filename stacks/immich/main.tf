@@ -559,7 +559,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       spec {
         priority_class_name = "gpu-workload"
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"

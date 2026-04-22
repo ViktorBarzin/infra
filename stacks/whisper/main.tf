@@ -73,7 +73,7 @@ resource "kubernetes_deployment" "whisper" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"
@@ -195,7 +195,7 @@ resource "kubernetes_deployment" "piper" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"

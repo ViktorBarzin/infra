@@ -122,8 +122,9 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | `offsite-sync-backup.timer` | Timer | Daily 06:00 | Two-step rsync to Synology (sda + NFS via inotify) |
 | `nfs-change-tracker.service` | Service | Continuous | inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log` |
 
-## GPU Node (k8s-node1)
-- **VMID**: 201, **PCIe**: `0000:06:00.0` (NVIDIA Tesla T4)
-- **Taint**: `nvidia.com/gpu=true:NoSchedule`, **Label**: `gpu=true`
-- GPU workloads need: `node_selector = { "gpu": "true" }` + nvidia toleration
-- Taint applied via `null_resource.gpu_node_taint` in `modules/kubernetes/nvidia/main.tf`
+## GPU Node (currently k8s-node1)
+- **VMID**: 201, **PCIe**: `0000:06:00.0` (NVIDIA Tesla T4) — physical passthrough, no Terraform pin
+- **Taint**: `nvidia.com/gpu=true:PreferNoSchedule` (applied dynamically to every NFD-discovered GPU node)
+- **Label**: `nvidia.com/gpu.present=true` (auto-applied by gpu-feature-discovery; also `feature.node.kubernetes.io/pci-10de.present=true` from NFD)
+- GPU workloads need: `node_selector = { "nvidia.com/gpu.present" : "true" }` + nvidia toleration
+- Taint applied via `null_resource.gpu_node_config` in `stacks/nvidia/modules/nvidia/main.tf`; node discovery keyed on the NFD `pci-10de.present` label so the taint follows the card to whichever host is carrying it

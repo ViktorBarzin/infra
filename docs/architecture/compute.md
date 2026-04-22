@@ -18,7 +18,7 @@ graph TB
     subgraph Proxmox["Proxmox VE"]
         direction TB
         MASTER["VM 200: k8s-master<br/>8c / 32GB<br/>10.0.20.100"]
-        NODE1["VM 201: k8s-node1<br/>16c / 32GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:NoSchedule"]
+        NODE1["VM 201: k8s-node1<br/>16c / 32GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:PreferNoSchedule"]
         NODE2["VM 202: k8s-node2<br/>8c / 32GB"]
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
         NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
@@ -72,7 +72,7 @@ graph TB
 | VM | VMID | vCPUs | RAM | Network | Role | Taints |
 |----|------|-------|-----|---------|------|--------|
 | k8s-master | 200 | 8 | 32GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
-| k8s-node1 | 201 | 16 | 32GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:NoSchedule` |
+| k8s-node1 | 201 | 16 | 32GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:PreferNoSchedule` (applied dynamically to whichever node carries the GPU) |
 | k8s-node2 | 202 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
@@ -85,9 +85,9 @@ graph TB
 |-----------|-------|
 | Device | NVIDIA Tesla T4 (16GB GDDR6) |
 | PCIe Address | 0000:06:00.0 |
-| Assigned VM | VMID 201 (k8s-node1) |
-| Node Label | `gpu=true` |
-| Node Taint | `nvidia.com/gpu=true:NoSchedule` |
+| Assigned VM | VMID 201 (k8s-node1) — physical location only, no Terraform pin |
+| Node Label | `nvidia.com/gpu.present=true` (auto-applied by gpu-feature-discovery; also `feature.node.kubernetes.io/pci-10de.present=true` from NFD) |
+| Node Taint | `nvidia.com/gpu=true:PreferNoSchedule` (applied by `null_resource.gpu_node_config` to every NFD-tagged GPU node) |
 | Driver | NVIDIA GPU Operator |
 | Resource Name | `nvidia.com/gpu` |
 
@@ -273,8 +273,8 @@ resources {
 ### GPU Resource Management
 
 **Node Selection**: GPU pods must:
-1. Tolerate `nvidia.com/gpu=true:NoSchedule` taint
-2. Select `gpu=true` label
+1. Tolerate `nvidia.com/gpu=true:PreferNoSchedule` taint
+2. Select `nvidia.com/gpu.present=true` label (auto-applied by gpu-feature-discovery wherever the card is)
 3. Request `nvidia.com/gpu: 1` resource
 
 **Example**:
@@ -286,13 +286,21 @@ spec:
     value: "true"
     effect: NoSchedule
   nodeSelector:
-    gpu: "true"
+    nvidia.com/gpu.present: "true"
   containers:
   - name: app
     resources:
       limits:
         nvidia.com/gpu: 1
 ```
+
+**Portability**: No Terraform code references a specific hostname for
+GPU scheduling. If the GPU card is physically moved to a different
+node, gpu-feature-discovery moves the `nvidia.com/gpu.present=true`
+label with it, and `null_resource.gpu_node_config` re-applies the
+`nvidia.com/gpu=true:PreferNoSchedule` taint to the new host on the
+next apply (discovery keyed on
+`feature.node.kubernetes.io/pci-10de.present=true`).
 
 **GPU Workloads**:
 - Ollama (LLM inference)
@@ -529,7 +537,7 @@ kubectl describe pod <pod-name> -n <namespace>
    ```
    0/5 nodes are available: 5 Insufficient nvidia.com/gpu.
    ```
-   **Fix**: Verify GPU node (201) is Ready and labeled `gpu=true`.
+   **Fix**: Verify the GPU-carrying node is Ready and has the `nvidia.com/gpu.present=true` label. Check `kubectl get nodes -l nvidia.com/gpu.present=true` — if empty, gpu-feature-discovery hasn't labeled any node (operator not running, driver not loaded, or PCI passthrough broken).
 
 ### Pods OOMKilled repeatedly
 
@@ -614,7 +622,7 @@ spec:
     value: "true"
     effect: NoSchedule
   nodeSelector:
-    gpu: "true"
+    nvidia.com/gpu.present: "true"
   containers:
   - name: app
     resources:

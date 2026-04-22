@@ -157,9 +157,9 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
             required_during_scheduling_ignored_during_execution {
               node_selector_term {
                 match_expressions {
-                  key      = "kubernetes.io/hostname"
+                  key      = "nvidia.com/gpu.present"
                   operator = "NotIn"
-                  values   = ["k8s-node1"]
+                  values   = ["true"]
                 }
               }
             }

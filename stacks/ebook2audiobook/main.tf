@@ -72,7 +72,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
 
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"
@@ -290,7 +290,7 @@ resource "kubernetes_deployment" "audiblez" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"
@@ -356,7 +356,7 @@ resource "kubernetes_deployment" "audiblez-web" {
       }
       spec {
         node_selector = {
-          "gpu" : "true"
+          "nvidia.com/gpu.present" : "true"
         }
         toleration {
           key      = "nvidia.com/gpu"
