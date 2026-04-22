@@ -219,6 +219,10 @@ module "ingress" {
   skip_default_rate_limit = true
   exclude_crowdsec        = true
   anti_ai_scraping        = false
+  # Deployment is scaled to 0 (see replicas above). Opt the ingress out of
+  # Uptime Kuma external monitoring so the sync CronJob deletes the orphaned
+  # `[External] poison` monitor instead of flapping DOWN.
+  external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Poison Fountain"
