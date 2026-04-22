@@ -1157,6 +1157,28 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault backup CronJob has never completed successfully"
+          - alert: VaultRaftLeaderStuck
+            expr: |
+              (vault_core_active == 1)
+              and on(instance)
+              (rate(vault_raft_last_index_gauge[5m]) == 0)
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault raft leader {{ $labels.instance }} is active but commit index has not advanced for >2m"
+              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md). NOTE: silent until vault telemetry + scrape job are enabled."
+          - alert: VaultHAStatusUnavailable
+            expr: |
+              (count(up{job="vault"} == 1) > 0)
+              and
+              (count(vault_core_active == 1) == 0)
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault pods are Up but no pod reports HA active leader"
+              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md. NOTE: silent until vault telemetry + scrape job are enabled."
           - alert: VaultwardenBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 86400
             for: 30m
