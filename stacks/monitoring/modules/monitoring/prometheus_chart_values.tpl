@@ -750,6 +750,14 @@ serverFiles:
               severity: critical
             annotations:
               summary: "NVIDIA GPU exporter is down - no GPU metrics available"
+          - alert: GPUNodeUnschedulable
+            expr: kube_node_spec_unschedulable{node="k8s-node1"} == 1
+            for: 5m
+            labels:
+              severity: critical
+              subsystem: gpu
+            annotations:
+              summary: "GPU node {{ $labels.node }} is cordoned — Frigate and GPU workloads cannot schedule"
       - name: Power
         rules:
           - alert: OnBattery
