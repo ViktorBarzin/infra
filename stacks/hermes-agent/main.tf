@@ -220,7 +220,8 @@ resource "kubernetes_deployment" "hermes_agent" {
     strategy {
       type = "Recreate"
     }
-    replicas = 1
+    # Disabled 2026-04-22 — main container fails with "mkdir: cannot create directory '/opt/data': Permission denied" (fsGroup/runAsUser mismatch vs init container). Re-enable after fixing PVC permissions.
+    replicas = 0
     selector {
       match_labels = {
         app = "hermes-agent"
