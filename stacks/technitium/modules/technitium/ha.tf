@@ -434,12 +434,17 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
 
                     while read -r zone; do
                       if grep -qx "$zone" /tmp/replica_zones.txt; then
-                        # Zone exists — just resync
+                        # Zone exists — reconcile primaryNameServerAddresses to the
+                        # stable FQDN before resync. Without this, a zone created
+                        # against an old pod IP (pre-service-ClusterIP era) stays
+                        # pinned to that dead IP forever and zone transfers fail
+                        # silently. Idempotent — Technitium accepts identical values.
+                        curl -sf "$REPLICA/api/zones/options/set?token=$R_TOKEN&zone=$zone&primaryNameServerAddresses=$PRIMARY_HOST" > /dev/null || true
                         curl -sf "$REPLICA/api/zones/resync?token=$R_TOKEN&zone=$zone" > /dev/null || true
                       else
                         # New zone — create as Secondary and validate response
                         echo "NEW: Creating $zone on $REPLICA"
-                        RESP=$(curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_IP" || echo '{"status":"error"}')
+                        RESP=$(curl -sf "$REPLICA/api/zones/create?token=$R_TOKEN&zone=$zone&type=Secondary&primaryNameServerAddresses=$PRIMARY_HOST" || echo '{"status":"error"}')
                         if echo "$RESP" | grep -q '"status":"ok"'; then
                           SYNCED=$((SYNCED + 1))
                         else
@@ -486,7 +491,14 @@ resource "kubernetes_cron_job_v1" "technitium_zone_sync" {
                 value = var.technitium_password
               }
               env {
-                name  = "PRIMARY_IP"
+                # Service ClusterIP — Terraform tracks it on every apply, and the
+                # reconcile loop below re-applies it to every existing zone on
+                # every run (*/30m), so any drift (e.g. service recreate → new
+                # ClusterIP, or historical pod-IP values still pinned on replicas)
+                # self-heals within a sync cycle. Hostname form was tried but
+                # Technitium's own resolver doesn't forward svc.cluster.local,
+                # so `primaryNameServerAddresses` must be a literal IP.
+                name  = "PRIMARY_HOST"
                 value = kubernetes_service.technitium_primary.spec[0].cluster_ip
               }
             }
