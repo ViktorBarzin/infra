@@ -1081,6 +1081,14 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Home Assistant down: {{ $labels.instance }}"
+          - alert: HomeAssistantCriticalSensorUnavailable
+            expr: haos_entity_available{entity=~"sensor\\.(tesla_t4_gpu_(temperature|power_usage|utilization|memory_used)|r730_(cpu_temperature|power_consumption|power_supply_input_voltage_[12]|system_board_(exhaust|inlet)_temperature)|ups_(input_voltage|output_voltage|load|battery_remaining|output_source))"} == 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "HA sensor unavailable: {{ $labels.friendly_name }} ({{ $labels.entity }})"
+              description: "{{ $labels.entity }} on {{ $labels.instance }} has been unavailable for 15+ minutes. Common cause: REST sensor needs HA restart (reload_all doesn't rebuild rest: platform). Verify exporter endpoint from HA: `ssh vbarzin@192.168.1.8` → `curl -sk <exporter-url>`. Fix: `curl -X POST -H \"Authorization: Bearer $HOME_ASSISTANT_SOFIA_TOKEN\" $HOME_ASSISTANT_SOFIA_URL/api/services/homeassistant/restart`."
           - alert: CoreDNSErrors
             expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
