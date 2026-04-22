@@ -160,6 +160,27 @@ prometheus-node-exporter:
       memory: 100Mi
     limits:
       memory: 100Mi
+# NOTE: The parent chart forwards subchart values under `prometheus-pushgateway:`,
+# not `pushgateway:` — using the wrong key silently no-ops.
+prometheus-pushgateway:
+  # Without persistence the pushgateway's in-memory metrics are lost on restart.
+  # Once-per-day pushers (offsite-backup-sync) stay invisible until their next run,
+  # which is why backup_last_success_timestamp{job="offsite-backup-sync"} vanished
+  # after the 2026-04-22 node3 kubelet hiccup.
+  persistentVolume:
+    enabled: true
+    size: 2Gi
+    storageClass: proxmox-lvm-encrypted
+    mountPath: /data
+  extraArgs:
+    - --persistence.file=/data/pushgateway.bin
+    - --persistence.interval=1m
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
 server:
   # Enable me to delete metrics
   extraFlags:

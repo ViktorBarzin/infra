@@ -252,6 +252,13 @@ resource "kubernetes_cron_job_v1" "poison_fetcher" {
             name = "poison-fountain-fetcher"
           }
           spec {
+            security_context {
+              # curlimages/curl defaults to uid 100, but the NFS mount at /data is
+              # owned root:root 755 (writes from the main Deployment which runs as
+              # root). Align the CronJob with the Deployment so mkdir /data/cache
+              # succeeds. no_root_squash is set on the /srv/nfs export.
+              run_as_user = 0
+            }
             container {
               name    = "fetcher"
               image   = "curlimages/curl:latest"

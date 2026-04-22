@@ -692,6 +692,16 @@ module "nfs_backup" {
 - ~~CloudSync monitor~~: Removed (TrueNAS decommissioned)
 - Vaultwarden integrity: Pushes `vaultwarden_sqlite_integrity_ok` hourly
 
+**Pushgateway persistence**: The Pushgateway is configured with
+`--persistence.file=/data/pushgateway.bin --persistence.interval=1m`
+on a 2Gi `proxmox-lvm-encrypted` PVC (helm values:
+`prometheus-pushgateway.persistentVolume`). Without this, every pod
+restart drops in-memory metrics. Once-per-day pushers (offsite-sync,
+weekly backup) are otherwise invisible for up to 24h if the
+Pushgateway restarts between pushes — which is exactly what triggered
+the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
+11:42 UTC terminated the Pushgateway 8h after the 03:12 UTC push).
+
 **Alert routing**:
 - All backup alerts → Slack `#infra-alerts`
 - Vaultwarden integrity fail → Slack `#infra-critical` (immediate action required)
