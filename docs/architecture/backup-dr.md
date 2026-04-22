@@ -226,7 +226,7 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 - They already have app-level dumps (Layer 2)
 - Including them causes ~36% write amplification; excluding them reduces overhead to ~0%
 
-**Monitoring**: Pushes metrics to Pushgateway via NodePort (30091). Alerts: `LVMSnapshotStale` (>24h), `LVMSnapshotFailing`, `LVMThinPoolLow` (<15% free).
+**Monitoring**: Pushes metrics to Pushgateway via NodePort (30091). Alerts: `LVMSnapshotStale` (>30h since last run + 30m `for:`), `LVMSnapshotFailing`, `LVMThinPoolLow` (<15% free).
 
 **Restore**: `lvm-pvc-snapshot restore <pvc-lv> <snapshot-lv>` — auto-discovers K8s workload, scales down, swaps LVs, scales back up. See `docs/runbooks/restore-lvm-snapshot.md`.
 
@@ -673,7 +673,7 @@ module "nfs_backup" {
 │  ~~CloudSyncNeverRun~~      REMOVED (TrueNAS decommissioned)    │
 │  ~~CloudSyncFailing~~       REMOVED (TrueNAS decommissioned)    │
 │  VaultwardenIntegrityFail   integrity_ok == 0                   │
-│  LVMSnapshotStale           > 24h since last snapshot           │
+│  LVMSnapshotStale           > 30h since last snapshot           │
 │  LVMSnapshotFailing         snapshot creation failed            │
 │  LVMThinPoolLow             < 15% free space in thin pool       │
 │  WeeklyBackupStale          > 8d  since last success            │

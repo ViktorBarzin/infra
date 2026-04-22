@@ -1249,12 +1249,13 @@ serverFiles:
             annotations:
               summary: "Backup job failed: {{ $labels.namespace }}/{{ $labels.job_name }}"
           - alert: LVMSnapshotStale
-            expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 172800
+            expr: (time() - lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"}) > 108000
             for: 30m
             labels:
               severity: critical
             annotations:
               summary: "LVM PVC snapshots are {{ $value | humanizeDuration }} old (expected daily)"
+              description: "Timer lvm-pvc-snapshot.timer on 192.168.1.127 hasn't pushed fresh metrics. Runbook: docs/runbooks/restore-lvm-snapshot.md"
           - alert: LVMSnapshotNeverRun
             expr: absent(lvm_snapshot_last_run_timestamp{job="lvm-pvc-snapshot"})
             for: 48h
