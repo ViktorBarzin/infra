@@ -43,7 +43,7 @@ resource "kubernetes_config_map" "haproxy" {
         timeout connect 5s
         timeout client  30s
         timeout server  30s
-        timeout check   3s
+        timeout check   5s
 
       # Dynamic DNS resolution via cluster CoreDNS. Without this, haproxy
       # resolves server hostnames once at startup and caches forever, so
@@ -82,9 +82,9 @@ resource "kubernetes_config_map" "haproxy" {
         tcp-check expect rstring role:master
         tcp-check send "QUIT\r\n"
         tcp-check expect string +OK
-        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
-        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
-        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
+        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
 
       backend redis_sentinel
         balance roundrobin
@@ -362,8 +362,8 @@ resource "kubernetes_config_map" "redis_v2_sentinel_bootstrap" {
       sentinel resolve-hostnames yes
       sentinel announce-hostnames yes
       sentinel monitor mymaster $MASTER_HOST 6379 2
-      sentinel down-after-milliseconds mymaster 5000
-      sentinel failover-timeout mymaster 30000
+      sentinel down-after-milliseconds mymaster 15000
+      sentinel failover-timeout mymaster 60000
       sentinel parallel-syncs mymaster 1
       EOF
 
@@ -396,7 +396,7 @@ resource "kubernetes_service" "redis_v2_headless" {
   }
   spec {
     cluster_ip                  = "None"
-    publish_not_ready_addresses = true
+    publish_not_ready_addresses = false
     selector = {
       app = "redis-v2"
     }
@@ -451,18 +451,15 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         affinity {
           pod_anti_affinity {
-            preferred_during_scheduling_ignored_during_execution {
-              weight = 100
-              pod_affinity_term {
-                label_selector {
-                  match_expressions {
-                    key      = "app"
-                    operator = "In"
-                    values   = ["redis-v2"]
-                  }
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_expressions {
+                  key      = "app"
+                  operator = "In"
+                  values   = ["redis-v2"]
                 }
-                topology_key = "kubernetes.io/hostname"
               }
+              topology_key = "kubernetes.io/hostname"
             }
           }
         }
@@ -535,8 +532,8 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
             }
             initial_delay_seconds = 15
             period_seconds        = 10
-            timeout_seconds       = 3
-            failure_threshold     = 3
+            timeout_seconds       = 10
+            failure_threshold     = 5
           }
           readiness_probe {
             exec {
@@ -580,8 +577,8 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
             }
             initial_delay_seconds = 20
             period_seconds        = 10
-            timeout_seconds       = 3
-            failure_threshold     = 3
+            timeout_seconds       = 10
+            failure_threshold     = 5
           }
           readiness_probe {
             exec {
