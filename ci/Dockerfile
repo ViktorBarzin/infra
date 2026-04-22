@@ -1,12 +1,11 @@
 FROM alpine:3.20
 
-# Rebuild 2026-04-19 — previous :latest index referenced missing blobs (404 on 98f718c8 / 27d5ab83)
-
 # Pin versions to match CI requirements
 ARG TERRAFORM_VERSION=1.5.7
 ARG TERRAGRUNT_VERSION=0.99.4
 ARG SOPS_VERSION=3.9.4
 ARG KUBECTL_VERSION=1.34.0
+ARG VAULT_VERSION=1.18.1
 
 # Install system packages (single layer)
 RUN apk add --no-cache \
@@ -35,6 +34,16 @@ RUN curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSIO
 RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
     -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
+
+# Vault CLI — required by scripts/tg for Tier 1 stack PG credential reads
+# and Tier 0 advisory locks. Pinned to server version (1.18.1). Without this
+# the CI pipeline surfaces the misleading "Cannot read PG credentials" error
+# because scripts/tg swallows stderr ("vault: not found").
+RUN curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" \
+    -o /tmp/vault.zip \
+    && unzip /tmp/vault.zip -d /usr/local/bin/ \
+    && rm /tmp/vault.zip \
+    && vault version
 
 # Provider cache directory (shared across stacks)
 ENV TF_PLUGIN_CACHE_DIR=/tmp/terraform-plugin-cache

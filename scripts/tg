@@ -72,12 +72,23 @@ if [ -n "$STACK_NAME" ]; then
   else
     # Tier 1: PG backend — fetch credentials from Vault
     if [ -z "${PG_CONN_STR:-}" ]; then
-      PG_CREDS=$(vault read -format=json database/static-creds/pg-terraform-state 2>/dev/null) || {
-        echo "ERROR: Cannot read PG credentials from Vault. Run: vault login -method=oidc" >&2
+      # Pre-flight: vault CLI must be available. Previously CI failed with a
+      # misleading "Cannot read PG credentials" message because the Alpine CI
+      # image lacked the vault binary — the 2>/dev/null below swallowed the
+      # real "vault: not found" error. Fail fast with a clear message instead.
+      if ! command -v vault >/dev/null 2>&1; then
+        echo "ERROR: vault CLI not found on PATH. Install it or use an image that includes it (ci/Dockerfile)." >&2
+        exit 1
+      fi
+      VAULT_OUT=$(vault read -format=json database/static-creds/pg-terraform-state 2>&1) || {
+        echo "ERROR: Cannot read PG credentials from Vault. Vault output follows:" >&2
+        echo "$VAULT_OUT" >&2
+        echo "" >&2
+        echo "Hint: humans run 'vault login -method=oidc'; CI auths via K8s SA (role=ci)." >&2
         exit 1
       }
-      PG_USER=$(echo "$PG_CREDS" | jq -r .data.username)
-      PG_PASS=$(echo "$PG_CREDS" | jq -r .data.password)
+      PG_USER=$(echo "$VAULT_OUT" | jq -r .data.username)
+      PG_PASS=$(echo "$VAULT_OUT" | jq -r .data.password)
       export PG_CONN_STR="postgres://${PG_USER}:${PG_PASS}@10.0.20.200:5432/terraform_state?sslmode=disable"
     fi
   fi
