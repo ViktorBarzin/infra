@@ -3,10 +3,10 @@
 | Field | Value |
 |-------|-------|
 | **Date** | 2026-04-22 |
-| **Duration** | External endpoint 503 from ~09:00 UTC to 11:03 UTC (~2h). Full cluster recovery ~12:30 UTC after node4 reboot. |
+| **Duration** | External endpoint 503 from ~09:00 UTC to ~11:43 UTC (~2h 43m). vault-2 became active leader 11:43:28 UTC. |
 | **Severity** | SEV1 (Vault — single source of secrets for 40+ services) |
 | **Affected Services** | All ESO-backed services (password rotation paused). CronJobs that read plan-time secrets (14 stacks). Woodpecker CI (blocked pipeline `d39770b3`). Everything with `ExternalSecret` refresh interval ≤ 2h. |
-| **Status** | Resolved for user traffic; vault-0 pod replacement pending node4 reboot. Terraform not yet reapplied. |
+| **Status** | Vault HA operational with vault-0 + vault-2 quorum. vault-1 still stuck ContainerCreating on node2 (third node2 reboot pending; workload can accept 2/3 quorum). Terraform fix committed as `2f1f9107`; apply pending. |
 
 ## Summary
 
@@ -40,7 +40,14 @@ A Vault raft leader (`vault-2`) entered a stuck goroutine state where its cluste
 | **10:54** | Patched the Vault `StatefulSet` with `fsGroupChangePolicy: OnRootMismatch` so subsequent recreations skip the recursive chown. |
 | **10:57** | Force-deleted `vault-2` and `06fa940b` pod directory on node3. New pod spawned but kubelet again stuck on phantom state from the old pod. |
 | **11:01** | **Hard-reset node3 VM** (`qm reset 203`). |
-| **11:03** | **External endpoint returns 200.** vault-1 elected leader, vault-2 standby, both 2/2 Running. |
+| **11:03** | First 200 response: vault-1 elected leader, vault-2 standby. Premature celebration — vault-1's audit log on node2 NFS starts timing out; `/sys/ha-status` returns 500 even though raft thinks vault-1 is active. |
+| **~11:18** | Service regresses. `vault-1` audit writes hanging (`event not processed by enough 'sink' nodes, context deadline exceeded`). Readiness probe fails; pod goes 1/2; `vault-active` endpoint stays pointed at vault-1's IP but backend unresponsive → 503. |
+| **11:22** | Force-restart `vault-1` to trigger re-election with new pod. Delete + containerd-shim cleanup leaves yet another zombie on node2. Same pattern: force-delete → zombie. |
+| **11:29** | **Hard-reset node4 VM** (`qm reset 204`). Rationale: vault-0 was still blocked there; 74 pods on node4 contribute to NFS server load (load avg 16 on PVE). After reboot, vault-0 mounts its PVCs on fresh kernel state and comes up 2/2 Running 11:31. |
+| **11:31** | Increased PVE NFS threads from 16 to 64 (`echo 64 > /proc/fs/nfsd/threads`). Did not help immediate mount failures — the stuck state is per-client kernel, not server capacity. |
+| **11:38** | Discover DNS resolution issue: vault-2's Go resolver returns NXDOMAIN for short names `vault-0.vault-internal` even though glibc resolver works. CoreDNS restart issued earlier didn't fix. Restart vault-2 pod to force fresh resolver state. |
+| **11:42** | **Second hard-reset of node3 VM** (`qm reset 203`). Kubelet+CSI re-register; vault-2 scheduled, NFS mounts finally succeed on fresh kernel state. |
+| **11:43:28** | **vault-2 becomes active leader.** External endpoint returns 200 and stays there. vault-0 follower, catches up to index 2477632+. vault-1 still stuck on node2; left for later recovery. |
 
 ## Root Cause Chain
 
