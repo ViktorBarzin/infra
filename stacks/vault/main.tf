@@ -117,6 +117,17 @@ resource "helm_release" "vault" {
         }
       }
 
+      # fsGroupChangePolicy=OnRootMismatch skips recursive chown on restart.
+      # Without this, kubelet walks every file over NFS each restart; during
+      # 2026-04-22 outage this looped for 10m+ and blocked quorum recovery.
+      statefulSet = {
+        securityContext = {
+          pod = {
+            fsGroupChangePolicy = "OnRootMismatch"
+          }
+        }
+      }
+
       # Mount unseal key secret
       extraVolumes = [{
         type = "secret"
