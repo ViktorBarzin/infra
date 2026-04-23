@@ -98,7 +98,7 @@ alertmanager:
       - source_matchers:
           - alertname = PowerOutage
         target_matchers:
-          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown|UPSMetricsMissing|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|ATSMetricsMissing|HomeAssistantMetricsMissing|FuseMainMetricsMissing|FuseGarageMetricsMissing|ProxmoxMetricsMissing|iDRACSystemUnhealthy|iDRACServerPoweredOff|ProxmoxExporterDown"
+          - alertname =~ "NodeDown|NFSServerUnresponsive|NodeExporterDown|CloudflaredDown|MetalLBSpeakerDown|MetalLBControllerDown|UPSMetricsMissing|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|ATSMetricsMissing|HomeAssistantMetricsMissing|FuseMainMetricsMissing|FuseGarageMetricsMissing|ThermostatHolMetricsMissing|ThermostatMasterBedroomMetricsMissing|ThermostatOfficeMetricsMissing|ThermostatKidsRoomMetricsMissing|ProxmoxMetricsMissing|iDRACSystemUnhealthy|iDRACServerPoweredOff|ProxmoxExporterDown"
       # iDRAC system-level unhealthy suppresses component-level alerts
       - source_matchers:
           - alertname = iDRACSystemUnhealthy
@@ -113,6 +113,11 @@ alertmanager:
           - alertname = FuseGarageFault
         target_matchers:
           - alertname = FuseGarageMetricsMissing
+      # Tuya Cloud API down suppresses all per-device metrics-missing alerts
+      - source_matchers:
+          - alertname = TuyaCloudDown
+        target_matchers:
+          - alertname =~ "ATSMetricsMissing|FuseMainMetricsMissing|FuseGarageMetricsMissing|ThermostatHolMetricsMissing|ThermostatMasterBedroomMetricsMissing|ThermostatOfficeMetricsMissing|ThermostatKidsRoomMetricsMissing"
       # Containerd broken suppresses downstream pod alerts
       - source_matchers:
           - alertname = KubeletImagePullErrors
@@ -945,6 +950,83 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Garage fuse panel fault detected"
+          - alert: FuseMainHighLeakage
+            expr: fuse_main_leakage_current > 30
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Main fuse leakage current: {{ $value }}mA (threshold: 30mA)"
+          - alert: FuseGarageHighLeakage
+            expr: fuse_garage_leakage_current > 30
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Garage fuse leakage current: {{ $value }}mA (threshold: 30mA)"
+          - alert: FuseMainOvertemperature
+            expr: fuse_main_temperature > 70
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Main fuse temperature: {{ $value }}°C (threshold: 70°C)"
+          - alert: FuseGarageOvertemperature
+            expr: fuse_garage_temperature > 70
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Garage fuse temperature: {{ $value }}°C (threshold: 70°C)"
+          - alert: FuseMainVoltageAbnormal
+            expr: fuse_main_voltage < 200 or fuse_main_voltage > 260
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Main fuse voltage: {{ $value }}V (expected 200-260V)"
+          - alert: FuseGarageVoltageAbnormal
+            expr: fuse_garage_voltage < 200 or fuse_garage_voltage > 260
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Garage fuse voltage: {{ $value }}V (expected 200-260V)"
+      - name: Thermostats
+        rules:
+          - alert: ThermostatOverheating
+            expr: >
+              thermostat_hol_temp_current > 400
+              or thermostat_master_bedroom_temp_current > 400
+              or thermostat_office_temp_current > 400
+              or thermostat_kids_room_temp_current > 400
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat temperature {{ $value | printf \"%.1f\" }} (x10 °C) exceeds 40°C"
+          - alert: ThermostatFreezing
+            expr: >
+              thermostat_hol_temp_current < 50
+              or thermostat_master_bedroom_temp_current < 50
+              or thermostat_office_temp_current < 50
+              or thermostat_kids_room_temp_current < 50
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Thermostat temperature {{ $value | printf \"%.1f\" }} (x10 °C) below 5°C — risk of freezing"
+          - alert: ThermostatHumidityHigh
+            expr: >
+              thermostat_hol_humidity > 80
+              or thermostat_master_bedroom_humidity > 80
+              or thermostat_office_humidity > 80
+              or thermostat_kids_room_humidity > 80
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat humidity {{ $value }}% exceeds 80%"
       - name: Metric Staleness
         rules:
           - alert: UPSMetricsMissing
@@ -989,6 +1071,41 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Fuse garage panel metrics missing for 15m - check tuya-bridge pod"
+          - alert: ThermostatHolMetricsMissing
+            expr: absent(thermostat_hol_temp_current)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat hol metrics missing for 15m - check tuya-bridge pod"
+          - alert: ThermostatMasterBedroomMetricsMissing
+            expr: absent(thermostat_master_bedroom_temp_current)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat master bedroom metrics missing for 15m - check tuya-bridge pod"
+          - alert: ThermostatOfficeMetricsMissing
+            expr: absent(thermostat_office_temp_current)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat office metrics missing for 15m - check tuya-bridge pod"
+          - alert: ThermostatKidsRoomMetricsMissing
+            expr: absent(thermostat_kids_room_temp_current)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Thermostat kids room metrics missing for 15m - check tuya-bridge pod"
+          - alert: TuyaCloudDown
+            expr: count(({__name__=~".*_tuya_cloud_up"}) == 0) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Tuya Cloud API rejecting calls ({{ $value }} devices affected) — renew subscription at iot.tuya.com (code 28841002 = expired trial) or rotate TINYTUYA_API_KEY"
           - alert: ProxmoxMetricsMissing
             expr: absent(pve_up)
             for: 10m
@@ -2409,6 +2526,58 @@ extraScrapeConfigs: |
         action: replace
         regex: '(.*)'
         replacement: 'fuse_main_$${1}'
+  - job_name: 'thermostat-hol'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bf7efce9519bd508df431s'
+    params:
+      api-key: ['${tuya_api_key}']
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'thermostat_hol_$${1}'
+  - job_name: 'thermostat-master-bedroom'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bf70e80159641f61a5lzho'
+    params:
+      api-key: ['${tuya_api_key}']
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'thermostat_master_bedroom_$${1}'
+  - job_name: 'thermostat-office'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bf9597a0064f0349d4b09x'
+    params:
+      api-key: ['${tuya_api_key}']
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'thermostat_office_$${1}'
+  - job_name: 'thermostat-kids-room'
+    static_configs:
+        - targets:
+          - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
+    metrics_path: '/metrics/bfe64da91577117e0annt5'
+    params:
+      api-key: ['${tuya_api_key}']
+    metric_relabel_configs:
+      - source_labels: [ __name__ ]
+        target_label: '__name__'
+        action: replace
+        regex: '(.*)'
+        replacement: 'thermostat_kids_room_$${1}'
   - job_name: 'haos'
     static_configs:
         - targets:

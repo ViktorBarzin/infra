@@ -40,8 +40,11 @@ resource "helm_release" "prometheus" {
   # version    = "15.0.2"
   version = "25.8.2"
 
-  timeout      = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
-  force_update = true # Required for StatefulSet volumeClaimTemplate changes (immutable field)
+  timeout = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
+  # force_update disabled 2026-04-23: caused Helm to try replacing the bound
+  # pushgateway PVC (added in rev 188, see commit e51c104), which is immutable.
+  # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
+  force_update = false
 
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token })]
 }
