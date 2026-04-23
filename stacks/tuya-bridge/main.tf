@@ -118,6 +118,26 @@ resource "kubernetes_deployment" "tuya-bridge" {
               }
             }
           }
+          liveness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 60
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 6
+          }
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 15
+            timeout_seconds       = 5
+            failure_threshold     = 2
+          }
           resources {
             requests = {
               cpu    = "10m"
