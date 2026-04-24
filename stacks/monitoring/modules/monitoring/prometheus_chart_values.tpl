@@ -979,14 +979,14 @@ serverFiles:
             annotations:
               summary: "Garage fuse temperature: {{ $value }}°C (threshold: 70°C)"
           - alert: FuseMainVoltageAbnormal
-            expr: fuse_main_voltage < 200 or fuse_main_voltage > 260
+            expr: fuse_main_voltage / 10 < 200 or fuse_main_voltage / 10 > 260
             for: 5m
             labels:
               severity: critical
             annotations:
               summary: "Main fuse voltage: {{ $value }}V (expected 200-260V)"
           - alert: FuseGarageVoltageAbnormal
-            expr: fuse_garage_voltage < 200 or fuse_garage_voltage > 260
+            expr: fuse_garage_voltage / 10 < 200 or fuse_garage_voltage / 10 > 260
             for: 5m
             labels:
               severity: critical
