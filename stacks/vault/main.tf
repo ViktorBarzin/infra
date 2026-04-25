@@ -25,22 +25,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# NFS StorageClass pointing to Proxmox host (replaces nfs-truenas for vault)
-resource "kubernetes_storage_class" "nfs_proxmox" {
-  metadata {
-    name = "nfs-proxmox"
-  }
-  storage_provisioner    = "nfs.csi.k8s.io"
-  reclaim_policy         = "Retain"
-  volume_binding_mode    = "Immediate"
-  allow_volume_expansion = true
-  parameters = {
-    server = "192.168.1.127"
-    share  = "/srv/nfs"
-  }
-  mount_options = ["soft", "actimeo=5", "retrans=3", "timeo=30"]
-}
-
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault.metadata[0].name

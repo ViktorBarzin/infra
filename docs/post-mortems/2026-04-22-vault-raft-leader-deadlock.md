@@ -1,5 +1,11 @@
 # Post-Mortem: Vault Raft Leader Deadlock + NFS Kernel Client Corruption Cascade
 
+> **Resolution status (2026-04-25):** Resolved structurally by code-gy7h
+> migration. All 3 vault voters now on `proxmox-lvm-encrypted` block
+> storage; the NFS fsync incompatibility that triggered the original
+> raft hang is no longer reachable. See
+> `docs/plans/2026-04-25-nfs-hostile-migration-plan.md` Phase 2.
+
 | Field | Value |
 |-------|-------|
 | **Date** | 2026-04-22 |

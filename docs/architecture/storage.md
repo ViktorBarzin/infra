@@ -131,7 +131,7 @@ graph TB
 **Services on encrypted storage (2026-04-15 migration):**
 vaultwarden, dbaas (mysql+pg+pgadmin), mailserver, nextcloud, forgejo, matrix, n8n, affine, health, hackmd, redis, headscale, frigate, meshcentral, technitium, actualbudget, grampsweb, owntracks, wealthfolio, monitoring (alertmanager)
 
-**Services migrated later** (post-audit catch-up): paperless-ngx (2026-04-25 — sensitive document scans had been left on plain `proxmox-lvm` by an abandoned attempt; rsync swap cleaned up the orphan and re-did via Terraform).
+**Services migrated later** (post-audit catch-up): paperless-ngx (2026-04-25 — sensitive document scans had been left on plain `proxmox-lvm` by an abandoned attempt; rsync swap cleaned up the orphan and re-did via Terraform). Vault raft cluster (2026-04-25 — all 3 voters migrated from `nfs-proxmox` to `proxmox-lvm-encrypted` after the 2026-04-22 raft-leader-deadlock post-mortem found NFS fsync semantics incompatible with raft consensus log; rolled non-leader-first with force-finalize on the pvc-protection finalizer to avoid pod-recreating on the old PVCs).
 
 **CSI node plugin memory**: Requires 1280Mi limit for LUKS2 Argon2id key derivation (~1GiB). Set via `node.plugin.resources` in Helm values (not `node.resources`).
 

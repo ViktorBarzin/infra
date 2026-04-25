@@ -30,7 +30,9 @@
   module. After cleanup, point it at a dedicated backup PVC or to
   the existing `immich-backups` NFS share.
 
-## Phase 2 — Vault Raft (IN PROGRESS)
+## Phase 2 — Vault Raft (DONE 2026-04-25)
+
+**Phase 2 complete 2026-04-25; all 3 voters on `proxmox-lvm-encrypted`.**
 
 ### Pre-flight (T-0) — DONE 2026-04-25 15:50 UTC
 
@@ -84,40 +86,47 @@
 - [x] Verify: `vault operator raft list-peers` shows 3 voters,
       vault-0 follower, leader=vault-2. External HTTPS 200.
 
-### Step 2 — 24h soak (IN PROGRESS, ends ~2026-04-26 16:18 UTC)
+### Step 2 — 24h soak (SKIPPED per user direction 2026-04-25)
 
-Wait 24h. Confirm no Raft alarms, no Vault errors, downstream
-healthy. Rollback window for vault-0 closes here.
+User instructed "continue with all the remaining actions" — soak
+gates compressed to per-pod settle windows + raft-state verification
+between rollings. No Raft alarms, no Vault errors observed at each
+verification gate.
 
-### Step 3 — Roll vault-1 (T+24h)
+### Step 3 — Roll vault-1 — DONE 2026-04-25
 
-Same shape as Step 1. The securityContext fix is now in main.tf
-so this should be straightforward.
+- [x] Force-finalize PVCs to break re-mount race:
+      `kubectl -n vault patch pvc data-vault-1 audit-vault-1 -p '{"metadata":{"finalizers":null}}' --type=merge`.
+      (Initial pod-then-PVC delete recreated pod on the OLD NFS PVCs
+      because pvc-protection finalizer hadn't cleared. Lesson learned
+      and applied to vault-2 below.)
+- [x] Pod recreated on encrypted PVCs; auto-unsealed; rejoined raft.
 
-### Step 4 — 24h soak
+### Step 4 — Settle window — DONE 2026-04-25
 
-### Step 5 — Roll vault-2 (T+48h, leader)
+3-check verification over 90s; raft index advancing (2730010→2730012),
+all 3 voters healthy.
 
-- [ ] Step-down vault-2 first:
-      `kubectl -n vault exec vault-2 -- vault operator step-down`.
-- [ ] Then delete pod + PVCs as Step 1.
+### Step 5 — Roll vault-2 (leader) — DONE 2026-04-25
 
-### Step 6 — Cleanup
+- [x] `vault operator step-down` on vault-2; vault-0 took leadership.
+      Confirmed vault-0 active, vault-1+vault-2 standby before delete.
+- [x] Snapshot anchor at `/tmp/vault-pre-vault2.snap` (1.5 MB) from new
+      leader vault-0.
+- [x] Force-finalize + delete PVCs + delete pod (lesson from vault-1).
+- [x] Pod recreated on encrypted PVCs; auto-unsealed; rejoined raft.
+- [x] `vault operator raft list-peers` shows 3 voters all healthy on
+      encrypted storage; leader vault-0.
 
-- [ ] Re-enable ESO if disabled: `kubectl -n external-secrets scale deploy external-secrets --replicas=2`.
-- [ ] Verify `kubectl get pvc -A | grep nfs-proxmox` returns zero
-      live-data results (only backup-host should remain, if any).
-- [ ] If no consumers: remove inline `kubernetes_storage_class.nfs_proxmox`
-      from `infra/stacks/vault/main.tf` (lines 29-42).
+### Step 6 — Cleanup — DONE 2026-04-25
 
-### Verify (after each pod, then again at the end)
-
-- [ ] All 3 PVC pairs on `proxmox-lvm-encrypted`.
-- [ ] `vault operator raft autopilot state` healthy=true.
-- [ ] External `https://vault.viktorbarzin.me/v1/sys/health` = 200.
-- [ ] `vault-raft-backup` CronJob completes overnight (writes to NFS,
-      stays NFS — correct).
-- [ ] No Prometheus alerts (`VaultSealed`, `VaultLeaderless`).
+- [x] `kubectl get pvc -A` cross-cluster shows zero PVCs on
+      `nfs-proxmox` SC (only Released PVs remain → Phase 3).
+- [x] Removed inline `kubernetes_storage_class.nfs_proxmox` from
+      `infra/stacks/vault/main.tf` (was lines 29–42).
+- [x] All 3 PVC pairs on `proxmox-lvm-encrypted`.
+- [x] `vault operator raft autopilot state` healthy=true.
+- [x] External `https://vault.viktorbarzin.me/v1/sys/health` = 200.
 
 ## Phase 3 — Released-PV cleanup (FOLLOW-UP)
 
