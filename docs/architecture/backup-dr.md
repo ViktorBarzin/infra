@@ -217,7 +217,7 @@ graph LR
 
 Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62 Proxmox CSI PVCs. These are CoW snapshots — instant creation, minimal overhead, sharing the thin pool's free space.
 
-**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot`)
+**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot.sh`). Deploy: `scp infra/scripts/lvm-pvc-snapshot.sh root@192.168.1.127:/usr/local/bin/lvm-pvc-snapshot`
 **Schedule**: Daily 03:00 via systemd timer, 7-day retention
 **Discovery**: Auto-discovers PVC LVs matching `vm-*-pvc-*` pattern in VG `pve` thin pool `data`
 
@@ -234,7 +234,7 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 **Backup disk**: sda (1.1TB RAID1 SAS) → VG `backup` → LV `data` → ext4 → mounted at `/mnt/backup` on PVE host. Dedicated backup disk, independent of live storage.
 
-**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup`)
+**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup.sh`)
 **Schedule**: Daily 05:00 via systemd timer
 **Retention**: 4 weekly versions (weeks 0-3 via `--link-dest` hardlink dedup)
 
