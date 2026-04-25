@@ -2325,6 +2325,216 @@
           "rawSql": "WITH vest_by_month AS (SELECT DATE_TRUNC('month', vest_date)::date AS vest_month, ticker, SUM(shares_vested) AS shares_vested, SUM(gross_value_gbp) AS broker_gross_gbp, SUM(tax_withheld_gbp) AS broker_tax_gbp FROM payslip_ingest.rsu_vest_events GROUP BY 1, 2), payslip_by_month AS (SELECT DATE_TRUNC('month', pay_date)::date AS vest_month, SUM(rsu_vest) AS payslip_rsu_gbp, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) AS payslip_rsu_tax_gbp FROM payslip_ingest.payslip WHERE rsu_vest > 0 GROUP BY 1) SELECT COALESCE(v.vest_month, p.vest_month) AS vest_month, v.ticker, v.shares_vested, v.broker_gross_gbp, p.payslip_rsu_gbp, (p.payslip_rsu_gbp - v.broker_gross_gbp) AS gross_delta_gbp, v.broker_tax_gbp, p.payslip_rsu_tax_gbp, (p.payslip_rsu_tax_gbp - v.broker_tax_gbp) AS tax_delta_gbp, CASE WHEN v.broker_tax_gbp IS NULL OR v.broker_tax_gbp = 0 THEN NULL ELSE ABS(p.payslip_rsu_tax_gbp - v.broker_tax_gbp) * 100.0 / v.broker_tax_gbp END AS tax_delta_pct FROM vest_by_month v FULL OUTER JOIN payslip_by_month p ON p.vest_month = v.vest_month ORDER BY vest_month DESC"
         }
       ]
+    },
+    {
+      "id": 16,
+      "title": "Yearly receipt — where total comp went per tax year",
+      "description": "One stacked bar per tax year. Bar height ≈ total comp (gross_pay + pension salary-sacrifice). Stacks: net pay (bank deposit), cash income tax, RSU tax (band-aware marginal: PAYE+NI), cash NI, student loan, pension via salary-sacrifice, RSU offset (Variant A only). Always shows all years — ignores the time picker.",
+      "type": "barchart",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 179
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisCenteredZero": false,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "net_pay"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Net pay (bank deposit)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cash_income_tax"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4162A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Income Tax (cash)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rsu_tax_marginal"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0652E"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Tax on RSU vest (band-aware marginal)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cash_ni"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "National Insurance (cash)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "student_loan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8B4513"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Student Loan"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pension_sacrifice"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CE96D8"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (salary sacrifice)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rsu_offset"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#888888"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "RSU Offset (Variant A)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "normal",
+        "xField": "tax_year",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH r AS (SELECT * FROM payslip_ingest.payslip), ani AS (SELECT *, COALESCE(SUM(gross_pay - COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS ani_prior FROM r), slice AS (SELECT *, ani_prior + gross_pay - COALESCE(rsu_vest, 0) - COALESCE(pension_sacrifice, 0) AS ani_pre, ani_prior + gross_pay - COALESCE(pension_sacrifice, 0) AS ani_post FROM ani), m AS (SELECT *, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.20 + GREATEST(0, LEAST(ani_post, 100000) - GREATEST(ani_pre, 50270)) * 0.40 + GREATEST(0, LEAST(ani_post, 125140) - GREATEST(ani_pre, 100000)) * 0.60 + GREATEST(0, ani_post - GREATEST(ani_pre, 125140)) * 0.45 AS rsu_paye_marginal, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.08 + GREATEST(0, ani_post - GREATEST(ani_pre, 50270)) * 0.02 AS rsu_ni_marginal FROM slice) SELECT tax_year, SUM(net_pay) AS net_pay, SUM(GREATEST(0, income_tax - rsu_paye_marginal)) AS cash_income_tax, SUM(rsu_paye_marginal + rsu_ni_marginal) AS rsu_tax_marginal, SUM(GREATEST(0, national_insurance - rsu_ni_marginal)) AS cash_ni, SUM(student_loan) AS student_loan, SUM(COALESCE(pension_sacrifice, 0)) AS pension_sacrifice, SUM(rsu_offset) AS rsu_offset FROM m GROUP BY tax_year ORDER BY tax_year"
+        }
+      ]
     }
   ],
   "refresh": "5m",
