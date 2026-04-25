@@ -539,7 +539,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-health", "pg-linkwarden",
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
-    "pg-wealthfolio-sync"
+    "pg-wealthfolio-sync", "pg-fire-planner"
   ]
 
   postgresql {
@@ -698,6 +698,14 @@ resource "vault_database_secret_backend_static_role" "pg_wealthfolio_sync" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-wealthfolio-sync"
   username        = "wealthfolio_sync"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_fire_planner" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-fire-planner"
+  username        = "fire_planner"
   rotation_period = 604800
 }
 

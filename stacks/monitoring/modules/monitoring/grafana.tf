@@ -137,6 +137,7 @@ locals {
     "uk-payslip.json"         = "Finance"
     "job-hunter.json"         = "Finance"
     "wealth.json"             = "Finance"
+    "fire-planner.json"       = "Finance"
   }
 }
 

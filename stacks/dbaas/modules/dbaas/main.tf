@@ -1236,6 +1236,34 @@ resource "null_resource" "pg_wealthfolio_sync_db" {
   }
 }
 
+# Create fire_planner database for the FIRE retirement-planning service.
+# Role password is managed by Vault Database Secrets Engine
+# (static role `pg-fire-planner`, 7d rotation).
+# fire_planner reads from payslip_ingest + wealthfolio_sync (read-only)
+# and writes its own MC results into schema fire_planner.
+resource "null_resource" "pg_fire_planner_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "fire_planner"
+    username = "fire_planner"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'fire_planner'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE fire_planner WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'fire_planner'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE fire_planner OWNER fire_planner"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE fire_planner TO fire_planner"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {
