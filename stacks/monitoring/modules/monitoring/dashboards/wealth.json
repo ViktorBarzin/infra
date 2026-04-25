@@ -507,7 +507,14 @@
             "lineWidth": 1
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "year"},
+            "properties": [
+              {"id": "unit", "value": "string"}
+            ]
+          }
+        ]
       },
       "options": {
         "barRadius": 0,
@@ -553,6 +560,12 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "year"},
+            "properties": [
+              {"id": "unit", "value": "string"}
+            ]
+          },
           {
             "matcher": {"id": "byName", "options": "contributions"},
             "properties": [
