@@ -352,6 +352,7 @@
     {
       "id": 2,
       "title": "Monthly cash flow (RSU stripped)",
+      "description": "Cash-only view: gross pay minus the RSU vest (cash_gross) and the bank-deposited net_pay. Tax and NI are not shown here because UK cumulative PAYE genuinely takes a YTD true-up chunk in vest months on top of the marginal RSU PAYE — see Panel 11 for the full tax breakdown with the flat 47% RSU split.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -422,7 +423,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, net_pay, COALESCE(cash_income_tax, income_tax) AS income_tax, national_insurance FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", (gross_pay - rsu_vest) AS cash_gross, net_pay FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
