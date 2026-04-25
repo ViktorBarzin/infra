@@ -518,7 +518,7 @@
     {
       "id": 11,
       "title": "Tax & pension \u2014 monthly",
-      "description": "Per-month deductions and pension contributions. Stacked \u2014 top equals total tax + pension. RSU vest tax broken out at a flat 47% marginal (45% PAYE + 2% NI), so the orange slice scales linearly with vest size; cash PAYE/NI slices have those amounts subtracted out so the stack still totals to actual deductions. Red = cash income tax; orange = tax on RSU vest @ 47%; amber = cash NI; brown = student loan; purple = employee pension; light purple = employer pension (paid on top of salary).",
+      "description": "Per-month RSU vest tax + recurring deductions. Cash-side PAYE/NI hidden because UK cumulative PAYE makes them inherently bumpy in vest months despite the marginal RSU strip \u2014 see Panel 12 (YTD cumulative) for the smoothed totals or Panel 3 for the effective rate. Orange = tax on RSU vest @ 47% (45% PAYE + 2% NI); brown = student loan; purple = employee pension; light purple = employer pension (paid on top of salary).",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -566,25 +566,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "cash_income_tax"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#C4162A"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Income Tax (cash)"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "rsu_tax_marginal"
             },
             "properties": [
@@ -598,25 +579,6 @@
               {
                 "id": "displayName",
                 "value": "Tax on RSU vest (@ 47% marginal)"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cash_ni"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "National Insurance (cash)"
               }
             ]
           },
@@ -699,7 +661,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", GREATEST(0, income_tax - rsu_vest * 0.45) AS cash_income_tax, rsu_vest * 0.47 AS rsu_tax_marginal, GREATEST(0, national_insurance - rsu_vest * 0.02) AS cash_ni, student_loan, pension_employee, pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", rsu_vest * 0.47 AS rsu_tax_marginal, student_loan, pension_employee, pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
