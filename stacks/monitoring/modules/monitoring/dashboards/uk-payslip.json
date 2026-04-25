@@ -434,7 +434,7 @@
     {
       "id": 3,
       "title": "Effective rate & take-home % (YTD cumulative)",
-      "description": "YTD-cumulative rates. PAYE rate uses reported taxable_pay as the base; all-deductions rate uses gross_pay. Computed from cumulative SUM over the tax year, so vest-month RSU tax is blended proportionally with RSU value \u2014 no per-slip attribution hack, no spikes.",
+      "description": "YTD-cumulative rates \u2014 three angles on take-home. (1) PAYE rate = SUM(income_tax) / SUM(taxable_pay): the audit number HMRC uses, converges to ~marginal in the additional-rate band. (2) Cash take-home % = SUM(net_pay) / SUM(gross_pay - rsu_vest): what fraction of cash earnings becomes a bank deposit; useful for cash-flow planning. (3) Total keep % = (SUM(net_pay) + 0.53 \u00d7 SUM(rsu_vest)) / SUM(gross_pay): true 'what I actually keep' including post-tax RSU shares (47% marginal applied to vest value). Resets on 6-April tax year boundary.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -485,7 +485,65 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_paye_rate_pct"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#C4162A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "PAYE rate (HMRC, on taxable_pay)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_cash_take_home_pct"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Cash take-home % (net / cash_gross)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ytd_total_keep_pct"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Total keep % (cash + post-tax shares)"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -507,7 +565,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", ROUND(((SUM(income_tax) OVER w)::numeric / NULLIF(SUM(COALESCE(taxable_pay, gross_pay)) OVER w, 0)) * 100, 2) AS \"ytd_paye_rate_pct\", ROUND((((SUM(income_tax) OVER w) + (SUM(national_insurance) OVER w) + (SUM(student_loan) OVER w))::numeric / NULLIF(SUM(gross_pay) OVER w, 0)) * 100, 2) AS \"ytd_all_deductions_pct\", ROUND(((SUM(net_pay) OVER w)::numeric / NULLIF(SUM(gross_pay) OVER w, 0)) * 100, 2) AS \"ytd_take_home_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", ROUND(((SUM(income_tax) OVER w)::numeric / NULLIF(SUM(COALESCE(taxable_pay, gross_pay)) OVER w, 0)) * 100, 2) AS \"ytd_paye_rate_pct\", ROUND(((SUM(net_pay) OVER w)::numeric / NULLIF(SUM(gross_pay - rsu_vest) OVER w, 0)) * 100, 2) AS \"ytd_cash_take_home_pct\", ROUND((((SUM(net_pay) OVER w) + 0.53 * (SUM(rsu_vest) OVER w))::numeric / NULLIF(SUM(gross_pay) OVER w, 0)) * 100, 2) AS \"ytd_total_keep_pct\" FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
