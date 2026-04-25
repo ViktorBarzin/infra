@@ -130,8 +130,29 @@ all 3 voters healthy.
 
 ## Phase 3 — Released-PV cleanup (FOLLOW-UP)
 
-After Phase 1+2 land cleanly, ~30 PVs in `Released` hold dead LVs.
-Reclaim by:
+### Step 3.1 — vault Released PVs — DONE 2026-04-25
+
+6 vault NFS PVs (Released, `nfs-proxmox` SC, Retain policy) deleted
+along with their NFS subdirectories on PVE host (~1.5 GB reclaimed):
+
+| PV | Claim | Size on disk |
+|---|---|---|
+| pvc-004a5d3b-… | data-vault-2 | 45M |
+| pvc-808a78ec-… | audit-vault-1 | 1.4M |
+| pvc-918ee7c1-… | audit-vault-0 | 3.2M |
+| pvc-9d2ddcb4-… | data-vault-0 | 46M |
+| pvc-a659711d-… | data-vault-1 | 46M |
+| pvc-d2e65109-… | audit-vault-2 | 1.4G |
+
+Procedure: `kubectl delete pv <name>` (cluster object only — Retain
+policy means CSI never touches NFS) then `rm -rf /srv/nfs/<dir>` on
+192.168.1.127.
+
+### Step 3.2 — Cluster-wide Released PV sweep (DEFERRED)
+
+~50 other Released PVs persist across the cluster (~200 GiB on
+`proxmox-lvm` and `proxmox-lvm-encrypted`). Out of scope for the
+2026-04-25 NFS-hostile session per user direction. To reclaim:
 
 1. List Released PVs, confirm LV exists on PVE.
 2. `kubectl delete pv <name>` (CSI removes underlying LV when PV is
