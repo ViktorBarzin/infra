@@ -932,7 +932,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 39
       },
       "fieldConfig": {
         "defaults": {
@@ -1086,7 +1086,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -1260,7 +1260,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -1436,7 +1436,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 68
       },
       "fieldConfig": {
         "defaults": {
@@ -1746,7 +1746,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 80
       },
       "options": {
         "monochrome": false,
@@ -1784,7 +1784,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 94
       },
       "fieldConfig": {
         "defaults": {
@@ -1939,10 +1939,10 @@
         "uid": "payslips-pg"
       },
       "gridPos": {
-        "h": 11,
-        "w": 24,
+        "h": 10,
+        "w": 12,
         "x": 0,
-        "y": 179
+        "y": 29
       },
       "fieldConfig": {
         "defaults": {
@@ -2074,10 +2074,10 @@
         "uid": "payslips-pg"
       },
       "gridPos": {
-        "h": 11,
-        "w": 24,
-        "x": 0,
-        "y": 190
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 29
       },
       "fieldConfig": {
         "defaults": {
