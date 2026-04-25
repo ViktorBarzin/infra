@@ -439,8 +439,8 @@
     },
     {
       "id": 11,
-      "title": "Trailing 12-month growth %",
-      "description": "% change in net worth over the trailing 12 months. Captures market momentum + new contributions combined.",
+      "title": "Trailing 12-month investment return %",
+      "description": "Modified-Dietz return over the trailing 12 months: market_gain / (nw_12mo_ago + 0.5 × contributions_12mo). Excludes new money in — answers 'how did my investments perform' rather than 'how much did my net worth change'.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
       "gridPos": {"h": 4, "w": 24, "x": 0, "y": 59},
@@ -475,14 +475,14 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH t12 AS (SELECT (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = (SELECT MAX(valuation_date) FROM daily_account_valuation)) AS now_nw, (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation))) AS yr_ago_nw) SELECT ROUND(((now_nw - yr_ago_nw) / NULLIF(yr_ago_nw, 0) * 100)::numeric, 2) AS pct_12mo FROM t12"
+          "rawSql": "WITH bounds AS (SELECT (SELECT MAX(valuation_date) FROM daily_account_valuation) AS d_now, (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation)) AS d_ago), agg AS (SELECT (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS nw_now, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS contrib_now, (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS nw_ago, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS contrib_ago FROM bounds b) SELECT ROUND((((nw_now - nw_ago - (contrib_now - contrib_ago)) / NULLIF(nw_ago + 0.5 * (contrib_now - contrib_ago), 0)) * 100)::numeric, 2) AS pct_12mo FROM agg"
         }
       ]
     },
     {
       "id": 12,
-      "title": "Yearly growth %",
-      "description": "% change in net worth from the first to last valuation in each calendar year. Includes both market gains and new contributions — see Panel 13 for the decomposition.",
+      "title": "Yearly investment return %",
+      "description": "Modified-Dietz return per calendar year: market_gain / (nw_start + 0.5 × contributions). Pure investment performance — excludes new contributions, so a £100k vest doesn't show as 100% growth. Negative bars = market losses (e.g., 2022 bear market).",
       "type": "barchart",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
       "gridPos": {"h": 11, "w": 24, "x": 0, "y": 63},
@@ -528,7 +528,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw FROM daily_account_valuation GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND(((nw_end - nw_start) / NULLIF(nw_start, 0) * 100)::numeric, 2) AS growth_pct FROM endpoints WHERE nw_start > 0 ORDER BY yr"
+          "rawSql": "WITH yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM daily_account_valuation GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((((nw_end - nw_start - (contrib_end - contrib_start)) / NULLIF(nw_start + 0.5 * (contrib_end - contrib_start), 0)) * 100)::numeric, 2) AS return_pct FROM endpoints WHERE (nw_start + 0.5 * (contrib_end - contrib_start)) > 0 ORDER BY yr"
         }
       ]
     },

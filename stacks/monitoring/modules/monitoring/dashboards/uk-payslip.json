@@ -2538,9 +2538,9 @@
     },
     {
       "id": 17,
-      "title": "Gross composition by tax year — salary / bonus / RSU / other",
-      "description": "Per-tax-year stacked bar of gross pay broken into earned components: salary, bonus, RSU vest value, and other (overtime, benefits-in-kind, etc.). Bar height = total gross. Compare year-over-year trends in base salary growth, bonus levels, and RSU vest sizing. Always shows all years — ignores the time picker.",
-      "type": "barchart",
+      "title": "YTD gross salary — year-over-year comparison",
+      "description": "Cumulative gross pay built up month by month within each UK tax year (April → March). One line per tax year. Pay dates are projected onto a 1970/71 fiscal calendar so years overlay cleanly — the X-axis shows month-of-tax-year (April first, March last). Always shows all years; ignores the time picker.",
+      "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "payslips-pg"
@@ -2557,58 +2557,20 @@
           "unit": "currencyGBP",
           "decimals": 0,
           "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
             "axisPlacement": "auto",
-            "axisLabel": "",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "lineWidth": 1
+            "stacking": {"group": "A", "mode": "none"}
           }
         },
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "salary"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}},
-              {"id": "displayName", "value": "Salary"}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "bonus"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#FADE2A"}},
-              {"id": "displayName", "value": "Bonus"}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "rsu"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#3274D9"}},
-              {"id": "displayName", "value": "RSU vest"}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "other"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#888888"}},
-              {"id": "displayName", "value": "Other"}
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
-        "barRadius": 0,
-        "barWidth": 0.6,
-        "groupWidth": 0.7,
-        "orientation": "auto",
-        "showValue": "auto",
-        "stacking": "normal",
-        "xField": "tax_year",
-        "xTickLabelRotation": 0,
-        "legend": {
-          "calcs": ["sum"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
+        "legend": {"calcs": ["last", "max"], "displayMode": "table", "placement": "bottom"},
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
@@ -2620,8 +2582,8 @@
           },
           "rawQuery": true,
           "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT tax_year, SUM(salary) AS salary, SUM(bonus) AS bonus, SUM(rsu_vest) AS rsu, SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)) AS other FROM payslip_ingest.payslip GROUP BY tax_year ORDER BY tax_year"
+          "format": "time_series",
+          "rawSql": "SELECT (DATE '1970-04-06' + (pay_date - MAKE_DATE(SUBSTRING(tax_year, 1, 4)::int, 4, 6)))::timestamp AS \"time\", tax_year AS metric, SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_gross FROM payslip_ingest.payslip ORDER BY tax_year, pay_date"
         }
       ]
     }
