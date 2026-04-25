@@ -85,6 +85,30 @@ module "nfs_postgresql_host" {
   nfs_path   = "/srv/nfs/immich/postgresql"
 }
 
+# Migrated 2026-04-25: PG live data moved off NFS to LUKS-encrypted block.
+# WAL fsync per commit on NFS contributed to the 2026-04-22 NFS writeback storm
+# (see post-mortems/2026-04-22-vault-raft-leader-deadlock.md).
+# Backup CronJob still writes to module.nfs_postgresql_host (NFS append-only).
+resource "kubernetes_persistent_volume_claim" "immich_postgresql_encrypted" {
+  wait_until_bound = false
+  metadata {
+    name      = "immich-postgresql-data-encrypted"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = { storage = "10Gi" }
+    }
+  }
+}
+
 module "nfs_ml_cache_host" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "immich-ml-cache-host"
@@ -462,6 +486,13 @@ resource "kubernetes_deployment" "immich-postgres" {
           name  = "write-pg-override-conf"
           image = "busybox:1.36"
           command = ["sh", "-c", <<-EOT
+            # Skip write on uninitialised PGDATA — initdb refuses non-empty dirs.
+            # On first boot the override is absent; trigger a pod restart after
+            # initdb completes so the override is applied before extension load.
+            if [ ! -f /data/PG_VERSION ]; then
+              echo "PGDATA uninitialised, skipping override conf (will write on next pod start)"
+              exit 0
+            fi
             cat > /data/postgresql.override.conf <<'PGCONF'
             # Immich vector search performance tuning
             shared_buffers = 2048MB
@@ -481,7 +512,7 @@ resource "kubernetes_deployment" "immich-postgres" {
         volume {
           name = "postgresql-persistent-storage"
           persistent_volume_claim {
-            claim_name = module.nfs_postgresql_host.claim_name
+            claim_name = kubernetes_persistent_volume_claim.immich_postgresql_encrypted.metadata[0].name
           }
         }
       }
