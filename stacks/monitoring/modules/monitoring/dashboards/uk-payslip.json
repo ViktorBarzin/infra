@@ -2539,8 +2539,9 @@
     {
       "id": 17,
       "title": "YTD gross salary — year-over-year comparison",
-      "description": "Cumulative gross pay built up month by month within each UK tax year (April → March). One line per tax year. Pay dates are projected onto a 1970/71 fiscal calendar so years overlay cleanly — the X-axis shows month-of-tax-year (April first, March last). Always shows all years; ignores the time picker.",
+      "description": "Cumulative gross pay built up month by month within each UK tax year (April → March). One line per tax year. Pay dates are projected onto a sliding 12-month window ending now, so years overlay cleanly without falling outside the dashboard's time range. X-axis shows month-of-tax-year (April first, March last).",
       "type": "timeseries",
+      "timeFrom": "13M",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "payslips-pg"
@@ -2583,7 +2584,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "SELECT (DATE '1970-04-06' + (pay_date - MAKE_DATE(SUBSTRING(tax_year, 1, 4)::int, 4, 6)))::timestamp AS \"time\", tax_year AS metric, SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd_gross FROM payslip_ingest.payslip ORDER BY tax_year, pay_date"
+          "rawSql": "WITH projected AS (SELECT ((CURRENT_DATE - INTERVAL '12 months')::date + (pay_date - MAKE_DATE(SUBSTRING(tax_year, 1, 4)::int, 4, 6)))::timestamp AS t, tax_year, SUM(gross_pay) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd FROM payslip_ingest.payslip) SELECT t AS \"time\", tax_year AS metric, ytd AS ytd_gross FROM projected ORDER BY t, tax_year"
         }
       ]
     }
