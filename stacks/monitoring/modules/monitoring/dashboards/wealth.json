@@ -436,6 +436,213 @@
           "rawSql": "SELECT a.activity_date AS \"date\", acc.name AS \"account\", a.activity_type AS \"type\", a.asset_id AS \"asset\", a.quantity AS \"qty\", a.unit_price AS \"unit_price\", a.amount AS \"amount\", a.currency AS \"ccy\", a.notes AS \"notes\" FROM activities a LEFT JOIN accounts acc ON acc.id = a.account_id WHERE $__timeFilter(a.activity_date) ORDER BY a.activity_date DESC LIMIT 100"
         }
       ]
+    },
+    {
+      "id": 11,
+      "title": "Trailing 12-month growth %",
+      "description": "% change in net worth over the trailing 12 months. Captures market momentum + new contributions combined.",
+      "type": "stat",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 59},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {"mode": "thresholds"},
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0},
+              {"color": "green", "value": 5}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH t12 AS (SELECT (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = (SELECT MAX(valuation_date) FROM daily_account_valuation)) AS now_nw, (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation))) AS yr_ago_nw) SELECT ROUND(((now_nw - yr_ago_nw) / NULLIF(yr_ago_nw, 0) * 100)::numeric, 2) AS pct_12mo FROM t12"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Yearly growth %",
+      "description": "% change in net worth from the first to last valuation in each calendar year. Includes both market gains and new contributions — see Panel 13 for the decomposition.",
+      "type": "barchart",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 63},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0},
+              {"color": "green", "value": 5}
+            ]
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "xField": "year",
+        "xTickLabelRotation": 0,
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw FROM daily_account_valuation GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND(((nw_end - nw_start) / NULLIF(nw_start, 0) * 100)::numeric, 2) AS growth_pct FROM endpoints WHERE nw_start > 0 ORDER BY yr"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Annual change decomposition — contributions vs market gain",
+      "description": "Each calendar year's net worth change split into 'new money in' (contributions − withdrawals) and 'market gain' (everything else: price appreciation, dividends, etc.). Shows whether you grew because you saved or because the market did the work. Negative bars = withdrawals or market losses.",
+      "type": "barchart",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 74},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "custom": {
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "contributions"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}},
+              {"id": "displayName", "value": "Net contributions"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "market_gain"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#56A64B"}},
+              {"id": "displayName", "value": "Market gain"}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "normal",
+        "xField": "year",
+        "xTickLabelRotation": 0,
+        "legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM daily_account_valuation GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((contrib_end - contrib_start)::numeric, 0) AS contributions, ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain FROM endpoints ORDER BY yr"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Per-account ROI %",
+      "description": "(market value − net contribution) / net contribution × 100, latest snapshot. Excludes accounts with zero/negative net contribution (Schwab — RSU vests sold = negative contribution distorts the ratio). Pension shows 0% because Wealthfolio doesn't track underlying fund holdings, so cost_basis = 0 and 'growth' is just the cash balance reported.",
+      "type": "barchart",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 85},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0},
+              {"color": "green", "value": 10}
+            ]
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "orientation": "horizontal",
+        "showValue": "always",
+        "stacking": "none",
+        "xField": "account",
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT a.name AS account, ROUND(((d.total_value - d.net_contribution) / NULLIF(d.net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date = (SELECT MAX(valuation_date) FROM daily_account_valuation) AND d.net_contribution > 0 ORDER BY roi_pct DESC"
+        }
+      ]
     }
   ],
   "refresh": "5m",
