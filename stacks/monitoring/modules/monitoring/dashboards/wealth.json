@@ -353,7 +353,7 @@
     {
       "id": 9,
       "title": "Cash vs invested (stacked)",
-      "description": "Daily breakdown of cash holdings vs market value of investments, summed across all accounts.",
+      "description": "Daily breakdown of uninvested broker cash vs market value of investments. WORKPLACE_PENSION accounts (Fidelity) are reclassified entirely as invested — Wealthfolio dumps pension wrappers into cash_balance because it doesn't track the underlying fund holdings, but they are not actually cash.",
       "type": "timeseries",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 35},
@@ -400,7 +400,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "SELECT valuation_date::timestamp AS \"time\", SUM(cash_balance) AS cash, SUM(investment_market_value) AS invested FROM daily_account_valuation WHERE $__timeFilter(valuation_date) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "SELECT d.valuation_date::timestamp AS \"time\", SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN 0 ELSE d.cash_balance END) AS cash, SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN d.cash_balance + d.investment_market_value ELSE d.investment_market_value END) AS invested FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) GROUP BY d.valuation_date ORDER BY d.valuation_date"
         }
       ]
     },

@@ -27,6 +27,10 @@ variable "grafana_admin_password" {
   type      = string
   sensitive = true
 }
+variable "kube_config_path" {
+  type      = string
+  sensitive = true
+}
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
 variable "registry_user" {

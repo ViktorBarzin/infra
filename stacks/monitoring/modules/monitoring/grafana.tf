@@ -134,11 +134,19 @@ locals {
     # Applications
     "qbittorrent.json"        = "Applications"
     "realestate-crawler.json" = "Applications"
-    "uk-payslip.json"         = "Finance"
+    "uk-payslip.json"         = "Finance (Personal)"
+    "wealth.json"             = "Finance (Personal)"
     "job-hunter.json"         = "Finance"
-    "wealth.json"             = "Finance"
     "fire-planner.json"       = "Finance"
   }
+
+  # Folders restricted to the Grafana admin user (anonymous Viewer + any future
+  # non-admin users are denied). Permission set by null_resource below via the
+  # Grafana folder permissions API after the dashboard sidecar auto-creates the
+  # folder. Server-admin always retains access regardless of folder ACL.
+  admin_only_folders = [
+    "Finance (Personal)",
+  ]
 }
 
 resource "kubernetes_config_map" "grafana_dashboards" {
@@ -157,6 +165,60 @@ resource "kubernetes_config_map" "grafana_dashboards" {
   data = {
     (each.value) = file("${path.module}/dashboards/${each.value}")
   }
+}
+
+# Lock down "admin only" folders via Grafana folder permissions API.
+# Default org-role inheritance gives Viewer + Editor read access to every
+# folder; explicitly setting the folder ACL to {Admin: 4} overrides that
+# inheritance so Viewer/Editor (incl. anonymous-Viewer) get no access.
+# The Grafana super-admin (`admin` user) always retains access regardless.
+resource "null_resource" "grafana_admin_only_folder_acl" {
+  for_each = toset(local.admin_only_folders)
+
+  # Re-runs on tg apply (cheap, idempotent API call). Catches drift if anyone
+  # edits permissions via the UI or the folder is rebuilt.
+  triggers = {
+    folder    = each.value
+    always    = timestamp()
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command = <<-EOT
+      set -euo pipefail
+      FOLDER='${each.value}'
+      KUBECONFIG_FLAG='--kubeconfig ${var.kube_config_path}'
+      POD=$(kubectl $KUBECONFIG_FLAG get pod -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}')
+      ADMIN_PW=$(kubectl $KUBECONFIG_FLAG get secret -n monitoring grafana -o jsonpath='{.data.admin-password}' | base64 -d)
+
+      # Wait up to 60s for the dashboard sidecar to materialise the folder.
+      for i in $(seq 1 12); do
+        FOLDER_UID=$(kubectl $KUBECONFIG_FLAG exec -n monitoring "$POD" -c grafana -- \
+          curl -sf -u "admin:$ADMIN_PW" "http://localhost:3000/api/folders" \
+          | python3 -c "import json,sys; folders=json.load(sys.stdin); print(next((f['uid'] for f in folders if f['title']==sys.argv[1]), ''))" "$FOLDER" || true)
+        if [ -n "$FOLDER_UID" ]; then break; fi
+        sleep 5
+      done
+
+      if [ -z "$FOLDER_UID" ]; then
+        echo "ERROR: folder '$FOLDER' not found in Grafana after 60s"
+        exit 1
+      fi
+
+      # Admin-only ACL. permission codes: 1=View, 2=Edit, 4=Admin.
+      kubectl $KUBECONFIG_FLAG exec -n monitoring "$POD" -c grafana -- \
+        curl -sf -u "admin:$ADMIN_PW" -X POST \
+          -H "Content-Type: application/json" \
+          -d '{"items":[{"role":"Admin","permission":4}]}' \
+          "http://localhost:3000/api/folders/$FOLDER_UID/permissions" >/dev/null
+      echo "set admin-only ACL on folder '$FOLDER' (uid=$FOLDER_UID)"
+    EOT
+  }
+
+  depends_on = [
+    helm_release.grafana,
+    kubernetes_config_map.grafana_dashboards,
+  ]
 }
 
 resource "helm_release" "grafana" {
