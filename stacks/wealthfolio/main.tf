@@ -390,7 +390,8 @@ resource "kubernetes_deployment" "wealthfolio" {
                  CAST(total_value AS REAL),
                  CAST(cost_basis AS REAL),
                  CAST(net_contribution AS REAL)
-          FROM daily_account_valuation;
+          FROM daily_account_valuation
+          WHERE account_id != 'TOTAL';  -- synthetic pre-aggregated row; would double-count when summed
           SQ
 
           sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/activities.tsv
