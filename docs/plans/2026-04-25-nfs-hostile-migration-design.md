@@ -90,6 +90,29 @@ no RWX media migration, no backup-target migration.
   + nightly `vault-raft-backup` CronJob. RTO < 1h via snapshot
   restore.
 
+## Helm `securityContext.pod` replace-not-merge (Vault, discovered during execution)
+
+The Vault helm chart sets pod-level securityContext defaults
+(`fsGroup=1000, runAsGroup=1000, runAsUser=100, runAsNonRoot=true`)
+from chart templates, not from values.yaml. When `main.tf` provided
+its own `server.statefulSet.securityContext.pod = {fsGroupChangePolicy
+= "OnRootMismatch"}` the helm rendering REPLACED the chart defaults
+rather than merging into them. On NFS this was harmless (`async,
+insecure` exports made the volume world-writable enough for any UID),
+but on a fresh ext4 LV via Proxmox CSI the volume root is `root:root`
+and vault user (UID 100) cannot open `/vault/data/vault.db`.
+
+vault-1 and vault-2 happened to be Running with the correct
+securityContext because their pod specs were written into etcd
+**before** the customization landed; helm chart upgrades don't
+restart pods, so the broken values lay dormant until vault-0 was
+recreated by the orphan-deleted STS during this migration.
+
+Resolution: provide all five fields (`fsGroup`, `fsGroupChangePolicy`,
+`runAsGroup`, `runAsUser`, `runAsNonRoot`) explicitly in main.tf so
+`runAsGroup=1000` etc. survive future chart bumps. Idempotent on
+both fresh PVCs and existing pods.
+
 ## Init container chicken-and-egg (Immich PG, discovered during execution)
 
 The pre-existing `write-pg-override-conf` init container on the

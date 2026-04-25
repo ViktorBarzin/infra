@@ -72,13 +72,13 @@ resource "helm_release" "vault" {
       dataStorage = {
         enabled      = true
         size         = "2Gi"
-        storageClass = "nfs-proxmox" # Proxmox host NFS (was nfs-truenas)
+        storageClass = "proxmox-lvm-encrypted" # Migrated 2026-04-25 from nfs-proxmox; raft fsync is NFS-hostile (post-mortems/2026-04-22-vault-raft-leader-deadlock.md)
       }
 
       auditStorage = {
         enabled      = true
         size         = "2Gi"
-        storageClass = "nfs-proxmox" # Proxmox host NFS (was nfs-truenas)
+        storageClass = "proxmox-lvm-encrypted" # Migrated 2026-04-25 from nfs-proxmox
       }
 
       standalone = { enabled = false }
@@ -120,10 +120,17 @@ resource "helm_release" "vault" {
       # fsGroupChangePolicy=OnRootMismatch skips recursive chown on restart.
       # Without this, kubelet walks every file over NFS each restart; during
       # 2026-04-22 outage this looped for 10m+ and blocked quorum recovery.
+      # The other four fields restore the chart defaults — providing pod{}
+      # replaces them, and missing fsGroup left vault unable to write to
+      # the freshly-formatted ext4 PVC during the 2026-04-25 migration.
       statefulSet = {
         securityContext = {
           pod = {
             fsGroupChangePolicy = "OnRootMismatch"
+            fsGroup             = 1000
+            runAsGroup          = 1000
+            runAsUser           = 100
+            runAsNonRoot        = true
           }
         }
       }

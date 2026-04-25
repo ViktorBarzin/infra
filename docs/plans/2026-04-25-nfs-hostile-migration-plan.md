@@ -32,51 +32,74 @@
 
 ## Phase 2 — Vault Raft (IN PROGRESS)
 
-### Pre-flight (T-0)
+### Pre-flight (T-0) — DONE 2026-04-25 15:50 UTC
 
-- [ ] Verify all 3 vault pods sealed=false, raft healthy.
-- [ ] Take fresh `vault operator raft snapshot save` (anchor).
-- [ ] Optional: scale ESO to 0 to reduce mid-migration churn.
-- [ ] Step-down leader if it's not vault-0 (current leader: vault-2 — needs step-down).
-- [ ] Verify thin pool headroom on PVE.
+- [x] Verify all 3 vault pods sealed=false, raft healthy.
+- [x] Take fresh `vault operator raft snapshot save` (anchor saved at
+      `/tmp/vault-pre-migration-20260425-155029.snap`, 1.5 MB).
+- [ ] Optional: scale ESO to 0 — skipped (auto-unseal sidecar is
+      independent; ESO refresh churn is non-disruptive for one swap).
+- [x] Confirmed leader is **vault-2** → migrate vault-0 first
+      (non-leader), vault-1 next, vault-2 last (with step-down).
+      Plan originally assumed vault-0 was leader; same intent
+      (non-leader first).
+- [x] Thin pool headroom: 54.63% used, plenty for 6 × 2 GiB LVs.
 
-### Step 0 — Helm values + StatefulSet swap
+### Step 0 — Helm values + StatefulSet swap — DONE 2026-04-25 16:08 UTC
 
-- [ ] Edit `infra/stacks/vault/main.tf`: change
+- [x] Edit `infra/stacks/vault/main.tf`: change
       `dataStorage.storageClass` and `auditStorage.storageClass`
       from `nfs-proxmox` → `proxmox-lvm-encrypted`.
-- [ ] `kubectl -n vault delete sts vault --cascade=orphan` (StatefulSet
+- [x] `kubectl -n vault delete sts vault --cascade=orphan` (StatefulSet
       `volumeClaimTemplates` is immutable; orphan keeps pods+PVCs
       alive while we recreate the controller with the new template).
-- [ ] `tg apply` → recreates StatefulSet with new VCT. Existing pods
-      still on old NFS PVCs.
+- [x] `tg apply -target=helm_release.vault` → recreates STS with new
+      VCT (full-stack `tg plan` blocks on unrelated for_each-with-
+      apply-time-keys errors at lines 848/865/909/917; targeted
+      apply on the helm release alone is the right scope here).
+      Existing pods still on old NFS PVCs.
 
-### Step 1 — Roll vault-2 (T+0)
+### Step 1 — Roll vault-0 first (non-leader) — DONE 2026-04-25 16:18 UTC
 
-- [ ] `kubectl -n vault delete pod vault-2 --grace-period=30`
-- [ ] `kubectl -n vault delete pvc data-vault-2 audit-vault-2`
-- [ ] STS controller recreates pod; new PVCs auto-provision on
-      `proxmox-lvm-encrypted`.
-- [ ] Wait Ready; auto-unseal sidecar unseals; `retry_join` rejoins
+- [x] `kubectl -n vault delete pod vault-0 --grace-period=30`
+- [x] `kubectl -n vault delete pvc data-vault-0 audit-vault-0`
+- [x] STS controller recreated pod; new PVCs auto-provisioned on
+      `proxmox-lvm-encrypted` (LVs `vm-9999-pvc-fb732fd7-...` data
+      4.12%, `vm-9999-pvc-36451f42-...` audit 3.99%).
+- [x] **Hit and fixed**: vault-0 CrashLoopBackOff'd with
+      `permission denied` on `/vault/data/vault.db`. The helm chart's
+      `statefulSet.securityContext.pod` block in main.tf only set
+      `fsGroupChangePolicy`, replacing (not merging) the chart's
+      defaults `fsGroup=1000, runAsGroup=1000, runAsUser=100,
+      runAsNonRoot=true`. NFS exports made the missing fsGroup a
+      no-op; ext4 LV needs it to chown the volume root for the
+      vault user. Old vault-1/vault-2 pods were created before that
+      block was added so they still had the chart-default
+      securityContext from their original spec. Fix: provide all
+      five fields explicitly in main.tf and re-apply. Same root
+      cause will affect vault-1 and vault-2 swaps unless this stays
+      in place.
+- [x] Wait Ready; auto-unseal sidecar unsealed; `retry_join` rejoined
       raft cluster.
-- [ ] Verify: `vault operator raft list-peers` shows 3 voters,
-      vault-2 reachable.
+- [x] Verify: `vault operator raft list-peers` shows 3 voters,
+      vault-0 follower, leader=vault-2. External HTTPS 200.
 
-### Step 2 — 24h soak
+### Step 2 — 24h soak (IN PROGRESS, ends ~2026-04-26 16:18 UTC)
 
 Wait 24h. Confirm no Raft alarms, no Vault errors, downstream
-healthy. Rollback window for vault-2 closes here.
+healthy. Rollback window for vault-0 closes here.
 
 ### Step 3 — Roll vault-1 (T+24h)
 
-Same shape as Step 1.
+Same shape as Step 1. The securityContext fix is now in main.tf
+so this should be straightforward.
 
 ### Step 4 — 24h soak
 
-### Step 5 — Roll vault-0 (T+48h)
+### Step 5 — Roll vault-2 (T+48h, leader)
 
-- [ ] If vault-0 is leader at this point, step-down first:
-      `kubectl -n vault exec vault-0 -- vault operator step-down`.
+- [ ] Step-down vault-2 first:
+      `kubectl -n vault exec vault-2 -- vault operator step-down`.
 - [ ] Then delete pod + PVCs as Step 1.
 
 ### Step 6 — Cleanup
