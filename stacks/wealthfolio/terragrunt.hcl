@@ -11,3 +11,8 @@ dependency "vault" {
   config_path  = "../vault"
   skip_outputs = true
 }
+
+dependency "external-secrets" {
+  config_path  = "../external-secrets"
+  skip_outputs = true
+}

@@ -136,6 +136,7 @@ locals {
     "realestate-crawler.json" = "Applications"
     "uk-payslip.json"         = "Finance"
     "job-hunter.json"         = "Finance"
+    "wealth.json"             = "Finance"
   }
 }
 
