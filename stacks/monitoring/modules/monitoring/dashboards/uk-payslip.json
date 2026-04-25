@@ -179,7 +179,7 @@
     {
       "id": 7,
       "title": "YTD uses \u2014 where gross went",
-      "description": "Year-to-date cumulative breakdown of where the gross went. Stacked \u2014 top equals gross_pay minus student loan and RSU offset (both small; shown on Panel 8 Sankey). Green = take-home; red = cash income tax; orange = RSU-attributed income tax + NI; purple = pension.",
+      "description": "Year-to-date cumulative breakdown of where the gross went. Stacked \u2014 top equals gross_pay minus student loan and RSU offset (both small; shown on Panel 8 Sankey). RSU vest tax broken out at a flat 47% marginal (45% PAYE + 2% NI). Green = take-home; red = cash income tax; orange = tax on RSU vest @ 47%; orange = cash NI; purple = pension.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -258,14 +258,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (cash pay)"
+                "value": "Income Tax (cash)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_rsu_income_tax"
+              "options": "ytd_rsu_tax_marginal"
             },
             "properties": [
               {
@@ -277,14 +277,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (RSU-attributed)"
+                "value": "Tax on RSU vest (@ 47% marginal)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_ni"
+              "options": "ytd_cash_ni"
             },
             "properties": [
               {
@@ -296,7 +296,7 @@
               },
               {
                 "id": "displayName",
-                "value": "National Insurance"
+                "value": "National Insurance (cash)"
               }
             ]
           },
@@ -341,7 +341,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(pension_employee) OVER w AS ytd_pension_employee FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(net_pay) OVER w AS ytd_net, SUM(GREATEST(0, income_tax - rsu_vest * 0.45)) OVER w AS ytd_cash_income_tax, SUM(rsu_vest * 0.47) OVER w AS ytd_rsu_tax_marginal, SUM(GREATEST(0, national_insurance - rsu_vest * 0.02)) OVER w AS ytd_cash_ni, SUM(pension_employee) OVER w AS ytd_pension_employee FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -517,7 +517,7 @@
     {
       "id": 11,
       "title": "Tax & pension \u2014 monthly",
-      "description": "Per-month deductions and pension contributions. Stacked \u2014 top equals total tax + pension (both sides). Red = cash income tax; orange = RSU-attributed income tax; amber = NI; brown = student loan; purple = employee pension; light purple = employer pension (paid on top of salary).",
+      "description": "Per-month deductions and pension contributions. Stacked \u2014 top equals total tax + pension. RSU vest tax broken out at a flat 47% marginal (45% PAYE + 2% NI), so the orange slice scales linearly with vest size; cash PAYE/NI slices have those amounts subtracted out so the stack still totals to actual deductions. Red = cash income tax; orange = tax on RSU vest @ 47%; amber = cash NI; brown = student loan; purple = employee pension; light purple = employer pension (paid on top of salary).",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -577,14 +577,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (cash pay)"
+                "value": "Income Tax (cash)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "rsu_income_tax"
+              "options": "rsu_tax_marginal"
             },
             "properties": [
               {
@@ -596,14 +596,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (RSU-attributed)"
+                "value": "Tax on RSU vest (@ 47% marginal)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ni"
+              "options": "cash_ni"
             },
             "properties": [
               {
@@ -615,7 +615,7 @@
               },
               {
                 "id": "displayName",
-                "value": "National Insurance"
+                "value": "National Insurance (cash)"
               }
             ]
           },
@@ -698,7 +698,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", COALESCE(cash_income_tax, income_tax) AS cash_income_tax, income_tax - COALESCE(cash_income_tax, income_tax) AS rsu_income_tax, national_insurance AS ni, student_loan, pension_employee, pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", GREATEST(0, income_tax - rsu_vest * 0.45) AS cash_income_tax, rsu_vest * 0.47 AS rsu_tax_marginal, GREATEST(0, national_insurance - rsu_vest * 0.02) AS cash_ni, student_loan, pension_employee, pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -709,7 +709,7 @@
     {
       "id": 12,
       "title": "Tax & pension \u2014 YTD cumulative",
-      "description": "Year-to-date cumulative tax and pension. Same series and colors as the monthly panel; resets on 6-April tax year boundary.",
+      "description": "Year-to-date cumulative tax and pension. Same series and colors as the monthly panel \u2014 RSU vest tax broken out at a flat 47% marginal (45% PAYE + 2% NI). Resets on 6-April tax year boundary.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -769,14 +769,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (cash pay)"
+                "value": "Income Tax (cash)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_rsu_income_tax"
+              "options": "ytd_rsu_tax_marginal"
             },
             "properties": [
               {
@@ -788,14 +788,14 @@
               },
               {
                 "id": "displayName",
-                "value": "Income Tax (RSU-attributed)"
+                "value": "Tax on RSU vest (@ 47% marginal)"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ytd_ni"
+              "options": "ytd_cash_ni"
             },
             "properties": [
               {
@@ -807,7 +807,7 @@
               },
               {
                 "id": "displayName",
-                "value": "National Insurance"
+                "value": "National Insurance (cash)"
               }
             ]
           },
@@ -890,7 +890,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "payslips-pg"
           },
-          "rawSql": "SELECT pay_date AS \"time\", SUM(COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_cash_income_tax, SUM(income_tax - COALESCE(cash_income_tax, income_tax)) OVER w AS ytd_rsu_income_tax, SUM(national_insurance) OVER w AS ytd_ni, SUM(student_loan) OVER w AS ytd_student_loan, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(pension_employer) OVER w AS ytd_pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
+          "rawSql": "SELECT pay_date AS \"time\", SUM(GREATEST(0, income_tax - rsu_vest * 0.45)) OVER w AS ytd_cash_income_tax, SUM(rsu_vest * 0.47) OVER w AS ytd_rsu_tax_marginal, SUM(GREATEST(0, national_insurance - rsu_vest * 0.02)) OVER w AS ytd_cash_ni, SUM(student_loan) OVER w AS ytd_student_loan, SUM(pension_employee) OVER w AS ytd_pension_employee, SUM(pension_employer) OVER w AS ytd_pension_employer FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date) WINDOW w AS (PARTITION BY tax_year ORDER BY pay_date) ORDER BY pay_date",
           "format": "time_series",
           "refId": "A",
           "rawQuery": true,
@@ -1746,7 +1746,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH agg AS (SELECT COALESCE(SUM(salary), 0) AS salary, COALESCE(SUM(bonus), 0) AS bonus, COALESCE(SUM(rsu_vest), 0) AS rsu_vest, COALESCE(SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)), 0) AS other_income, COALESCE(SUM(net_pay), 0) AS net_pay, COALESCE(SUM(COALESCE(cash_income_tax, income_tax)), 0) AS cash_income_tax, COALESCE(SUM(income_tax - COALESCE(cash_income_tax, income_tax)), 0) AS rsu_income_tax, COALESCE(SUM(national_insurance), 0) AS ni, COALESCE(SUM(pension_employee), 0) AS pension, COALESCE(SUM(student_loan), 0) AS student_loan, COALESCE(SUM(rsu_offset), 0) AS rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date)) SELECT 'Salary' AS source, 'Gross' AS target, salary AS value FROM agg WHERE salary > 0 UNION ALL SELECT 'Bonus', 'Gross', bonus FROM agg WHERE bonus > 0 UNION ALL SELECT 'RSU', 'Gross', rsu_vest FROM agg WHERE rsu_vest > 0 UNION ALL SELECT 'Other income', 'Gross', other_income FROM agg WHERE other_income > 0 UNION ALL SELECT 'Gross', 'Net pay', net_pay FROM agg WHERE net_pay > 0 UNION ALL SELECT 'Gross', 'Income Tax (cash)', cash_income_tax FROM agg WHERE cash_income_tax > 0 UNION ALL SELECT 'Gross', 'Income Tax (RSU)', rsu_income_tax FROM agg WHERE rsu_income_tax > 0 UNION ALL SELECT 'Gross', 'National Insurance', ni FROM agg WHERE ni > 0 UNION ALL SELECT 'Gross', 'Pension', pension FROM agg WHERE pension > 0 UNION ALL SELECT 'Gross', 'Student Loan', student_loan FROM agg WHERE student_loan > 0 UNION ALL SELECT 'Gross', 'RSU Offset', rsu_offset FROM agg WHERE rsu_offset > 0"
+          "rawSql": "WITH agg AS (SELECT COALESCE(SUM(salary), 0) AS salary, COALESCE(SUM(bonus), 0) AS bonus, COALESCE(SUM(rsu_vest), 0) AS rsu_vest, COALESCE(SUM(GREATEST(gross_pay - salary - bonus - rsu_vest, 0)), 0) AS other_income, COALESCE(SUM(net_pay), 0) AS net_pay, COALESCE(SUM(GREATEST(0, income_tax - rsu_vest * 0.45)), 0) AS cash_income_tax, COALESCE(SUM(rsu_vest * 0.47), 0) AS rsu_tax_marginal, COALESCE(SUM(GREATEST(0, national_insurance - rsu_vest * 0.02)), 0) AS cash_ni, COALESCE(SUM(pension_employee), 0) AS pension, COALESCE(SUM(student_loan), 0) AS student_loan, COALESCE(SUM(rsu_offset), 0) AS rsu_offset FROM payslip_ingest.payslip WHERE $__timeFilter(pay_date)) SELECT 'Salary' AS source, 'Gross' AS target, salary AS value FROM agg WHERE salary > 0 UNION ALL SELECT 'Bonus', 'Gross', bonus FROM agg WHERE bonus > 0 UNION ALL SELECT 'RSU', 'Gross', rsu_vest FROM agg WHERE rsu_vest > 0 UNION ALL SELECT 'Other income', 'Gross', other_income FROM agg WHERE other_income > 0 UNION ALL SELECT 'Gross', 'Net pay', net_pay FROM agg WHERE net_pay > 0 UNION ALL SELECT 'Gross', 'Income Tax (cash)', cash_income_tax FROM agg WHERE cash_income_tax > 0 UNION ALL SELECT 'Gross', 'Tax on RSU vest (47%)', rsu_tax_marginal FROM agg WHERE rsu_tax_marginal > 0 UNION ALL SELECT 'Gross', 'National Insurance (cash)', cash_ni FROM agg WHERE cash_ni > 0 UNION ALL SELECT 'Gross', 'Pension', pension FROM agg WHERE pension > 0 UNION ALL SELECT 'Gross', 'Student Loan', student_loan FROM agg WHERE student_loan > 0 UNION ALL SELECT 'Gross', 'RSU Offset', rsu_offset FROM agg WHERE rsu_offset > 0"
         }
       ]
     },
