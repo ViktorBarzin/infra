@@ -96,6 +96,21 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
         reason: "Trusted IP - never block"
         ip:
           - "176.12.22.76"
+      ---
+      name: viktor/immich-asset-paths-whitelist
+      description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
+      whitelist:
+        reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
+        expression:
+          - >
+            evt.Parsed.target_fqdn == "immich.viktorbarzin.me" &&
+            (evt.Parsed.request startsWith "/api/assets/" ||
+             evt.Parsed.request startsWith "/api/timeline/" ||
+             evt.Parsed.request startsWith "/api/asset/" ||
+             evt.Parsed.request startsWith "/api/search/" ||
+             evt.Parsed.request startsWith "/api/memories" ||
+             evt.Parsed.request startsWith "/api/albums" ||
+             evt.Parsed.request startsWith "/api/activities")
     YAML
   }
 }
