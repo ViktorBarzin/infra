@@ -121,12 +121,34 @@ resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
     labels = {
-      tier = local.tiers.gpu
+      # Opts immich out of kyverno's `quota-tier-2-gpu` generation rule
+      # so this stack can own the tier-quota with a higher memory cap.
+      "resource-governance/custom-quota" = "true"
+      tier                               = local.tiers.gpu
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Override the kyverno-generated tier-2-gpu quota (12Gi requests.memory).
+# Immich-server needs 8Gi to absorb face-detection burst spikes (OOM 2026-04-26)
+# without OOM. Plus immich-machine-learning (3.5Gi) + immich-postgresql (3Gi) +
+# backup CronJobs ≈ 15.5Gi. 20Gi gives ~4.5Gi headroom.
+resource "kubernetes_resource_quota" "immich" {
+  metadata {
+    name      = "tier-quota"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "20Gi"
+      "limits.memory"   = "32Gi"
+      pods              = "40"
+    }
   }
 }
 
@@ -311,10 +333,10 @@ resource "kubernetes_deployment" "immich_server" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "4096Mi"
+              memory = "8Gi"
             }
             limits = {
-              memory = "4096Mi"
+              memory = "8Gi"
             }
           }
         }
