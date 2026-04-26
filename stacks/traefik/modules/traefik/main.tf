@@ -200,7 +200,7 @@ resource "helm_release" "traefik" {
       # Explicit entrypoint timeouts to bound tail latency from slow clients
       "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=60s",
       "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=60s",
-      "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=180s",
+      "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=600s",
       # Use forwarded headers from trusted proxies
       "--entryPoints.websecure.forwardedHeaders.insecure=false",
       "--entryPoints.web.forwardedHeaders.insecure=false",
