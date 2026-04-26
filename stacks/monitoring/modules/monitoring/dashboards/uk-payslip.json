@@ -1932,7 +1932,7 @@
     {
       "id": 16,
       "title": "Yearly receipt \u2014 what I actually earned per tax year",
-      "description": "One stacked bar per tax year, showing pay components I keep: salary (gross), bonus (gross), and RSU vests AFTER band-aware tax (PAYE+NI withheld via sell-to-cover). Excludes deductions and taxes \u2014 this is the take-home view of earnings, not the gross-deductions waterfall. tax_year axis (text), unit GBP. Always shows all years \u2014 ignores the time picker.",
+      "description": "One stacked bar per tax year, showing pay components I keep: salary (cash, post-pension-sacrifice), pension (salary-sacrifice contribution \u2014 untaxed but real income), bonus, and RSU vests AFTER band-aware tax (PAYE+NI withheld via sell-to-cover). Bar total = take-home cash + pension contribution. Doesn't match P60 gross because P60 reports pre-RSU-tax gross income.",
       "type": "barchart",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1971,7 +1971,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "salary"
+              "options": "salary_cash"
             },
             "properties": [
               {
@@ -1983,7 +1983,26 @@
               },
               {
                 "id": "displayName",
-                "value": "Salary (gross)"
+                "value": "Salary (cash, post-sacrifice)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pension_sacrifice"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CE96D8"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Pension (salary sacrifice, untaxed)"
               }
             ]
           },
@@ -2059,7 +2078,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH r AS (SELECT * FROM payslip_ingest.payslip), ani AS (SELECT *, COALESCE(SUM(gross_pay - COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS ani_prior FROM r), slice AS (SELECT *, ani_prior + gross_pay - COALESCE(rsu_vest, 0) - COALESCE(pension_sacrifice, 0) AS ani_pre, ani_prior + gross_pay - COALESCE(pension_sacrifice, 0) AS ani_post FROM ani), m AS (SELECT *, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.20 + GREATEST(0, LEAST(ani_post, 100000) - GREATEST(ani_pre, 50270)) * 0.40 + GREATEST(0, LEAST(ani_post, 125140) - GREATEST(ani_pre, 100000)) * 0.60 + GREATEST(0, ani_post - GREATEST(ani_pre, 125140)) * 0.45 AS rsu_paye_marginal, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.08 + GREATEST(0, ani_post - GREATEST(ani_pre, 50270)) * 0.02 AS rsu_ni_marginal FROM slice) SELECT tax_year, SUM(salary) AS salary, SUM(bonus) AS bonus, SUM(rsu_vest - rsu_paye_marginal - rsu_ni_marginal) AS rsu_after_tax FROM m GROUP BY tax_year ORDER BY tax_year"
+          "rawSql": "WITH r AS (SELECT * FROM payslip_ingest.payslip), ani AS (SELECT *, COALESCE(SUM(gross_pay - COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS ani_prior FROM r), slice AS (SELECT *, ani_prior + gross_pay - COALESCE(rsu_vest, 0) - COALESCE(pension_sacrifice, 0) AS ani_pre, ani_prior + gross_pay - COALESCE(pension_sacrifice, 0) AS ani_post FROM ani), m AS (SELECT *, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.20 + GREATEST(0, LEAST(ani_post, 100000) - GREATEST(ani_pre, 50270)) * 0.40 + GREATEST(0, LEAST(ani_post, 125140) - GREATEST(ani_pre, 100000)) * 0.60 + GREATEST(0, ani_post - GREATEST(ani_pre, 125140)) * 0.45 AS rsu_paye_marginal, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.08 + GREATEST(0, ani_post - GREATEST(ani_pre, 50270)) * 0.02 AS rsu_ni_marginal FROM slice) SELECT tax_year, SUM(salary - COALESCE(pension_sacrifice, 0)) AS salary_cash, SUM(COALESCE(pension_sacrifice, 0)) AS pension_sacrifice, SUM(bonus) AS bonus, SUM(rsu_vest - rsu_paye_marginal - rsu_ni_marginal) AS rsu_after_tax FROM m GROUP BY tax_year ORDER BY tax_year"
         }
       ]
     },
