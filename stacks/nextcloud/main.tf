@@ -493,6 +493,25 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
           spec {
             restart_policy = "OnFailure"
 
+            # Backup mounts the same RWO PVC (proxmox-lvm-encrypted) as the
+            # main nextcloud pod, so it MUST schedule on the same node — the
+            # volume cannot attach to two nodes simultaneously. Without this
+            # the backup pod is stuck in ContainerCreating until cron retries.
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      "app.kubernetes.io/name"     = "nextcloud"
+                      "app.kubernetes.io/instance" = "nextcloud"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                  namespaces   = [kubernetes_namespace.nextcloud.metadata[0].name]
+                }
+              }
+            }
+
             container {
               name  = "backup"
               image = "alpine:latest"
