@@ -104,7 +104,7 @@ flowchart LR
     end
 
     subgraph K8s["Kubernetes"]
-        Import[CronJob<br/>pfsense-import<br/>every 5min]
+        Import[CronJob<br/>pfsense-import<br/>hourly]
         Sync[CronJob<br/>dns-sync<br/>every 15min]
         IPAM[phpIPAM<br/>Web UI + API]
         MySQL[(MySQL<br/>InnoDB)]
@@ -338,7 +338,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 - Stack: `stacks/phpipam/`
 - Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
 - Database: MySQL InnoDB cluster (`mysql.dbaas.svc.cluster.local`)
-- Device import: CronJob `phpipam-pfsense-import` every 5min — queries Kea DHCP leases + pfSense ARP table via SSH (no active scanning)
+- Device import: CronJob `phpipam-pfsense-import` hourly — queries Kea DHCP leases + pfSense ARP table via SSH (no active scanning)
 - DNS sync: CronJob `phpipam-dns-sync` every 15min — bidirectional sync between phpIPAM and Technitium DNS (push named hosts → A+PTR, pull DNS hostnames → unnamed phpIPAM entries)
 - Subnets tracked: 10.0.10.0/24, 10.0.20.0/24, 192.168.1.0/24, 10.3.2.0/24, 192.168.8.0/24, 192.168.0.0/24
 - API: REST API enabled (app `claude`, ssl_token auth), MCP server available for agent access

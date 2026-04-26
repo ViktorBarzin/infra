@@ -386,7 +386,7 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
     namespace = kubernetes_namespace.phpipam.metadata[0].name
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    schedule                      = "0 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"

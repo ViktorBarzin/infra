@@ -117,7 +117,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - **Rate limiting**: Return 429 (not 503). Per-service tuning: Immich/Nextcloud need higher limits.
 - **Retry middleware**: 2 attempts, 100ms — in default ingress chain.
 - **HTTP/3 (QUIC)**: Enabled cluster-wide via Traefik.
-- **IPAM & DNS auto-registration**: pfSense Kea DHCP serves all 3 subnets (VLAN 10, VLAN 20, 192.168.1.x). Kea DDNS auto-registers every DHCP client in Technitium (RFC 2136, A+PTR). CronJob `phpipam-pfsense-import` (5min) pulls Kea leases + ARP into phpIPAM via SSH (passive, no scanning). CronJob `phpipam-dns-sync` (15min) bidirectional sync phpIPAM ↔ Technitium. 42 MAC reservations for 192.168.1.x.
+- **IPAM & DNS auto-registration**: pfSense Kea DHCP serves all 3 subnets (VLAN 10, VLAN 20, 192.168.1.x). Kea DDNS auto-registers every DHCP client in Technitium (RFC 2136, A+PTR). CronJob `phpipam-pfsense-import` (hourly) pulls Kea leases + ARP into phpIPAM via SSH (passive, no scanning). CronJob `phpipam-dns-sync` (15min) bidirectional sync phpIPAM ↔ Technitium. 42 MAC reservations for 192.168.1.x.
 
 ## Service-Specific Notes
 | Service | Key Operational Knowledge |
@@ -129,7 +129,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
 | Kyverno | failurePolicy=Ignore to prevent blocking cluster, pin chart version |
 | MySQL Standalone | Raw `kubernetes_stateful_set_v1` with `mysql:8.4` (migrated from InnoDB Cluster 2026-04-16). `skip-log-bin`, `innodb_flush_log_at_trx_commit=2`, `innodb_doublewrite=ON`. ConfigMap `mysql-standalone-cnf`. PVC `data-mysql-standalone-0` (15Gi, `proxmox-lvm-encrypted`). Service `mysql.dbaas` unchanged. Anti-affinity excludes k8s-node1. Old InnoDB Cluster + operator still in TF (Phase 4 cleanup pending). Bitnami charts deprecated (Broadcom Aug 2025) — use official images. |
-| phpIPAM | IPAM — no active scanning. `pfsense-import` CronJob (5min) pulls Kea leases + ARP via SSH. `dns-sync` CronJob (15min) bidirectional sync with Technitium. Kea DDNS on pfSense handles all 3 subnets. API app `claude` (ssl_token). |
+| phpIPAM | IPAM — no active scanning. `pfsense-import` CronJob (hourly) pulls Kea leases + ARP via SSH. `dns-sync` CronJob (15min) bidirectional sync with Technitium. Kea DDNS on pfSense handles all 3 subnets. API app `claude` (ssl_token). |
 
 ## Monitoring & Alerting
 - Alert cascade inhibitions: if node is down, suppress pod alerts on that node.

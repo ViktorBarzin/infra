@@ -377,7 +377,7 @@ Devices get automatic DNS registration without manual intervention. See [network
 Summary:
 1. **Kea DHCP** on pfSense assigns IP (53 reservations across 3 subnets). DHCP option 6 (DNS servers) is pushed with two IPs per internal subnet: internal resolver + AdGuard public fallback (`94.140.14.14`) — clients survive an internal DNS outage.
 2. **Kea DDNS** sends **TSIG-signed** RFC 2136 dynamic update to Technitium (A + PTR records) — immediate. Key `kea-ddns` (HMAC-SHA256); Technitium enforces both source-IP ACL and TSIG signature on `viktorbarzin.lan` + reverse zones.
-3. **phpipam-pfsense-import** CronJob (5min) pulls Kea leases + ARP table into phpIPAM
+3. **phpipam-pfsense-import** CronJob (hourly) pulls Kea leases + ARP table into phpIPAM
 4. **phpipam-dns-sync** CronJob (15min) pushes named phpIPAM hosts → Technitium A + PTR, pulls Technitium PTR → phpIPAM hostnames
 
 ## Automation CronJobs
@@ -389,7 +389,7 @@ Summary:
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
 | `phpipam-dns-sync` | `*/15 * * * *` | phpipam | Bidirectional phpIPAM ↔ Technitium DNS sync |
-| `phpipam-pfsense-import` | `*/5 * * * *` | phpipam | Import Kea DHCP leases + ARP from pfSense |
+| `phpipam-pfsense-import` | `0 * * * *` | phpipam | Import Kea DHCP leases + ARP from pfSense |
 
 ### Password Rotation Flow
 
