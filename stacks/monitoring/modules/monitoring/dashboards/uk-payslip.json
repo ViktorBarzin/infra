@@ -1931,8 +1931,8 @@
     },
     {
       "id": 16,
-      "title": "Yearly receipt \u2014 what I actually earned per tax year",
-      "description": "One stacked bar per tax year, showing pay components I keep: salary (cash, post-pension-sacrifice), pension (salary-sacrifice contribution \u2014 untaxed but real income), bonus, and RSU vests AFTER band-aware tax (PAYE+NI withheld via sell-to-cover). Bar total = take-home cash + pension contribution. Doesn't match P60 gross because P60 reports pre-RSU-tax gross income.",
+      "title": "Yearly receipt \u2014 gross income per tax year",
+      "description": "One stacked bar per tax year showing all gross income components: salary (cash, post-pension-sacrifice), pension (salary-sacrifice \u2014 untaxed but real income), bonus, and RSU vest gross. Bar total = pre-sacrifice gross compensation. Aligns with P60: bar \u2212 pension_sacrifice \u2248 ytd_gross reported on the final March payslip / P60. Where the parser correctly captured bonus into gross_pay (every year except 2023/24 and 2024/25 \u2014 March payslip parsing bug), the match is exact.",
       "type": "barchart",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -2028,7 +2028,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "rsu_after_tax"
+              "options": "rsu_gross"
             },
             "properties": [
               {
@@ -2040,7 +2040,7 @@
               },
               {
                 "id": "displayName",
-                "value": "RSU vest (after band-aware tax)"
+                "value": "RSU vest (gross)"
               }
             ]
           }
@@ -2078,7 +2078,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH r AS (SELECT * FROM payslip_ingest.payslip), ani AS (SELECT *, COALESCE(SUM(gross_pay - COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS ani_prior FROM r), slice AS (SELECT *, ani_prior + gross_pay - COALESCE(rsu_vest, 0) - COALESCE(pension_sacrifice, 0) AS ani_pre, ani_prior + gross_pay - COALESCE(pension_sacrifice, 0) AS ani_post FROM ani), m AS (SELECT *, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.20 + GREATEST(0, LEAST(ani_post, 100000) - GREATEST(ani_pre, 50270)) * 0.40 + GREATEST(0, LEAST(ani_post, 125140) - GREATEST(ani_pre, 100000)) * 0.60 + GREATEST(0, ani_post - GREATEST(ani_pre, 125140)) * 0.45 AS rsu_paye_marginal, GREATEST(0, LEAST(ani_post, 12570) - GREATEST(ani_pre, 0)) * 0.00 + GREATEST(0, LEAST(ani_post, 50270) - GREATEST(ani_pre, 12570)) * 0.08 + GREATEST(0, ani_post - GREATEST(ani_pre, 50270)) * 0.02 AS rsu_ni_marginal FROM slice) SELECT tax_year, SUM(salary - COALESCE(pension_sacrifice, 0)) AS salary_cash, SUM(COALESCE(pension_sacrifice, 0)) AS pension_sacrifice, SUM(bonus) AS bonus, SUM(rsu_vest - rsu_paye_marginal - rsu_ni_marginal) AS rsu_after_tax FROM m GROUP BY tax_year ORDER BY tax_year"
+          "rawSql": "SELECT tax_year, SUM(salary - COALESCE(pension_sacrifice, 0)) AS salary_cash, SUM(COALESCE(pension_sacrifice, 0)) AS pension_sacrifice, SUM(bonus) AS bonus, SUM(rsu_vest) AS rsu_gross FROM payslip_ingest.payslip GROUP BY tax_year ORDER BY tax_year"
         }
       ]
     },
