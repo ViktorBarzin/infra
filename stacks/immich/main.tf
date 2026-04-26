@@ -188,7 +188,7 @@ resource "kubernetes_deployment" "immich_server" {
     }
 
     strategy {
-      type = "RollingUpdate"
+      type = "Recreate"
     }
 
     template {
@@ -311,10 +311,10 @@ resource "kubernetes_deployment" "immich_server" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "2000Mi"
+              memory = "4096Mi"
             }
             limits = {
-              memory = "3500Mi"
+              memory = "4096Mi"
             }
           }
         }
@@ -579,7 +579,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       }
     }
     strategy {
-      type = "RollingUpdate"
+      type = "Recreate"
     }
     template {
       metadata {
