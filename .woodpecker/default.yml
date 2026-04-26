@@ -128,7 +128,7 @@ steps:
       # ── Pre-warm provider cache ──
       - |
         if [ -s .platform_apply ] || [ -s .app_apply ]; then
-          FIRST_STACK=$(head -1 .platform_apply .app_apply 2>/dev/null | head -1)
+          FIRST_STACK=$(cat .platform_apply .app_apply 2>/dev/null | head -1)
           if [ -n "$FIRST_STACK" ]; then
             echo "Pre-warming provider cache from stacks/$FIRST_STACK..."
             cd "stacks/$FIRST_STACK" && terragrunt init --terragrunt-non-interactive -input=false 2>&1 | tail -3 && cd ../..
@@ -150,7 +150,7 @@ steps:
               if echo "$OUTPUT" | grep -q "is locked by"; then
                 echo "[$stack] SKIPPED (locked by another session)"
               else
-                echo "$OUTPUT" | tail -5
+                echo "$OUTPUT" | tail -50
                 echo "[$stack] FAILED (exit $EXIT)"
                 FAILED_PLATFORM_STACKS="$FAILED_PLATFORM_STACKS $stack"
               fi
@@ -178,7 +178,7 @@ steps:
               if echo "$OUTPUT" | grep -q "is locked by"; then
                 echo "[$stack] SKIPPED (locked by another session)"
               else
-                echo "$OUTPUT" | tail -5
+                echo "$OUTPUT" | tail -50
                 echo "[$stack] FAILED (exit $EXIT)"
                 FAILED_APP_STACKS="$FAILED_APP_STACKS $stack"
               fi
