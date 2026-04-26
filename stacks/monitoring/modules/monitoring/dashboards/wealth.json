@@ -23,7 +23,7 @@
       "title": "Net worth (current)",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "gridPos": {"h": 4, "w": 5, "x": 0, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -57,7 +57,7 @@
       "description": "Total deposits minus withdrawals across all accounts.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "gridPos": {"h": 4, "w": 5, "x": 5, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -91,7 +91,7 @@
       "description": "Net worth minus net contribution — the gain on everything you've put in.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "gridPos": {"h": 4, "w": 5, "x": 10, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -132,7 +132,7 @@
       "description": "Growth / net contribution × 100. Excludes accounts with zero/negative contribution (Schwab) to avoid distortion.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 4, "w": 5, "x": 15, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -439,11 +439,11 @@
     },
     {
       "id": 11,
-      "title": "Trailing 12-month investment return %",
+      "title": "12mo return",
       "description": "Modified-Dietz return over the trailing 12 months: market_gain / (nw_12mo_ago + 0.5 × contributions_12mo). Excludes new money in — answers 'how did my investments perform' rather than 'how much did my net worth change'.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 59},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -466,7 +466,7 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "value"
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -485,7 +485,7 @@
       "description": "Modified-Dietz return per calendar year: market_gain / (nw_start + 0.5 × contributions). Pure investment performance — excludes new contributions, so a £100k vest doesn't show as 100% growth. Negative bars = market losses (e.g., 2022 bear market).",
       "type": "barchart",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 63},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 59},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -545,7 +545,7 @@
       "description": "Each calendar year's net worth change split into 'new money in' (contributions − withdrawals) and 'market gain' (everything else: price appreciation, dividends, etc.). Shows whether you grew because you saved or because the market did the work. Negative bars = withdrawals or market losses.",
       "type": "barchart",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 74},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 70},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -611,7 +611,7 @@
       "description": "(market value − net contribution) / net contribution × 100, latest snapshot. Excludes accounts with zero/negative net contribution (Schwab — RSU vests sold = negative contribution distorts the ratio). Pension shows 0% because Wealthfolio doesn't track underlying fund holdings, so cost_basis = 0 and 'growth' is just the cash balance reported.",
       "type": "barchart",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 85},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 81},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
