@@ -23,7 +23,7 @@
       "title": "Net worth (current)",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 5, "x": 0, "y": 0},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -57,7 +57,7 @@
       "description": "Total deposits minus withdrawals across all accounts.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 5, "x": 5, "y": 0},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -91,7 +91,7 @@
       "description": "Net worth minus net contribution — the gain on everything you've put in.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 5, "x": 10, "y": 0},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
@@ -132,7 +132,7 @@
       "description": "Growth / net contribution × 100. Excludes accounts with zero/negative contribution (Schwab) to avoid distortion.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 5, "x": 15, "y": 0},
+      "gridPos": {"h": 4, "w": 3, "x": 12, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -443,7 +443,7 @@
       "description": "Modified-Dietz return over the trailing 12 months: market_gain / (nw_12mo_ago + 0.5 × contributions_12mo). Excludes new money in — answers 'how did my investments perform' rather than 'how much did my net worth change'.",
       "type": "stat",
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "gridPos": {"h": 4, "w": 3, "x": 15, "y": 0},
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -476,6 +476,81 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "WITH bounds AS (SELECT (SELECT MAX(valuation_date) FROM daily_account_valuation) AS d_now, (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation)) AS d_ago), agg AS (SELECT (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS nw_now, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS contrib_now, (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS nw_ago, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS contrib_ago FROM bounds b) SELECT ROUND((((nw_now - nw_ago - (contrib_now - contrib_ago)) / NULLIF(nw_ago + 0.5 * (contrib_now - contrib_ago), 0)) * 100)::numeric, 2) AS pct_12mo FROM agg"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "12mo contrib",
+      "description": "Net contributions (deposits − withdrawals) over the trailing 12 months. How much new money you put in — independent of market movement.",
+      "type": "stat",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 4, "w": 3, "x": 18, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {"mode": "fixed", "fixedColor": "blue"},
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH bounds AS (SELECT (SELECT MAX(valuation_date) FROM daily_account_valuation) AS d_now, (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation)) AS d_ago) SELECT ((SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_now) - (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_ago)) AS contrib_12mo FROM bounds b"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "12mo gain",
+      "description": "Trailing 12-month market gain in £ — the change in net worth minus net contributions. What the markets gave you, separate from money you added in.",
+      "type": "stat",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+      "gridPos": {"h": 4, "w": 3, "x": 21, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {"mode": "thresholds"},
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 0}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH bounds AS (SELECT (SELECT MAX(valuation_date) FROM daily_account_valuation) AS d_now, (SELECT MIN(valuation_date) FROM daily_account_valuation WHERE valuation_date >= (SELECT MAX(valuation_date) - INTERVAL '12 months' FROM daily_account_valuation)) AS d_ago), agg AS (SELECT (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS nw_now, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_now) AS contrib_now, (SELECT SUM(total_value) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS nw_ago, (SELECT SUM(net_contribution) FROM daily_account_valuation WHERE valuation_date = b.d_ago) AS contrib_ago FROM bounds b) SELECT ((nw_now - nw_ago) - (contrib_now - contrib_ago)) AS gain_12mo FROM agg"
         }
       ]
     },
