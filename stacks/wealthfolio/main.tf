@@ -660,3 +660,101 @@ resource "kubernetes_config_map" "grafana_wealth_datasource" {
 # See `resource "kubernetes_deployment" "wealthfolio"` above — the sidecar
 # is wired in via the deployment's container/volume blocks.
 ############################################################################
+
+############################################################################
+# Daily portfolio-recalc CronJob — keeps the Grafana wealth dashboard fresh.
+#
+# Wealthfolio writes new `daily_account_valuation` rows ONLY when a
+# PortfolioJob fires with ValuationRecalcMode != None. None of its built-in
+# schedulers do that for our deployment:
+#   * Internal 6h quote scheduler — refreshes the `quotes` table only.
+#   * Internal 4h broker scheduler — short-circuits if `sync_refresh_token`
+#     is unset (it is — we route broker imports through the external
+#     wealthfolio-sync CronJob).
+# Result: valuations only update when the Tauri/web UI hits
+# /api/v1/market-data/sync — i.e. when someone opens the dashboard.
+#
+# This CronJob mimics that: login → POST /api/v1/market-data/sync. The
+# server runs the portfolio job (Incremental quote sync + IncrementalFromLast
+# valuation recalc), backfilling missing daily_account_valuation rows up to
+# today. The pg-sync sidecar's :07 hourly tick mirrors them to PG, and
+# Grafana auto-refreshes within 5 min.
+#
+# Schedule 16:00 UTC (= 17:00 BST in summer):
+#   - After UK market close (15:30 UTC BST), so EOD UK prices are settled
+#   - US market open ~2.5h (good intra-day US quotes)
+#   - pg-sync next tick at 16:07 → Grafana fresh by ~16:12 UTC ≈ 17:12 BST,
+#     well before the 18:00 BST "fresh data by 6pm" target.
+#
+# Plaintext password lives at Vault `secret/wealthfolio.web_password`,
+# pulled into the existing `wealthfolio-secrets` K8s Secret by the
+# `dataFrom.extract` ExternalSecret above (no extra ESO wiring needed —
+# the new key flows through automatically).
+############################################################################
+resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
+  metadata {
+    name      = "wealthfolio-daily-sync"
+    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
+  }
+
+  spec {
+    schedule                      = "0 16 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+
+    job_template {
+      metadata {}
+      spec {
+        active_deadline_seconds = 180
+        backoff_limit           = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+
+            container {
+              name  = "curl"
+              image = "curlimages/curl:8.11.1"
+              env {
+                name = "WF_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "wealthfolio-secrets"
+                    key  = "web_password"
+                  }
+                }
+              }
+              command = ["/bin/sh", "-c"]
+              args = [
+                <<-EOT
+                set -eu
+                BASE=http://wealthfolio.wealthfolio.svc.cluster.local
+                JAR=$(mktemp)
+                trap 'rm -f "$JAR"' EXIT
+
+                echo "[$(date -u +%FT%TZ)] login"
+                curl -sS --max-time 15 --fail -X POST "$BASE/api/v1/auth/login" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"password\":\"$WF_PASSWORD\"}" \
+                  -c "$JAR" -o /dev/null
+
+                echo "[$(date -u +%FT%TZ)] POST /api/v1/market-data/sync"
+                curl -sS --max-time 60 --fail -X POST "$BASE/api/v1/market-data/sync" \
+                  -H "Content-Type: application/json" \
+                  -b "$JAR" \
+                  -d '{"refetchAll":false}' -o /dev/null
+                echo "[$(date -u +%FT%TZ)] sync queued (204) — portfolio job runs async"
+                EOT
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
