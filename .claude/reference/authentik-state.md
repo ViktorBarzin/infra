@@ -119,3 +119,18 @@ Removed bindings from:
 - `default-source-authentication` (PK: via policybindingmodel `1a779f24`) — Google/GitHub/Facebook OAuth
 
 Policy still exists with 0 bindings. If brute-force protection is needed, bind to the **password stage** (not the flow level).
+
+## Session Duration (2026-05-01)
+
+Pinned via Terraform in `stacks/authentik/`:
+
+| Knob | Value | Surface | Effect |
+|------|-------|---------|--------|
+| `UserLoginStage.session_duration` on `default-authentication-login` | `weeks=4` | `authentik_stage_user_login.default_login` in `authentik_provider.tf` | Authenticated users stay logged in 4 weeks across browser restarts. No sliding refresh — resets on each login. |
+| `AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE` (server + worker) | `hours=2` | `server.env` + `worker.env` in `modules/authentik/values.yaml` | Anonymous Django sessions (bots, healthcheckers, partial flows) are reaped within 2h instead of the 1d default. |
+
+Notes:
+- There is **no** `Brand.session_duration`; `UserLoginStage` is the only correct lever for authenticated session lifetime.
+- Embedded outpost session storage moved from `/dev/shm` → Postgres table `authentik_providers_proxy_proxysession` in authentik 2025.10. The 2026-04-18 `/dev/shm`-fill outage class is no longer load-bearing in 2026.2.2; the `unauthenticated_age` cap is still the right lever for anonymous-session bloat from external monitors.
+- `ProxyProvider.access_token_validity` and `remember_me_offset` stay UI-managed via `ignore_changes`.
+- The `unauthenticated_age` env var is injected via `server.env` / `worker.env` (not `authentik.sessions.unauthenticated_age`) because we set `authentik.existingSecret.secretName: goauthentik`, which makes the chart skip rendering its own `AUTHENTIK_*` Secret. The `authentik.*` value block is therefore inert in this stack — anything new under `authentik.*` must use the `*.env` arrays instead. The same applies to the existing `authentik.cache.*`, `authentik.web.*`, `authentik.worker.*` blocks (currently inert; live values come from the orphaned, helm-keep-policy `goauthentik` Secret created by chart 2025.10.3 before `existingSecret` was introduced).
