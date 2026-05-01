@@ -209,7 +209,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \\\"time\\\", SUM(total_value) AS net_worth FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \"time\", SUM(total_value) AS net_worth FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
         }
       ]
     },
@@ -264,7 +264,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \\\"time\\\", SUM(net_contribution) AS net_contribution, SUM(total_value) AS market_value FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \"time\", SUM(net_contribution) AS net_contribution, SUM(total_value) AS market_value FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
         }
       ]
     },
@@ -310,7 +310,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \\\"time\\\", (SUM(total_value) - SUM(net_contribution)) AS growth FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT valuation_date::timestamp AS \"time\", (SUM(total_value) - SUM(net_contribution)) AS growth FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY valuation_date ORDER BY valuation_date"
         }
       ]
     },
@@ -350,7 +350,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT d.valuation_date::timestamp AS \\\"time\\\", a.name AS metric, d.total_value AS value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date IN (SELECT valuation_date FROM complete_dates) ORDER BY d.valuation_date, a.name"
+          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT d.valuation_date::timestamp AS \"time\", a.name AS metric, d.total_value AS value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date IN (SELECT valuation_date FROM complete_dates) ORDER BY d.valuation_date, a.name"
         }
       ]
     },
@@ -405,7 +405,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT d.valuation_date::timestamp AS \\\"time\\\", SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN 0 ELSE d.cash_balance END) AS cash, SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN d.cash_balance + d.investment_market_value ELSE d.investment_market_value END) AS invested FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY d.valuation_date ORDER BY d.valuation_date"
+          "rawSql": "WITH active_accounts AS (SELECT COUNT(*) AS n FROM accounts), complete_dates AS (SELECT d.valuation_date FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date HAVING COUNT(*) >= (SELECT n FROM active_accounts)) SELECT d.valuation_date::timestamp AS \"time\", SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN 0 ELSE d.cash_balance END) AS cash, SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN d.cash_balance + d.investment_market_value ELSE d.investment_market_value END) AS invested FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date IN (SELECT valuation_date FROM complete_dates) GROUP BY d.valuation_date ORDER BY d.valuation_date"
         }
       ]
     },
