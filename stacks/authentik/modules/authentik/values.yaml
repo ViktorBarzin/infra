@@ -37,6 +37,15 @@ authentik:
 
 server:
   replicas: 3
+  # Anonymous Django sessions (no completed login: bots, healthcheckers,
+  # partial flows) expire in 2h. Default is days=1. Once login completes,
+  # UserLoginStage.session_duration takes over via request.session.set_expiry.
+  # Injected via server.env (not authentik.sessions.*) because we use
+  # authentik.existingSecret.secretName, which makes the chart skip
+  # rendering the AUTHENTIK_* secret — so the values block doesn't reach env.
+  env:
+    - name: AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE
+      value: "hours=2"
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -70,6 +79,11 @@ global:
 
 worker:
   replicas: 3
+  # Same unauthenticated_age cap as server — both the server (Django session
+  # middleware) and worker (cleanup tasks) need to see the value.
+  env:
+    - name: AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE
+      value: "hours=2"
   strategy:
     type: RollingUpdate
     rollingUpdate:

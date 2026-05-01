@@ -57,3 +57,34 @@ resource "authentik_provider_proxy" "catchall" {
     ignore_changes = [property_mappings, jwt_federation_sources, skip_path_regex, internal_host, basic_auth_enabled, basic_auth_password_attribute, basic_auth_username_attribute, intercept_header_auth, access_token_validity]
   }
 }
+
+# -----------------------------------------------------------------------------
+# Default User Login stage — bound to default-authentication-flow.
+# Adopted into Terraform 2026-05-01 to set session_duration=weeks=4 so users
+# stay logged in across browser restarts. There is no Brand.session_duration
+# in authentik 2026.2.x — UserLoginStage is the correct knob.
+# -----------------------------------------------------------------------------
+
+data "authentik_stage" "default_authentication_login" {
+  name = "default-authentication-login"
+}
+
+import {
+  to = authentik_stage_user_login.default_login
+  id = data.authentik_stage.default_authentication_login.id
+}
+
+resource "authentik_stage_user_login" "default_login" {
+  name             = "default-authentication-login"
+  session_duration = "weeks=4"
+  lifecycle {
+    # Pin only session_duration; everything else stays UI-managed so the
+    # plan doesn't churn unrelated knobs (e.g. remember_me_offset toggles).
+    ignore_changes = [
+      remember_me_offset,
+      terminate_other_sessions,
+      geoip_binding,
+      network_binding,
+    ]
+  }
+}
