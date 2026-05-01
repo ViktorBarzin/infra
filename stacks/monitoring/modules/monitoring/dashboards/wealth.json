@@ -28,7 +28,7 @@
         "defaults": {
           "unit": "currencyGBP",
           "color": {"mode": "fixed", "fixedColor": "green"},
-          "decimals": 0
+          "decimals": 2
         },
         "overrides": []
       },
@@ -62,7 +62,7 @@
         "defaults": {
           "unit": "currencyGBP",
           "color": {"mode": "fixed", "fixedColor": "blue"},
-          "decimals": 0
+          "decimals": 2
         },
         "overrides": []
       },
@@ -96,7 +96,7 @@
         "defaults": {
           "unit": "currencyGBP",
           "color": {"mode": "thresholds"},
-          "decimals": 0,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -137,7 +137,7 @@
         "defaults": {
           "unit": "percent",
           "color": {"mode": "thresholds"},
-          "decimals": 1,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -179,6 +179,7 @@
         "defaults": {
           "color": {"mode": "fixed", "fixedColor": "green"},
           "unit": "currencyGBP",
+          "decimals": 2,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -223,6 +224,7 @@
         "defaults": {
           "color": {"mode": "palette-classic"},
           "unit": "currencyGBP",
+          "decimals": 2,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -277,6 +279,7 @@
         "defaults": {
           "color": {"mode": "fixed", "fixedColor": "#56A64B"},
           "unit": "currencyGBP",
+          "decimals": 2,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -322,6 +325,7 @@
         "defaults": {
           "color": {"mode": "palette-classic"},
           "unit": "currencyGBP",
+          "decimals": 2,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -361,6 +365,7 @@
         "defaults": {
           "color": {"mode": "palette-classic"},
           "unit": "currencyGBP",
+          "decimals": 2,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -490,7 +495,7 @@
         "defaults": {
           "unit": "currencyGBP",
           "color": {"mode": "fixed", "fixedColor": "blue"},
-          "decimals": 0
+          "decimals": 2
         },
         "overrides": []
       },
@@ -524,7 +529,7 @@
         "defaults": {
           "unit": "currencyGBP",
           "color": {"mode": "thresholds"},
-          "decimals": 0,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -625,7 +630,7 @@
         "defaults": {
           "color": {"mode": "palette-classic"},
           "unit": "currencyGBP",
-          "decimals": 0,
+          "decimals": 2,
           "custom": {
             "axisPlacement": "auto",
             "axisLabel": "",
@@ -691,7 +696,7 @@
         "defaults": {
           "color": {"mode": "thresholds"},
           "unit": "percent",
-          "decimals": 1,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -737,7 +742,7 @@
   "schemaVersion": 39,
   "tags": ["finance", "personal", "wealth"],
   "templating": {"list": []},
-  "time": {"from": "now-5y", "to": "now"},
+  "time": {"from": "now-180d", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
   "title": "Wealth",
