@@ -65,15 +65,6 @@ resource "authentik_provider_proxy" "catchall" {
 # in authentik 2026.2.x — UserLoginStage is the correct knob.
 # -----------------------------------------------------------------------------
 
-data "authentik_stage" "default_authentication_login" {
-  name = "default-authentication-login"
-}
-
-import {
-  to = authentik_stage_user_login.default_login
-  id = data.authentik_stage.default_authentication_login.id
-}
-
 resource "authentik_stage_user_login" "default_login" {
   name             = "default-authentication-login"
   session_duration = "weeks=4"
