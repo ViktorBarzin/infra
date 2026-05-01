@@ -23,6 +23,26 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+resource "kubernetes_persistent_volume_claim" "uploads" {
+  wait_until_bound = false
+  metadata {
+    name      = "priority-pass-uploads"
+    namespace = kubernetes_namespace.priority-pass.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "10Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = { storage = "1Gi" }
+    }
+  }
+}
+
 resource "kubernetes_deployment" "priority-pass" {
   metadata {
     name      = "priority-pass"
@@ -34,6 +54,9 @@ resource "kubernetes_deployment" "priority-pass" {
   }
   spec {
     replicas = 1
+    strategy {
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         run = "priority-pass"
@@ -48,6 +71,12 @@ resource "kubernetes_deployment" "priority-pass" {
       spec {
         image_pull_secrets {
           name = "registry-credentials"
+        }
+        volume {
+          name = "uploads"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.uploads.metadata[0].name
+          }
         }
         container {
           name  = "frontend"
@@ -75,9 +104,17 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "backend"
-          image = "registry.viktorbarzin.me/priority-pass-backend:ae1420a0"
+          image = "registry.viktorbarzin.me/priority-pass-backend:f4246691"
           port {
             container_port = 8000
+          }
+          env {
+            name  = "UPLOAD_DIR"
+            value = "/data/uploads"
+          }
+          volume_mount {
+            name       = "uploads"
+            mount_path = "/data/uploads"
           }
           resources {
             limits = {
