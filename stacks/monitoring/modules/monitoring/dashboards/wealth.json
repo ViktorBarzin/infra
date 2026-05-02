@@ -9,6 +9,20 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "Milestones",
+        "target": {
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "refId": "Anno",
+          "rawSql": "WITH daily AS (SELECT d.valuation_date, SUM(d.total_value) AS nw FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date), crossings AS (SELECT t, (SELECT MIN(valuation_date) FROM daily WHERE nw >= t::numeric) AS d FROM unnest(ARRAY[100000, 250000, 500000, 750000, 1000000]) AS t) SELECT d::timestamptz AS time, '£' || CASE WHEN t >= 1000000 THEN (t/1000000)::int::text || 'M' ELSE (t/1000)::int::text || 'k' END AS text FROM crossings WHERE d IS NOT NULL ORDER BY d"
+        }
       }
     ]
   },
