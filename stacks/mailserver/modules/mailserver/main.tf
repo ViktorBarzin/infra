@@ -829,11 +829,32 @@ DOMAIN = "viktorbarzin.me"
 
 marker = f"e2e-probe-{uuid.uuid4().hex[:12]}"
 subject = f"[E2E Monitor] {marker}"
+recipient = f"smoke-test@{DOMAIN}"
 start = time.time()
 success = 0
 duration = 0
 
 try:
+    # Step 0: Defensive unblock. Brevo permanently blocks a recipient after a
+    # single hardBounce — once blocked, every subsequent /smtp/email request
+    # returns 201 but the message is silently dropped (event=blocked).
+    # Single transient pod outage → permanent probe outage. Idempotent: 204 if
+    # the recipient was blocked, 404 if not blocked — both are fine.
+    # NOTE: this script is wrapped in shell single quotes (see the python3 -c
+    # invocation above). Do NOT use apostrophes anywhere here, including in
+    # comments — a stray apostrophe terminates the shell string and Python
+    # only sees the prefix, raising IndentationError on this try block.
+    try:
+        unblock = requests.delete(
+            f"https://api.brevo.com/v3/smtp/blockedContacts/{recipient}",
+            headers={"api-key": BREVO_API_KEY, "Accept": "application/json"},
+            timeout=10,
+        )
+        if unblock.status_code == 204:
+            print(f"WARN: {recipient} was blocked at Brevo, unblocked")
+    except Exception as ue:
+        print(f"Unblock attempt failed (non-critical): {ue}")
+
     # Step 1: Send via Brevo Transactional Email API to smoke-test@ (hits catch-all -> spam@)
     resp = requests.post(
         "https://api.brevo.com/v3/smtp/email",
@@ -844,7 +865,7 @@ try:
         },
         json={
             "sender": {"name": "Monitoring", "email": f"monitoring@{DOMAIN}"},
-            "to": [{"email": f"smoke-test@{DOMAIN}"}],
+            "to": [{"email": recipient}],
             "subject": subject,
             "textContent": f"E2E email monitoring probe {marker}. Auto-generated, will be deleted.",
         },
