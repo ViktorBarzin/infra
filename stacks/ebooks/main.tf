@@ -785,8 +785,18 @@ resource "kubernetes_deployment" "book_search" {
             }
           }
           env {
-            name  = "SMTP_HOST"
-            value = "mail.viktorbarzin.me"
+            name = "SMTP_HOST"
+            # Use intra-cluster ClusterIP path — bypasses pfSense HAProxy +
+            # PROXY v2 (the public path hairpins through HAProxy:587 →
+            # NodePort → pod :5587 where Postfix's smtpd-proxy587 daemon
+            # crashes ~50% of HAProxy healthchecks with
+            # `smtpd_peer_hostaddr_to_sockaddr: ... Servname not supported`,
+            # producing intermittent 6s TCP timeouts for clients that land
+            # mid-respawn). The ClusterIP service points to pod port 587
+            # (stock submission daemon, no PROXY) and is rock-solid (12/12
+            # in <31ms vs 6/12 timeouts on the public path).
+            # See docs/runbooks/mailserver-pfsense-haproxy.md.
+            value = "mailserver.mailserver.svc.cluster.local"
           }
           env {
             name  = "SMTP_PORT"

@@ -733,6 +733,35 @@ resource "kubernetes_service" "mailserver_proxy" {
       target_port = 10993
       node_port   = 30128
     }
+    # Dedicated non-PROXY healthcheck NodePorts. HAProxy on pfSense uses
+    # `option smtpchk` against these stock pod ports (25/465/587, no PROXY)
+    # so health probes don't hit the smtpd_peer_hostaddr_to_sockaddr fatal
+    # that fires on PROXY-v2 LOCAL/AF_UNSPEC frames sent during checks. The
+    # data path (30125-30128 → 2525/4465/5587/10993) still gets PROXY v2 for
+    # real client IP visibility — only the healthcheck path is split off.
+    # See infra/scripts/pfsense-haproxy-bootstrap.php (`check port` directive)
+    # and docs/runbooks/mailserver-pfsense-haproxy.md.
+    port {
+      name        = "smtp-check"
+      protocol    = "TCP"
+      port        = 2500
+      target_port = 25
+      node_port   = 30145
+    }
+    port {
+      name        = "smtps-check"
+      protocol    = "TCP"
+      port        = 4650
+      target_port = 465
+      node_port   = 30146
+    }
+    port {
+      name        = "sub-check"
+      protocol    = "TCP"
+      port        = 5870
+      target_port = 587
+      node_port   = 30147
+    }
   }
 }
 

@@ -12,7 +12,11 @@ so pfSense runs a small HAProxy that:
 1. Listens on the pfSense VLAN20 IP (`10.0.20.1`) on all 4 mail ports,
 2. Forwards each connection to a k8s node's NodePort with `send-proxy-v2`,
 3. Injects PROXY v2 framing so Postfix/Dovecot see the original client IP,
-4. TCP health-checks every k8s worker — any node can serve (ETP:Cluster).
+4. TCP-checks every k8s worker via dedicated **non-PROXY healthcheck NodePorts**
+   (30145/30146/30147 → pod stock 25/465/587 listeners, no PROXY required).
+   This split path avoids the `smtpd_peer_hostaddr_to_sockaddr` fatal that
+   used to fire on every PROXY-aware health probe and throttled real client
+   connections.
 
 Corresponding k8s-side setup (`stacks/mailserver/modules/mailserver/`):
 
@@ -23,14 +27,20 @@ Corresponding k8s-side setup (`stacks/mailserver/modules/mailserver/`):
   - `:5587` smtpd (alt :587 submission) with `smtpd_upstream_proxy_protocol=haproxy`
 - ConfigMap `mailserver.config` adds Dovecot `inet_listener imaps_proxy` on
   port 10993 with `haproxy = yes` and `haproxy_trusted_networks = 10.0.20.0/24`.
-- Service `mailserver-proxy` (NodePort, ETP:Cluster) with 4 NodePorts:
-  - `port 25 → targetPort 2525 → nodePort 30125`
-  - `port 465 → targetPort 4465 → nodePort 30126`
-  - `port 587 → targetPort 5587 → nodePort 30127`
-  - `port 993 → targetPort 10993 → nodePort 30128`
+- Service `mailserver-proxy` (NodePort, ETP:Cluster) — 4 PROXY data ports +
+  3 non-PROXY healthcheck ports:
+  - Data (PROXY v2):
+    - `port 25 → targetPort 2525 → nodePort 30125`
+    - `port 465 → targetPort 4465 → nodePort 30126`
+    - `port 587 → targetPort 5587 → nodePort 30127`
+    - `port 993 → targetPort 10993 → nodePort 30128`
+  - Healthcheck (no PROXY, stock SMTP/SMTPS/Submission listeners):
+    - `port 2500 → targetPort 25 → nodePort 30145`  (smtp-check)
+    - `port 4650 → targetPort 465 → nodePort 30146` (smtps-check)
+    - `port 5870 → targetPort 587 → nodePort 30147` (sub-check)
 - Service `mailserver` (ClusterIP) — unchanged stock ports 25/465/587/993
   for intra-cluster clients (Roundcube pod, `email-roundtrip-monitor`
-  CronJob). These listeners are PROXY-free.
+  CronJob, book-search). These listeners are PROXY-free.
 
 bd: `code-yiu`.
 
@@ -46,7 +56,9 @@ External mail (WAN) path — PROXY v2
 │      │  NAT rdr → 10.0.20.1:{same}                                  │
 │      ▼                                                              │
 │  pfSense HAProxy  (mode tcp, 4 frontends, 4 backend pools)          │
-│      │  send-proxy-v2 + tcp-check inter 120000                      │
+│      │  data: send-proxy-v2 → :{30125..30128}  (PROXY-aware pod)   │
+│      │  health: TCP-check    → :{30145..30147}  (no-PROXY pod)     │
+│      │  inter 5000                                                  │
 │      ▼                                                              │
 │  k8s-node<1-4>:{30125..30128}   ← any node (ETP:Cluster)            │
 │      │  kube-proxy SNAT (source IP lost on the wire)                │
@@ -186,11 +198,18 @@ Full restore: pfSense WebUI → Diagnostics → Backup & Restore → Upload that
 
 ## Known warts
 
-- HAProxy TCP health-check with `send-proxy-v2` generates `getpeername:
-  Transport endpoint not connected` warnings on postscreen every check cycle.
-  Mitigated with `inter 120000` (2 min). To reduce further, switch to
-  `option smtpchk` — but that requires a separate non-PROXY health-check
-  port on the pod (not done yet).
+- ~~HAProxy TCP health-check with `send-proxy-v2` generates `getpeername:
+  Transport endpoint not connected` warnings on postscreen every check cycle.~~
+  **Resolved 2026-05-05**: dedicated non-PROXY healthcheck NodePorts
+  (30145/30146/30147 → stock pod 25/465/587) added; HAProxy now checks
+  those, eliminating both the `getpeername` postscreen warnings and the
+  `smtpd_peer_hostaddr_to_sockaddr: ... Servname not supported` fatals
+  that were throttling smtpd respawns and causing ~50% client timeouts on
+  the public 587 path. `inter` dropped 120000 → 5000 (fast failover, no
+  log-spam concern). `option smtpchk` was tried but flapped against
+  postscreen (multi-line greet + DNSBL silence + anti-pre-greet detection
+  trip HAProxy's parser → L7RSP). Plain TCP check on the no-PROXY ports
+  is sufficient.
 - Frontend binds on all pfSense interfaces (`bind :25` instead of
   `10.0.20.1:25`). `<extaddr>` is set in XML but pfSense templates it
   port-only. Low concern in practice because WAN firewall rules plus the
