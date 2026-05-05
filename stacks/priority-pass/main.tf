@@ -80,7 +80,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "frontend"
-          image = "docker.io/viktorbarzin/priority-pass-frontend:50a432ad"
+          image = "docker.io/viktorbarzin/priority-pass-frontend:7c01448d"
           port {
             container_port = 3000
           }
@@ -104,7 +104,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "backend"
-          image = "docker.io/viktorbarzin/priority-pass-backend:50a432ad"
+          image = "docker.io/viktorbarzin/priority-pass-backend:7c01448d"
           port {
             container_port = 8000
           }
