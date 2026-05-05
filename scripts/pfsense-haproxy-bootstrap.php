@@ -68,7 +68,35 @@ $NODES = [
     ['k8s-node4', '10.0.20.104'],
 ];
 
-function build_pool(string $name, string $nodeport, array $nodes): array {
+// Build a pool with optional split healthcheck path.
+//
+// $check_port: if non-null, HAProxy sends health probes to that NodePort
+//   (which Service `mailserver-proxy` maps to the pod's stock no-PROXY
+//   listener — see infra/stacks/mailserver/.../mailserver_proxy ports
+//   30145/30146/30147). Real client traffic still goes to $nodeport with
+//   PROXY v2 framing.
+// $check_type: 'TCP' for plain accept-on-port checks, 'ESMTP' for
+//   `option smtpchk EHLO <monitor_domain>` (real SMTP banner+EHLO+250).
+//
+// Why split: smtpd-proxy587/4465 fatal on every PROXY-v2-aware health
+// probe with `smtpd_peer_hostaddr_to_sockaddr: ... Servname not supported`
+// — the daemon respawns get throttled by Postfix master and real clients
+// land mid-respawn → 6s TCP timeout. Routing health probes to the stock
+// no-PROXY port sidesteps the bug entirely while data path still gets
+// PROXY v2 for CrowdSec/Postfix client-IP visibility. The HAProxy package
+// has no `checkport` field, so `port N` is appended via the server's
+// `advanced` string (HAProxy parses server keywords in any order).
+function build_pool(
+    string $name,
+    string $nodeport,
+    array $nodes,
+    string $check_type = 'TCP',
+    ?string $check_port = null,
+    string $monitor_domain = ''
+): array {
+    $advanced_check = $check_port !== null
+        ? "send-proxy-v2 port {$check_port}"
+        : 'send-proxy-v2';
     $servers = [];
     foreach ($nodes as $n) {
         $servers[] = [
@@ -77,18 +105,19 @@ function build_pool(string $name, string $nodeport, array $nodes): array {
             'port'       => $nodeport,
             'weight'     => '10',
             'ssl'        => '',
-            // check every 2 min — send-proxy-v2 check + close generates
-            // noise on postscreen, not worth doing more often.
-            'checkinter' => '120000',
-            'advanced'   => 'send-proxy-v2',
+            // 5s = sub-block-window failover when a NodePort goes sour.
+            // Safe to be aggressive once health probes don't fatal smtpd.
+            'checkinter' => '5000',
+            'advanced'   => $advanced_check,
             'status'     => 'active',
         ];
     }
     return [
         'name'                   => $name,
         'balance'                => 'roundrobin',
-        'check_type'             => 'TCP',
-        'checkinter'             => '120000',
+        'check_type'             => $check_type,
+        'monitor_domain'         => $monitor_domain,
+        'checkinter'             => '5000',
         'retries'                => '3',
         'ha_servers'             => ['item' => $servers],
         'advanced_bind'          => '',
@@ -132,9 +161,28 @@ $h['ha_pools']['item'] = array_values(array_filter(
 $h['ha_pools']['item'][] = build_pool('mailserver_nodes',       '30125', $NODES);
 
 // Production pools — one per mail port.
-$h['ha_pools']['item'][] = build_pool('mailserver_nodes_smtp',  '30125', $NODES);
-$h['ha_pools']['item'][] = build_pool('mailserver_nodes_smtps', '30126', $NODES);
-$h['ha_pools']['item'][] = build_pool('mailserver_nodes_sub',   '30127', $NODES);
+//
+// All SMTP/SMTPS/Submission backends use plain TCP checks against
+// dedicated non-PROXY healthcheck NodePorts (30145/30146/30147 → pod
+// stock 25/465/587) so probes hit the no-PROXY listeners and avoid
+// the smtpd_peer_hostaddr_to_sockaddr fatal that fires on PROXY-v2
+// LOCAL frames. Real client traffic still goes to 30125-30128 with
+// PROXY v2 for client-IP visibility.
+//
+// We tried `option smtpchk EHLO` initially — it works on the plain
+// `submission` daemon (587) but flaps the `postscreen` listener on
+// port 25 (multi-line greet + DNSBL silence + anti-pre-greet
+// detection makes HAProxy's simple smtpchk parser hit L7RSP). A
+// plain TCP accept-on-port check is enough for both: HAProxy still
+// gets fast failover when the listener actually goes away, and we
+// stop triggering the Postfix fatal entirely.
+//
+// IMAPS stays on its existing TCP-check-with-PROXY-frame for now —
+// Dovecot's PROXY parser doesn't show the same fatal pattern; adding
+// a separate IMAP healthcheck path would require another svc port.
+$h['ha_pools']['item'][] = build_pool('mailserver_nodes_smtp',  '30125', $NODES, 'TCP', '30145');
+$h['ha_pools']['item'][] = build_pool('mailserver_nodes_smtps', '30126', $NODES, 'TCP', '30146');
+$h['ha_pools']['item'][] = build_pool('mailserver_nodes_sub',   '30127', $NODES, 'TCP', '30147');
 $h['ha_pools']['item'][] = build_pool('mailserver_nodes_imaps', '30128', $NODES);
 
 // ── Frontends ───────────────────────────────────────────────────────────
