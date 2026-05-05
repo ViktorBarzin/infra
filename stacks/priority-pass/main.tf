@@ -1,6 +1,17 @@
+variable "image_tag" {
+  type        = string
+  default     = "7c01448d"
+  description = "priority-pass image tag (applies to both frontend + backend). Use 8-char git SHA in CI; :latest only for local trials."
+}
+
 variable "tls_secret_name" {
   type      = string
   sensitive = true
+}
+
+locals {
+  frontend_image = "docker.io/viktorbarzin/priority-pass-frontend:${var.image_tag}"
+  backend_image  = "docker.io/viktorbarzin/priority-pass-backend:${var.image_tag}"
 }
 
 resource "kubernetes_namespace" "priority-pass" {
@@ -80,7 +91,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "frontend"
-          image = "docker.io/viktorbarzin/priority-pass-frontend:7c01448d"
+          image = local.frontend_image
           port {
             container_port = 3000
           }
@@ -104,7 +115,7 @@ resource "kubernetes_deployment" "priority-pass" {
         }
         container {
           name  = "backend"
-          image = "docker.io/viktorbarzin/priority-pass-backend:7c01448d"
+          image = local.backend_image
           port {
             container_port = 8000
           }
