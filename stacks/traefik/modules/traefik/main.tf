@@ -307,6 +307,12 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
       server {
           listen 8080;
           location /auth {
+              access_by_lua_block {
+                  ngx.req.clear_header("If-Match")
+                  ngx.req.clear_header("If-None-Match")
+                  ngx.req.clear_header("If-Modified-Since")
+                  ngx.req.clear_header("If-Unmodified-Since")
+              }
               proxy_pass http://poison_fountain;
               proxy_connect_timeout 3s;
               proxy_read_timeout 5s;
@@ -373,7 +379,7 @@ resource "kubernetes_deployment" "bot_block_proxy" {
         }
         container {
           name  = "nginx"
-          image = "nginx:1-alpine"
+          image = "openresty/openresty:alpine"
 
           port {
             container_port = 8080
