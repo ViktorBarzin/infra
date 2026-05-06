@@ -94,10 +94,21 @@ class ExtractionService:
                 stream.is_live = verdict.is_playable
                 stream.checked_at = now_iso
 
+            # Curated streams skip the verifier — they are hand-picked
+            # 24/7 channels whose embed pages aggressively detect headless
+            # automation. We can't reliably confirm playback server-side,
+            # but we trust the curator. The user's real browser does NOT
+            # trigger the same anti-bot heuristics (real plugins, real
+            # mouse movements, etc.).
+            CURATED_BYPASS = {"curated"}
             for stream in embed_streams:
+                stream.checked_at = now_iso
+                if stream.site_key in CURATED_BYPASS:
+                    stream.is_live = True
+                    stream.response_time_ms = 0
+                    continue
                 key = stream.embed_url or stream.url
                 verdict = verdicts.get(key)
-                stream.checked_at = now_iso
                 if verdict is None:
                     # Verifier unavailable — fall back to "trust extractor".
                     # This keeps the service usable even without playwright.

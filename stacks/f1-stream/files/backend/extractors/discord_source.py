@@ -42,13 +42,13 @@ EXCLUDED_DOMAINS = {
 }
 
 # A URL is treated as a candidate stream embed only if its path looks like
-# a stream/embed/player route. This catches /embed/{id}, /stream/{id},
-# /watch/{id}, /live/{slug}, /player/{...} and similar — and rejects
-# /article/, /news/, /latest/, /join/, etc.
+# a *direct* player/embed page — `/embed/{id}`, `/player/{...}`, `*.m3u8`,
+# `*.php` (legacy iframe1.php style). Aggregator landing pages
+# (`/event/...`, `/watch?session=...`, etc.) are rejected because they
+# show a list of links instead of playing automatically — those produce
+# verifier-passing UI without actual playback.
 _PATH_KEYWORDS = (
-    "embed/", "/stream", "/streams", "/watch", "/live",
-    "/player", "/play/", "/sky", "/f1/", "/formula",
-    "/grand-prix", "/gp/", "/channel", ".m3u8", ".php",
+    "/embed/", "/player/", ".m3u8", ".php",
 )
 
 
