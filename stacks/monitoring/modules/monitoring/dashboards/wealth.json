@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "datasource", "uid": "grafana"},
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -11,7 +14,10 @@
         "type": "dashboard"
       },
       {
-        "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "wealth-pg"
+        },
         "enable": true,
         "hide": false,
         "iconColor": "purple",
@@ -36,12 +42,23 @@
       "id": 1,
       "title": "Net worth (current)",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
-          "color": {"mode": "fixed", "fixedColor": "green"},
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
           "decimals": 2
         },
         "overrides": []
@@ -51,13 +68,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -70,12 +96,23 @@
       "title": "Net contribution (cumulative)",
       "description": "Total deposits minus withdrawals across all accounts.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
-          "color": {"mode": "fixed", "fixedColor": "blue"},
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
           "decimals": 2
         },
         "overrides": []
@@ -85,13 +122,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -104,18 +150,34 @@
       "title": "Growth (unrealised)",
       "description": "Net worth minus net contribution — the gain on everything you've put in.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 0}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
             ]
           }
         },
@@ -126,13 +188,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -145,19 +216,38 @@
       "title": "ROI %",
       "description": "Growth / net contribution × 100. Excludes accounts with zero/negative contribution (Schwab) to avoid distortion.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 3, "x": 12, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0},
-              {"color": "green", "value": 5}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 5
+              }
             ]
           }
         },
@@ -168,13 +258,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -187,11 +286,22 @@
       "title": "Net worth — total over time",
       "description": "Daily total_value summed across all accounts (base GBP).",
       "type": "timeseries",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 4},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "fixed", "fixedColor": "green"},
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -202,24 +312,48 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisPlacement": "auto",
-            "stacking": {"group": "A", "mode": "none"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "net_worth"},
-            "properties": [{"id": "displayName", "value": "Net worth"}]
+            "matcher": {
+              "id": "byName",
+              "options": "net_worth"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Net worth"
+              }
+            ]
           }
         ]
       },
       "options": {
-        "legend": {"calcs": ["last", "max"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
@@ -232,11 +366,21 @@
       "title": "Net contribution vs market value",
       "description": "Net contribution = cumulative deposits − withdrawals. Market value = total_value (cash + investments). Gap between the two = unrealised growth.",
       "type": "timeseries",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 14},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -247,34 +391,73 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisPlacement": "auto",
-            "stacking": {"group": "A", "mode": "none"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "market_value"},
+            "matcher": {
+              "id": "byName",
+              "options": "market_value"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}},
-              {"id": "displayName", "value": "Market value"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Market value"
+              }
             ]
           },
           {
-            "matcher": {"id": "byName", "options": "net_contribution"},
+            "matcher": {
+              "id": "byName",
+              "options": "net_contribution"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}},
-              {"id": "displayName", "value": "Net contribution"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Net contribution"
+              }
             ]
           }
         ]
       },
       "options": {
-        "legend": {"calcs": ["last"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
@@ -287,11 +470,22 @@
       "title": "Growth (market value − contribution) over time",
       "description": "Unrealised gain across all accounts. Filled area to emphasise the wealth created above the contributed capital.",
       "type": "timeseries",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 14},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "fixed", "fixedColor": "#56A64B"},
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#56A64B"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -303,24 +497,48 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisPlacement": "auto",
-            "stacking": {"group": "A", "mode": "none"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "growth"},
-            "properties": [{"id": "displayName", "value": "Growth"}]
+            "matcher": {
+              "id": "byName",
+              "options": "growth"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Growth"
+              }
+            ]
           }
         ]
       },
       "options": {
-        "legend": {"calcs": ["last", "max"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
@@ -333,11 +551,21 @@
       "title": "Per-account stacked — total value",
       "description": "Stacked area showing each account's contribution to total net worth over time. Useful for spotting which account drives the trajectory.",
       "type": "timeseries",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 24},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -348,19 +576,34 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisPlacement": "auto",
-            "stacking": {"group": "A", "mode": "normal"}
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {"calcs": ["last"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
@@ -373,11 +616,21 @@
       "title": "Cash vs invested (stacked)",
       "description": "Daily breakdown of uninvested broker cash vs market value of investments. WORKPLACE_PENSION accounts (Fidelity) are reclassified entirely as invested — Wealthfolio dumps pension wrappers into cash_balance because it doesn't track the underlying fund holdings, but they are not actually cash.",
       "type": "timeseries",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 35},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -388,34 +641,73 @@
             "showPoints": "never",
             "spanNulls": true,
             "axisPlacement": "auto",
-            "stacking": {"group": "A", "mode": "normal"}
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "cash"},
+            "matcher": {
+              "id": "byName",
+              "options": "cash"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#FADE2A"}},
-              {"id": "displayName", "value": "Cash"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FADE2A"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Cash"
+              }
             ]
           },
           {
-            "matcher": {"id": "byName", "options": "invested"},
+            "matcher": {
+              "id": "byName",
+              "options": "invested"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#56A64B"}},
-              {"id": "displayName", "value": "Invested"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56A64B"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Invested"
+              }
             ]
           }
         ]
       },
       "options": {
-        "legend": {"calcs": ["last"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
@@ -428,27 +720,51 @@
       "title": "Activity log",
       "description": "Recent activities (BUY / SELL / DEPOSIT / WITHDRAWAL / DIVIDEND / etc.) across all accounts. Limited to 100 most recent.",
       "type": "table",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 77},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 81
+      },
       "fieldConfig": {
         "defaults": {
-          "custom": {"align": "auto", "displayMode": "auto"}
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "amount"},
-            "properties": [{"id": "unit", "value": "currencyGBP"}]
+            "matcher": {
+              "id": "byName",
+              "options": "amount"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
           }
         ]
       },
       "options": {
         "cellHeight": "sm",
-        "footer": {"show": false}
+        "footer": {
+          "show": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -461,19 +777,38 @@
       "title": "12mo return",
       "description": "Modified-Dietz return over the trailing 12 months: market_gain / (nw_12mo_ago + 0.5 × contributions_12mo). Excludes new money in — answers 'how did my investments perform' rather than 'how much did my net worth change'.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 3, "x": 15, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0},
-              {"color": "green", "value": 5}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 5
+              }
             ]
           }
         },
@@ -484,13 +819,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -503,12 +847,23 @@
       "title": "12mo contrib",
       "description": "Net contributions (deposits − withdrawals) over the trailing 12 months. How much new money you put in — independent of market movement.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 3, "x": 18, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
-          "color": {"mode": "fixed", "fixedColor": "blue"},
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
           "decimals": 2
         },
         "overrides": []
@@ -518,13 +873,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -537,18 +901,34 @@
       "title": "12mo gain",
       "description": "Trailing 12-month market gain in £ — the change in net worth minus net contributions. What the markets gave you, separate from money you added in.",
       "type": "stat",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 4, "w": 3, "x": 21, "y": 0},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "currencyGBP",
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 0}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
             ]
           }
         },
@@ -559,13 +939,22 @@
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto"
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -574,23 +963,302 @@
       ]
     },
     {
+      "id": 17,
+      "title": "Δ 1d",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '1 day' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT (SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap) AS delta"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Δ 7d",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '7 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT (SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap) AS delta"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Δ 30d",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '30 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT (SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap) AS delta"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Δ 90d",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '90 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT (SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap) AS delta"
+        }
+      ]
+    },
+    {
       "id": 12,
       "title": "Yearly investment return %",
       "description": "Modified-Dietz return per calendar year: market_gain / (nw_start + 0.5 × contributions). Pure investment performance — excludes new contributions, so a £100k vest doesn't show as 100% growth. Negative bars = market losses (e.g., 2022 bear market).",
       "type": "barchart",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 45},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "unit": "percent",
           "decimals": 1,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0},
-              {"color": "green", "value": 5}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 5
+              }
             ]
           },
           "custom": {
@@ -603,9 +1271,15 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "year"},
+            "matcher": {
+              "id": "byName",
+              "options": "year"
+            },
             "properties": [
-              {"id": "unit", "value": "string"}
+              {
+                "id": "unit",
+                "value": "string"
+              }
             ]
           }
         ]
@@ -619,13 +1293,22 @@
         "stacking": "none",
         "xField": "year",
         "xTickLabelRotation": 0,
-        "legend": {"displayMode": "list", "placement": "bottom"},
-        "tooltip": {"mode": "single", "sort": "none"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -638,11 +1321,21 @@
       "title": "Annual change decomposition — contributions vs market gain",
       "description": "Each calendar year's net worth change split into 'new money in' (contributions − withdrawals) and 'market gain' (everything else: price appreciation, dividends, etc.). Shows whether you grew because you saved or because the market did the work. Negative bars = withdrawals or market losses.",
       "type": "barchart",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 56},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "unit": "currencyGBP",
           "decimals": 2,
           "custom": {
@@ -655,23 +1348,53 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byName", "options": "year"},
+            "matcher": {
+              "id": "byName",
+              "options": "year"
+            },
             "properties": [
-              {"id": "unit", "value": "string"}
+              {
+                "id": "unit",
+                "value": "string"
+              }
             ]
           },
           {
-            "matcher": {"id": "byName", "options": "contributions"},
+            "matcher": {
+              "id": "byName",
+              "options": "contributions"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}},
-              {"id": "displayName", "value": "Net contributions"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Net contributions"
+              }
             ]
           },
           {
-            "matcher": {"id": "byName", "options": "market_gain"},
+            "matcher": {
+              "id": "byName",
+              "options": "market_gain"
+            },
             "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#56A64B"}},
-              {"id": "displayName", "value": "Market gain"}
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56A64B"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Market gain"
+              }
             ]
           }
         ]
@@ -685,13 +1408,25 @@
         "stacking": "normal",
         "xField": "year",
         "xTickLabelRotation": 0,
-        "legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom"},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -704,19 +1439,38 @@
       "title": "Per-account ROI %",
       "description": "(market value − net contribution) / net contribution × 100, latest snapshot. Excludes accounts with zero/negative net contribution (Schwab — RSU vests sold = negative contribution distorts the ratio). Pension shows 0% because Wealthfolio doesn't track underlying fund holdings, so cost_basis = 0 and 'growth' is just the cash balance reported.",
       "type": "barchart",
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 67},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "unit": "percent",
           "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0},
-              {"color": "green", "value": 10}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 10
+              }
             ]
           },
           "custom": {
@@ -737,13 +1491,22 @@
         "showValue": "always",
         "stacking": "none",
         "xField": "account",
-        "legend": {"displayMode": "list", "placement": "bottom"},
-        "tooltip": {"mode": "single", "sort": "none"}
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "wealth-pg"},
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
@@ -754,9 +1517,18 @@
   ],
   "refresh": "5m",
   "schemaVersion": 39,
-  "tags": ["finance", "personal", "wealth"],
-  "templating": {"list": []},
-  "time": {"from": "now-180d", "to": "now"},
+  "tags": [
+    "finance",
+    "personal",
+    "wealth"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-180d",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "Wealth",
