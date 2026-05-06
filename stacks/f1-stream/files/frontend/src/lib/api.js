@@ -45,6 +45,20 @@ export function getProxyUrl(m3u8Url) {
 }
 
 /**
+ * Get the embed-proxy URL for an upstream iframe embed page.
+ *
+ * The proxy strips X-Frame-Options / CSP frame-ancestors and injects a
+ * frame-buster-defeat script so the embed renders inside our iframe even
+ * when the upstream tries to block it.
+ * @param {string} embedUrl - The original embed page URL
+ * @returns {string} URL pointing at our /embed proxy
+ */
+export function getEmbedProxyUrl(embedUrl) {
+	const encoded = toBase64Url(embedUrl);
+	return `${API_BASE}/embed?url=${encoded}`;
+}
+
+/**
  * Mark a stream as actively being watched (enables token refresh).
  * @param {string} url - The stream URL
  * @param {string} [siteKey] - Optional site key

@@ -1,5 +1,5 @@
 <script>
-	import { fetchStreams, fetchSchedule, getProxyUrl, activateStream, deactivateStream } from '$lib/api.js';
+	import { fetchStreams, fetchSchedule, getProxyUrl, getEmbedProxyUrl, activateStream, deactivateStream } from '$lib/api.js';
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
 
@@ -107,12 +107,14 @@
 		}
 
 		if (stream.stream_type === 'embed') {
-			// Embed/iframe player — no hls.js needed
+			// Embed/iframe player — route through our /embed proxy so the
+			// upstream's X-Frame-Options / CSP / JS frame-busters can't
+			// block the iframe.
 			const newPlayer = {
 				id: Date.now(),
 				proxyUrl: '',
 				originalUrl: stream.embed_url,
-				embedUrl: stream.embed_url,
+				embedUrl: getEmbedProxyUrl(stream.embed_url),
 				streamType: 'embed',
 				siteKey: stream.site_key || '',
 				siteName: stream.site_name || stream.site_key || 'Unknown',
