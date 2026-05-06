@@ -131,8 +131,12 @@ resource "kubernetes_config_map" "openclaw_config" {
             mode = "off"
           }
           model = {
-            primary   = "nim/qwen/qwen3-coder-480b-a35b-instruct"
-            fallbacks = ["nim/mistralai/mistral-large-3-675b-instruct-2512", "modelrelay/auto-fastest"]
+            # ChatGPT Plus OAuth via openai-codex plugin (account: ancaelena98@gmail.com).
+            # gpt-5.4-mini is the only mini variant the Codex backend accepts for Plus tier;
+            # gpt-5-mini / gpt-5.1-codex-mini return model_not_found / "not supported with
+            # ChatGPT account". Plus rate-card: 1,200–7,000 local msgs / 5h on gpt-5.4-mini.
+            primary   = "openai-codex/gpt-5.4-mini"
+            fallbacks = ["openai-codex/gpt-5.5", "nim/qwen/qwen3-coder-480b-a35b-instruct", "modelrelay/auto-fastest"]
           }
           models = {
             "modelrelay/auto-fastest"                                = {}
@@ -146,6 +150,8 @@ resource "kubernetes_config_map" "openclaw_config" {
             "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"     = {}
             "openrouter/stepfun/step-3.5-flash:free"                 = {}
             "openrouter/arcee-ai/trinity-large-preview:free"         = {}
+            "openai-codex/gpt-5.4-mini"                              = {}
+            "openai-codex/gpt-5.5"                                   = {}
           }
         }
       }
@@ -383,8 +389,10 @@ resource "kubernetes_deployment" "openclaw" {
         # Main container: OpenClaw
         container {
           name    = "openclaw"
-          image   = "ghcr.io/openclaw/openclaw:2026.2.26"
-          command = ["sh", "-c", "node openclaw.mjs doctor --fix 2>/dev/null; exec node openclaw.mjs gateway --allow-unconfigured --bind lan"]
+          image   = "ghcr.io/openclaw/openclaw:2026.5.4"
+          # Doctor --fix auto-promotes the highest-tier codex model (gpt-5-pro) after
+          # auth-profile-based model discovery; pin gpt-5.4-mini back to default after it.
+          command = ["sh", "-c", "node openclaw.mjs doctor --fix 2>/dev/null; node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null; exec node openclaw.mjs gateway --allow-unconfigured --bind lan"]
           port {
             container_port = 18789
           }
