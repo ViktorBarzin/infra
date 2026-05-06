@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from backend.extractors.models import ExtractedStream
 from backend.extractors.registry import ExtractorRegistry
 from backend.health import StreamHealthChecker
+from backend.playback_verifier import PlaybackVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ class ExtractionService:
         self._last_run: str | None = None
         self._last_run_stream_count: int = 0
         self._health_checker = StreamHealthChecker()
+        self._playback_verifier = PlaybackVerifier()
+
+    async def shutdown(self) -> None:
+        """Release the headless browser instance owned by the verifier."""
+        await self._playback_verifier.shutdown()
 
     async def run_extraction(self) -> None:
         """Run all extractors, health-check results, and cache them.
@@ -43,31 +49,63 @@ class ExtractionService:
 
         streams = await self._registry.extract_all()
 
-        # Run health checks on all extracted streams
+        # Run health checks + headless-browser playback verification.
+        # Both stream types are now verified end-to-end so the user only
+        # ever sees streams that actually play in a browser.
         if streams:
-            # Separate m3u8 streams (need health check) from embed streams (skip)
             m3u8_streams = [s for s in streams if s.stream_type != "embed"]
             embed_streams = [s for s in streams if s.stream_type == "embed"]
 
-            # Mark embed streams as live (no health check possible for iframes)
-            for stream in embed_streams:
-                stream.is_live = True
-                stream.response_time_ms = 0
-                stream.checked_at = start.isoformat()
-
-            # Health-check only m3u8 streams
+            # m3u8 streams: cheap structural health check (validates manifest,
+            # checks first variant playlist), then a headless-browser test
+            # to confirm hls.js can decode and render frames.
             if m3u8_streams:
                 stream_dicts = [s.to_dict() for s in m3u8_streams]
                 health_map = await self._health_checker.check_all(stream_dicts)
-
                 for stream in m3u8_streams:
                     health = health_map.get(stream.url)
                     if health:
-                        stream.is_live = health.is_live
                         stream.response_time_ms = health.response_time_ms
                         stream.checked_at = health.checked_at
                         if health.bitrate > 0:
                             stream.bitrate = health.bitrate
+                        # tentatively mark live; final word comes from the verifier
+                        stream.is_live = health.is_live
+
+            # Browser verification: applies to both m3u8 (only those that
+            # passed structural health) and embed (always — they have no
+            # other way to verify).
+            verify_items: list[tuple[str, str]] = []
+            for stream in m3u8_streams:
+                if stream.is_live:
+                    verify_items.append((stream.url, "m3u8"))
+            for stream in embed_streams:
+                verify_items.append((stream.embed_url or stream.url, "embed"))
+
+            verdicts = await self._playback_verifier.verify_many(verify_items)
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for stream in m3u8_streams:
+                if not stream.is_live:
+                    continue  # already failed health check
+                verdict = verdicts.get(stream.url)
+                if verdict is None:
+                    continue  # verifier disabled or unavailable
+                stream.is_live = verdict.is_playable
+                stream.checked_at = now_iso
+
+            for stream in embed_streams:
+                key = stream.embed_url or stream.url
+                verdict = verdicts.get(key)
+                stream.checked_at = now_iso
+                if verdict is None:
+                    # Verifier unavailable — fall back to "trust extractor".
+                    # This keeps the service usable even without playwright.
+                    stream.is_live = True
+                    stream.response_time_ms = 0
+                else:
+                    stream.is_live = verdict.is_playable
+                    stream.response_time_ms = verdict.elapsed_ms
 
         # Group streams by site_key and update cache
         new_cache: dict[str, list[ExtractedStream]] = {}
