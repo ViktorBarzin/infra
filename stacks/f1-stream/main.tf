@@ -104,11 +104,11 @@ resource "kubernetes_deployment" "f1-stream" {
           name              = "f1-stream"
           resources {
             limits = {
-              memory = "256Mi"
+              memory = "1Gi"
             }
             requests = {
-              cpu    = "25m"
-              memory = "256Mi"
+              cpu    = "100m"
+              memory = "1Gi"
             }
           }
           port {

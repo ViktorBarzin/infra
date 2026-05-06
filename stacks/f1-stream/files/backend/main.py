@@ -3,6 +3,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.responses import Response, StreamingResponse
 
+from backend.embed_proxy import fetch_embed, relay_asset
 from backend.extractors import create_extraction_service
 from backend.proxy import proxy_playlist, relay_stream
 from backend.schedule import ScheduleService
@@ -117,10 +119,6 @@ async def lifespan(app: FastAPI):
     # Startup: load schedule and start background scheduler
     await schedule_service.initialize()
 
-    # Run initial extraction
-    logger.info("Running initial stream extraction...")
-    await extraction_service.run_extraction()
-
     # Schedule daily schedule refresh
     scheduler.add_job(
         _scheduled_refresh,
@@ -130,13 +128,18 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Schedule periodic stream extraction (default: every 30 minutes)
+    # Schedule periodic stream extraction (default: every 30 minutes).
+    # next_run_time fires the first run 8s after startup. We don't run
+    # extraction inline here because it calls the playback verifier,
+    # which hits http://127.0.0.1:8000/embed for embed streams — uvicorn
+    # isn't listening yet inside the lifespan startup phase.
     scheduler.add_job(
         _scheduled_extraction,
         trigger=IntervalTrigger(minutes=30),
         id="stream_extraction",
         name="Extract streams from all registered sites",
         replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=8),
     )
 
     # Schedule token refresh every 4 minutes (safe margin for 5-min CDN tokens).
@@ -159,6 +162,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     scheduler.shutdown(wait=False)
     logger.info("APScheduler shut down")
+    try:
+        await extraction_service.shutdown()
+    except Exception:
+        logger.exception("extraction_service shutdown failed")
 
 
 app = FastAPI(title="F1 Streams", lifespan=lifespan)
@@ -407,6 +414,37 @@ async def relay_endpoint(
         status_code=status_code,
         headers=headers,
     )
+
+
+# --- Embed iframe-stripping proxy ---
+
+
+@app.get("/embed")
+async def embed_proxy(url: str = Query(..., description="Base64url-encoded embed URL")):
+    """Proxy a third-party embed page so it can be iframed in our origin.
+
+    Strips X-Frame-Options and CSP frame-ancestors from the upstream
+    response, injects a base href + frame-buster-defeat script, and
+    forwards a plausible Referer/Origin to bypass upstream allowlists.
+    """
+    body, headers, status_code = await fetch_embed(url)
+    return Response(content=body, headers=headers, status_code=status_code)
+
+
+@app.get("/embed-asset")
+async def embed_asset(
+    request: Request,
+    url: str = Query(..., description="Base64url-encoded subresource URL"),
+):
+    """Relay an upstream subresource (JS/CSS/image/etc.) for the embed proxy.
+
+    Used as a fallback when an upstream blocks hotlinked assets via Origin
+    or Referer checks. Most assets load directly via the injected <base>
+    tag without going through this endpoint.
+    """
+    range_header = request.headers.get("range")
+    stream_gen, headers, status_code = await relay_asset(url, range_header)
+    return StreamingResponse(stream_gen, headers=headers, status_code=status_code)
 
 
 # --- Frontend Static Files ---

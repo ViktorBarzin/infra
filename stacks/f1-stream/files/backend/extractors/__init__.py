@@ -12,12 +12,17 @@ Example:
 """
 
 from backend.extractors.aceztrims import AceztrimsExtractor
+from backend.extractors.curated import CuratedExtractor
 from backend.extractors.daddylive import DaddyLiveExtractor
 from backend.extractors.demo import DemoExtractor
+from backend.extractors.discord_source import DiscordExtractor
 from backend.extractors.models import ExtractedStream
+from backend.extractors.pitsport import PitsportExtractor
+from backend.extractors.ppv import PPVExtractor
 from backend.extractors.registry import ExtractorRegistry
 from backend.extractors.service import ExtractionService
 from backend.extractors.streamed import StreamedExtractor
+from backend.extractors.timstreams import TimStreamsExtractor
 
 __all__ = [
     "ExtractedStream",
@@ -36,10 +41,20 @@ def create_registry() -> ExtractorRegistry:
     registry = ExtractorRegistry()
 
     # --- Register extractors below ---
+    # CuratedExtractor returns hand-picked 24/7 channels first so we always
+    # have something. FallbackExtractor was removed — it surfaced aggregator
+    # landing pages that don't play directly in an iframe (they require
+    # user navigation through the page) and dominated the list with
+    # entries that fail browser-based playback verification.
+    registry.register(CuratedExtractor())
     registry.register(DemoExtractor())
     registry.register(StreamedExtractor())
     registry.register(DaddyLiveExtractor())
     registry.register(AceztrimsExtractor())
+    registry.register(PitsportExtractor())
+    registry.register(PPVExtractor())
+    registry.register(TimStreamsExtractor())
+    registry.register(DiscordExtractor())
 
     return registry
 
