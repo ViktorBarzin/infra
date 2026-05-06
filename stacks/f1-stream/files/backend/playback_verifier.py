@@ -162,12 +162,9 @@ _EMBED_POLL_JS = """
         sources: v.querySelectorAll('source').length,
       };
     }
-    const player_divs = document.querySelectorAll(
-      '[id*="player" i], [class*="player" i], [class*="jwplayer" i], [id*="video" i], [class*="video-js" i]'
-    );
-    return {has_video: false, has_player_div: player_divs.length > 0};
+    return {has_video: false};
   } catch (e) {
-    return {has_video: false, has_player_div: false, err: String(e)};
+    return {has_video: false, err: String(e)};
   }
 }
 """
@@ -271,12 +268,14 @@ async def _verify_embed(page, proxied_url: str, deadline: float) -> PlaybackVerd
         )
 
     # Track the best state seen across all polls. Some embeds load a player
-    # div briefly then anti-bot JS tears the DOM down (hmembeds redirects
-    # to google.com if its devtool-detection trips). We accept any positive
+    # briefly then anti-bot JS tears the DOM down (hmembeds redirects to
+    # google.com if its devtool-detection trips). We accept any positive
     # signal observed during the window, even if it's gone by timeout.
+    #
+    # We require an actual <video> element — a "player container div"
+    # is too weak (sportsurge has player-class divs but no real player).
     seen_video_wired = False
     seen_video_tag = False
-    seen_player_div = False
     last_err = ""
 
     while time.monotonic() < deadline:
@@ -295,8 +294,6 @@ async def _verify_embed(page, proxied_url: str, deadline: float) -> PlaybackVerd
                     is_playable=True, signal="video.wired",
                     elapsed_ms=int((time.monotonic() - start) * 1000),
                 )
-        if r.get("has_player_div"):
-            seen_player_div = True
         last_err = r.get("err", "")
         await asyncio.sleep(0.5)
 
@@ -306,11 +303,8 @@ async def _verify_embed(page, proxied_url: str, deadline: float) -> PlaybackVerd
     if seen_video_tag:
         return PlaybackVerdict(is_playable=True, signal="video.tag_only",
                                elapsed_ms=int((time.monotonic() - start) * 1000))
-    if seen_player_div:
-        return PlaybackVerdict(is_playable=True, signal="player_div",
-                               elapsed_ms=int((time.monotonic() - start) * 1000))
 
-    err = "no <video> or player container found"
+    err = "no <video> element rendered"
     if last_err:
         err += f"; last_err: {last_err}"
     return PlaybackVerdict(is_playable=False, error=err,

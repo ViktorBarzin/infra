@@ -14,7 +14,6 @@ Example:
 from backend.extractors.aceztrims import AceztrimsExtractor
 from backend.extractors.curated import CuratedExtractor
 from backend.extractors.daddylive import DaddyLiveExtractor
-from backend.extractors.demo import DemoExtractor
 from backend.extractors.discord_source import DiscordExtractor
 from backend.extractors.models import ExtractedStream
 from backend.extractors.pitsport import PitsportExtractor
@@ -42,12 +41,11 @@ def create_registry() -> ExtractorRegistry:
 
     # --- Register extractors below ---
     # CuratedExtractor returns hand-picked 24/7 channels first so we always
-    # have something. FallbackExtractor was removed — it surfaced aggregator
-    # landing pages that don't play directly in an iframe (they require
-    # user navigation through the page) and dominated the list with
-    # entries that fail browser-based playback verification.
+    # have something. DemoExtractor and FallbackExtractor were removed —
+    # demo streams aren't F1 content (just Big Buck Bunny etc.) and
+    # FallbackExtractor surfaced aggregator landing pages that don't play
+    # directly in an iframe.
     registry.register(CuratedExtractor())
-    registry.register(DemoExtractor())
     registry.register(StreamedExtractor())
     registry.register(DaddyLiveExtractor())
     registry.register(AceztrimsExtractor())

@@ -96,6 +96,63 @@ _FRAME_BUSTER_DEFEAT_TEMPLATE = """
     loc.assign = function(u){{ if (typeof u === 'string' && u.indexOf('google.com') !== -1) return; if (origAssign) origAssign(u); }};
     loc.replace = function(u){{ if (typeof u === 'string' && u.indexOf('google.com') !== -1) return; if (origReplace) origReplace(u); }};
   }} catch (e) {{}}
+
+  // Route all cross-origin fetch/XHR requests through our /embed-asset
+  // proxy. The hmembeds player calls a token-binding endpoint
+  // (hghndasw.gbgdhdffhf.shop/sec/<JWT>) that CORS-rejects requests from
+  // any origin other than hmembeds.one. By rewriting the URL to
+  // /embed-asset?url=..., the browser fetches our same-origin endpoint
+  // (no CORS issue), and our backend fetches the upstream with the
+  // correct Referer/Origin server-side (no CORS issue there either).
+  try {{
+    var b64url = function(s) {{
+      return btoa(unescape(encodeURIComponent(s)))
+        .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+    }};
+    var sameOrigin = function(u) {{
+      try {{ return (new URL(u, document.baseURI || location.href)).origin === location.origin; }}
+      catch (_) {{ return true; }}
+    }};
+    var toAbsolute = function(u) {{
+      try {{ return (new URL(u, document.baseURI || location.href)).toString(); }}
+      catch (_) {{ return u; }}
+    }};
+    var proxify = function(u) {{
+      var abs = toAbsolute(u);
+      if (sameOrigin(abs)) return u;
+      // Don't double-proxy.
+      if (abs.indexOf('/embed-asset?') !== -1 || abs.indexOf('/embed?') !== -1) return u;
+      return location.origin + '/embed-asset?url=' + b64url(abs);
+    }};
+
+    var _fetch = window.fetch && window.fetch.bind(window);
+    if (_fetch) {{
+      window.fetch = function(input, init) {{
+        try {{
+          if (typeof input === 'string') {{
+            return _fetch(proxify(input), init);
+          }} else if (input && input.url) {{
+            var newUrl = proxify(input.url);
+            if (newUrl !== input.url) {{
+              return _fetch(new Request(newUrl, input), init);
+            }}
+          }}
+        }} catch (e) {{}}
+        return _fetch(input, init);
+      }};
+    }}
+
+    var XHR = window.XMLHttpRequest;
+    if (XHR && XHR.prototype && XHR.prototype.open) {{
+      var _open = XHR.prototype.open;
+      XHR.prototype.open = function(method, url) {{
+        try {{ url = proxify(url); }} catch (e) {{}}
+        var args = Array.prototype.slice.call(arguments);
+        args[1] = url;
+        return _open.apply(this, args);
+      }};
+    }}
+  }} catch (e) {{}}
 }})();</script>
 """
 
