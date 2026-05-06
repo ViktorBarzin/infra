@@ -964,7 +964,8 @@
     },
     {
       "id": 17,
-      "title": "Δ 1d",
+      "title": "Δ 1d (all)",
+      "description": "Net worth delta over the trailing window (latest snapshot minus snapshot from N days ago). Includes new money paid in (salary, vests, deposits) AND market gains.",
       "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -972,7 +973,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
         "x": 0,
         "y": 4
       },
@@ -1028,8 +1029,9 @@
       ]
     },
     {
-      "id": 18,
-      "title": "Δ 7d",
+      "id": 21,
+      "title": "Δ 1d (mkt)",
+      "description": "Pure market gain over the trailing window — net-worth delta minus net-contribution delta. Excludes new money paid in. Apples-to-apples with the Growth panel.",
       "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1037,7 +1039,73 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
+        "x": 3,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '1 day' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Δ 7d (all)",
+      "description": "Net worth delta over the trailing window (latest snapshot minus snapshot from N days ago). Includes new money paid in (salary, vests, deposits) AND market gains.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
         "x": 6,
         "y": 4
       },
@@ -1093,8 +1161,9 @@
       ]
     },
     {
-      "id": 19,
-      "title": "Δ 30d",
+      "id": 22,
+      "title": "Δ 7d (mkt)",
+      "description": "Pure market gain over the trailing window — net-worth delta minus net-contribution delta. Excludes new money paid in. Apples-to-apples with the Growth panel.",
       "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1102,7 +1171,73 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
+        "x": 9,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '7 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Δ 30d (all)",
+      "description": "Net worth delta over the trailing window (latest snapshot minus snapshot from N days ago). Includes new money paid in (salary, vests, deposits) AND market gains.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
         "x": 12,
         "y": 4
       },
@@ -1158,8 +1293,9 @@
       ]
     },
     {
-      "id": 20,
-      "title": "Δ 90d",
+      "id": 23,
+      "title": "Δ 30d (mkt)",
+      "description": "Pure market gain over the trailing window — net-worth delta minus net-contribution delta. Excludes new money paid in. Apples-to-apples with the Growth panel.",
       "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1167,7 +1303,73 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
+        "x": 15,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '30 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Δ 90d (all)",
+      "description": "Net worth delta over the trailing window (latest snapshot minus snapshot from N days ago). Includes new money paid in (salary, vests, deposits) AND market gains.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
         "x": 18,
         "y": 4
       },
@@ -1219,6 +1421,72 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '90 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT (SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap) AS delta"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "title": "Δ 90d (mkt)",
+      "description": "Pure market gain over the trailing window — net-worth delta minus net-contribution delta. Excludes new money paid in. Apples-to-apples with the Growth panel.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '90 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
         }
       ]
     },
