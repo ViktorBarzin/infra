@@ -172,6 +172,31 @@ resource "helm_release" "woodpecker" {
   depends_on = [kubernetes_manifest.db_external_secret]
 }
 
+# Patch hostAliases onto the woodpecker-server StatefulSet — the chart 3.5.1
+# does NOT expose this field, so we have to do it after the helm release.
+# Keeps the OAuth/forge-API path off the WAN gateway (forgejo.viktorbarzin.me
+# resolves to the public IP via DNS, which round-trips through Cloudflare
+# and routinely tripped 30s context-deadline timeouts when fetching pipeline
+# config). 10.0.20.200 is the Traefik LB that fronts forgejo internally;
+# Traefik serves the *.viktorbarzin.me wildcard so SNI verification still
+# passes.
+resource "null_resource" "woodpecker_server_host_alias" {
+  triggers = {
+    helm_revision = helm_release.woodpecker.metadata[0].revision
+  }
+
+  provisioner "local-exec" {
+    command     = <<-BASH
+      set -euo pipefail
+      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '{"spec":{"template":{"spec":{"hostAliases":[{"ip":"10.0.20.200","hostnames":["forgejo.viktorbarzin.me"]}]}}}}'
+      kubectl -n woodpecker rollout status statefulset/woodpecker-server --timeout=120s
+    BASH
+    interpreter = ["/bin/bash", "-c"]
+  }
+
+  depends_on = [helm_release.woodpecker]
+}
+
 # ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces
 resource "kubernetes_cluster_role_binding" "woodpecker" {
   metadata {
