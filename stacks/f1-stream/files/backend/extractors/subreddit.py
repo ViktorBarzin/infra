@@ -1,17 +1,28 @@
-"""Subreddit extractor — pulls live-stream posts from motorsport subreddits.
+"""Subreddit extractor — pulls community-curated live-stream URLs from
+the *MotorsportsReplays* subreddit (and a few siblings).
 
-Uses the public old.reddit.com JSON API (no auth required) to discover
-posts in r/MotorsportsReplays, r/motorsports, r/MotorsportsStreaming etc.
-that are tagged "Live" or whose title matches motorsport stream keywords.
+The community follows a stable pattern: a single mod-curated post titled
+`[Watch / Download] <Series> <Year> - <Round> | <Event>` goes up on or
+near each race weekend with a `**Watch Online:**` link in the selftext,
+pointing at an admin-run WordPress site (motomundo.net for MotoGP, the
+F1 equivalent has rotated over the years). That WordPress page hosts
+iframe embeds whose m3u8 is JS-computed at load time — ideal target for
+the chrome-service pipeline downstream.
 
-Each candidate URL is then sent to the chrome-service-driven pipeline
-(via ChromeBrowserExtractor.scrape one-off) so the m3u8 is captured even
-when the link points to an aggregator page rather than a direct playlist.
+This extractor:
+- Hits Reddit with a real-browser User-Agent (httpx default UA + cluster
+  IP combo gets HTTP 403'd on r/motogp; a Safari UA does not).
+- Searches for the `[Watch` thread pattern AND scans `/new.json` for
+  any flair set to LIVE.
+- Pulls selftext URLs and returns each candidate as an `embed`-type
+  ExtractedStream. The verifier already drives chrome-service for embed
+  streams, so the m3u8 capture happens there.
 """
 
 import asyncio
 import logging
 import re
+import urllib.parse
 from typing import NamedTuple
 
 import httpx
@@ -27,8 +38,8 @@ USER_AGENT = (
     "Version/17.4 Safari/605.1.15"
 )
 
-# Subreddits to scan. old.reddit.com serves the public JSON API anonymously
-# without the auth wall the new site bounces requests off.
+# Subreddits to scan. r/MotorsportsReplays is the main signal; the others
+# rarely have stream posts but cost nothing to skim.
 SUBREDDITS: tuple[str, ...] = (
     "MotorsportsReplays",
     "motorsports",
@@ -36,37 +47,77 @@ SUBREDDITS: tuple[str, ...] = (
     "motogp",
 )
 
-# Reject post URLs we already know don't yield playable streams (Discord
-# invite links, social media, paywalled F1TV, our own host).
-_REJECT_HOSTS = {
-    "discord.gg", "discord.com", "twitter.com", "x.com",
-    "youtube.com", "youtu.be", "instagram.com", "tiktok.com",
-    "f1tv.formula1.com", "viktorbarzin.me",
-}
+# Search queries to fire against r/MotorsportsReplays (the ones below
+# capture the consistent mod-post pattern). Encoded into the JSON
+# search endpoint.
+SEARCH_QUERIES: tuple[str, ...] = (
+    "Watch Download F1 2026",
+    "Watch Download MotoGP 2026",
+    "Watch Online F1 2026",
+    "Watch Online MotoGP 2026",
+)
 
-_LIVE_KEYWORDS = re.compile(r"\b(live|stream|fp1|fp2|fp3|qualifying|race|session|grand prix|gp\b|sprint)\b", re.I)
+# Hosts we accept as "interesting" stream-page URLs. These are the
+# admin-curated WordPress / aggregator sites the community links to.
+# motomundo.net hosts MotoGP; new entries can be added freely.
+_INTERESTING_HOSTS = (
+    "motomundo.net",        # MotoGP
+    "motomundo.top",        # MotoMundo embed host
+    "motomundo.upns.xyz",   # MotoMundo embed host (newer)
+    "freemotorsports.com",  # community curated link list
+    "pitsport.xyz",         # in case a Reddit poster links it
+    "rerace.io",            # F1 archives + live (when up)
+    "dd12streams.com",      # live aggregator
+    "f1mundo.net",          # speculative F1 sister to motomundo
+    "f1.live",
+    "f1live",
+    "skystreams",
+    "raceon",
+    "watchf1",
+)
+
+# URLs we actively never try to scrape (auth-walled, social media,
+# direct downloads with no live stream).
+_REJECT_HOSTS = (
+    "discord.gg", "discord.com",
+    "twitter.com", "x.com",
+    "youtube.com", "youtu.be",
+    "instagram.com", "tiktok.com",
+    "f1tv.formula1.com",
+    "viktorbarzin.me",
+    "gofile.io",
+    "mega.nz", "drive.google.com",
+    "1fichier.com", "rapidgator", "uploaded.net",
+    "magnet:",
+)
+
+_URL_RE = re.compile(r"https?://[^\s\)\]\>\"']+")
 
 
-class _RedditPost(NamedTuple):
+class _Candidate(NamedTuple):
     title: str
     url: str
     subreddit: str
     flair: str
 
 
-def _interesting(post: _RedditPost) -> bool:
-    if not post.url:
+def _is_interesting(url: str) -> bool:
+    low = url.lower()
+    if any(host in low for host in _REJECT_HOSTS):
         return False
-    if any(host in post.url for host in _REJECT_HOSTS):
-        return False
-    if (post.flair or "").lower() in {"live", "live stream", "stream"}:
+    return any(host in low for host in _INTERESTING_HOSTS)
+
+
+def _has_live_marker(post: dict) -> bool:
+    title = (post.get("title") or "").lower()
+    flair = (post.get("link_flair_text") or "").lower()
+    if "[watch" in title or "watch online" in title or "live" in flair:
         return True
-    text = f"{post.title} {post.flair or ''}"
-    return bool(_LIVE_KEYWORDS.search(text))
+    return False
 
 
 class SubredditExtractor(BaseExtractor):
-    """Scan motorsport subreddits for live-stream candidate URLs."""
+    """Scan motorsport subreddits for community-curated live-stream URLs."""
 
     @property
     def site_key(self) -> str:
@@ -77,77 +128,97 @@ class SubredditExtractor(BaseExtractor):
         return "Subreddit"
 
     async def extract(self) -> list[ExtractedStream]:
+        # NB: do NOT send `Accept: application/json` — Reddit's anti-bot
+        # fingerprint flags that header from datacenter IPs and returns
+        # HTTP 403 with HTML. Default Accept (`*/*`) gets through fine
+        # and `.json` URLs always return JSON regardless.
         async with httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            headers={"User-Agent": USER_AGENT},
         ) as client:
-            tasks = [self._fetch(client, sub) for sub in SUBREDDITS]
+            tasks = [self._fetch_new(client, sub) for sub in SUBREDDITS]
+            tasks.extend(self._search(client, q) for q in SEARCH_QUERIES)
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        candidates: list[_RedditPost] = []
+        candidates: list[_Candidate] = []
         for r in results:
             if isinstance(r, Exception):
                 logger.debug("[subreddit] fetch failed: %s", r)
                 continue
             candidates.extend(r)
 
-        # Filter to live-stream posts and dedupe by URL.
+        # Dedupe by URL, keep first occurrence.
         seen: set[str] = set()
-        picks: list[_RedditPost] = []
-        for p in candidates:
-            if not _interesting(p):
+        picks: list[_Candidate] = []
+        for c in candidates:
+            if c.url in seen:
                 continue
-            if p.url in seen:
-                continue
-            seen.add(p.url)
-            picks.append(p)
+            seen.add(c.url)
+            picks.append(c)
 
         logger.info(
-            "[subreddit] %d post(s) across %d sub(s) — %d live-stream candidate(s)",
-            len(candidates), len(SUBREDDITS), len(picks),
+            "[subreddit] scanned %d source(s) — %d unique candidate URL(s)",
+            len(SUBREDDITS) + len(SEARCH_QUERIES), len(picks),
         )
-        # Hand off URL discovery to the existing chrome-service pipeline
-        # via ChromeBrowserExtractor — but in lazy form: we register the
-        # discovered URL as an `embed`-type stream so the verifier visits
-        # it, captures the actual m3u8 via JS, and (if successful) marks
-        # is_live=True. The frontend will iframe it for playback.
         return [
             ExtractedStream(
-                url=p.url,
+                url=c.url,
                 site_key=self.site_key,
-                site_name=f"Subreddit r/{p.subreddit}",
+                site_name=f"r/{c.subreddit}",
                 quality="",
-                title=p.title[:100],
+                title=c.title[:100],
                 stream_type="embed",
-                embed_url=p.url,
+                embed_url=c.url,
             )
-            for p in picks
+            for c in picks
         ]
 
-    async def _fetch(self, client: httpx.AsyncClient, sub: str) -> list[_RedditPost]:
-        url = f"https://old.reddit.com/r/{sub}/new.json?limit=25"
+    async def _fetch_new(self, client: httpx.AsyncClient, sub: str) -> list[_Candidate]:
+        return await self._collect(
+            client,
+            f"https://www.reddit.com/r/{sub}/new.json?limit=25",
+            sub,
+        )
+
+    async def _search(self, client: httpx.AsyncClient, query: str) -> list[_Candidate]:
+        q = urllib.parse.quote_plus(query)
+        return await self._collect(
+            client,
+            f"https://www.reddit.com/r/MotorsportsReplays/search.json?q={q}&restrict_sr=on&sort=new&limit=10",
+            "MotorsportsReplays",
+        )
+
+    async def _collect(
+        self, client: httpx.AsyncClient, url: str, sub: str
+    ) -> list[_Candidate]:
         try:
             resp = await client.get(url)
         except Exception as e:
-            logger.debug("[subreddit] r/%s fetch failed: %s", sub, e)
+            logger.debug("[subreddit] fetch %s failed: %s", url, e)
             return []
         if resp.status_code != 200:
-            logger.debug("[subreddit] r/%s HTTP %d", sub, resp.status_code)
+            logger.debug("[subreddit] %s -> HTTP %d", url, resp.status_code)
             return []
         try:
             data = resp.json()
         except Exception:
             return []
-        posts: list[_RedditPost] = []
+        out: list[_Candidate] = []
         for child in (data.get("data", {}) or {}).get("children", []):
             d = child.get("data", {}) or {}
-            posts.append(
-                _RedditPost(
-                    title=d.get("title", "") or "",
-                    url=d.get("url", "") or "",
-                    subreddit=sub,
-                    flair=d.get("link_flair_text", "") or "",
-                )
-            )
-        return posts
+            if not _has_live_marker(d):
+                continue
+            text = (d.get("selftext") or "")
+            title = d.get("title") or ""
+            flair = d.get("link_flair_text") or ""
+            # First, the linked URL itself (if it's a recognised live site).
+            top = d.get("url") or ""
+            if top and _is_interesting(top):
+                out.append(_Candidate(title, top, sub, flair))
+            # Then any URL embedded in the selftext that points at a
+            # community-curated live page.
+            for u in _URL_RE.findall(text):
+                if _is_interesting(u):
+                    out.append(_Candidate(title, u, sub, flair))
+        return out
