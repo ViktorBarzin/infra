@@ -175,9 +175,13 @@
 		if (!player || !player.videoEl) return;
 
 		if (Hls.isSupported()) {
+			// `lowLatencyMode` previously broke playback on regular (non-LL-HLS)
+			// providers like RallyTV — they don't ship the LL-HLS extensions
+			// hls.js needs in that mode. Default off; explicit per-stream flag
+			// can re-enable later.
 			const hlsInstance = new Hls({
 				enableWorker: true,
-				lowLatencyMode: true,
+				lowLatencyMode: false,
 				backBufferLength: 90
 			});
 
