@@ -89,14 +89,24 @@ PVC) and reuses it on subsequent restarts.
 
 ## Network controls
 
-- **`kubernetes_network_policy_v1.ws_ingress`** — only namespaces labelled
-  `chrome-service.viktorbarzin.me/client = "true"` (plus an explicit
-  fallback for `f1-stream` by `kubernetes.io/metadata.name`) can reach
-  TCP/3000.
+- **`kubernetes_network_policy_v1.ws_ingress`** — two separate ingress
+  rules on the same policy:
+  - **TCP/3000** (Playwright WS): only namespaces labelled
+    `chrome-service.viktorbarzin.me/client = "true"` (plus an explicit
+    fallback for `f1-stream` by `kubernetes.io/metadata.name`).
+  - **TCP/6080** (noVNC HTTP+WS): only the `traefik` namespace, since
+    the public-facing path is `chrome.viktorbarzin.me` ingress →
+    Traefik → sidecar. Authentik forward-auth still gates external
+    access at the Traefik layer.
 - **WS port 3000** is internal-only (no ingress, no Cloudflare DNS).
-- **HTTP port 80** (sidecar `nginxinc/nginx-unprivileged:alpine`) serves
-  a static health stub at `chrome.viktorbarzin.me`, Authentik-gated.
-  Lets a human confirm pod liveness without spinning a browser.
+- **noVNC sidecar** (`forgejo.viktorbarzin.me/viktor/chrome-service-novnc`)
+  exposes a live HTML5 view of the headed Chromium session via
+  `x11vnc` (connected to Xvfb on `localhost:6099`) bridged to
+  `websockify` on port 6080. Service `chrome` maps :80 → :6080 and is
+  exposed via `ingress_factory` at `chrome.viktorbarzin.me`,
+  Authentik-gated. Both static page and WebSocket upgrade share the
+  same path — Cloudflare proxy, Cloudflared tunnel, Traefik, and
+  Authentik forward-auth all preserve `Upgrade: websocket`.
 
 ## Adding a new caller
 

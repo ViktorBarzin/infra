@@ -21,9 +21,9 @@ resource "kubernetes_namespace" "chrome_service" {
   metadata {
     name = local.namespace
     labels = {
-      "istio-injection"                                  = "disabled"
-      tier                                               = local.tiers.aux
-      "chrome-service.viktorbarzin.me/server"            = "true"
+      "istio-injection"                       = "disabled"
+      tier                                    = local.tiers.aux
+      "chrome-service.viktorbarzin.me/server" = "true"
     }
   }
   lifecycle {
@@ -366,10 +366,14 @@ module "ingress" {
   }
 }
 
-# --- NetworkPolicy: TCP/3000 ingress only from labelled client namespaces.
+# --- NetworkPolicy: scoped ingress.
+# - TCP/3000 (Playwright WS): only from labelled client namespaces.
+# - TCP/6080 (noVNC HTTP+WS): only from the traefik namespace, since the
+#   public-facing path is `chrome.viktorbarzin.me` ingress → Traefik →
+#   sidecar. Authentik forward-auth still gates external access at the
+#   Traefik layer.
 # The cluster has no default-deny, so this NP only takes effect inside
-# chrome-service ns — pods elsewhere remain unaffected. Callers opt in by
-# labelling their namespace `chrome-service.viktorbarzin.me/client = "true"`.
+# chrome-service ns — pods elsewhere remain unaffected.
 resource "kubernetes_network_policy_v1" "ws_ingress" {
   metadata {
     name      = "chrome-service-ws-ingress"
@@ -399,6 +403,19 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
       }
       ports {
         port     = "3000"
+        protocol = "TCP"
+      }
+    }
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "traefik"
+          }
+        }
+      }
+      ports {
+        port     = "6080"
         protocol = "TCP"
       }
     }
