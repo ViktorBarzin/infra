@@ -24,16 +24,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_config_map" "kms-web-page" {
-  metadata {
-    name      = "kms-web-page-config"
-    namespace = kubernetes_namespace.kms.metadata[0].name
-  }
-  data = {
-    "index.html" = var.index_html
-  }
-}
-
 resource "kubernetes_deployment" "kms-web-page" {
   metadata {
     name      = "kms-web-page"
@@ -59,8 +49,11 @@ resource "kubernetes_deployment" "kms-web-page" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
         container {
-          image             = "nginx"
+          image             = "forgejo.viktorbarzin.me/viktor/kms-website:${var.image_tag}"
           name              = "kms-web-page"
           image_pull_policy = "IfNotPresent"
           resources {
@@ -76,29 +69,17 @@ resource "kubernetes_deployment" "kms-web-page" {
             container_port = 80
             protocol       = "TCP"
           }
-          volume_mount {
-            name       = "config"
-            mount_path = "/usr/share/nginx/html/"
-          }
-        }
-
-        volume {
-          name = "config"
-          config_map {
-            name = "kms-web-page-config"
-            items {
-              key  = "index.html"
-              path = "index.html"
-            }
-          }
         }
       }
     }
   }
-  depends_on = [kubernetes_config_map.kms-web-page]
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].dns_config,
+      # CI (Woodpecker) manages the live image tag via `kubectl set image`
+      spec[0].template[0].spec[0].container[0].image,
+    ]
   }
 }
 
