@@ -125,6 +125,12 @@ resource "kubernetes_deployment" "chrome_service" {
         labels = local.labels
       }
       spec {
+        # The noVNC sidecar pulls from registry.viktorbarzin.me which needs
+        # auth. Kyverno's `sync-registry-credentials` ClusterPolicy syncs
+        # the secret into every namespace.
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
         security_context {
           run_as_user  = 1000
           run_as_group = 1000
@@ -169,7 +175,13 @@ resource "kubernetes_deployment" "chrome_service" {
           args = [
             <<-EOT
             set -e
-            Xvfb :99 -screen 0 1280x720x24 &
+            # `-listen tcp` enables localhost:6099 so the noVNC sidecar can
+            # connect over the pod's shared network namespace (Ubuntu 24.04
+            # defaults Xvfb to -nolisten tcp).
+            # `-ac` disables X access control so the noVNC sidecar can
+            # attach without an MIT-MAGIC-COOKIE; safe because Xvfb only
+            # listens on localhost (pod's lo).
+            Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &
             sleep 1
             cat > /tmp/launch.json <<JSON
             {
@@ -252,33 +264,25 @@ resource "kubernetes_deployment" "chrome_service" {
           }
         }
 
-        # Static health/admin page served behind Authentik. Lets a human
-        # confirm the service is up via the browser; the WS endpoint stays
-        # internal-only. nginx-unprivileged listens on 8080 as user 101 by
-        # default — works under the pod's non-root securityContext.
+        # noVNC sidecar — exposes a live HTML5 view of the headed Chromium
+        # session via x11vnc + websockify, gated by the Authentik-protected
+        # ingress at chrome.viktorbarzin.me. WS port 3000 (the Playwright
+        # endpoint) stays internal-only.
         container {
-          name              = "health"
-          image             = "docker.io/nginxinc/nginx-unprivileged:alpine"
+          name              = "novnc"
+          image             = "registry.viktorbarzin.me/chrome-service-novnc:v4"
           image_pull_policy = "IfNotPresent"
           port {
             name           = "http"
-            container_port = 8080
+            container_port = 6080
             protocol       = "TCP"
           }
-          volume_mount {
-            name       = "health-html"
-            mount_path = "/usr/share/nginx/html"
-            read_only  = true
-          }
-          # nginx-unprivileged ships with /tmp, /var/cache/nginx and pidfile
-          # paths owned by UID 101, not 1000. Override the pod-level user.
-          security_context {
-            run_as_user  = 101
-            run_as_group = 101
-          }
+          # x11vnc connects to the chrome-service container's Xvfb over
+          # localhost TCP (shared pod network). Same uid 1000 as chrome
+          # container so we can read MIT-MAGIC-COOKIE if Xvfb adds one.
           resources {
-            requests = { cpu = "10m", memory = "16Mi" }
-            limits   = { memory = "32Mi" }
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { memory = "96Mi" }
           }
         }
 
@@ -295,34 +299,12 @@ resource "kubernetes_deployment" "chrome_service" {
             size_limit = "256Mi"
           }
         }
-        volume {
-          name = "health-html"
-          config_map {
-            name = kubernetes_config_map.health_html.metadata[0].name
-          }
-        }
       }
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
-  }
-}
-
-# --- Static health page ConfigMaps (served by nginx sidecar) ---
-resource "kubernetes_config_map" "health_html" {
-  metadata {
-    name      = "chrome-service-health-html"
-    namespace = kubernetes_namespace.chrome_service.metadata[0].name
-  }
-  data = {
-    "index.html" = <<-EOT
-      <!doctype html><meta charset="utf-8"><title>chrome-service</title>
-      <h1>chrome-service</h1>
-      <p>Headless-Chromium-as-a-service is running.</p>
-      <p>Connect via Playwright: <code>chromium.connect("ws://chrome-service.chrome-service.svc.cluster.local:3000/&lt;TOKEN&gt;")</code></p>
-    EOT
   }
 }
 
@@ -346,8 +328,8 @@ resource "kubernetes_service" "chrome_service" {
   }
 }
 
-# Health page (Authentik-gated, exposed via ingress).
-resource "kubernetes_service" "chrome_health" {
+# noVNC view (Authentik-gated, exposed via ingress).
+resource "kubernetes_service" "chrome_novnc" {
   metadata {
     name      = "chrome"
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
@@ -359,7 +341,7 @@ resource "kubernetes_service" "chrome_health" {
     port {
       name        = "http"
       port        = 80
-      target_port = 8080
+      target_port = 6080
       protocol    = "TCP"
     }
   }
@@ -372,10 +354,12 @@ module "ingress" {
   name            = "chrome"
   tls_secret_name = var.tls_secret_name
   protected       = true
+  # noVNC defaults to /vnc.html — auto-redirect / there.
+  ingress_path = ["/"]
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Chrome Service"
-    "gethomepage.dev/description" = "Headed Chromium WebSocket pool"
+    "gethomepage.dev/description" = "Live noVNC view of headed Chromium"
     "gethomepage.dev/icon"        = "chromium.png"
     "gethomepage.dev/group"       = "Infrastructure"
   }
