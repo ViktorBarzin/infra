@@ -49,6 +49,25 @@ class ExtractionService:
 
         streams = await self._registry.extract_all()
 
+        # Dedupe by canonical URL — pitsport surfaces every WRC stage as a
+        # separate event but they all point at the same RallyTV master.m3u8
+        # (and similar for MotoGP weekend sessions). Keep the first
+        # occurrence so the user sees one entry per actual stream.
+        deduped: list[ExtractedStream] = []
+        seen_urls: set[str] = set()
+        for stream in streams:
+            key = (stream.embed_url or "").strip() or (stream.url or "").strip()
+            if not key or key in seen_urls:
+                continue
+            seen_urls.add(key)
+            deduped.append(stream)
+        if len(deduped) < len(streams):
+            logger.info(
+                "Deduped streams: %d -> %d (collapsed %d duplicate URL(s))",
+                len(streams), len(deduped), len(streams) - len(deduped),
+            )
+        streams = deduped
+
         # Run health checks + headless-browser playback verification.
         # Both stream types are now verified end-to-end so the user only
         # ever sees streams that actually play in a browser.
