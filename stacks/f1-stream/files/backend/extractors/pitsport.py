@@ -71,15 +71,12 @@ def _is_motorsport_category(category: str) -> bool:
 
 
 def _is_motorsport_event(category: str, title: str) -> bool:
-    """Check if an event is a motorsport we want to surface (F1 + adjacent)."""
-    if _is_motorsport_category(category):
-        return True
-    lower = f"{category} {title}".lower()
-    if any(kw in lower for kw in MOTORSPORT_KEYWORDS):
-        return True
-    if GP_KEYWORD in lower:
-        return True
-    return False
+    """Accept anything pitsport.xyz lists. Pitsport curates sports
+    broadcasts (WRC, MotoGP, IndyCar, NASCAR, Premier League Darts,
+    Premier League football, etc.) — the site's own selection is the
+    filter we want. Empty/garbage events still get filtered downstream
+    when `_resolve_event_streams` produces no playable URL."""
+    return bool(category or title)
 
 
 # Aliases kept so older call-sites stay compiling. Both now point at the
