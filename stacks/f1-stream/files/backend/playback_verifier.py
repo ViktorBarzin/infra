@@ -336,18 +336,26 @@ class PlaybackVerifier:
                 logger.error("playwright not installed — playback verification disabled")
                 return None
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-dev-shm-usage",
-                    "--disable-web-security",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--autoplay-policy=no-user-gesture-required",
-                ],
-            )
-            logger.info("Playwright browser launched (concurrency=%d)", MAX_CONCURRENCY)
+            ws_base = os.getenv("CHROME_WS_URL")
+            ws_token = os.getenv("CHROME_WS_TOKEN")
+            if ws_base and ws_token:
+                self._browser = await self._playwright.chromium.connect(
+                    f"{ws_base.rstrip('/')}/{ws_token}", timeout=15_000,
+                )
+                logger.info("connected to remote chrome-service (concurrency=%d)", MAX_CONCURRENCY)
+            else:
+                self._browser = await self._playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-dev-shm-usage",
+                        "--disable-web-security",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-features=IsolateOrigins,site-per-process",
+                        "--autoplay-policy=no-user-gesture-required",
+                    ],
+                )
+                logger.warning("CHROME_WS_URL not set — using in-process Chromium (concurrency=%d)", MAX_CONCURRENCY)
             return self._browser
 
     async def shutdown(self) -> None:
@@ -387,6 +395,8 @@ class PlaybackVerifier:
                     viewport={"width": 1280, "height": 720},
                     bypass_csp=True,
                 )
+                from backend.stealth import STEALTH_JS
+                await context.add_init_script(STEALTH_JS)
                 page = await context.new_page()
             except Exception as e:
                 return PlaybackVerdict(
