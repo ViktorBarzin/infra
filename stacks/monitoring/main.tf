@@ -33,6 +33,10 @@ module "monitoring" {
   kube_config_path              = var.kube_config_path
   registry_user                 = data.vault_kv_secret_v2.viktor.data["registry_user"]
   registry_password             = data.vault_kv_secret_v2.viktor.data["registry_password"]
-  forgejo_pull_token            = data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"]
-  tier                          = local.tiers.cluster
+  # try() so apply succeeds before the Vault key is populated during Phase 0
+  # bootstrap (see docs/runbooks/forgejo-registry-setup.md). Empty token =
+  # probe will report an auth failure and fire RegistryCatalogInaccessible —
+  # that's the intended visible-broken state until the PAT is created.
+  forgejo_pull_token = try(data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"], "")
+  tier               = local.tiers.cluster
 }

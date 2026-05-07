@@ -32,8 +32,11 @@ resource "kubernetes_secret" "registry_credentials" {
         # Forgejo OCI registry — read-only PAT for the cluster-puller service
         # account user. Pushes go through ci-pusher (separate PAT in Vault
         # secret/ci/global, surfaced to Woodpecker).
+        # try() lets the apply succeed before the Vault key is populated
+        # during Phase 0 bootstrap (see docs/runbooks/forgejo-registry-setup.md).
+        # The cluster has no consumers yet — broken creds are visible but harmless.
         "forgejo.viktorbarzin.me" = {
-          auth = base64encode("cluster-puller:${data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"]}")
+          auth = base64encode("cluster-puller:${try(data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"], "")}")
         }
       }
     })
