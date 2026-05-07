@@ -41,6 +41,11 @@ variable "registry_password" {
   type      = string
   sensitive = true
 }
+variable "forgejo_pull_token" {
+  type        = string
+  sensitive   = true
+  description = "PAT for the cluster-puller user, used by the Forgejo registry integrity probe."
+}
 
 resource "kubernetes_namespace" "monitoring" {
   metadata {
@@ -375,6 +380,203 @@ resource "kubernetes_cron_job_v1" "registry_integrity_probe" {
                         CH=$(curl -sk -u "$AUTH" -o /dev/null -w '%%{http_code}' \
                           -H "Accept: $ACCEPT" --max-time 10 -I \
                           "https://$REG/v2/$repo/manifests/$d")
+                        if [ "$CH" != "200" ]; then
+                          echo "FAIL: $repo:$tag index child $d HTTP $CH"
+                          FAIL=$((FAIL + 1))
+                        fi
+                      done < /tmp/children.txt
+                    fi
+                  done < /tmp/tags.txt
+                done < /tmp/repos.txt
+
+                NOW=$(date +%s)
+                push <<METRICS
+                # TYPE registry_manifest_integrity_failures gauge
+                registry_manifest_integrity_failures{instance="$INSTANCE"} $FAIL
+                # TYPE registry_manifest_integrity_catalog_accessible gauge
+                registry_manifest_integrity_catalog_accessible{instance="$INSTANCE"} 1
+                # TYPE registry_manifest_integrity_repos_checked gauge
+                registry_manifest_integrity_repos_checked{instance="$INSTANCE"} $REPOS_N
+                # TYPE registry_manifest_integrity_tags_checked gauge
+                registry_manifest_integrity_tags_checked{instance="$INSTANCE"} $TAGS_N
+                # TYPE registry_manifest_integrity_indexes_checked gauge
+                registry_manifest_integrity_indexes_checked{instance="$INSTANCE"} $INDEXES_N
+                # TYPE registry_manifest_integrity_last_run_timestamp gauge
+                registry_manifest_integrity_last_run_timestamp{instance="$INSTANCE"} $NOW
+                METRICS
+
+                echo "Probe complete: $FAIL failures across $REPOS_N repos / $TAGS_N tags / $INDEXES_N indexes"
+                if [ "$FAIL" -gt 0 ]; then exit 1; fi
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "48Mi"
+                }
+                limits = {
+                  memory = "96Mi"
+                }
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Forgejo registry integrity probe — same algorithm as registry-integrity-probe
+# above, but targets the Forgejo OCI registry instead of registry-private. Runs
+# in parallel with the existing probe during the dual-push bake; once Phase 4
+# decommissions registry-private, the registry-integrity-probe CronJob is
+# deleted and only this one remains.
+#
+# Auth: HTTP Basic with cluster-puller PAT (read:package scope is enough to
+# walk catalog + manifests). Reaches Forgejo via the in-cluster service so we
+# don't hairpin out through Traefik for every probe run.
+# -----------------------------------------------------------------------------
+resource "kubernetes_secret" "forgejo_probe_credentials" {
+  metadata {
+    name      = "forgejo-probe-credentials"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  type = "Opaque"
+  data = {
+    REG_USER = "cluster-puller"
+    REG_PASS = var.forgejo_pull_token
+  }
+}
+
+resource "kubernetes_cron_job_v1" "forgejo_integrity_probe" {
+  metadata {
+    name      = "forgejo-integrity-probe"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+    schedule                      = "*/15 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "forgejo-integrity-probe"
+              image = "docker.io/library/alpine:3.20"
+              env {
+                name = "REG_USER"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.forgejo_probe_credentials.metadata[0].name
+                    key  = "REG_USER"
+                  }
+                }
+              }
+              env {
+                name = "REG_PASS"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.forgejo_probe_credentials.metadata[0].name
+                    key  = "REG_PASS"
+                  }
+                }
+              }
+              env {
+                name  = "REGISTRY_HOST"
+                value = "forgejo.forgejo.svc.cluster.local"
+              }
+              env {
+                name  = "REGISTRY_SCHEME"
+                value = "http"
+              }
+              env {
+                name  = "REGISTRY_INSTANCE"
+                value = "forgejo.viktorbarzin.me"
+              }
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/forgejo-integrity-probe"
+              }
+              env {
+                name  = "TAGS_PER_REPO"
+                value = "5"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                apk add --no-cache curl jq >/dev/null
+
+                REG="$REGISTRY_HOST"
+                SCHEME="$${REGISTRY_SCHEME:-https}"
+                INSTANCE="$REGISTRY_INSTANCE"
+                AUTH="$REG_USER:$REG_PASS"
+                ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+
+                push() {
+                  curl -sf --max-time 10 --data-binary @- "$PUSHGATEWAY" >/dev/null 2>&1 || true
+                }
+
+                CATALOG=$(curl -sk -u "$AUTH" --max-time 30 "$SCHEME://$REG/v2/_catalog?n=1000" || echo "")
+                REPOS=$(echo "$CATALOG" | jq -r '.repositories[]?' 2>/dev/null || echo "")
+
+                if [ -z "$REPOS" ]; then
+                  echo "ERROR: empty catalog or auth failure — cannot probe"
+                  NOW=$(date +%s)
+                  push <<METRICS
+                # TYPE registry_manifest_integrity_catalog_accessible gauge
+                registry_manifest_integrity_catalog_accessible{instance="$INSTANCE"} 0
+                # TYPE registry_manifest_integrity_last_run_timestamp gauge
+                registry_manifest_integrity_last_run_timestamp{instance="$INSTANCE"} $NOW
+                METRICS
+                  exit 1
+                fi
+
+                FAIL=0
+                REPOS_N=0
+                TAGS_N=0
+                INDEXES_N=0
+
+                printf '%s\n' $REPOS > /tmp/repos.txt
+                while IFS= read -r repo; do
+                  [ -z "$repo" ] && continue
+                  REPOS_N=$((REPOS_N + 1))
+
+                  TAGS_JSON=$(curl -sk -u "$AUTH" --max-time 15 "$SCHEME://$REG/v2/$repo/tags/list" || echo "")
+                  echo "$TAGS_JSON" | jq -r '.tags[]?' 2>/dev/null | tail -n "$TAGS_PER_REPO" > /tmp/tags.txt || true
+
+                  while IFS= read -r tag; do
+                    [ -z "$tag" ] && continue
+                    TAGS_N=$((TAGS_N + 1))
+
+                    HTTP=$(curl -sk -u "$AUTH" -o /tmp/m.json -w '%%{http_code}' \
+                      -H "Accept: $ACCEPT" --max-time 15 \
+                      "$SCHEME://$REG/v2/$repo/manifests/$tag")
+                    if [ "$HTTP" != "200" ]; then
+                      echo "FAIL: $repo:$tag manifest HTTP $HTTP"
+                      FAIL=$((FAIL + 1))
+                      continue
+                    fi
+
+                    MT=$(jq -r '.mediaType // empty' /tmp/m.json 2>/dev/null || echo "")
+                    if echo "$MT" | grep -Eq 'manifest\.list|image\.index'; then
+                      INDEXES_N=$((INDEXES_N + 1))
+                      jq -r '.manifests[].digest' /tmp/m.json > /tmp/children.txt 2>/dev/null || true
+                      while IFS= read -r d; do
+                        [ -z "$d" ] && continue
+                        CH=$(curl -sk -u "$AUTH" -o /dev/null -w '%%{http_code}' \
+                          -H "Accept: $ACCEPT" --max-time 10 -I \
+                          "$SCHEME://$REG/v2/$repo/manifests/$d")
                         if [ "$CH" != "200" ]; then
                           echo "FAIL: $repo:$tag index child $d HTTP $CH"
                           FAIL=$((FAIL + 1))

@@ -40,8 +40,9 @@ variable "ingress_path" {
   default = ["/"]
 }
 variable "max_body_size" {
-  type    = string
-  default = "50m"
+  type        = string
+  default     = null
+  description = "Maximum request body size, e.g. '5g'. null = no limit (Traefik default). When set, a per-ingress Buffering middleware is created and attached."
 }
 variable "extra_annotations" {
   default = {}
@@ -203,6 +204,17 @@ locals {
     "gethomepage.dev/href"    = "https://${local.effective_host}"
     "gethomepage.dev/icon"    = "${replace(var.name, "-", "")}.png"
   } : {}
+
+  # Parse "5g"/"50m"/"1024k"/"42" into bytes. Traefik's Buffering middleware
+  # takes maxRequestBodyBytes as an integer. Empty unit = bytes.
+  body_size_match = var.max_body_size == null ? null : regex("^([0-9]+)([kmgKMG]?)$", var.max_body_size)
+  body_size_unit_multiplier = var.max_body_size == null ? 0 : (
+    lower(local.body_size_match[1]) == "g" ? 1073741824 :
+    lower(local.body_size_match[1]) == "m" ? 1048576 :
+    lower(local.body_size_match[1]) == "k" ? 1024 :
+    1
+  )
+  max_body_size_bytes = var.max_body_size == null ? 0 : tonumber(local.body_size_match[0]) * local.body_size_unit_multiplier
 }
 
 
@@ -245,6 +257,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
+        var.max_body_size != null ? "${var.namespace}-buffering-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
       }, local.homepage_defaults, var.extra_annotations,
@@ -297,6 +310,27 @@ resource "kubernetes_manifest" "custom_csp" {
     spec = {
       headers = {
         contentSecurityPolicy = var.custom_content_security_policy
+      }
+    }
+  }
+}
+
+# Buffering middleware - created per service when max_body_size is set.
+# Traefik default is unlimited; setting maxRequestBodyBytes enforces a limit
+# (e.g. Forgejo container pushes can ship multi-GB layer blobs).
+resource "kubernetes_manifest" "buffering" {
+  count = var.max_body_size != null ? 1 : 0
+
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "buffering-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      buffering = {
+        maxRequestBodyBytes = local.max_body_size_bytes
       }
     }
   }

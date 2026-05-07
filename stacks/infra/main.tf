@@ -83,6 +83,12 @@ module "k8s-node-template" {
   mkdir -p /etc/containerd/certs.d/registry.viktorbarzin.me
   printf 'server = "https://registry.viktorbarzin.me"\n\n[host."https://10.0.20.10:5050"]\n  capabilities = ["pull", "resolve", "push"]\n  skip_verify = true\n' > /etc/containerd/certs.d/registry.viktorbarzin.me/hosts.toml
 
+  # Forgejo OCI registry: redirect to in-cluster Traefik LB (10.0.20.200) so
+  # pulls don't hairpin out through the WAN gateway. Traefik serves the
+  # *.viktorbarzin.me wildcard so SNI verification still passes.
+  mkdir -p /etc/containerd/certs.d/forgejo.viktorbarzin.me
+  printf 'server = "https://forgejo.viktorbarzin.me"\n\n[host."https://10.0.20.200"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml
+
   # Low-traffic registries (registry.k8s.io, quay.io, reg.kyverno.io) pull directly.
   # Pull-through cache removed: caused corrupted images (truncated downloads)
   # breaking VPA certgen and Kyverno image pulls.
