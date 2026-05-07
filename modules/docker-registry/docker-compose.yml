@@ -89,35 +89,25 @@ services:
       retries: 3
       start_period: 10s
 
-  registry-private:
-    image: registry:2.8.3
-    container_name: registry-private
-    restart: always
-    volumes:
-      - /opt/registry/data/private:/var/lib/registry
-      - /opt/registry/config-private.yml:/etc/docker/registry/config.yml:ro
-      - /opt/registry/htpasswd:/auth/htpasswd:ro
-    networks:
-      - registry
-    healthcheck:
-      # 401 is expected (auth required) — any HTTP response means the registry is healthy
-      test: ["CMD", "sh", "-c", "wget -qS -O /dev/null http://127.0.0.1:5000/v2/ 2>&1 | grep -q 'HTTP/'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+  # registry-private removed in Phase 4 of forgejo-registry-consolidation
+  # 2026-05-07. The /v2/ private registry has migrated to Forgejo at
+  # forgejo.viktorbarzin.me/viktor/<image>. Pull-through caches for upstream
+  # registries (dockerhub, ghcr, quay, k8s, kyverno) stay on this VM.
+  # Manual decommission step on the live VM:
+  #   ssh root@10.0.20.10 'cd /opt/registry && docker compose up -d --remove-orphans'
+  # …and after 1 week of no incidents, `rm -rf /opt/registry/data/private/`.
 
   nginx:
     image: nginx:alpine
     container_name: registry-nginx
     restart: always
+    # 5050 dropped Phase 4 of forgejo-registry-consolidation 2026-05-07.
     ports:
       - "5000:5000"
       - "5010:5010"
       - "5020:5020"
       - "5030:5030"
       - "5040:5040"
-      - "5050:5050"
     volumes:
       - /opt/registry/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/registry/tls:/etc/nginx/tls:ro
@@ -134,8 +124,6 @@ services:
       registry-k8s:
         condition: service_healthy
       registry-kyverno:
-        condition: service_healthy
-      registry-private:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:5000/v2/ >/dev/null 2>&1"]

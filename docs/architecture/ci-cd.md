@@ -19,7 +19,7 @@ graph LR
     I --> J[Pull from DockerHub<br/>or Pull-Through Cache]
 
     K[Pull-Through Cache<br/>10.0.20.10] -.-> J
-    L[registry.viktorbarzin.me<br/>Private Registry] -.-> J
+    L[forgejo.viktorbarzin.me<br/>Private Registry on Forgejo] -.-> J
 
     style B fill:#2088ff
     style F fill:#4c9e47
@@ -33,7 +33,7 @@ graph LR
 | GitHub Actions | Cloud | `.github/workflows/build-and-deploy.yml` | Build Docker images, push to DockerHub |
 | Woodpecker CI | Self-hosted | `ci.viktorbarzin.me` | Deploy to Kubernetes cluster |
 | DockerHub | Cloud | `viktorbarzin/*` | Public image registry |
-| Private Registry | Custom | `registry.viktorbarzin.me` | Private images, htpasswd auth |
+| Private Registry | Forgejo Packages | `forgejo.viktorbarzin.me/viktor` | Private container images (PAT auth, retention CronJob) — migrated from registry.viktorbarzin.me 2026-05-07 |
 | Pull-Through Cache | Custom | `10.0.20.10:5000` (docker.io)<br/>`10.0.20.10:5010` (ghcr.io) | LAN cache for remote registries |
 | Kyverno | Cluster | `kyverno` namespace | Auto-sync registry credentials to all namespaces |
 | Vault | Cluster | `vault.viktorbarzin.me` | K8s auth for Woodpecker pipelines |
@@ -102,7 +102,7 @@ Woodpecker API uses numeric IDs (not owner/name):
 1. **Containerd hosts.toml** redirects pulls from docker.io and ghcr.io to pull-through cache at `10.0.20.10`
 2. **Pull-through cache** serves cached images from LAN, fetches from upstream on cache miss
 3. **Kyverno ClusterPolicy** auto-syncs `registry-credentials` Secret to all namespaces for private registry access
-4. **Private registry** (`registry.viktorbarzin.me`) uses htpasswd auth, credentials stored in Vault. Runs `registry:2.8.3` (pinned — floating `registry:2` was the root cause of the 2026-04-13 + 2026-04-19 orphan-index incidents; see `docs/post-mortems/2026-04-19-registry-orphan-index.md`).
+4. **Private registry** has been Forgejo's built-in OCI registry at `forgejo.viktorbarzin.me/viktor/<image>` since 2026-05-07. Auth via PAT (Vault `secret/ci/global/forgejo_push_token` for push, `secret/viktor/forgejo_pull_token` for pull). The pre-migration `registry:2.8.3`-based private registry on `registry.viktorbarzin.me:5050` was the root cause of three orphan-index incidents in three weeks (2026-04-13, 2026-04-19, 2026-05-04 — see `docs/post-mortems/2026-04-19-registry-orphan-index.md` and the full migration writeup at `docs/plans/2026-05-07-forgejo-registry-consolidation-{design,plan}.md`). The five pull-through caches on `10.0.20.10` (ports 5000/5010/5020/5030/5040) stay in place for upstream registries.
 5. **Integrity probe** (`registry-integrity-probe` CronJob in `monitoring` ns, every 15m) walks `/v2/_catalog` → tags → indexes → child manifests via HEAD and pushes `registry_manifest_integrity_failures` to Pushgateway; alerts `RegistryManifestIntegrityFailure` / `RegistryIntegrityProbeStale` / `RegistryCatalogInaccessible` page on broken state. Authoritative check (HTTP API, not filesystem).
 
 ### Infra Pipelines (Woodpecker-only)

@@ -8,7 +8,10 @@ variable "postgresql_host" { type = string }
 
 locals {
   namespace = "payslip-ingest"
-  image     = "registry.viktorbarzin.me/payslip-ingest:${var.image_tag}"
+  # Phase 3 of forgejo-registry-consolidation — image= flipped to Forgejo
+  # 2026-05-07. registry-private kept image at the same path, so the new
+  # Forgejo URL is `viktor/<name>` under forgejo.viktorbarzin.me.
+  image = "forgejo.viktorbarzin.me/viktor/payslip-ingest:${var.image_tag}"
   labels = {
     app = "payslip-ingest"
   }

@@ -25,7 +25,7 @@ clone:
 
 steps:
   - name: apply
-    image: registry.viktorbarzin.me/infra-ci:latest
+    image: forgejo.viktorbarzin.me/viktor/infra-ci:latest
     pull: true
     backend_options:
       kubernetes:

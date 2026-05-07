@@ -269,8 +269,9 @@ resource "kubernetes_deployment" "chrome_service" {
         # ingress at chrome.viktorbarzin.me. WS port 3000 (the Playwright
         # endpoint) stays internal-only.
         container {
-          name              = "novnc"
-          image             = "registry.viktorbarzin.me/chrome-service-novnc:v4"
+          name = "novnc"
+          # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
+          image             = "forgejo.viktorbarzin.me/viktor/chrome-service-novnc:v4"
           image_pull_policy = "IfNotPresent"
           port {
             name           = "http"

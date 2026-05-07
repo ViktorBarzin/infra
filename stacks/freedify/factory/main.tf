@@ -105,7 +105,8 @@ resource "kubernetes_deployment" "freedify" {
           name = "registry-credentials"
         }
         container {
-          image = "registry.viktorbarzin.me/freedify:${var.tag}"
+          # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
+          image = "forgejo.viktorbarzin.me/viktor/freedify:${var.tag}"
           name  = "freedify"
 
           port {
