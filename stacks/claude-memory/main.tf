@@ -284,4 +284,7 @@ module "ingress" {
     "gethomepage.dev/name"         = "Claude Memory"
     "gethomepage.dev/description"  = "Shared persistent memory for Claude sessions"
     "gethomepage.dev/icon"         = "claude-ai.png"
-    "gethomepage.dev/group"        = "Cor
+    "gethomepage.dev/group"        = "Core Platform"
+    "gethomepage.dev/pod-selector" = ""
+  }
+}
