@@ -12,7 +12,10 @@ Example:
 """
 
 from backend.extractors.aceztrims import AceztrimsExtractor
+from backend.extractors.chrome_browser import ChromeBrowserExtractor
 from backend.extractors.curated import CuratedExtractor
+from backend.extractors.dd12 import DD12Extractor
+from backend.extractors.subreddit import SubredditExtractor
 from backend.extractors.daddylive import DaddyLiveExtractor
 from backend.extractors.discord_source import DiscordExtractor
 from backend.extractors.models import ExtractedStream
@@ -48,6 +51,18 @@ def create_registry() -> ExtractorRegistry:
     # disabled until/unless we find a working bypass.
     # registry.register(CuratedExtractor())
     registry.register(StreamedExtractor())
+    # ChromeBrowserExtractor drives the in-cluster chrome-service via the
+    # CHROME_WS_URL / CHROME_WS_TOKEN env vars to scrape JS-rendered
+    # pages whose m3u8 is computed at runtime.
+    registry.register(ChromeBrowserExtractor())
+    # SubredditExtractor pulls live-stream posts from motorsport subreddits.
+    # Returns embed-type streams; the verifier will visit each via
+    # chrome-service to confirm playability.
+    registry.register(SubredditExtractor())
+    # DD12Extractor scrapes DD12Streams' per-channel pages for the inline
+    # JW Player file URL. The site embeds the m3u8 in HTML so curl-based
+    # parsing is enough — no browser needed.
+    registry.register(DD12Extractor())
     registry.register(DaddyLiveExtractor())
     registry.register(AceztrimsExtractor())
     registry.register(PitsportExtractor())
