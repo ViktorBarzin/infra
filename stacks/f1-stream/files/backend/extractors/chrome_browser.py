@@ -51,23 +51,22 @@ class _Target:
 # whose m3u8 is JS-computed. Add freely — each one takes ~12s to scrape.
 # ---------------------------------------------------------------------------
 TARGETS: tuple[_Target, ...] = (
-    # DD12streams' /nas iframe → /new-nas/jwplayer → JW player setup with
-    # an inline m3u8. The HTML is generated server-side and the URL string
-    # is embedded directly, so this would also work over curl — but the
-    # browser path future-proofs against dd12 starting to compute the URL
-    # in JS.
+    # MotoMundo embed pages — the community-curated WordPress site for
+    # MotoGP. Each /e/<id> URL is one of the iframes their "Watch Online"
+    # post lists for the active session (FP/Q/Race). The m3u8 is
+    # JS-computed at load time so a real browser is required to capture
+    # it. Update IDs each weekend to match the current race; subreddit.py
+    # discovers them from the Reddit "[Watch / Download]" thread.
     _Target(
-        label="DD12Streams",
-        title="NASCAR Cup (24/7) — DD12",
-        url="https://dd12streams.com/nas",
-        settle=10,
+        label="MotoMundo",
+        title="MotoGP Live (MotoMundo) — French GP / Le Mans",
+        url="https://motomundo.top/e/9yzn08jk9py4",
+        settle=15,
     ),
-    # Acestrlms aggregator — always-on F1 page that re-frames pooembed.
-    # Captured m3u8 only appears once the embed's JS runs.
     _Target(
-        label="Acestrlms",
-        title="Sky Sports F1 (24/7) — Acestrlms",
-        url="https://acestrlms.pages.dev/f11/",
+        label="MotoMundo",
+        title="MotoGP Live (MotoMundo upns) — French GP / Le Mans",
+        url="https://motomundo.upns.xyz/#kqasde",
         settle=15,
     ),
 )
