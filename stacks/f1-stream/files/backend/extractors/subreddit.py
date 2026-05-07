@@ -38,37 +38,62 @@ USER_AGENT = (
     "Version/17.4 Safari/605.1.15"
 )
 
-# Subreddits to scan. r/MotorsportsReplays is the main signal; the others
-# rarely have stream posts but cost nothing to skim.
+# Subreddits to scan.
+# - r/motorsportsstreams2 is the active 12.5k-sub successor to the banned
+#   r/motorsportstreams; race-weekend "[F1 STREAM]" posts include
+#   `boxboxbox.pro/stream-1` URLs and similar fresh aggregator links.
+# - r/MotorsportsReplays runs the [Watch / Download] mod-post pattern
+#   linking to motomundo.net (MotoGP) and sister sites.
+# - The rest are low-yield but cost nothing.
 SUBREDDITS: tuple[str, ...] = (
+    "motorsportsstreams2",
     "MotorsportsReplays",
+    "f1streams",
     "motorsports",
     "formula1",
     "motogp",
 )
 
-# Search queries to fire against r/MotorsportsReplays (the ones below
-# capture the consistent mod-post pattern). Encoded into the JSON
-# search endpoint.
+# Search queries fired against r/motorsportsstreams2 + r/MotorsportsReplays.
+# The first set captures the [Watch / Download] mod posts; the second set
+# catches race-weekend live discussion threads.
 SEARCH_QUERIES: tuple[str, ...] = (
     "Watch Download F1 2026",
     "Watch Download MotoGP 2026",
     "Watch Online F1 2026",
-    "Watch Online MotoGP 2026",
+    "F1 STREAM live",
+    "Sky Sports F1 live",
+    "Sky F1 stream",
 )
 
 # Hosts we accept as "interesting" stream-page URLs. These are the
 # admin-curated WordPress / aggregator sites the community links to.
-# motomundo.net hosts MotoGP; new entries can be added freely.
+# Anchored to what r/motorsportsstreams2 currently posts (May 2026 sweep).
 _INTERESTING_HOSTS = (
-    "motomundo.net",        # MotoGP
+    # WordPress wrappers / community-run sites
+    "motomundo.net",        # MotoGP — admin-curated WP
     "motomundo.top",        # MotoMundo embed host
     "motomundo.upns.xyz",   # MotoMundo embed host (newer)
-    "freemotorsports.com",  # community curated link list
-    "pitsport.xyz",         # in case a Reddit poster links it
-    "rerace.io",            # F1 archives + live (when up)
-    "dd12streams.com",      # live aggregator
-    "f1mundo.net",          # speculative F1 sister to motomundo
+    "freemotorsports.com",  # WAC successor curated link list
+    "boxboxbox.pro",        # F1 race-weekend aggregator (community fav)
+    "boxboxbox.live",       # boxboxbox sister
+    "boxboxbox.lol",
+    # Aggregators we already have direct extractors for, but Reddit may
+    # surface event-specific deeplinks (e.g. /watch/<UUID>) we'd miss
+    # otherwise.
+    "pitsport.xyz",
+    "pitsport.live",
+    "rerace.io",
+    "dd12streams.com",
+    "ppv.to",
+    "streamed.pk",
+    "acestrlms.pages.dev",
+    "aceztrims.pages.dev",
+    # Sport-specific direct CDNs that occasionally appear in posts
+    "racelive.jp",          # Super Formula
+    "cdn.sfgo.jp",          # Super Formula CDN
+    # Speculative F1 sister sites — pattern likely if motomundo for MotoGP
+    "f1mundo.net",
     "f1.live",
     "f1live",
     "skystreams",
