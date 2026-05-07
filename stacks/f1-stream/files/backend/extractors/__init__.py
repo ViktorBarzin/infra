@@ -15,6 +15,7 @@ from backend.extractors.aceztrims import AceztrimsExtractor
 from backend.extractors.chrome_browser import ChromeBrowserExtractor
 from backend.extractors.curated import CuratedExtractor
 from backend.extractors.dd12 import DD12Extractor
+from backend.extractors.hmembeds import HmembedsExtractor
 from backend.extractors.stremio import StremioAddonExtractor
 from backend.extractors.subreddit import SubredditExtractor
 from backend.extractors.daddylive import DaddyLiveExtractor
@@ -64,6 +65,10 @@ def create_registry() -> ExtractorRegistry:
     # JW Player file URL. The site embeds the m3u8 in HTML so curl-based
     # parsing is enough — no browser needed.
     registry.register(DD12Extractor())
+    # HmembedsExtractor offline-decodes hmembeds.one JWT m3u8 URLs
+    # (base64+XOR with hardcoded key per page; reverse-engineered
+    # 2026-05-07). Verifier filters dead origins.
+    registry.register(HmembedsExtractor())
     # StremioAddonExtractor calls Stremio addon HTTP APIs (TvVoo, StremVerse)
     # which already index Sky F1 / DAZN F1 / Vavoo IPTV channels. No
     # Stremio client needed — just /stream/<type>/<id>.json calls.
