@@ -14,20 +14,30 @@ steps:
   - name: build-and-push
     image: woodpeckerci/plugin-docker-buildx
     settings:
-      repo: registry.viktorbarzin.me:5050/infra-ci
+      # Dual-push during the Forgejo registry consolidation bake. infra-ci
+      # is the most safety-critical image — every infra pipeline pulls it,
+      # including the one that fixes Forgejo when it breaks. Tarball
+      # break-glass below covers the chicken-and-egg.
+      repo:
+        - registry.viktorbarzin.me:5050/infra-ci
+        - forgejo.viktorbarzin.me/viktor/infra-ci
       dockerfile: ci/Dockerfile
       context: ci/
       tags:
         - latest
         - "${CI_COMMIT_SHA:0:8}"
       platforms: linux/amd64
-      registry: registry.viktorbarzin.me:5050
       logins:
         - registry: registry.viktorbarzin.me:5050
           username:
             from_secret: registry_user
           password:
             from_secret: registry_password
+        - registry: forgejo.viktorbarzin.me
+          username:
+            from_secret: forgejo_user
+          password:
+            from_secret: forgejo_push_token
 
   # Post-push integrity check. Re-resolves the image we just pushed and HEADs
   # every blob it references — top-level manifest (index or single), each child
@@ -106,12 +116,46 @@ steps:
 
         echo "=== All manifests + blobs verified. Push integrity intact. ==="
 
+  # Break-glass tarball: save the just-pushed infra-ci image to disk on the
+  # registry VM (10.0.20.10) so we can `docker load` it back into a node
+  # when Forgejo is unreachable AND registry-private is gone (post-Phase 4).
+  # Best-effort — failure here doesn't fail the pipeline.
+  # Recovery procedure: docs/runbooks/forgejo-registry-breakglass.md.
+  - name: breakglass-tarball
+    image: alpine:3.20
+    failure: ignore
+    environment:
+      REGISTRY_SSH_KEY:
+        from_secret: registry_ssh_key
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$REGISTRY_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keyscan -t ed25519 10.0.20.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - SHA=${CI_COMMIT_SHA:0:8}
+      - |
+        ssh -n -o BatchMode=yes root@10.0.20.10 "
+          set -e
+          mkdir -p /opt/registry/data/private/_breakglass
+          IMAGE=registry.viktorbarzin.me:5050/infra-ci:$SHA
+          # Pull from the local registry-private — fast hop on the VM itself.
+          docker pull \$IMAGE
+          docker save \$IMAGE | gzip > /opt/registry/data/private/_breakglass/infra-ci-$SHA.tar.gz
+          ln -sfn infra-ci-$SHA.tar.gz /opt/registry/data/private/_breakglass/infra-ci-latest.tar.gz
+          # Retain last 5 by mtime; older versions are still recoverable from
+          # registry blobs until a corruption event.
+          ls -t /opt/registry/data/private/_breakglass/infra-ci-*.tar.gz \
+            | grep -v 'latest' | tail -n +6 | xargs -r rm -v
+          ls -lh /opt/registry/data/private/_breakglass/
+        "
+
   - name: slack
     image: curlimages/curl
     commands:
       - |
         curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"CI image built: registry.viktorbarzin.me:5050/infra-ci:${CI_COMMIT_SHA:0:8}\"}" \
+          --data "{\"text\":\"CI image built: forgejo.viktorbarzin.me/viktor/infra-ci:${CI_COMMIT_SHA:0:8} (and registry-private mirror)\"}" \
           "$SLACK_WEBHOOK" || true
     environment:
       SLACK_WEBHOOK:
