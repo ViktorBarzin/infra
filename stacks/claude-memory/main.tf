@@ -175,8 +175,10 @@ resource "kubernetes_deployment" "claude-memory" {
           }
         }
         container {
-          name  = "claude-memory"
-          image = "viktorbarzin/claude-memory-mcp:17"
+          name = "claude-memory"
+          # Phase 3 cutover 2026-05-07 — moved off DockerHub to Forgejo as
+          # part of the registry consolidation. Old: viktorbarzin/claude-memory-mcp:17
+          image = "forgejo.viktorbarzin.me/viktor/claude-memory-mcp:17"
 
           port {
             container_port = 8000
@@ -282,7 +284,4 @@ module "ingress" {
     "gethomepage.dev/name"         = "Claude Memory"
     "gethomepage.dev/description"  = "Shared persistent memory for Claude sessions"
     "gethomepage.dev/icon"         = "claude-ai.png"
-    "gethomepage.dev/group"        = "Core Platform"
-    "gethomepage.dev/pod-selector" = ""
-  }
-}
+    "gethomepage.dev/group"        = "Cor

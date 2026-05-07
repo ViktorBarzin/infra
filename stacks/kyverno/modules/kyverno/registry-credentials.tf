@@ -20,21 +20,12 @@ resource "kubernetes_secret" "registry_credentials" {
   data = {
     ".dockerconfigjson" = jsonencode({
       auths = {
-        "registry.viktorbarzin.me" = {
-          auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
-        }
-        "registry.viktorbarzin.me:5050" = {
-          auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
-        }
-        "10.0.20.10:5050" = {
-          auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
-        }
-        # Forgejo OCI registry — read-only PAT for the cluster-puller service
-        # account user. Pushes go through ci-pusher (separate PAT in Vault
-        # secret/ci/global, surfaced to Woodpecker).
-        # try() lets the apply succeed before the Vault key is populated
-        # during Phase 0 bootstrap (see docs/runbooks/forgejo-registry-setup.md).
-        # The cluster has no consumers yet — broken creds are visible but harmless.
+        # Phase 4 of forgejo-registry-consolidation 2026-05-07 — registry-
+        # private decommissioned. Old auths entries (registry.viktorbarzin.me,
+        # registry.viktorbarzin.me:5050, 10.0.20.10:5050) removed to prevent
+        # silent fallback. If a pod somehow references the old hostname now,
+        # it will visibly fail with auth missing rather than silently pulling
+        # potentially-stale blobs.
         "forgejo.viktorbarzin.me" = {
           auth = base64encode("cluster-puller:${try(data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"], "")}")
         }

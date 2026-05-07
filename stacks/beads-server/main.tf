@@ -567,7 +567,8 @@ resource "kubernetes_deployment" "beadboard" {
 
         container {
           name  = "beadboard"
-          image = "registry.viktorbarzin.me:5050/beadboard:${var.beadboard_image_tag}"
+          # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
+          image = "forgejo.viktorbarzin.me/viktor/beadboard:${var.beadboard_image_tag}"
 
           port {
             name           = "http"
@@ -725,7 +726,8 @@ resource "kubernetes_config_map" "beads_metadata" {
 }
 
 locals {
-  claude_agent_service_image = "registry.viktorbarzin.me/claude-agent-service:${var.claude_agent_service_image_tag}"
+  # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
+  claude_agent_service_image = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.claude_agent_service_image_tag}"
   beadboard_internal_url     = "http://${kubernetes_service.beadboard.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
 
   beads_script_prelude = <<-EOT
