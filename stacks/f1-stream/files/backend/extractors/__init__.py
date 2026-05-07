@@ -40,12 +40,13 @@ def create_registry() -> ExtractorRegistry:
     registry = ExtractorRegistry()
 
     # --- Register extractors below ---
-    # CuratedExtractor returns hand-picked 24/7 channels first so we always
-    # have something. DemoExtractor and FallbackExtractor were removed —
-    # demo streams aren't F1 content (just Big Buck Bunny etc.) and
-    # FallbackExtractor surfaced aggregator landing pages that don't play
-    # directly in an iframe.
-    registry.register(CuratedExtractor())
+    # CuratedExtractor previously surfaced two hmembeds 24/7 channels (Sky
+    # Sports F1, DAZN F1) but their JW Player decoder produces an empty
+    # playlist in our environment (error 102630) regardless of headed mode,
+    # IP, or fingerprint we tried. The streams loaded the upstream's ad
+    # overlay but never produced a video element, so they confused users —
+    # disabled until/unless we find a working bypass.
+    # registry.register(CuratedExtractor())
     registry.register(StreamedExtractor())
     registry.register(DaddyLiveExtractor())
     registry.register(AceztrimsExtractor())
