@@ -72,6 +72,14 @@ resource "kubernetes_deployment" "forgejo" {
         }
       }
       spec {
+        # fsGroup chowns the mounted PVC to GID 1000 (the forgejo user) on
+        # mount. Without this, /data is owned by root and the
+        # `[packages].CHUNKED_UPLOAD_PATH` default at /data/tmp is not
+        # writable, crashlooping the pod when packages is enabled. Pre-23-day
+        # Forgejo ran without packages on so this never surfaced.
+        security_context {
+          fs_group = 1000
+        }
         container {
           name  = "forgejo"
           image = "codeberg.org/forgejo/forgejo:11"
