@@ -116,6 +116,13 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__webhook__ALLOWED_HOST_LIST"
             value = "*.svc.cluster.local,ci.viktorbarzin.me,*.viktorbarzin.me"
           }
+          # Default DELIVER_TIMEOUT is 5s — too tight for the Cloudflare-tunnel
+          # round-trip on first request after pod restart (cold TLS handshake
+          # can hit 6-8s). 30s comfortably covers retries.
+          env {
+            name  = "FORGEJO__webhook__DELIVER_TIMEOUT"
+            value = "30"
+          }
           # OCI registry (container packages). Default-on in Forgejo v11 but
           # explicit so it can't be silently disabled by an upstream config
           # change. CHUNKED_UPLOAD_PATH defaults to `data/tmp/package-upload`
