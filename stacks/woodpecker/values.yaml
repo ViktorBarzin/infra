@@ -36,6 +36,14 @@ server:
     WOODPECKER_FORGEJO_CLIENT: "${forgejo_client_id}"
     WOODPECKER_FORGEJO_SECRET: "${forgejo_client_secret}"
     WOODPECKER_FORGEJO_URL: "${forgejo_url}"
+    # Default is 3s (cmd/server/flags.go @ default `--forge-timeout`).
+    # Forgejo responses on this cluster spike to 1-2s under load and the
+    # config-loader makes 4-6 sequential calls (.woodpecker dir, .woodpecker.yaml,
+    # .woodpecker.yml, raw .woodpecker/build.yml, etc.); occasionally the cumulative
+    # overhead trips the 3s deadline → "could not load config from forge: context
+    # deadline exceeded" on every pipeline. 30s removes the false-positive timeouts
+    # without regressing the legitimate-failure detection window meaningfully.
+    WOODPECKER_FORGE_TIMEOUT: "30s"
   service:
     type: ClusterIP
     port: 80
