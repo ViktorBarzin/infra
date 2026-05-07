@@ -30,19 +30,30 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
-# Categories to include (case-insensitive match)
-F1_CATEGORIES = {"formula 1", "formula 2", "formula 3"}
-
-# Fallback keyword matching on combined category+title for edge cases
-F1_KEYWORDS = {"formula 1", "formula one", "f1"}
-GP_KEYWORD = "grand prix"
-NON_F1_KEYWORDS = {
-    "motogp", "moto gp", "moto2", "moto3", "motoe", "indycar",
-    "indy car", "firestone", "nascar", "rally", "wrc", "wec",
-    "lemans", "le mans", "superbike", "dtm", "supercars", "arca",
-    "xfinity", "trucks", "super formula", "supergt", "super gt",
-    "ama supercross", "supercross",
+# Categories to include (case-insensitive match). Broadened beyond F1
+# to also surface MotoGP and adjacent motorsports — keeps the f1-stream
+# UI useful between race weekends and during the off-season.
+MOTORSPORT_CATEGORIES = {
+    "formula 1", "formula 2", "formula 3",
+    "motogp", "moto gp", "moto2", "moto3", "motoe",
+    "world rally championship", "wrc",
+    "world endurance championship", "wec",
+    "indycar series", "indycar", "indynxt",
+    "nascar cup series", "nascar truck series", "nascar o'reilly auto parts series",
+    "nascar xfinity series", "nascar",
 }
+
+# Title keywords that are strong positives even when the category text
+# is missing (live-now cards sometimes elide it).
+MOTORSPORT_KEYWORDS = {
+    "formula 1", "formula one", "f1",
+    "motogp", "moto gp", "moto2", "moto3",
+    "rally", "wrc",
+    "indycar", "indy car",
+    "nascar",
+    "le mans", "lemans", "wec", "endurance",
+}
+GP_KEYWORD = "grand prix"
 
 
 @dataclass
@@ -54,26 +65,27 @@ class _PitsportEvent:
     watch_uuid: str
 
 
-def _is_f1_category(category: str) -> bool:
-    """Check if a category string matches an F1-related series."""
-    return category.strip().lower() in F1_CATEGORIES
+def _is_motorsport_category(category: str) -> bool:
+    """Check if a category string matches an included motorsport series."""
+    return category.strip().lower() in MOTORSPORT_CATEGORIES
 
 
-def _is_f1_event(category: str, title: str) -> bool:
-    """Check if an event is Formula 1 related by category or title keywords."""
-    # Primary check: exact category match
-    if _is_f1_category(category):
+def _is_motorsport_event(category: str, title: str) -> bool:
+    """Check if an event is a motorsport we want to surface (F1 + adjacent)."""
+    if _is_motorsport_category(category):
         return True
-
-    # Secondary check: keyword matching on combined text
     lower = f"{category} {title}".lower()
-    if any(kw in lower for kw in NON_F1_KEYWORDS):
-        return False
-    if any(kw in lower for kw in F1_KEYWORDS):
+    if any(kw in lower for kw in MOTORSPORT_KEYWORDS):
         return True
     if GP_KEYWORD in lower:
         return True
     return False
+
+
+# Aliases kept so older call-sites stay compiling. Both now point at the
+# broadened motorsport filter.
+_is_f1_category = _is_motorsport_category
+_is_f1_event = _is_motorsport_event
 
 
 def _parse_live_events(html: str) -> list[_PitsportEvent]:
@@ -232,11 +244,28 @@ class _StreamConfig:
 def _parse_stream_config(html: str) -> _StreamConfig | None:
     """Extract stream config from an embed page RSC payload.
 
-    The embed page contains an RSC payload line like:
-        4:["$","$Ld",null,{"stream":{"title":"...","link":"...","method":"player"},
+    The embed page now uses a `safeStream` payload that elides the link:
+        4:["$","$Ld",null,{"safeStream":{"title":"Rally TV","method":"jwp"},
            "error":null,"slug":"..."}]
+    The actual stream URL is fetched at runtime via
+    pushembdz.store/api/stream/<slug>. Older payloads used "stream" with
+    inline title+link+method — kept as fallback.
     """
-    # Try matching the escaped RSC payload pattern
+    # Current format: safeStream with title + method only (link via API).
+    pattern_safe = re.compile(
+        r'\\?"safeStream\\?"\s*:\s*\{'
+        r'\\?"title\\?"\s*:\s*\\?"([^"\\]+)\\?"\s*,\s*'
+        r'\\?"method\\?"\s*:\s*\\?"([^"\\]+)\\?"',
+    )
+    match = pattern_safe.search(html)
+    if match:
+        return _StreamConfig(
+            title=match.group(1),
+            link="",  # filled in by the caller via the api/stream endpoint
+            method=match.group(2),
+        )
+
+    # Legacy: escaped RSC payload with inline link.
     pattern = re.compile(
         r'"stream":\{["\']?\\?"title\\?"["\']?:["\']?\\?"([^"\\]+)\\?"["\']?,'
         r'["\']?\\?"link\\?"["\']?:["\']?\\?"([^"\\]+)\\?"["\']?,'
@@ -244,13 +273,8 @@ def _parse_stream_config(html: str) -> _StreamConfig | None:
     )
     match = pattern.search(html)
     if match:
-        return _StreamConfig(
-            title=match.group(1),
-            link=match.group(2),
-            method=match.group(3),
-        )
+        return _StreamConfig(title=match.group(1), link=match.group(2), method=match.group(3))
 
-    # Simpler pattern for double-escaped payload
     pattern2 = re.compile(
         r'\\?"stream\\?":\{\\?"title\\?":\\?"([^\\]+)\\?",'
         r'\\?"link\\?":\\?"([^\\]+)\\?",'
@@ -258,13 +282,8 @@ def _parse_stream_config(html: str) -> _StreamConfig | None:
     )
     match = pattern2.search(html)
     if match:
-        return _StreamConfig(
-            title=match.group(1),
-            link=match.group(2),
-            method=match.group(3),
-        )
+        return _StreamConfig(title=match.group(1), link=match.group(2), method=match.group(3))
 
-    # Most lenient: just find the three fields near each other
     pattern3 = re.compile(
         r'"stream"\s*:\s*\{\s*"title"\s*:\s*"([^"]+)"\s*,'
         r'\s*"link"\s*:\s*"([^"]+)"\s*,'
@@ -272,18 +291,16 @@ def _parse_stream_config(html: str) -> _StreamConfig | None:
     )
     match = pattern3.search(html)
     if match:
-        return _StreamConfig(
-            title=match.group(1),
-            link=match.group(2),
-            method=match.group(3),
-        )
+        return _StreamConfig(title=match.group(1), link=match.group(2), method=match.group(3))
 
     return None
 
 
 def _is_m3u8_method(method: str) -> bool:
     """Check if the stream method indicates a direct HLS stream."""
-    return method.lower() in ("player", "hls")
+    # `jwp` (current pushembdz format) returns an m3u8 from the api/stream
+    # endpoint regardless of player UI; treat it as HLS.
+    return method.lower() in ("player", "hls", "jwp")
 
 
 def _extract_m3u8_url(link: str) -> str:
@@ -478,11 +495,31 @@ class PitsportExtractor(BaseExtractor):
             if stream_num > 1:
                 stream_title += f" #{stream_num}"
 
-            if _is_m3u8_method(config.method) and "serveplay.site" in config.link:
-                # Direct m3u8 stream
-                m3u8_url = _extract_m3u8_url(config.link)
+            # `safeStream` payload elides the link — fetch it from the
+            # pushembdz.store/api/stream/<slug> endpoint. Older `stream`
+            # payloads provided the link inline.
+            link = config.link
+            if not link and _is_m3u8_method(config.method):
+                api_url = f"{EMBED_BASE}/api/stream/{embed_uuid}"
+                try:
+                    api_resp = await client.get(
+                        api_url,
+                        headers={"Referer": embed_url, "Accept": "application/json"},
+                    )
+                    if api_resp.status_code == 200:
+                        link = (api_resp.json() or {}).get("link", "")
+                except Exception:
+                    logger.debug(
+                        "[pitsport] api/stream lookup failed for %s",
+                        embed_uuid,
+                        exc_info=True,
+                    )
+
+            # Treat any HLS-ish URL (m3u8, or pushembdz's .css disguise) as m3u8.
+            looks_hls = link and (".m3u8" in link or link.endswith(".css") or "serveplay.site" in link)
+            if _is_m3u8_method(config.method) and looks_hls:
                 return ExtractedStream(
-                    url=m3u8_url,
+                    url=link,
                     site_key=self.site_key,
                     site_name=self.site_name,
                     quality="",
