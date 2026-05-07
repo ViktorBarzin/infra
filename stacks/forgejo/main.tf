@@ -32,7 +32,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
       "resize.topolvm.io/increase"      = "50%"
-      "resize.topolvm.io/storage_limit" = "20Gi"
+      "resize.topolvm.io/storage_limit" = "50Gi"
     }
   }
   spec {
@@ -40,7 +40,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
-        storage = "5Gi"
+        storage = "15Gi"
       }
     }
   }
@@ -106,6 +106,18 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__webhook__ALLOWED_HOST_LIST"
             value = "*.svc.cluster.local"
           }
+          # OCI registry (container packages). Default-on in Forgejo v11 but
+          # explicit so it can't be silently disabled by an upstream config
+          # change. Chunked-upload path needs a directory inside /data so it
+          # survives pod restarts and shares the same PVC as the registry blobs.
+          env {
+            name  = "FORGEJO__packages__ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__packages__CHUNKED_UPLOAD_PATH"
+            value = "/data/tmp/package-upload"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -113,10 +125,10 @@ resource "kubernetes_deployment" "forgejo" {
           resources {
             requests = {
               cpu    = "15m"
-              memory = "384Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "384Mi"
+              memory = "1Gi"
             }
           }
           port {
@@ -165,6 +177,9 @@ module "ingress" {
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
+  # OCI registry pushes ship full image layer blobs in one request; default
+  # Traefik buffering chokes on anything past a few hundred MB.
+  max_body_size = "5g"
   extra_annotations = {
     "gethomepage.dev/enabled"                      = "true"
     "gethomepage.dev/name"                         = "Forgejo"

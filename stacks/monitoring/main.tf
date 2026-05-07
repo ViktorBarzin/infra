@@ -33,5 +33,6 @@ module "monitoring" {
   kube_config_path              = var.kube_config_path
   registry_user                 = data.vault_kv_secret_v2.viktor.data["registry_user"]
   registry_password             = data.vault_kv_secret_v2.viktor.data["registry_password"]
+  forgejo_pull_token            = data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"]
   tier                          = local.tiers.cluster
 }
