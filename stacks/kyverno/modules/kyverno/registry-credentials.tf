@@ -29,6 +29,12 @@ resource "kubernetes_secret" "registry_credentials" {
         "10.0.20.10:5050" = {
           auth = base64encode("${data.vault_kv_secret_v2.viktor.data["registry_user"]}:${data.vault_kv_secret_v2.viktor.data["registry_password"]}")
         }
+        # Forgejo OCI registry — read-only PAT for the cluster-puller service
+        # account user. Pushes go through ci-pusher (separate PAT in Vault
+        # secret/ci/global, surfaced to Woodpecker).
+        "forgejo.viktorbarzin.me" = {
+          auth = base64encode("cluster-puller:${data.vault_kv_secret_v2.viktor.data["forgejo_pull_token"]}")
+        }
       }
     })
   }
