@@ -9,7 +9,9 @@ from backend.extractors.models import ExtractedStream
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://streamed.su"
+# Site renamed from streamed.su → streamed.pk in 2026; the .su domain
+# stopped resolving the API host (only the marketing page is left).
+BASE_URL = "https://streamed.pk"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
