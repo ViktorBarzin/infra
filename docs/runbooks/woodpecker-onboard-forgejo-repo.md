@@ -2,72 +2,85 @@
 
 Last updated: 2026-05-07
 
-When you create a new repo on `forgejo.viktorbarzin.me`, Woodpecker
-does NOT auto-discover it via the cluster's existing OAuth session.
-The `forgejo` user inside Woodpecker (Forgejo-OAuth'd) needs to:
+## Programmatic (preferred)
 
-1. Open `https://ci.viktorbarzin.me/` in a browser.
-2. Log in via Forgejo OAuth (the "Sign in with Forgejo" button).
-3. Click "Add Repository" — your new repo should appear.
-4. Click the toggle to activate it. Woodpecker will:
-   - Add a webhook on the Forgejo repo (push, PR, release events).
-   - Register the repo's `forge_remote_id` in its DB so subsequent
-     hooks deserialize correctly.
-5. Push a commit (or hit "Run pipeline" in Woodpecker UI) — first
-   build fires.
+```bash
+infra/scripts/woodpecker-register-forgejo-repo.sh viktor/<repo-name>
+```
 
-## Why API-only doesn't work
+The script:
+1. Pulls the `viktor` (Forgejo-OAuth'd) user's `hash` from the
+   Woodpecker PG `users` table.
+2. Mints a session JWT (HS256, signed with that hash) — Woodpecker
+   per-user session JWTs have payload
+   `{"type":"user","user-id":"<id>"}` and the signing key is the
+   user's `hash` column. (Confirmed against a known-good admin
+   token: same payload shape, signature reproducible from the user's
+   stored hash via `openssl dgst -sha256 -hmac "$HASH"`.)
+3. Looks up the Forgejo repo id and POSTs to
+   `https://ci.viktorbarzin.me/api/repos?forge_remote_id=<id>` as
+   that user. Woodpecker server creates the per-repo webhook +
+   per-repo signing key on the Forgejo side automatically (uses
+   the user's stored Forgejo OAuth `access_token` to do so — that's
+   why this only works with viktor's user, not the GitHub admin's).
 
-The webhook URL contains a JWT signed with a per-server key that's
-stored in the DB and only accessible at OAuth-flow time. POST'ing
-`/api/repos` as the admin (`ViktorBarzin` GitHub user) returns 500
-because the lookup queries forge-side OAuth state for THAT user,
-which doesn't exist for the Forgejo `viktor` user. We confirmed:
+Pre-requisites:
+- `vault login -method=oidc` with read access to
+  `database/static-creds/pg-woodpecker`.
+- `kubectl` cluster access (the script spawns a 5-min psql pod in
+  the `woodpecker` namespace to query the DB).
+- A Forgejo PAT in `secret/viktor/forgejo_admin_token` (or pass
+  `FORGEJO_TOKEN=…` env), used to look up the repo's numeric ID.
+- The `viktor` Woodpecker user must already exist (i.e., they've
+  logged in via Forgejo OAuth at least once on the Web UI).
+  If user_id=2 / forge_id=2 doesn't exist in `users`, the OAuth
+  bootstrap is unavoidable — but it only needs to happen once for
+  the lifetime of the Woodpecker DB.
 
-- Direct `POST /api/repos?forge_remote_id=N` → HTTP 500 server-side.
-- Generating a JWT with the agent secret → "token is unverifiable"
-  on hook delivery (the signing key is repo-specific, not the
-  global agent secret).
+## Why the GitHub admin token can't do this
 
-There's no admin endpoint that side-steps the OAuth flow.
+The earlier 500 from `POST /api/repos?forge_remote_id=N` was
+because my admin session token authenticates as `ViktorBarzin`
+(GitHub user, forge_id=1). Woodpecker tries to call Forgejo as
+that user (using their stored Forgejo OAuth token) — which doesn't
+exist for the GitHub user, hence the lookup error. There's no way
+around this without acting as the Forgejo user.
 
-## Bootstrap when UI access isn't available
+## Why the previous "JWT for the webhook" approach didn't work
 
-If you absolutely need to bootstrap a new image without UI access
-(e.g., during an outage), the workaround is:
+I tried generating a webhook JWT signed with `WOODPECKER_AGENT_SECRET`
+(the global agent secret) and registering it directly on Forgejo.
+That fails because the webhook JWT verification path runs through a
+DB-backed `keyfunc` — Woodpecker stores a per-repo signing key when
+the repo is activated, and rejects any JWT signed with a different
+key. POST /api/repos is what creates that per-repo key.
 
-1. Build locally:
-   ```bash
-   docker build -t forgejo.viktorbarzin.me/viktor/<name>:<tag> /path/to/source
-   docker push forgejo.viktorbarzin.me/viktor/<name>:<tag>
-   ```
-2. Or pull from another already-built source and retag:
-   ```bash
-   docker pull viktorbarzin/<name>:<tag>          # DockerHub
-   docker tag  viktorbarzin/<name>:<tag>     forgejo.viktorbarzin.me/viktor/<name>:<tag>
-   docker push forgejo.viktorbarzin.me/viktor/<name>:<tag>
-   ```
-3. Flip the cluster `image=` reference and restart deployments.
+## After registration
 
-Document the bootstrap in the relevant stack so future maintainers
-know the image was put there by hand. After Woodpecker UI onboarding,
-the next pipeline run replaces the bootstrap image with a CI-built one.
+Pipelines fire automatically on push. The `WOODPECKER_FORGE_TIMEOUT`
+default of 3s was too tight for our cluster (Forgejo response time
+spikes to 1-2s under load) — bumped to 30s in
+`infra/stacks/woodpecker/values.yaml` 2026-05-07. Without that bump,
+config-loader hits the deadline and every pipeline errors with
+`could not load config from forge: context deadline exceeded`.
 
-## Repos onboarded in flight 2026-05-07
+## When the v3.13 → v3.14 server upgrade matters
 
-These were created during the forgejo-registry-consolidation but the
-UI step above hasn't been done yet — their `.woodpecker.yml` /
-`.woodpecker/build.yml` exists on Forgejo but no pipeline fires:
+`v3.14.0` doesn't fix this on its own — the timeout default is the
+same. Set `WOODPECKER_FORGE_TIMEOUT` regardless of version. The
+v3.14 upgrade was useful for unrelated forge-API changes (smarter
+config-loader, fewer redundant calls per trigger).
 
-- `viktor/broker-sync` — image bootstrapped via DockerHub (see
-  `infra/stacks/wealthfolio/main.tf` comment).
-- `viktor/fire-planner` — image bootstrapped via local docker build.
-- `viktor/hmrc-sync`
-- `viktor/freedify`
-- `viktor/claude-agent-service`
-- `viktor/beadboard` — image bootstrapped via local docker build.
-- `viktor/claude-memory-mcp`
+## Troubleshooting
 
-Walk through each in the Woodpecker UI to enable. Pipelines for
-already-onboarded repos (payslip-ingest, job-hunter, infra) fired
-correctly after the v3.13 → v3.14 upgrade.
+- Pipeline status `error` with `could not load config from forge`:
+  bump `WOODPECKER_FORGE_TIMEOUT`. 30s is plenty.
+- Pipeline status `error` with `secret "registry-password" not found`:
+  the repo's `.woodpecker.yml` still references registry-private
+  credentials. Drop the `registry.viktorbarzin.me` block — Forgejo
+  is the only registry now.
+- Pipeline status `failure` with `"/vault": not found` (or any
+  other COPY of a binary): the gitignored binary wasn't pushed to
+  Forgejo. Switch the Dockerfile to `curl … && unzip` from the
+  HashiCorp/upstream release URL. See `claude-agent-service/Dockerfile`
+  commit bab6dd2 for the pattern.
