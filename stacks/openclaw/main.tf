@@ -261,6 +261,19 @@ resource "random_password" "gateway_token" {
   special = false
 }
 
+# Prometheus exporter script — read by the openclaw-exporter sidecar.
+# Stdlib-only Python so no pip install at startup. Reads sessions JSONL +
+# auth-profiles.json from the NFS-backed openclaw home volume (mounted ro).
+resource "kubernetes_config_map" "openclaw_exporter" {
+  metadata {
+    name      = "openclaw-exporter"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  data = {
+    "exporter.py" = file("${path.module}/files/exporter.py")
+  }
+}
+
 module "nfs_tools_host" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "openclaw-tools-host"
@@ -350,6 +363,11 @@ resource "kubernetes_deployment" "openclaw" {
         }
         annotations = {
           "reloader.stakater.com/search" = "true"
+          # Prometheus auto-discovers pods with these annotations.
+          # Scraped by the openclaw-exporter sidecar — exposes /metrics on :9099.
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "9099"
+          "prometheus.io/path"   = "/metrics"
         }
       }
       spec {
@@ -518,6 +536,54 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
+        # Sidecar: openclaw-exporter — Prometheus exporter for Codex/OAuth usage.
+        # Reads sessions JSONL files + auth-profiles.json, exposes /metrics on :9099.
+        # Stdlib-only Python; no pip install at startup.
+        container {
+          name    = "openclaw-exporter"
+          image   = "docker.io/library/python:3.12-slim"
+          command = ["python3", "/scripts/exporter.py"]
+          port {
+            container_port = 9099
+            name           = "metrics"
+          }
+          env {
+            name  = "OPENCLAW_HOME"
+            value = "/home/node/.openclaw"
+          }
+          env {
+            name  = "METRICS_PORT"
+            value = "9099"
+          }
+          volume_mount {
+            name       = "openclaw-exporter-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+            read_only  = true
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 9099
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+        }
+
         # Sidecar: modelrelay — auto-routes to fastest healthy free model
         container {
           name  = "modelrelay"
@@ -604,6 +670,13 @@ resource "kubernetes_deployment" "openclaw" {
           name = "openclaw-config"
           config_map {
             name = kubernetes_config_map.openclaw_config.metadata[0].name
+          }
+        }
+        volume {
+          name = "openclaw-exporter-script"
+          config_map {
+            name         = kubernetes_config_map.openclaw_exporter.metadata[0].name
+            default_mode = "0555"
           }
         }
       }

@@ -134,6 +134,7 @@ locals {
     # Applications
     "qbittorrent.json"        = "Applications"
     "realestate-crawler.json" = "Applications"
+    "openclaw.json"           = "Applications"
     "uk-payslip.json"         = "Finance (Personal)"
     "wealth.json"             = "Finance (Personal)"
     "job-hunter.json"         = "Finance"
