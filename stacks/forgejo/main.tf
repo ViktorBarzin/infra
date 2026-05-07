@@ -108,15 +108,14 @@ resource "kubernetes_deployment" "forgejo" {
           }
           # OCI registry (container packages). Default-on in Forgejo v11 but
           # explicit so it can't be silently disabled by an upstream config
-          # change. Chunked-upload path needs a directory inside /data so it
-          # survives pod restarts and shares the same PVC as the registry blobs.
+          # change. CHUNKED_UPLOAD_PATH defaults to `data/tmp/package-upload`
+          # under Forgejo's AppDataPath (resolves to a writable subdir of
+          # /data/gitea/) — overriding to /data/tmp directly hits a perms
+          # issue because /data is the volume mount root and is not chowned
+          # to the forgejo user.
           env {
             name  = "FORGEJO__packages__ENABLED"
             value = "true"
-          }
-          env {
-            name  = "FORGEJO__packages__CHUNKED_UPLOAD_PATH"
-            value = "/data/tmp/package-upload"
           }
           volume_mount {
             name       = "data"
