@@ -109,10 +109,12 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__openid__ENABLE_OPENID_SIGNIN"
             value = "false"
           }
-          # Allow webhook delivery to internal k8s services
+          # Allow webhook delivery to internal k8s services AND to the public
+          # ingress hostnames Forgejo's own webhooks point to (ci.viktorbarzin.me
+          # for Woodpecker pipelines).
           env {
             name  = "FORGEJO__webhook__ALLOWED_HOST_LIST"
-            value = "*.svc.cluster.local"
+            value = "*.svc.cluster.local,ci.viktorbarzin.me,*.viktorbarzin.me"
           }
           # OCI registry (container packages). Default-on in Forgejo v11 but
           # explicit so it can't be silently disabled by an upstream config
