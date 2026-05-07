@@ -1,12 +1,30 @@
 # Runbook: Registry VM (docker-registry, 10.0.20.10)
 
-Last updated: 2026-04-19
+Last updated: 2026-05-07
 
-The registry VM hosts `registry.viktorbarzin.me` (private Docker
-registry, htpasswd-auth, NGINX → registry:2). It is an Ubuntu 24.04
-VM on the cluster LAN subnet `10.0.20.0/24`, with a static netplan
-config (no DHCP). Because it sits on a subnet that only has pfSense
-as its gateway, its DNS must be statically configured.
+The registry VM is an Ubuntu 24.04 VM on the cluster LAN subnet
+`10.0.20.0/24`, with a static netplan config (no DHCP). Because it
+sits on a subnet that only has pfSense as its gateway, its DNS must
+be statically configured.
+
+**As of Phase 4 of forgejo-registry-consolidation 2026-05-07** the VM
+no longer hosts the private R/W registry. It hosts pull-through
+caches only:
+
+| Port | Upstream |
+|---|---|
+| 5000 | docker.io (Docker Hub) — auth via dockerhub_registry_password |
+| 5010 | ghcr.io |
+| 5020 | quay.io |
+| 5030 | registry.k8s.io |
+| 5040 | reg.kyverno.io |
+
+The decommissioned private registry (port 5050) is now hosted on
+Forgejo at `forgejo.viktorbarzin.me/viktor/<image>`. See
+`docs/plans/2026-05-07-forgejo-registry-consolidation-plan.md` for the
+migration. Break-glass tarballs of `infra-ci` are still produced on
+each build to `/opt/registry/data/private/_breakglass/` — see
+`docs/runbooks/forgejo-registry-breakglass.md`.
 
 ## DNS configuration
 

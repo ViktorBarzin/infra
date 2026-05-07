@@ -8,7 +8,11 @@ variable "postgresql_host" { type = string }
 
 locals {
   namespace = "fire-planner"
-  image     = "registry.viktorbarzin.me/fire-planner:${var.image_tag}"
+  # Phase 3 cutover 2026-05-07. NOTE: the registry-private repo for
+  # fire-planner has 0 tags — first build via Woodpecker on the new Forgejo
+  # repo (viktor/fire-planner, Dockerfile + .woodpecker.yml added 2026-05-07)
+  # must succeed BEFORE the next pod restart, otherwise pulls will 404.
+  image = "forgejo.viktorbarzin.me/viktor/fire-planner:${var.image_tag}"
   labels = {
     app = "fire-planner"
   }

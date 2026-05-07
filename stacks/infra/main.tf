@@ -75,17 +75,11 @@ module "k8s-node-template" {
   mkdir -p /etc/containerd/certs.d/ghcr.io
   printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n\n[host."https://ghcr.io"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
 
-  # Create hosts.toml for private registry — both IP and hostname entries
-  # IP-based (10.0.20.10:5050): direct access, skip TLS verify (wildcard cert, no IP SAN)
-  mkdir -p /etc/containerd/certs.d/10.0.20.10:5050
-  printf 'server = "https://10.0.20.10:5050"\n\n[host."https://10.0.20.10:5050"]\n  capabilities = ["pull", "resolve", "push"]\n  skip_verify = true\n' > /etc/containerd/certs.d/10.0.20.10:5050/hosts.toml
-  # Hostname-based (registry.viktorbarzin.me): redirects to LAN IP to avoid Traefik round-trip
-  mkdir -p /etc/containerd/certs.d/registry.viktorbarzin.me
-  printf 'server = "https://registry.viktorbarzin.me"\n\n[host."https://10.0.20.10:5050"]\n  capabilities = ["pull", "resolve", "push"]\n  skip_verify = true\n' > /etc/containerd/certs.d/registry.viktorbarzin.me/hosts.toml
-
   # Forgejo OCI registry: redirect to in-cluster Traefik LB (10.0.20.200) so
   # pulls don't hairpin out through the WAN gateway. Traefik serves the
   # *.viktorbarzin.me wildcard so SNI verification still passes.
+  # registry.viktorbarzin.me / 10.0.20.10:5050 entries removed in Phase 4 of
+  # the forgejo-registry-consolidation 2026-05-07 — registry-private is gone.
   mkdir -p /etc/containerd/certs.d/forgejo.viktorbarzin.me
   printf 'server = "https://forgejo.viktorbarzin.me"\n\n[host."https://10.0.20.200"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml
 
