@@ -45,7 +45,8 @@
 | nextcloud | File sync/share | nextcloud |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
 | onlyoffice | Document editing | onlyoffice |
-| f1-stream | F1 streaming | f1-stream |
+| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier) | f1-stream |
+| chrome-service | Headed Chromium WebSocket pool (`ws://chrome-service.chrome-service.svc:3000/<token>`) for sibling services driving anti-bot embeds | chrome-service |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
 | actualbudget | Budgeting (factory pattern) | actualbudget |
