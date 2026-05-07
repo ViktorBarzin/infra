@@ -515,7 +515,12 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
             }
             container {
               name  = "sync"
-              image = "registry.viktorbarzin.me/wealthfolio-sync:latest"
+              # Phase 4 of forgejo-registry-consolidation 2026-05-07 +
+              # post-cutover wealthfolio-sync rebuild: image is now
+              # produced by /home/wizard/code/broker-sync (Forgejo
+              # viktor/broker-sync, DockerHub viktorbarzin/broker-sync,
+              # Forgejo viktor/wealthfolio-sync as the cluster pull path).
+              image = "forgejo.viktorbarzin.me/viktor/wealthfolio-sync:latest"
               env {
                 name = "IMAP_HOST"
                 value_from {
