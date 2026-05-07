@@ -1657,7 +1657,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "{{ $labels.instance }}: {{ $value }} broken manifest reference(s) — orphan index or missing blob"
-              description: "The integrity probe CronJob found {{ $value }} manifest/blob references that return non-200 on {{ $labels.instance }}. For registry.viktorbarzin.me see docs/runbooks/registry-rebuild-image.md (orphan OCI-index child from cleanup-tags.sh+GC race). For forgejo.viktorbarzin.me see docs/runbooks/forgejo-registry-rebuild-image.md."
+              description: "The forgejo-integrity-probe CronJob found {{ $value }} manifest/blob references that return non-200 on {{ $labels.instance }}. Rebuild the affected image per docs/runbooks/forgejo-registry-rebuild-image.md. (registry.viktorbarzin.me retired Phase 4 of forgejo-registry-consolidation 2026-05-07 — only forgejo.viktorbarzin.me remains.)"
           - alert: RegistryIntegrityProbeStale
             expr: time() - registry_manifest_integrity_last_run_timestamp > 3600
             for: 15m
