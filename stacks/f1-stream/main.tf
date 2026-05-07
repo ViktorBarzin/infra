@@ -11,7 +11,8 @@ resource "kubernetes_namespace" "f1-stream" {
     name = "f1-stream"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier                                    = local.tiers.aux
+      "chrome-service.viktorbarzin.me/client" = "true"
     }
   }
   lifecycle {
@@ -40,6 +41,35 @@ resource "kubernetes_manifest" "external_secret" {
       dataFrom = [{
         extract = {
           key = "f1-stream"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.f1-stream]
+}
+
+# Pull the chrome-service bearer token into this namespace as a separate
+# Secret so the verifier can reach the in-cluster Playwright pool.
+resource "kubernetes_manifest" "chrome_service_client_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "chrome-service-client-secrets"
+      namespace = "f1-stream"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "chrome-service-client-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "chrome-service"
         }
       }]
     }
@@ -126,6 +156,29 @@ resource "kubernetes_deployment" "f1-stream" {
           env {
             name  = "DISCORD_CHANNELS"
             value = var.discord_f1_channel_ids
+          }
+          # Verifier connects to in-cluster headed Chromium pool — see
+          # stacks/chrome-service/. Falls back to in-process headless if unset.
+          env {
+            name  = "CHROME_WS_URL"
+            value = "ws://chrome-service.chrome-service.svc.cluster.local:3000"
+          }
+          env {
+            name = "CHROME_WS_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-client-secrets"
+                key  = "api_bearer_token"
+              }
+            }
+          }
+          # The embed proxy (this pod's /embed?url=…) must be reachable from
+          # the remote chrome-service pod. Default 127.0.0.1 only works for
+          # in-process Chromium — for the remote browser we point it at our
+          # own ClusterIP service.
+          env {
+            name  = "PLAYBACK_VERIFY_PROXY_BASE"
+            value = "http://f1.f1-stream.svc.cluster.local"
           }
           volume_mount {
             name       = "data"
