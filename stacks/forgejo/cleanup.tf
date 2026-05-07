@@ -35,7 +35,10 @@ resource "kubernetes_secret" "forgejo_cleanup_token" {
   }
   type = "Opaque"
   data = {
-    FORGEJO_TOKEN = data.vault_kv_secret_v2.forgejo_viktor.data["forgejo_cleanup_token"]
+    # try() so the apply succeeds before the Vault key is populated during
+    # Phase 0 bootstrap (see docs/runbooks/forgejo-registry-setup.md). Empty
+    # token causes the cleanup CronJob to fail visibly — that's intended.
+    FORGEJO_TOKEN = try(data.vault_kv_secret_v2.forgejo_viktor.data["forgejo_cleanup_token"], "")
   }
 }
 
