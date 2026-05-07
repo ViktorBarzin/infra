@@ -4,17 +4,12 @@ server:
     reloader.stakater.com/search: "true"
   statefulSet:
     replicaCount: 1
-  # Pin forgejo.viktorbarzin.me to the in-cluster Traefik LB so the
-  # forge-API fetch path never round-trips through Cloudflare. Without
-  # this, OAuth/HTTP requests hit 30s context-deadline timeouts on cold
-  # DNS / TLS handshakes through the WAN gateway, which fails every
-  # pipeline trigger ("could not load config from forge: context
-  # deadline exceeded"). Traefik serves the wildcard cert so SNI
-  # verification still passes.
-  hostAliases:
-    - ip: "10.0.20.200"
-      hostnames:
-        - "forgejo.viktorbarzin.me"
+  # NOTE: hostAliases is NOT exposed by the woodpecker Helm chart (3.5.1 verified) —
+  # see main.tf null_resource.woodpecker_server_host_alias which applies the same
+  # via `kubectl patch` post-helm. Pinned to the in-cluster Traefik LB
+  # (10.0.20.200) so the forge-API fetch path never round-trips through
+  # Cloudflare ("context deadline exceeded" was failing every Forgejo
+  # pipeline trigger).
   image:
     registry: docker.io
     repository: woodpeckerci/woodpecker-server
