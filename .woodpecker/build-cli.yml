@@ -15,22 +15,23 @@ steps:
       username: "viktorbarzin"
       password:
         from_secret: dockerhub-pat
+      # Phase 4 of forgejo-registry-consolidation 2026-05-07 —
+      # registry.viktorbarzin.me:5050 decommissioned. Push to DockerHub
+      # (the public-facing infra image) AND Forgejo (the cluster pull
+      # source). Same image, two locations.
       repo:
         - viktorbarzin/infra
-        - registry.viktorbarzin.me:5050/infra
+        - forgejo.viktorbarzin.me/viktor/infra
       logins:
         - registry: https://index.docker.io/v1/
           username: viktorbarzin
           password:
             from_secret: dockerhub-pat
-        # Private registry on :5050 requires htpasswd auth since 2026-03-22.
-        # Without this, buildx pushes the second repo but blob HEAD comes
-        # back 401 → pipeline fails → CI false-negative (see bd code-12b).
-        - registry: registry.viktorbarzin.me:5050
+        - registry: forgejo.viktorbarzin.me
           username:
-            from_secret: registry_user
+            from_secret: forgejo_user
           password:
-            from_secret: registry_password
+            from_secret: forgejo_push_token
       dockerfile: cli/Dockerfile
       context: cli
       auto_tag: true
