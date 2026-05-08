@@ -182,7 +182,9 @@ resource "helm_release" "woodpecker" {
 # passes.
 resource "null_resource" "woodpecker_server_host_alias" {
   triggers = {
-    helm_revision = helm_release.woodpecker.metadata[0].revision
+    # Re-run on every helm_release version bump or values change.
+    helm_version = helm_release.woodpecker.version
+    helm_values  = sha256(join("", helm_release.woodpecker.values))
   }
 
   provisioner "local-exec" {
