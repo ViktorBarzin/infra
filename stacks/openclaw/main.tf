@@ -399,6 +399,44 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
+        # Init 1b: regenerate kubeconfig pointing at the projected SA tokenFile
+        # so kubectl always reads the fresh, kubelet-rotated token. Without
+        # this the previously-baked kubeconfig retains a SA token bound to a
+        # long-dead pod and kubectl returns "must be logged in to the server".
+        init_container {
+          name    = "setup-kubeconfig"
+          image   = "busybox:1.37"
+          command = ["sh", "-c", <<-EOT
+            cat > /home/node/.openclaw/kubeconfig <<'KUBECONFIG_EOF'
+            apiVersion: v1
+            kind: Config
+            clusters:
+            - cluster:
+                certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                server: https://kubernetes.default.svc
+              name: in-cluster
+            contexts:
+            - context:
+                cluster: in-cluster
+                user: openclaw
+                namespace: openclaw
+              name: in-cluster
+            current-context: in-cluster
+            users:
+            - name: openclaw
+              user:
+                tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            KUBECONFIG_EOF
+            chown 1000:1000 /home/node/.openclaw/kubeconfig
+            chmod 0644 /home/node/.openclaw/kubeconfig
+          EOT
+          ]
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
+        }
+
         # Init 2 removed: install-dotfiles init container was cloning dotfiles
         # repo via git on every pod start, causing 200+ small NFS writes.
         # Dotfiles already exist on NFS at /home/node/.openclaw/dotfiles from
