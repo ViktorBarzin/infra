@@ -80,6 +80,44 @@ resource "kubernetes_manifest" "external_secret_claude_agent" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+# Shared secrets for the Immich → Telegram → Postiz Instagram pipeline.
+# Workflows in stacks/n8n/workflows/instagram-*.json reference these env vars.
+resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "instagram-pipeline-secrets"
+      namespace = "n8n"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "instagram-pipeline-secrets"
+      }
+      data = [
+        {
+          secretKey = "telegram_bot_token"
+          remoteRef = { key = "instagram-poster", property = "telegram_bot_token" }
+        },
+        {
+          secretKey = "telegram_chat_id"
+          remoteRef = { key = "instagram-poster", property = "telegram_chat_id" }
+        },
+        {
+          secretKey = "immich_api_key"
+          remoteRef = { key = "instagram-poster", property = "immich_api_key" }
+        },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.n8n]
+}
+
 resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
@@ -252,6 +290,47 @@ resource "kubernetes_deployment" "n8n" {
           env {
             name  = "N8N_BLOCK_ENV_ACCESS_IN_NODE"
             value = "false"
+          }
+          # Instagram pipeline env (consumed by workflows in
+          # stacks/n8n/workflows/instagram-*.json).
+          env {
+            name = "TELEGRAM_BOT_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "instagram-pipeline-secrets"
+                key  = "telegram_bot_token"
+              }
+            }
+          }
+          env {
+            name = "TELEGRAM_CHAT_ID"
+            value_from {
+              secret_key_ref {
+                name = "instagram-pipeline-secrets"
+                key  = "telegram_chat_id"
+              }
+            }
+          }
+          env {
+            name = "IMMICH_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "instagram-pipeline-secrets"
+                key  = "immich_api_key"
+              }
+            }
+          }
+          env {
+            name  = "IMMICH_BASE_URL"
+            value = "https://immich.viktorbarzin.me"
+          }
+          env {
+            name  = "INSTAGRAM_POSTER_INTERNAL_URL"
+            value = "http://instagram-poster.instagram-poster.svc.cluster.local"
+          }
+          env {
+            name  = "PUBLIC_INSTAGRAM_POSTER_URL"
+            value = "https://instagram-poster.viktorbarzin.me"
           }
           volume_mount {
             name       = "data"
