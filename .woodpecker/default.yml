@@ -73,6 +73,38 @@ steps:
         # the env var is unset.
         umask 077; printf '%s' "$VAULT_TOKEN" > "$HOME/.vault-token"
 
+      # ── Generate kubeconfig from projected SA token ──
+      # terragrunt.hcl injects `-var kube_config_path=<repo>/config` for every
+      # terraform invocation, so we need a kubeconfig file at that path. The
+      # `default` SA in the woodpecker namespace is cluster-admin (via the
+      # `woodpecker-default` ClusterRoleBinding), so the projected token is
+      # sufficient to apply any stack. Using `tokenFile` (not an inline token)
+      # so the provider re-reads it if kubelet rotates the projected token
+      # mid-pipeline.
+      - |
+        cat > config <<'EOF'
+        apiVersion: v1
+        kind: Config
+        clusters:
+          - name: kubernetes
+            cluster:
+              server: https://10.0.20.100:6443
+              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        contexts:
+          - name: ci
+            context:
+              cluster: kubernetes
+              user: ci
+        current-context: ci
+        users:
+          - name: ci
+            user:
+              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        EOF
+        chmod 600 config
+        # Sanity check: kubeconfig works
+        kubectl --kubeconfig=config get ns kube-system -o name >/dev/null
+
       # ── Detect changed stacks ──
       - |
         PLATFORM_STACKS="dbaas authentik crowdsec monitoring nvidia mailserver cloudflared kyverno metallb redis traefik technitium headscale rbac k8s-portal vaultwarden reverse-proxy metrics-server vpa nfs-csi iscsi-csi cnpg sealed-secrets uptime-kuma wireguard xray infra-maintenance platform vault reloader descheduler external-secrets"
