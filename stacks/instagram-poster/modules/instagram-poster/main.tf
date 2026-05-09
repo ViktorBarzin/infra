@@ -268,17 +268,35 @@ resource "kubernetes_service" "instagram_poster" {
   }
 }
 
-# Public ingress. No UI — entire host is API-only and Meta needs to fetch
-# /image/<asset_id> unauthenticated to render preview cards. We therefore
-# leave `protected = false` so Authentik forward-auth doesn't run on any
-# path. Inbound auth is the API's own concern (Postiz webhook signature
-# / shared secret as configured by the parallel agent).
-module "ingress" {
+# Two ingresses on the same host — Traefik picks the longest path prefix.
+#
+# `/image/*` must be reachable WITHOUT auth so Meta's content fetcher (and
+# Telegram's photo preview) can render the 9:16 derivatives we produce.
+# Everything else (/queue, /scan, /enqueue, /post-next, /reject, /healthz)
+# sits behind Authentik forward-auth — same defense as every other UI on
+# the cluster, no random caller can pop items off the approval queue.
+module "ingress_image_public" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.instagram_poster.metadata[0].name
-  name            = "instagram-poster"
+  name            = "instagram-poster-image"
+  host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
   protected       = false
+  ingress_path    = ["/image"]
   port            = 80
+  service_name    = "instagram-poster"
+}
+
+module "ingress_protected" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "none" # DNS record already created by the public ingress above
+  namespace       = kubernetes_namespace.instagram_poster.metadata[0].name
+  name            = "instagram-poster"
+  host            = "instagram-poster"
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  ingress_path    = ["/"]
+  port            = 80
+  service_name    = "instagram-poster"
 }

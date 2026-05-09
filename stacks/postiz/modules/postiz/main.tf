@@ -132,6 +132,8 @@ resource "helm_release" "postiz" {
       DISABLE_REGISTRATION             = "false"
       IS_GENERAL                       = "true"
       NX_ADD_PLUGINS                   = "false"
+      # Postiz uses Temporal for cron/scheduling — bring our own; Helm chart doesn't.
+      TEMPORAL_ADDRESS                 = "temporal:7233"
     }
 
     # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
@@ -212,6 +214,7 @@ module "ingress" {
   host            = var.host
   service_name    = "postiz" # chart Service name resolves to fullnameOverride
   port            = 80
+  protected       = true # Authentik forward-auth — Postiz has its own login on top, but we don't expose registration to the open internet.
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
@@ -220,5 +223,153 @@ module "ingress" {
     "gethomepage.dev/icon"         = "postiz.png"
     "gethomepage.dev/group"        = "Automation"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Temporal — cron/workflow engine Postiz requires for scheduled posts.
+#
+# Lightweight single-replica deployment using temporalio/auto-setup, backed
+# by the bundled postiz-postgresql (separate `temporal` database). Visibility
+# search via Elasticsearch is disabled (ENABLE_ES=false) — Postiz only uses
+# the workflow engine, not visibility, so SQL is enough.
+#
+# Important: temporalio/auto-setup creates schemas in the `temporal` and
+# `temporal_visibility` databases on first boot. We pre-create them with an
+# init container running psql against postiz-postgresql.
+# ──────────────────────────────────────────────────────────────────────────────
+
+resource "kubernetes_deployment" "temporal" {
+  metadata {
+    name      = "temporal"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    labels = {
+      app = "temporal"
+    }
+  }
+  spec {
+    replicas = 1
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = { app = "temporal" }
+    }
+    template {
+      metadata {
+        labels = { app = "temporal" }
+      }
+      spec {
+        # Pre-create the two databases Temporal expects on the bundled PG.
+        init_container {
+          name  = "create-temporal-dbs"
+          image = "docker.io/bitnamilegacy/postgresql:16.4.0-debian-12-r7"
+          env {
+            name  = "PGPASSWORD"
+            value = "postiz-password"
+          }
+          command = ["/bin/bash", "-c"]
+          args = [
+            <<-EOT
+            set -e
+            for db in temporal temporal_visibility; do
+              psql -h postiz-postgresql -U postiz -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
+                || psql -h postiz-postgresql -U postiz -d postgres -c "CREATE DATABASE \"$db\""
+            done
+            EOT
+          ]
+        }
+        container {
+          name  = "temporal"
+          image = "temporalio/auto-setup:1.28.1"
+          port {
+            container_port = 7233
+            name           = "grpc"
+          }
+          env {
+            name  = "DB"
+            value = "postgres12"
+          }
+          env {
+            name  = "DB_PORT"
+            value = "5432"
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "postiz"
+          }
+          env {
+            name  = "POSTGRES_PWD"
+            value = "postiz-password"
+          }
+          env {
+            name  = "POSTGRES_SEEDS"
+            value = "postiz-postgresql"
+          }
+          env {
+            name  = "DBNAME"
+            value = "temporal"
+          }
+          env {
+            name  = "VISIBILITY_DBNAME"
+            value = "temporal_visibility"
+          }
+          env {
+            name  = "ENABLE_ES"
+            value = "false"
+          }
+          env {
+            name  = "TEMPORAL_NAMESPACE"
+            value = "default"
+          }
+          # NOTE: not setting DYNAMIC_CONFIG_FILE_PATH — that file isn't
+          # bundled in temporalio/auto-setup. Defaults are fine for our
+          # use (Postiz only needs the workflow engine, not dynamic config).
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "1Gi"
+            }
+          }
+          # Auto-setup runs schema migrations on first boot — give it time.
+          startup_probe {
+            tcp_socket {
+              port = 7233
+            }
+            failure_threshold     = 30
+            period_seconds        = 5
+            initial_delay_seconds = 10
+          }
+          liveness_probe {
+            tcp_socket {
+              port = 7233
+            }
+            period_seconds = 30
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [helm_release.postiz]
+}
+
+resource "kubernetes_service" "temporal" {
+  metadata {
+    name      = "temporal"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  spec {
+    selector = { app = "temporal" }
+    port {
+      name        = "grpc"
+      port        = 7233
+      target_port = 7233
+    }
   }
 }
