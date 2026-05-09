@@ -21,14 +21,47 @@ warn() { log "WARN: $*" >&2; }
 die()  { log "FATAL: $*" >&2; push_metrics 1 0; exit 1; }
 
 # --- Locking ---
+# Track whether we got SIGTERM/SIGINT so cleanup can push a non-success metric.
+# Without this, a systemd timeout-kill leaves WeeklyBackupFailing alerts blind:
+# the script never reaches the success push at the end and the metric goes stale
+# silently. (Root cause of 2026-04-30 → 2026-05-09 silent-failure run.)
+KILLED=""
+
 cleanup() {
-    umount "${PVC_MOUNT}" 2>/dev/null || true
+    # Recursively unmount /tmp/pvc-mount: previous SIGTERM'd runs left snapshot
+    # mounts stacked here, which made every subsequent run start with an
+    # already-occupied mountpoint and time out before reaching its own umount.
+    while mountpoint -q "${PVC_MOUNT}" 2>/dev/null; do
+        umount "${PVC_MOUNT}" 2>/dev/null || umount -l "${PVC_MOUNT}" 2>/dev/null || break
+    done
+    # Close any LUKS mappers we opened (or that were left over from a prior crash).
+    for m in /dev/mapper/pvc-snap-*; do
+        [ -e "$m" ] || continue
+        cryptsetup close "$(basename "$m")" 2>/dev/null || true
+    done
     rm -f "${LOCKFILE}"
+    if [ -n "${KILLED}" ]; then
+        # status=2 = aborted (matches lvm-pvc-snapshot's convention)
+        push_metrics 2 "${TOTAL_BYTES:-0}"
+    fi
 }
 trap cleanup EXIT
+trap 'KILLED=1; exit 143' TERM INT
+
 if ! ( set -o noclobber; echo $$ > "${LOCKFILE}" ) 2>/dev/null; then
     die "Another instance is running (PID $(cat "${LOCKFILE}" 2>/dev/null || echo unknown))"
 fi
+
+# Belt-and-braces: if a previous run was SIGTERM'd before its trap completed,
+# /tmp/pvc-mount may have stacked mounts and stale LUKS mappers. The lock above
+# guarantees we're alone, so it's safe to clean these up now.
+while mountpoint -q "${PVC_MOUNT}" 2>/dev/null; do
+    umount "${PVC_MOUNT}" 2>/dev/null || umount -l "${PVC_MOUNT}" 2>/dev/null || break
+done
+for m in /dev/mapper/pvc-snap-*; do
+    [ -e "$m" ] || continue
+    cryptsetup close "$(basename "$m")" 2>/dev/null || true
+done
 
 # --- Metrics ---
 push_metrics() {
@@ -243,6 +276,7 @@ fi
 log "--- Step 3: pfsense backup ---"
 PFSENSE_DEST="${BACKUP_ROOT}/pfsense"
 DATE=$(date +%Y%m%d)
+PFSENSE_STATUS=0
 mkdir -p "${PFSENSE_DEST}"
 
 if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/dev/null; then
@@ -253,6 +287,7 @@ if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/de
     else
         warn "Failed to copy pfsense config.xml"
         STATUS=1
+        PFSENSE_STATUS=1
     fi
 
     # Full filesystem tar
@@ -264,20 +299,27 @@ if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/de
     else
         warn "Failed to tar pfsense filesystem"
         STATUS=1
+        PFSENSE_STATUS=1
     fi
 
     # Retention: keep 4 weekly copies
     ls -t "${PFSENSE_DEST}"/config-*.xml 2>/dev/null | tail -n +5 | xargs rm -f 2>/dev/null || true
     ls -t "${PFSENSE_DEST}"/pfsense-full-*.tar.gz 2>/dev/null | tail -n +5 | xargs rm -f 2>/dev/null || true
-
-    # Push pfsense-specific metric
-    echo "backup_last_success_timestamp $(date +%s)" | \
-        curl -s --connect-timeout 5 --max-time 10 --data-binary @- \
-        "${PUSHGATEWAY}/metrics/job/pfsense-backup" 2>/dev/null || true
 else
     warn "Cannot SSH to pfsense (10.0.20.1) — skipping"
     STATUS=1
+    PFSENSE_STATUS=1
 fi
+
+# Push pfsense-backup metrics in BOTH success and failure paths so
+# PfsenseBackupStale + PfsenseBackupFailing alerts can fire instead of going
+# silent when ssh-to-pfsense is broken.
+{
+    echo "backup_last_run_timestamp $(date +%s)"
+    echo "backup_last_status ${PFSENSE_STATUS}"
+    [ "${PFSENSE_STATUS}" -eq 0 ] && echo "backup_last_success_timestamp $(date +%s)"
+} | curl -s --connect-timeout 5 --max-time 10 --data-binary @- \
+    "${PUSHGATEWAY}/metrics/job/pfsense-backup" 2>/dev/null || true
 
 # ============================================================
 # STEP 4: PVE host config backup
