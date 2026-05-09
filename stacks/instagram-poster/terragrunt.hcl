@@ -18,6 +18,6 @@ dependency "external-secrets" {
 }
 
 inputs = {
-  # Bump per deploy. Use 8-char git SHA in CI; :latest only for local trials.
-  image_tag = "latest"
+  # Bump per deploy. Use 8-char git SHA — :latest causes stale pull-through cache.
+  image_tag = "23f8b4ed"
 }
