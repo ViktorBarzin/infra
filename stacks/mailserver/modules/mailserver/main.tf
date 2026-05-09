@@ -293,7 +293,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
       "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
+      "resize.topolvm.io/storage_limit" = "10Gi"
     }
   }
   spec {
@@ -301,9 +301,15 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
-        storage = "2Gi"
+        storage = "5Gi"
       }
     }
+  }
+  lifecycle {
+    # pvc-autoresizer expands this PVC up to storage_limit; ignore drift on
+    # requests.storage. To bump the floor manually: temporarily remove this
+    # block, apply the new size, re-add the block, apply again.
+    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
