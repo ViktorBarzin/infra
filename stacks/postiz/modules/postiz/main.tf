@@ -234,15 +234,34 @@ resource "helm_release" "postiz" {
   ]
 }
 
-module "ingress" {
+# Two ingresses on the same host. /uploads/* must be reachable WITHOUT auth
+# so Meta's IG Graph API fetcher can pull the JPEG when Postiz hands it the
+# upload URL — when behind Authentik, Meta receives a 302 to the login page
+# and rejects with error code 36001 (Postiz mistranslates this as "Invalid
+# Instagram image resolution"). Everything else stays behind Authentik.
+module "ingress_uploads_public" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.postiz.metadata[0].name
+  name            = "postiz-uploads"
+  host            = var.host
+  service_name    = "postiz"
+  port            = 80
+  protected       = false
+  ingress_path    = ["/uploads"]
+  tls_secret_name = var.tls_secret_name
+}
+
+module "ingress" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "none" # DNS already created by ingress_uploads_public
+  namespace       = kubernetes_namespace.postiz.metadata[0].name
   name            = "postiz"
   host            = var.host
-  service_name    = "postiz" # chart Service name resolves to fullnameOverride
+  service_name    = "postiz"
   port            = 80
-  protected       = true # Authentik forward-auth — Postiz has its own login on top, but we don't expose registration to the open internet.
+  protected       = true # Authentik forward-auth on the UI / API path
+  ingress_path    = ["/"]
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
