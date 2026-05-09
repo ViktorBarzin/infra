@@ -377,3 +377,52 @@ resource "kubernetes_service" "temporal" {
     }
   }
 }
+
+# One-shot Job: remove the two default Text-typed search attributes
+# (CustomTextField, CustomStringField) that temporalio/auto-setup ships
+# with. Postiz needs to register `organizationId` + `postId`, and SQL
+# visibility caps at 3 Text attributes total — without this, Postiz's
+# NestJS bootstrap crashes with "cannot have more than 3 search attribute
+# of type Text" and the backend never starts.
+# Upstream issue: https://github.com/gitroomhq/postiz-app/issues/1504
+resource "kubernetes_job" "temporal_search_attr_cleanup" {
+  metadata {
+    name      = "temporal-search-attr-cleanup"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  spec {
+    backoff_limit              = 30
+    ttl_seconds_after_finished = 300
+    template {
+      metadata {}
+      spec {
+        restart_policy = "OnFailure"
+        container {
+          name    = "cleanup"
+          image   = "temporalio/auto-setup:1.28.1"
+          command = ["/bin/sh", "-c"]
+          args = [
+            <<-EOT
+            set -e
+            # Wait for Temporal to be reachable (auto-setup may take 30s).
+            for i in $(seq 1 60); do
+              if temporal --address temporal:7233 operator search-attribute list >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            for attr in CustomTextField CustomStringField; do
+              if temporal --address temporal:7233 operator search-attribute list 2>/dev/null | grep -q "$attr"; then
+                temporal --address temporal:7233 operator search-attribute remove --name "$attr" --yes
+              fi
+            done
+            EOT
+          ]
+        }
+      }
+    }
+  }
+  wait_for_completion = false
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_deployment.temporal]
+}
