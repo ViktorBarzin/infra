@@ -57,31 +57,27 @@ resource "kubernetes_manifest" "external_secret" {
       data = [
         {
           secretKey = "IMMICH_API_KEY"
-          remoteRef = {
-            key      = "instagram-poster"
-            property = "immich_api_key"
-          }
+          remoteRef = { key = "instagram-poster", property = "immich_api_key" }
         },
         {
           secretKey = "POSTIZ_API_TOKEN"
-          remoteRef = {
-            key      = "instagram-poster"
-            property = "postiz_api_token"
-          }
+          remoteRef = { key = "instagram-poster", property = "postiz_api_token" }
         },
         {
           secretKey = "IMMICH_TAG_INSTAGRAM"
-          remoteRef = {
-            key      = "instagram-poster"
-            property = "immich_tag_instagram"
-          }
+          remoteRef = { key = "instagram-poster", property = "immich_tag_instagram" }
         },
         {
           secretKey = "IMMICH_TAG_POSTED"
-          remoteRef = {
-            key      = "instagram-poster"
-            property = "immich_tag_posted"
-          }
+          remoteRef = { key = "instagram-poster", property = "immich_tag_posted" }
+        },
+        {
+          secretKey = "TELEGRAM_BOT_TOKEN"
+          remoteRef = { key = "instagram-poster", property = "telegram_bot_token" }
+        },
+        {
+          secretKey = "TELEGRAM_CHAT_ID"
+          remoteRef = { key = "instagram-poster", property = "telegram_chat_id" }
         },
       ]
     }
@@ -222,10 +218,12 @@ resource "kubernetes_deployment" "instagram_poster" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
+            # Pillow full-resolution HEIC decode peaks ~600-800Mi for big phone
+            # photos; 512Mi was OOMKilling on /original requests.
             limits = {
-              memory = "512Mi"
+              memory = "1500Mi"
             }
           }
         }
@@ -283,7 +281,7 @@ module "ingress_image_public" {
   host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
   protected       = false
-  ingress_path    = ["/image"]
+  ingress_path    = ["/image", "/original"]
   port            = 80
   service_name    = "instagram-poster"
 }
