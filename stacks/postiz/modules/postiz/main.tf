@@ -102,7 +102,7 @@ resource "helm_release" "postiz" {
   timeout          = 600
 
   repository = "oci://ghcr.io/gitroomhq/postiz-helmchart/charts"
-  chart      = "postiz"
+  chart      = "postiz-app"
   version    = var.chart_version
 
   values = [yamlencode({
@@ -184,8 +184,15 @@ resource "helm_release" "postiz" {
     # PG/Redis Services are ClusterIP and only routable from the postiz
     # namespace, so the credentials never leave the pod network. Promotion to
     # CNPG with Vault-rotated creds is the next step.
+    # Bitnami removed bitnami/postgresql + bitnami/redis from DockerHub
+    # (Broadcom acquisition, Aug 2025). Older tags moved to bitnamilegacy/*.
     postgresql = {
       enabled = true
+      image = {
+        registry   = "docker.io"
+        repository = "bitnamilegacy/postgresql"
+        tag        = "16.4.0-debian-12-r7"
+      }
       auth = {
         username = "postiz"
         database = "postiz"
@@ -194,6 +201,11 @@ resource "helm_release" "postiz" {
 
     redis = {
       enabled = true
+      image = {
+        registry   = "docker.io"
+        repository = "bitnamilegacy/redis"
+        tag        = "7.4.0-debian-12-r2"
+      }
     }
   })]
 
