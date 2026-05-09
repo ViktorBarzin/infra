@@ -41,6 +41,34 @@ steps:
         export VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
           -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
 
+      # ── Generate kubeconfig from projected SA token ──
+      # See default.yml for rationale. terragrunt.hcl injects
+      # `-var kube_config_path=<repo>/config` for every terraform invocation,
+      # so we need a kubeconfig file at that path. The woodpecker default SA
+      # is cluster-admin, so the projected token is sufficient.
+      - |
+        cat > config <<'EOF'
+        apiVersion: v1
+        kind: Config
+        clusters:
+          - name: kubernetes
+            cluster:
+              server: https://10.0.20.100:6443
+              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        contexts:
+          - name: ci
+            context:
+              cluster: kubernetes
+              user: ci
+        current-context: ci
+        users:
+          - name: ci
+            user:
+              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        EOF
+        chmod 600 config
+        kubectl --kubeconfig=config get ns kube-system -o name >/dev/null
+
       # ── Run terraform plan on all stacks ──
       # Emits two timestamps per drifted stack so the Pushgateway/Prometheus
       # side can compute drift-age-hours via `time() - drift_stack_first_seen`.
