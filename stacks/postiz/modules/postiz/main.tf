@@ -95,6 +95,14 @@ resource "kubernetes_manifest" "external_secret_jwt" {
           secretKey = "FACEBOOK_APP_SECRET"
           remoteRef = { key = "instagram-poster", property = "facebook_app_secret" }
         },
+        {
+          secretKey = "INSTAGRAM_APP_ID"
+          remoteRef = { key = "instagram-poster", property = "instagram_app_id" }
+        },
+        {
+          secretKey = "INSTAGRAM_APP_SECRET"
+          remoteRef = { key = "instagram-poster", property = "instagram_app_secret" }
+        },
       ]
     }
   }
@@ -158,6 +166,10 @@ resource "helm_release" "postiz" {
       # placeholder; ESO patches the real values from Vault below.
       FACEBOOK_APP_ID      = ""
       FACEBOOK_APP_SECRET  = ""
+      # IG standalone (Postiz Instagram-Login integration). Uses the modern
+      # `instagram_business_*` scopes — does not require the FB Login dance.
+      INSTAGRAM_APP_ID     = ""
+      INSTAGRAM_APP_SECRET = ""
     }
 
     # Use our PVC for uploads (overrides the chart's emptyDir default).
