@@ -7,20 +7,23 @@
     {
       "parameters": {
         "rule": {
-          "interval": [{"field": "minutes", "minutesInterval": 30}]
+          "interval": [{
+            "field": "cronExpression",
+            "expression": "0 9 * * *"
+          }]
         }
       },
-      "id": "cron-30min",
-      "name": "Every 30 minutes",
+      "id": "cron-daily-9",
+      "name": "Daily 09:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [250, 300],
-      "notes": "Trigger every 30 minutes."
+      "notes": "Once a day kickstart. Sends 1 candidate so the user can start a training session by tapping. The approval workflow's chain takes over from there — every approve/reject sends the next candidate immediately. Daily cadence avoids spamming Telegram if the user is actively training; the loop is user-paced."
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.INSTAGRAM_POSTER_INTERNAL_URL }}/candidates?limit=3",
+        "url": "={{ $env.INSTAGRAM_POSTER_INTERNAL_URL }}/candidates?limit=1",
         "options": {"timeout": 60000}
       },
       "id": "candidates",
@@ -89,7 +92,7 @@
     }
   ],
   "connections": {
-    "Every 30 minutes": {"main": [[{"node": "Get top-3 ranked candidates", "type": "main", "index": 0}]]},
+    "Daily 09:00": {"main": [[{"node": "Get top-3 ranked candidates", "type": "main", "index": 0}]]},
     "Get top-3 ranked candidates": {"main": [[{"node": "Split candidates", "type": "main", "index": 0}]]},
     "Split candidates": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]},
     "Loop one at a time": {"main": [[{"node": "Build caption", "type": "main", "index": 0}]]},
