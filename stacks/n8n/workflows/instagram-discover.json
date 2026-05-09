@@ -15,40 +15,32 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [250, 300],
-      "notes": "Trigger every 30 minutes. Polling cadence is conservative for a personal pipeline; matches instagram-poster scan rate."
+      "notes": "Trigger every 30 minutes."
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.INSTAGRAM_POSTER_INTERNAL_URL }}/scan",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {"name": "Authorization", "value": "=Bearer {{ $env.INSTAGRAM_POSTER_TOKEN }}"},
-            {"name": "Content-Type", "value": "application/json"}
-          ]
-        },
-        "sendBody": false,
+        "method": "GET",
+        "url": "={{ $env.INSTAGRAM_POSTER_INTERNAL_URL }}/candidates?limit=3",
         "options": {"timeout": 60000}
       },
-      "id": "scan-immich",
-      "name": "Scan Immich for new candidates",
+      "id": "candidates",
+      "name": "Get top-3 ranked candidates",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [500, 300],
-      "notes": "Calls instagram-poster /scan endpoint. Returns {\"new_items\": [\"asset-uuid\", ...]}. Authorization header is optional (internal cluster service); leave INSTAGRAM_POSTER_TOKEN blank if unused."
+      "notes": "GET /candidates?limit=3 returns assets ranked by CLIP similarity to approved/rejected centroids. Cold-start (no decision history) falls back to recency. Endpoint also auto-adds returned items to story_queue as pending so /enqueue can transition them on approve."
     },
     {
       "parameters": {
-        "fieldToSplitOut": "new_items",
+        "fieldToSplitOut": "candidates",
         "options": {}
       },
       "id": "split-items",
-      "name": "Split new_items array",
+      "name": "Split candidates",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [750, 300],
-      "notes": "Fan out one candidate per execution branch so each photo gets its own approval message."
+      "notes": "One Telegram message per candidate."
     },
     {
       "parameters": {
@@ -60,38 +52,18 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [970, 300],
-      "notes": "Process one asset at a time so errors on a single asset don't fan out and spam Telegram."
+      "notes": "Process one asset at a time so a single Telegram error doesn't stop the others."
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.IMMICH_BASE_URL }}/api/assets/{{ $json.new_items }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {"name": "x-api-key", "value": "={{ $env.IMMICH_API_KEY }}"},
-            {"name": "Accept", "value": "application/json"}
-          ]
-        },
-        "options": {"timeout": 30000}
-      },
-      "id": "fetch-asset-meta",
-      "name": "Fetch Immich asset metadata",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1190, 300],
-      "notes": "Pull asset metadata from Immich for caption preview (filename, fileCreatedAt, EXIF location)."
-    },
-    {
-      "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst assetId = item.id || $('Loop one at a time').item.json.new_items;\nconst filename = item.originalFileName || item.originalPath || 'unknown';\nconst createdAt = item.fileCreatedAt || item.localDateTime || '';\nconst exif = item.exifInfo || {};\nconst city = exif.city || '';\nconst country = exif.country || '';\nconst location = [city, country].filter(Boolean).join(', ');\n\nconst dateStr = createdAt ? new Date(createdAt).toISOString().slice(0, 10) : '';\n\nconst lines = [\n  '<b>New Immich candidate</b>',\n  '',\n  '<code>' + assetId + '</code>',\n  '',\n  '<b>File:</b> ' + filename\n];\nif (dateStr) lines.push('<b>Taken:</b> ' + dateStr);\nif (location) lines.push('<b>Where:</b> ' + location);\nlines.push('');\nlines.push('Approve to enqueue for posting, reject to mark seen.');\n\nreturn [{ json: { asset_id: assetId, caption: lines.join('\\n') } }];"
+        "jsCode": "const c = $input.first().json;\nconst score = (typeof c.score === 'number') ? c.score.toFixed(2) : '–';\nconst takenDate = c.taken_at ? c.taken_at.slice(0, 10) : '';\nconst lines = [\n  '<b>📸 New candidate</b>',\n  '',\n  '<b>File:</b> ' + (c.filename || c.asset_id),\n];\nif (takenDate) lines.push('<b>Taken:</b> ' + takenDate);\nlines.push('<b>Score:</b> ' + score + (c.has_embedding ? '' : ' (no embedding yet)'));\nlines.push('', 'Approve to queue for posting, reject to mark seen.');\nreturn [{ json: { asset_id: c.asset_id, caption: lines.join('\\n') } }];"
       },
       "id": "build-caption",
-      "name": "Build caption + asset id",
+      "name": "Build caption",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1410, 300],
-      "notes": "Compose the caption from Immich metadata. HTML parse_mode is used downstream."
+      "position": [1190, 300],
+      "notes": "Format the Telegram caption with the CLIP-similarity score, taken date, filename. Score is approve_centroid_cos − reject_centroid_cos; nulls show as –."
     },
     {
       "parameters": {
@@ -105,24 +77,23 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, photo: $env.PUBLIC_INSTAGRAM_POSTER_URL + '/image/' + $json.asset_id, caption: $json.caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[ { text: 'Approve', callback_data: 'approve:' + $json.asset_id }, { text: 'Reject', callback_data: 'reject:' + $json.asset_id } ]] } }) }}",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, photo: $env.PUBLIC_INSTAGRAM_POSTER_URL + '/image/' + $json.asset_id, caption: $json.caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[ { text: '✅ Approve', callback_data: 'approve:' + $json.asset_id }, { text: '❌ Reject', callback_data: 'reject:' + $json.asset_id } ]] } }) }}",
         "options": {"timeout": 30000}
       },
       "id": "telegram-send-photo",
       "name": "Telegram sendPhoto with buttons",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1630, 300],
-      "notes": "Telegram needs a public URL for the photo (it fetches the image from outside the cluster). callback_data uses the action:asset_id format consumed by instagram-approval."
+      "position": [1410, 300],
+      "notes": "Telegram fetches the 9:16 derivative from instagram-poster.viktorbarzin.me/image/<id>. Inline keyboard wires the action:asset_id format consumed by instagram-approval workflow."
     }
   ],
   "connections": {
-    "Every 30 minutes": {"main": [[{"node": "Scan Immich for new candidates", "type": "main", "index": 0}]]},
-    "Scan Immich for new candidates": {"main": [[{"node": "Split new_items array", "type": "main", "index": 0}]]},
-    "Split new_items array": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]},
-    "Loop one at a time": {"main": [[{"node": "Fetch Immich asset metadata", "type": "main", "index": 0}]]},
-    "Fetch Immich asset metadata": {"main": [[{"node": "Build caption + asset id", "type": "main", "index": 0}]]},
-    "Build caption + asset id": {"main": [[{"node": "Telegram sendPhoto with buttons", "type": "main", "index": 0}]]},
+    "Every 30 minutes": {"main": [[{"node": "Get top-3 ranked candidates", "type": "main", "index": 0}]]},
+    "Get top-3 ranked candidates": {"main": [[{"node": "Split candidates", "type": "main", "index": 0}]]},
+    "Split candidates": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]},
+    "Loop one at a time": {"main": [[{"node": "Build caption", "type": "main", "index": 0}]]},
+    "Build caption": {"main": [[{"node": "Telegram sendPhoto with buttons", "type": "main", "index": 0}]]},
     "Telegram sendPhoto with buttons": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]}
   },
   "settings": {"executionOrder": "v1", "saveExecutionProgress": false, "saveManualExecutions": true},
