@@ -152,6 +152,15 @@ resource "kubernetes_deployment" "instagram_poster" {
           name = "registry-credentials"
         }
 
+        # PVC mounts as root by default; pod runs as uid/gid 10001 (poster).
+        # fs_group makes kubelet chown the volume to gid 10001 on mount.
+        security_context {
+          fs_group        = 10001
+          run_as_user     = 10001
+          run_as_group    = 10001
+          run_as_non_root = true
+        }
+
         container {
           name  = "instagram-poster"
           image = local.image
