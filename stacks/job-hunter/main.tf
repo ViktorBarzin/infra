@@ -294,18 +294,52 @@ resource "kubernetes_service" "job_hunter" {
   }
 }
 
-# Plan-time read of the ESO-created DB creds Secret for Grafana datasource.
-# First apply: -target=kubernetes_manifest.db_external_secret first so the Secret exists.
-data "kubernetes_secret" "job_hunter_db_creds" {
-  metadata {
-    name      = "job-hunter-db-creds"
-    namespace = kubernetes_namespace.job_hunter.metadata[0].name
+# ExternalSecret in the monitoring namespace mirroring the rotating
+# job_hunter DB password. Grafana mounts this via envFromSecrets in
+# monitoring/grafana_chart_values.yaml; the datasource ConfigMap below
+# references it as $__env{JOB_HUNTER_PG_PASSWORD}. Reloader restarts
+# Grafana whenever ESO updates this secret (every 7d on rotation).
+resource "kubernetes_manifest" "grafana_job_hunter_db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-job-hunter-pg-creds"
+      namespace = "monitoring"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-job-hunter-pg-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            JOB_HUNTER_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-job-hunter"
+          property = "password"
+        }
+      }]
+    }
   }
-  depends_on = [kubernetes_manifest.db_external_secret]
 }
 
 # Grafana datasource for the job_hunter Postgres DB. Lives in the monitoring
 # namespace so the grafana sidecar (label grafana_datasource=1) picks it up.
+# Password is injected via $__env{...} from grafana-job-hunter-pg-creds (above).
 resource "kubernetes_config_map" "grafana_job_hunter_datasource" {
   metadata {
     name      = "grafana-job-hunter-datasource"
@@ -333,10 +367,11 @@ resource "kubernetes_config_map" "grafana_job_hunter_datasource" {
           timescaledb     = false
         }
         secureJsonData = {
-          password = data.kubernetes_secret.job_hunter_db_creds.data["DB_PASSWORD"]
+          password = "$__env{JOB_HUNTER_PG_PASSWORD}"
         }
         editable = true
       }]
     })
   }
+  depends_on = [kubernetes_manifest.grafana_job_hunter_db_external_secret]
 }

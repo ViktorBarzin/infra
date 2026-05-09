@@ -173,7 +173,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, message_id: $json.message_id, reply_markup: { inline_keyboard: [] } }) }}",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Parse callback_data').item.json.chat_id, message_id: $('Parse callback_data').item.json.message_id, reply_markup: { inline_keyboard: [] } }) }}",
         "options": {"timeout": 30000}
       },
       "id": "edit-reply-markup",
@@ -181,7 +181,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1570, 400],
-      "notes": "Strip the inline buttons from the original DM."
+      "notes": "Strip the inline buttons from the original DM. Refers back to Parse callback_data because the previous Telegram HTTP call replaced $json with its API response (which has result.chat.id, not chat_id at root)."
     },
     {
       "parameters": {
@@ -195,7 +195,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ callback_query_id: $json.callback_query_id, text: 'Recorded' }) }}",
+        "jsonBody": "={{ JSON.stringify({ callback_query_id: $('Parse callback_data').item.json.callback_query_id, text: 'Recorded' }) }}",
         "options": {"timeout": 15000}
       },
       "id": "answer-callback",
@@ -203,7 +203,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1790, 400],
-      "notes": "Dismiss the spinner on the user's tap."
+      "notes": "Dismiss the spinner on the user's tap. callback_query_id from Parse callback_data (upstream HTTP responses don't carry it)."
     },
     {
       "parameters": {
