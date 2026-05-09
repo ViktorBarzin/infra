@@ -6,6 +6,11 @@ variable "image_tag" {
 
 variable "postgresql_host" { type = string }
 
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+
 locals {
   namespace = "fire-planner"
   # Phase 3 cutover 2026-05-07. NOTE: the registry-private repo for
@@ -24,6 +29,10 @@ resource "kubernetes_namespace" "fire_planner" {
     labels = {
       tier              = local.tiers.aux
       "istio-injection" = "disabled"
+      # Lets us drive the deployed UI from the in-cluster chrome-service
+      # for headless verification (NetworkPolicy in chrome-service ns admits
+      # any namespace carrying this label).
+      "chrome-service.viktorbarzin.me/client" = "true"
     }
   }
   lifecycle {
@@ -117,6 +126,53 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.fire_planner]
 }
 
+# Read-only credentials for the wealthfolio_sync mirror DB (a separate
+# Postgres database on the same CNPG cluster). The wealthfolio pod's
+# pg-sync sidecar populates `daily_account_valuation` etc. hourly; the
+# fire-planner ingest reads those tables via this role.
+resource "kubernetes_manifest" "wealthfolio_sync_db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "wealthfolio-sync-db-creds"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "wealthfolio-sync-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            WEALTHFOLIO_SYNC_DB_CONNECTION_STRING = "postgresql+asyncpg://wealthfolio_sync:{{ .password }}@${var.postgresql_host}:5432/wealthfolio_sync"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-wealthfolio-sync"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.fire_planner]
+}
+
+# tls-secret for fire-planner.viktorbarzin.me is auto-cloned into every
+# namespace by Kyverno's `sync-tls-secret` ClusterPolicy — no local module
+# call needed.
+
 resource "kubernetes_deployment" "fire_planner" {
   metadata {
     name      = "fire-planner"
@@ -192,6 +248,11 @@ resource "kubernetes_deployment" "fire_planner" {
           env_from {
             secret_ref {
               name = "fire-planner-db-creds"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "wealthfolio-sync-db-creds"
             }
           }
 
@@ -304,6 +365,11 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
                   name = "fire-planner-db-creds"
                 }
               }
+              env_from {
+                secret_ref {
+                  name = "wealthfolio-sync-db-creds"
+                }
+              }
 
               resources {
                 requests = {
@@ -329,7 +395,29 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
   depends_on = [
     kubernetes_manifest.external_secret,
     kubernetes_manifest.db_external_secret,
+    kubernetes_manifest.wealthfolio_sync_db_external_secret,
   ]
+}
+
+# Public ingress at fire-planner.viktorbarzin.me. Authentik-protected
+# (forward-auth at the Traefik layer); Cloudflare-proxied for CDN +
+# DDoS shielding. Backend FastAPI serves the SPA at / and the API
+# under /api/* (FRONTEND_DIST=/app/frontend_dist, baked into the image).
+module "ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.fire_planner.metadata[0].name
+  name            = "fire-planner"
+  port            = 8080
+  tls_secret_name = var.tls_secret_name
+  protected       = true
+  extra_annotations = {
+    "gethomepage.dev/enabled"     = "true"
+    "gethomepage.dev/name"        = "FIRE Planner"
+    "gethomepage.dev/description" = "Risk-adjusted retirement projections (ProjectionLab clone)"
+    "gethomepage.dev/icon"        = "mdi-fire"
+    "gethomepage.dev/group"       = "Finance"
+  }
 }
 
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource
