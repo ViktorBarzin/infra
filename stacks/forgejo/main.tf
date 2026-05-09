@@ -40,9 +40,15 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
-        storage = "15Gi"
+        storage = "30Gi"
       }
     }
+  }
+  lifecycle {
+    # pvc-autoresizer expands this PVC up to storage_limit; ignore drift on
+    # requests.storage. To bump the floor manually: temporarily remove this
+    # block, apply the new size, re-add the block, apply again.
+    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
