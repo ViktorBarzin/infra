@@ -1,6 +1,6 @@
 # Storage Architecture
 
-Last updated: 2026-04-15
+Last updated: 2026-05-09
 
 ## Overview
 
@@ -13,7 +13,7 @@ The cluster uses two storage backends: **Proxmox CSI** for database block storag
 All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 2026-04-15. This eliminates the previous double-CoW (ZFS + LVM-thin) path and ensures data-at-rest encryption.
 
 **NFS storage (Proxmox host)**: ~100 NFS shares for media libraries (Immich, audiobookshelf, servarr, navidrome), backup targets (`*-backup/` directories), and app data are served directly from the Proxmox host at `192.168.1.127`. Two NFS export roots exist:
-- **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (2TB) — bulk media and backup targets
+- **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (3TB) — bulk media and backup targets
 - **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB) — high-performance data (Immich ML)
 
 Both `StorageClass: nfs-truenas` and `StorageClass: nfs-proxmox` point to the Proxmox host and are functionally identical. The `nfs-truenas` name is historical — it was retained because StorageClass names are immutable on bound PVs (48 PVs reference it) and renaming would force mass PV churn across the cluster.
@@ -31,7 +31,7 @@ graph TB
     subgraph Proxmox["Proxmox Host (192.168.1.127)"]
         sdc["sdc: 10.7TB RAID1 HDD<br/>VG pve, LV data (thin pool)<br/>~67 proxmox-lvm PVCs<br/>~28 proxmox-lvm-encrypted PVCs"]
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
-        NFS_HDD["LV pve/nfs-data (2TB ext4)<br/>/srv/nfs<br/>~100 NFS shares<br/>Media + backup targets"]
+        NFS_HDD["LV pve/nfs-data (3TB ext4)<br/>/srv/nfs<br/>~100 NFS shares<br/>Media + backup targets"]
         NFS_SSD["LV ssd/nfs-ssd-data (100GB ext4)<br/>/srv/nfs-ssd<br/>High-performance data<br/>(Immich ML)"]
         NFS_Exports["NFS Exports<br/>managed by /etc/exports"]
         NFS_HDD --> NFS_Exports
@@ -74,7 +74,7 @@ graph TB
 | **Proxmox CSI plugin** | Helm chart | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
 | **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Non-sensitive stateful apps |
 | **StorageClass `proxmox-lvm-encrypted`** | RWO, WaitForFirstConsumer, LUKS2 | Cluster-wide | **All sensitive data** (databases, auth, email, passwords, git) |
-| Proxmox NFS (HDD) | LV `pve/nfs-data`, 2TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
+| Proxmox NFS (HDD) | LV `pve/nfs-data`, 3TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
 | Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
 | StorageClass `nfs-proxmox` | RWX, soft mount | Cluster-wide | NFS storage, points to Proxmox host |
