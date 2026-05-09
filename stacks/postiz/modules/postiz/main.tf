@@ -82,13 +82,20 @@ resource "kubernetes_manifest" "external_secret_jwt" {
         name           = "postiz-secrets"
         creationPolicy = "Merge"
       }
-      data = [{
-        secretKey = "JWT_SECRET"
-        remoteRef = {
-          key      = "instagram-poster"
-          property = "postiz_jwt_secret"
-        }
-      }]
+      data = [
+        {
+          secretKey = "JWT_SECRET"
+          remoteRef = { key = "instagram-poster", property = "postiz_jwt_secret" }
+        },
+        {
+          secretKey = "FACEBOOK_APP_ID"
+          remoteRef = { key = "instagram-poster", property = "facebook_app_id" }
+        },
+        {
+          secretKey = "FACEBOOK_APP_SECRET"
+          remoteRef = { key = "instagram-poster", property = "facebook_app_secret" }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.postiz]
@@ -138,14 +145,19 @@ resource "helm_release" "postiz" {
 
     # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
     # NOT auto-wire bundled subcharts — we have to point at the in-namespace
-    # PG/Redis Services. ESO patches JWT_SECRET on top via creationPolicy=Merge.
+    # PG/Redis Services. ESO patches JWT_SECRET + FACEBOOK_APP_* on top via
+    # creationPolicy=Merge from secret/instagram-poster.
     # Subchart auth uses the chart defaults (postiz / postiz-password,
     # postiz-redis-password) — both Services are ClusterIP, only routable
     # from inside the postiz namespace, so the well-known creds are safe.
     secrets = {
-      DATABASE_URL = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
-      REDIS_URL    = "redis://default:postiz-redis-password@postiz-redis-master:6379"
-      JWT_SECRET   = ""
+      DATABASE_URL         = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
+      REDIS_URL            = "redis://default:postiz-redis-password@postiz-redis-master:6379"
+      JWT_SECRET           = ""
+      # IG-via-Facebook OAuth (Postiz Instagram-Business integration). Empty
+      # placeholder; ESO patches the real values from Vault below.
+      FACEBOOK_APP_ID      = ""
+      FACEBOOK_APP_SECRET  = ""
     }
 
     # Use our PVC for uploads (overrides the chart's emptyDir default).
