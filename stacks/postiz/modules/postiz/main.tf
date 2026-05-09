@@ -134,27 +134,16 @@ resource "helm_release" "postiz" {
       NX_ADD_PLUGINS                   = "false"
     }
 
-    # Empty placeholder for chart-rendered Secret. ESO patches JWT_SECRET via
-    # creationPolicy=Merge above. DATABASE_URL/REDIS_URL are auto-wired by the
-    # chart's bundled subcharts and don't need to be set here.
+    # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
+    # NOT auto-wire bundled subcharts — we have to point at the in-namespace
+    # PG/Redis Services. ESO patches JWT_SECRET on top via creationPolicy=Merge.
+    # Subchart auth uses the chart defaults (postiz / postiz-password,
+    # postiz-redis-password) — both Services are ClusterIP, only routable
+    # from inside the postiz namespace, so the well-known creds are safe.
     secrets = {
-      DATABASE_URL                  = ""
-      REDIS_URL                     = ""
-      JWT_SECRET                    = ""
-      X_API_KEY                     = ""
-      X_API_SECRET                  = ""
-      LINKEDIN_CLIENT_ID            = ""
-      LINKEDIN_CLIENT_SECRET        = ""
-      REDDIT_CLIENT_ID              = ""
-      REDDIT_CLIENT_SECRET          = ""
-      GITHUB_CLIENT_ID              = ""
-      GITHUB_CLIENT_SECRET          = ""
-      RESEND_API_KEY                = ""
-      CLOUDFLARE_ACCOUNT_ID         = ""
-      CLOUDFLARE_ACCESS_KEY         = ""
-      CLOUDFLARE_SECRET_ACCESS_KEY  = ""
-      CLOUDFLARE_BUCKETNAME         = ""
-      CLOUDFLARE_BUCKET_URL         = ""
+      DATABASE_URL = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
+      REDIS_URL    = "redis://default:postiz-redis-password@postiz-redis-master:6379"
+      JWT_SECRET   = ""
     }
 
     # Use our PVC for uploads (overrides the chart's emptyDir default).
