@@ -22,6 +22,7 @@ topologySpreadConstraints:
         app.kubernetes.io/name: grafana
 podAnnotations:
   dependency.kyverno.io/wait-for: "mysql.dbaas:3306"
+  reloader.stakater.com/auto: "true"
 podDisruptionBudget:
   maxUnavailable: 1
 persistence:
@@ -72,6 +73,19 @@ dashboardProviders:
 envFromSecrets:
   - name: grafana-db-creds
     optional: false
+  # Cross-namespace passwords for provisioned datasources backed by
+  # rotating Vault static-roles. Each source stack creates the secret
+  # via its own ExternalSecret in `monitoring`. `optional: true` lets
+  # Grafana boot if a stack hasn't applied yet; reloader (podAnnotation
+  # above) restarts Grafana when any of these secrets is created or
+  # rotated, so $__env{...} substitution in datasource ConfigMaps stays
+  # current.
+  - name: grafana-wealth-pg-creds
+    optional: true
+  - name: grafana-payslips-pg-creds
+    optional: true
+  - name: grafana-job-hunter-pg-creds
+    optional: true
 env:
   GF_SERVER_ROOT_URL: https://grafana.viktorbarzin.me
 
