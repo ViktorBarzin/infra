@@ -160,13 +160,17 @@ resource "helm_release" "postiz" {
       mountPath = "/uploads"
     }]
 
+    # Postiz runs frontend (Next 16) + backend (NestJS) + orchestrator
+    # (Temporal worker with webpack bundling) in one pod. The orchestrator
+    # alone bundles ~3MB JS per task queue, and on cold start it bundles
+    # several queues — pushed peak RSS past 2Gi → OOMKill mid-NestJS init.
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "256Mi"
+        memory = "512Mi"
       }
       limits = {
-        memory = "2Gi"
+        memory = "4Gi"
       }
     }
 
