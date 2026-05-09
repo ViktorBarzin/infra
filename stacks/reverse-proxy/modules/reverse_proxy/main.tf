@@ -167,25 +167,9 @@ module "docker-registry-ui" {
   }
 }
 
-# https://registry.viktorbarzin.me/ (Docker CLI push/pull endpoint)
-module "docker-registry-cli" {
-  source           = "./factory"
-  dns_type         = "non-proxied"
-  name             = "registry"
-  external_name    = "docker-registry.viktorbarzin.lan"
-  port             = 5050
-  backend_protocol = "HTTPS"
-  tls_secret_name  = var.tls_secret_name
-  protected        = false # Docker CLI uses htpasswd, NOT Authentik
-  max_body_size    = "0"   # unlimited - Docker layers can be large
-  depends_on       = [kubernetes_namespace.reverse-proxy]
-  extra_annotations = {
-    # Skip rate-limit (Docker push/pull generates many rapid requests)
-    # Keep CrowdSec for L7 protection
-    "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
-    "gethomepage.dev/enabled"                          = "false"
-  }
-}
+# registry.viktorbarzin.me decommissioned 2026-05-07 (forgejo-registry-consolidation
+# Phase 4). Forgejo at forgejo.viktorbarzin.me is the only writable private
+# registry now. Pull-through caches stay on registry VM at 10.0.20.10:5000-5040.
 
 # https://valchedrym.viktorbarzin.me/
 module "valchedrym" {
