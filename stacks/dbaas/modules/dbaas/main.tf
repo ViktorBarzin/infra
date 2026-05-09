@@ -188,10 +188,10 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
           resources {
             requests = {
               cpu    = "250m"
-              memory = "1536Mi"
+              memory = "3Gi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "4Gi"
             }
           }
 
