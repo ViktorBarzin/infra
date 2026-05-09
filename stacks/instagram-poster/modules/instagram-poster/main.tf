@@ -83,6 +83,26 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "POSTIZ_INTEGRATION_ID"
           remoteRef = { key = "instagram-poster", property = "postiz_integration_id" }
         },
+        {
+          secretKey = "IMMICH_PG_HOST"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_host" }
+        },
+        {
+          secretKey = "IMMICH_PG_PORT"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_port" }
+        },
+        {
+          secretKey = "IMMICH_PG_DATABASE"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_database" }
+        },
+        {
+          secretKey = "IMMICH_PG_USER"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_user" }
+        },
+        {
+          secretKey = "IMMICH_PG_PASSWORD"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_password" }
+        },
       ]
     }
   }

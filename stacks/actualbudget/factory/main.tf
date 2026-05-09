@@ -33,6 +33,10 @@ variable "homepage_annotations" {
   type    = map(string)
   default = {}
 }
+variable "storage_size" {
+  type    = string
+  default = "1Gi"
+}
 
 resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
@@ -50,7 +54,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
-        storage = "1Gi"
+        storage = var.storage_size
       }
     }
   }
@@ -261,7 +265,7 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
       metadata {}
       spec {
         backoff_limit              = 1
-        ttl_seconds_after_finished = 300
+        ttl_seconds_after_finished = 86400
         template {
           metadata {}
           spec {
@@ -287,23 +291,28 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 LAST_SUCCESS=$END
               else
                 SUCCESS=0
-                LAST_SUCCESS=0
                 echo "Bank sync failed with HTTP $HTTP_CODE:"
                 cat /tmp/response.txt
                 echo ""
               fi
 
-              cat <<METRICS | curl -s --data-binary @- "$PUSHGATEWAY"
-              # HELP bank_sync_success Whether the last bank sync succeeded (1=ok, 0=fail)
-              # TYPE bank_sync_success gauge
-              bank_sync_success $SUCCESS
-              # HELP bank_sync_duration_seconds Duration of the last bank sync run
-              # TYPE bank_sync_duration_seconds gauge
-              bank_sync_duration_seconds $DURATION
-              # HELP bank_sync_last_success_timestamp Unix timestamp of the last successful sync
-              # TYPE bank_sync_last_success_timestamp gauge
-              bank_sync_last_success_timestamp $LAST_SUCCESS
-              METRICS
+              # Pushgateway POST preserves metrics not in the payload, so on
+              # failure we omit bank_sync_last_success_timestamp to keep the
+              # prior success value — this prevents BankSyncStale from firing
+              # alongside BankSyncFailing after a single failed run.
+              {
+                printf '# HELP bank_sync_success Whether the last bank sync succeeded (1=ok, 0=fail)\n'
+                printf '# TYPE bank_sync_success gauge\n'
+                printf 'bank_sync_success %s\n' "$SUCCESS"
+                printf '# HELP bank_sync_duration_seconds Duration of the last bank sync run\n'
+                printf '# TYPE bank_sync_duration_seconds gauge\n'
+                printf 'bank_sync_duration_seconds %s\n' "$DURATION"
+                if [ "$SUCCESS" = "1" ]; then
+                  printf '# HELP bank_sync_last_success_timestamp Unix timestamp of the last successful sync\n'
+                  printf '# TYPE bank_sync_last_success_timestamp gauge\n'
+                  printf 'bank_sync_last_success_timestamp %s\n' "$LAST_SUCCESS"
+                fi
+              } | curl -s --data-binary @- "$PUSHGATEWAY"
               EOT
               ]
             }

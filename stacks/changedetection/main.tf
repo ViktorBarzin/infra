@@ -70,7 +70,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     annotations = {
       "resize.topolvm.io/threshold"     = "80%"
       "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
+      "resize.topolvm.io/storage_limit" = "8Gi"
     }
   }
   spec {
@@ -78,7 +78,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     storage_class_name = "proxmox-lvm"
     resources {
       requests = {
-        storage = "1Gi"
+        storage = "4Gi"
       }
     }
   }
