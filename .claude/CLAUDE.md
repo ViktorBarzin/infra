@@ -188,11 +188,20 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
       requests = { storage = "1Gi" }
     }
   }
+  lifecycle {
+    # pvc-autoresizer expands this PVC up to storage_limit; ignore drift on
+    # requests.storage so the next TF apply doesn't try to shrink it back
+    # (K8s rejects shrinks → apply fails). To bump the floor manually:
+    # temporarily remove this block, apply the new size, re-add the block,
+    # apply again.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
 }
 ```
 - `wait_until_bound = false` is **required** (WaitForFirstConsumer binding)
 - Deployment strategy **must be Recreate** (RWO volumes)
 - Autoresizer annotations are **required** on all proxmox-lvm PVCs
+- `lifecycle.ignore_changes` on `requests` is **required** to coexist with the autoresizer
 - Every proxmox-lvm app **MUST** add a backup CronJob writing to NFS `/mnt/main/<app>-backup/`
 
 **proxmox-lvm-encrypted PVC template** (Terraform) — use for all sensitive data:
@@ -215,9 +224,13 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
       requests = { storage = "1Gi" }
     }
   }
+  lifecycle {
+    # See data_proxmox above — required for autoresizer coexistence.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
 }
 ```
-- Same rules as `proxmox-lvm` (wait_until_bound, Recreate strategy, autoresizer, backup CronJob)
+- Same rules as `proxmox-lvm` (wait_until_bound, Recreate strategy, autoresizer, backup CronJob, `lifecycle.ignore_changes`)
 - Uses LUKS2 encryption with Argon2id key derivation via Proxmox CSI plugin
 - Encryption passphrase stored in Vault KV (`secret/viktor/proxmox_csi_encryption_passphrase`), synced to K8s Secret `proxmox-csi-encryption` in `kube-system` via ExternalSecret
 - Backup key at `/root/.luks-backup-key` on PVE host (chmod 600)
