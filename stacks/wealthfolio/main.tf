@@ -601,18 +601,52 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
   }
 }
 
-# Plan-time read of the ESO-created K8s Secret for Grafana datasource password.
-# First apply: -target=kubernetes_manifest.wealthfolio_sync_db_external_secret first.
-data "kubernetes_secret" "wealthfolio_sync_db_creds" {
-  metadata {
-    name      = "wealthfolio-sync-db-creds"
-    namespace = kubernetes_namespace.wealthfolio.metadata[0].name
+# ExternalSecret in the monitoring namespace mirroring the rotating
+# wealthfolio_sync DB password. Grafana mounts this via envFromSecrets
+# in monitoring/grafana_chart_values.yaml; the datasource ConfigMap
+# below references it as $__env{WEALTH_PG_PASSWORD}. Reloader restarts
+# Grafana whenever ESO updates this secret (every 7d on rotation).
+resource "kubernetes_manifest" "grafana_wealth_db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-wealth-pg-creds"
+      namespace = "monitoring"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-wealth-pg-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            WEALTH_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-wealthfolio-sync"
+          property = "password"
+        }
+      }]
+    }
   }
-  depends_on = [kubernetes_manifest.wealthfolio_sync_db_external_secret]
 }
 
 # Grafana datasource for wealthfolio_sync PostgreSQL DB.
 # Lives in the monitoring namespace so the Grafana sidecar (grafana_datasource=1) picks it up.
+# Password is injected via $__env{...} from grafana-wealth-pg-creds (above).
 resource "kubernetes_config_map" "grafana_wealth_datasource" {
   metadata {
     name      = "grafana-wealth-datasource"
@@ -640,12 +674,13 @@ resource "kubernetes_config_map" "grafana_wealth_datasource" {
           timescaledb     = false
         }
         secureJsonData = {
-          password = data.kubernetes_secret.wealthfolio_sync_db_creds.data["PGPASSWORD"]
+          password = "$__env{WEALTH_PG_PASSWORD}"
         }
         editable = true
       }]
     })
   }
+  depends_on = [kubernetes_manifest.grafana_wealth_db_external_secret]
 }
 
 ############################################################################
