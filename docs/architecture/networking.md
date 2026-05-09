@@ -261,7 +261,7 @@ MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 
 | traefik | traefik | 10.0.20.200 (shared) | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
 | coturn | coturn | 10.0.20.200 (shared) | 3478/UDP (STUN/TURN), 49152-49252/UDP (relay) |
 | headscale | headscale | 10.0.20.200 (shared) | 41641/UDP, 3479/UDP |
-| windows-kms | kms | 10.0.20.200 (shared) | 1688/TCP |
+| windows-kms¹ | kms | 10.0.20.200 (shared) | 1688/TCP |
 | qbittorrent | servarr | 10.0.20.200 (shared) | 50000/TCP+UDP |
 | shadowsocks | shadowsocks | 10.0.20.200 (shared) | 8388/TCP+UDP |
 | torrserver-bt | tor-proxy | 10.0.20.200 (shared) | 5665/TCP |
@@ -271,6 +271,8 @@ MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 
 | **technitium-dns** | **technitium** | **10.0.20.201 (dedicated)** | **53/UDP+TCP** |
 
 pfSense aliases reference these IPs: `k8s_shared_lb` (10.0.20.200), `technitium_dns` (10.0.20.201). NAT rules use aliases for maintainability.
+
+¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_shared_lb:1688` so any internet host can activate. The matching filter rule applies a per-source rate limit (`max-src-conn 50`, `max-src-conn-rate 10/60`) with `overload <virusprot>` flush — offenders are auto-added to pfSense's stock `virusprot` pf table for follow-on blocks. Operations (rate-limit tuning, log locations, revocation) are documented in `docs/runbooks/kms-public-exposure.md`.
 
 Critical services are scaled to **3 replicas**:
 - Traefik (PDB: minAvailable=2)

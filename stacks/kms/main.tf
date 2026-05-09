@@ -119,6 +119,46 @@ module "ingress" {
   }
 }
 
+resource "kubernetes_config_map" "kms_slack_notifier" {
+  metadata {
+    name      = "kms-slack-notifier"
+    namespace = kubernetes_namespace.kms.metadata[0].name
+  }
+  data = {
+    "notifier.py" = file("${path.module}/files/slack-notifier.py")
+  }
+}
+
+resource "kubernetes_manifest" "kms_slack_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "kms-slack-webhook"
+      namespace = kubernetes_namespace.kms.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name           = "kms-slack-webhook"
+        creationPolicy = "Owner"
+      }
+      data = [{
+        secretKey = "url"
+        remoteRef = {
+          key      = "kms"
+          property = "slack_webhook_url"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.kms]
+}
+
 resource "kubernetes_deployment" "windows_kms" {
   metadata {
     name      = "kms"
@@ -140,11 +180,31 @@ resource "kubernetes_deployment" "windows_kms" {
         labels = {
           app = "kms-service"
         }
+        annotations = {
+          # Reload pods when the notifier script changes
+          "checksum/notifier" = sha1(file("${path.module}/files/slack-notifier.py"))
+          # Prometheus scrape — kubernetes-pods job picks up via pod IP
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "9101"
+          "prometheus.io/path"   = "/metrics"
+        }
       }
       spec {
+        volume {
+          name = "vlmcsd-log"
+          empty_dir {}
+        }
+        volume {
+          name = "slack-notifier-script"
+          config_map {
+            name = kubernetes_config_map.kms_slack_notifier.metadata[0].name
+          }
+        }
         container {
-          image = "kebe/vlmcsd:latest"
-          name  = "windows-kms"
+          image   = "kebe/vlmcsd:latest"
+          name    = "windows-kms"
+          command = ["/usr/bin/vlmcsd"]
+          args    = ["-D", "-v", "-l", "/var/log/vlmcsd/vlmcsd.log"]
           resources {
             limits = {
               memory = "64Mi"
@@ -157,6 +217,59 @@ resource "kubernetes_deployment" "windows_kms" {
           port {
             container_port = 1688
           }
+          volume_mount {
+            name       = "vlmcsd-log"
+            mount_path = "/var/log/vlmcsd"
+          }
+        }
+        container {
+          image   = "python:3.12-alpine"
+          name    = "slack-notifier"
+          command = ["python3", "-u", "/scripts/notifier.py"]
+          env {
+            name  = "VLMCSD_LOG"
+            value = "/var/log/vlmcsd/vlmcsd.log"
+          }
+          env {
+            name  = "SLACK_CHANNEL"
+            value = "#alerts"
+          }
+          env {
+            name  = "DEDUP_WINDOW_SECONDS"
+            value = "3600"
+          }
+          env {
+            name = "SLACK_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name = "kms-slack-webhook"
+                key  = "url"
+              }
+            }
+          }
+          port {
+            container_port = 9101
+            name           = "metrics"
+          }
+          resources {
+            limits = {
+              memory = "64Mi"
+            }
+            requests = {
+              cpu    = "5m"
+              memory = "48Mi"
+            }
+          }
+          volume_mount {
+            name       = "vlmcsd-log"
+            mount_path = "/var/log/vlmcsd"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "slack-notifier-script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
         }
       }
     }
@@ -165,6 +278,7 @@ resource "kubernetes_deployment" "windows_kms" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
+  depends_on = [kubernetes_manifest.kms_slack_external_secret]
 }
 
 resource "kubernetes_service" "windows_kms" {
