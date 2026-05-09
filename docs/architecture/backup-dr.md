@@ -267,7 +267,7 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 **Snapshot Pruning**: Deletes LVM snapshots older than 7 days (safety net for snapshots that outlive `lvm-pvc-snapshot` timer).
 
-**Monitoring**: Pushes `backup_weekly_last_success_timestamp` to Pushgateway. Alerts: `WeeklyBackupStale` (>8d), `WeeklyBackupFailing`.
+**Monitoring**: Pushes `daily_backup_last_run_timestamp`, `daily_backup_last_status`, and `daily_backup_bytes_synced` to Pushgateway (job `daily-backup`). Alerts: `WeeklyBackupStale` (>9d on `daily_backup_last_run_timestamp`), `WeeklyBackupFailing` (`daily_backup_last_status != 0`). The metric is pushed both on clean exit AND from a `trap TERM INT` handler — a 2026-04-30 → 2026-05-09 silent-failure incident traced to systemd SIGTERMing the script before it reached its final push, leaving the alert blind.
 
 ### Layer 2b: Application-Level Backups
 
@@ -686,9 +686,11 @@ module "nfs_backup" {
 
 **Metrics sources**:
 - Backup CronJobs: Push `backup_last_success_timestamp` to Pushgateway on completion
-- LVM snapshot script: Pushes `lvm_snapshot_last_success_timestamp`, `lvm_snapshot_count`, `lvm_thin_pool_free_percent`
-- Daily backup script: Pushes `backup_weekly_last_success_timestamp`, `backup_disk_usage_percent`
-- Offsite sync script: Pushes `offsite_backup_sync_last_success_timestamp`
+- LVM snapshot script: Pushes `lvm_snapshot_last_run_timestamp`, `lvm_snapshot_last_status`, `lvm_snapshot_created_total`, `lvm_snapshot_failed_total`, `lvm_snapshot_pruned_total`, `lvm_snapshot_thinpool_free_pct` (job `lvm-pvc-snapshot`)
+- Daily backup script: Pushes `daily_backup_last_run_timestamp`, `daily_backup_last_status`, `daily_backup_bytes_synced` (job `daily-backup`). Disk-fullness alert (`BackupDiskFull`) does NOT use a script-pushed metric; it derives from node-exporter `node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"}`.
+- pfSense backup (step 3 of `daily-backup`): Pushes `backup_last_run_timestamp`, `backup_last_status`, and `backup_last_success_timestamp` (only on success) under job `pfsense-backup`. Pushed in BOTH success and failure paths so `PfsenseBackupStale` doesn't go silent when SSH-to-pfsense breaks.
+- Offsite sync script: Pushes `backup_last_success_timestamp`, `offsite_sync_last_status` (job `offsite-backup-sync`)
+- Prometheus backup (sidecar in prometheus-server pod, monthly 1st-Sunday 04:00 UTC): Pushes `prometheus_backup_last_success_timestamp` (job `prometheus-backup`)
 - ~~CloudSync monitor~~: Removed (TrueNAS decommissioned)
 - Vaultwarden integrity: Pushes `vaultwarden_sqlite_integrity_ok` hourly
 
@@ -728,6 +730,8 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 | NovelApp | ✓ | ✓ | — | ✓ | proxmox-lvm |
 | Headscale | ✓ | ✓ | — | ✓ | proxmox-lvm |
 | Uptime Kuma | ✓ | ✓ | — | ✓ | proxmox-lvm |
+| **Other apps not enumerated above** | ✓¹ | ✓¹ | varies | ✓ | proxmox-lvm / proxmox-lvm-encrypted |
+| **Postiz** (bundled bitnami PG on local-path) | — | — | ✓ daily pg_dump → NFS | ✓ | local-path + NFS |
 | **Media (NFS)** |
 | Immich (~800GB) | — | — | — | ✓ | NFS |
 | Audiobookshelf | — | — | — | ✓ | NFS |
@@ -739,7 +743,13 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 - — = Not needed (other layers cover it, or data is regenerable/disposable)
 - excluded = Too large/regenerable, not worth offsite bandwidth
 
-**Note**: All 65 proxmox-lvm PVCs get LVM snapshots (except dbaas+monitoring = 3 PVCs) + file-level backup (except dbaas+monitoring). NFS-backed media syncs directly to Synology `nfs/` and `nfs-ssd/` via inotify change tracking.
+**Note**: All proxmox-lvm and proxmox-lvm-encrypted PVCs get LVM snapshots (except `dbaas` and `monitoring` namespaces, excluded for write-amplification reasons) + file-level backup. NFS-backed media syncs directly to Synology `nfs/` and `nfs-ssd/` via inotify change tracking.
+
+¹ **"Other apps not enumerated above"** — the table only enumerates services worth calling out. The default backup posture for any service using `proxmox-lvm` or `proxmox-lvm-encrypted` (outside `dbaas`/`monitoring`) is **automatic** Layer 1 (LVM thin snapshots, 7d retention) + Layer 2 (file backup, 4 weekly versions on sda) + Layer 3 (offsite to Synology). Auto-discovery is by LV name pattern (`vm-*-pvc-*`), so adding a new service to the cluster gets it covered without any explicit registration. Run `ssh root@192.168.1.127 lvs --noheadings -o lv_name pve | grep '^vm-.*-pvc-' | grep -v _snap_ | wc -l` to see the live count.
+
+**Known gaps** — services with PVCs not on the proxmox-lvm path lose Layer 1+2:
+- **Postiz** PG and Redis (bundled bitnami chart) live on `local-path` (K8s node OS disk). PG covered by the postiz-postgres-backup CronJob (daily pg_dump → `/srv/nfs/postiz-backup/`, Layer 3 via offsite sync). Redis is regenerable cache — not backed up.
+- **Prometheus, Alertmanager, Pushgateway** — `monitoring` namespace excluded by policy; loss is acceptable (metrics regenerable, silences ephemeral, Pushgateway has on-disk persistence for 24h gap tolerance).
 
 ## Recovery Procedures
 
