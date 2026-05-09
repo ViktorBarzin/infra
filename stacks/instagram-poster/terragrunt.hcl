@@ -19,5 +19,5 @@ dependency "external-secrets" {
 
 inputs = {
   # Bump per deploy. Use 8-char git SHA — :latest causes stale pull-through cache.
-  image_tag = "25e46efd"
+  image_tag = "cac6fa97"
 }
