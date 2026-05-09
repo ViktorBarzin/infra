@@ -380,8 +380,11 @@ serverFiles:
             regex: 'kubernetes_feature_enabled|kubelet_container_log_filesystem_used_bytes'
             action: drop
           # Whitelist: only keep essential kubelet metrics
+          # kubelet_volume_stats_available_bytes is required by pvc-autoresizer
+          # (it computes utilization as 1 - available/capacity). Without it the
+          # autoresizer is silent for every PVC in the cluster.
           - source_labels: [__name__]
-            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes_used|kubelet_running_containers|kubelet_runtime_operations_errors_total|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
+            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes_used|kubelet_running_containers|kubelet_runtime_operations_errors_total|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
             action: keep
       - job_name: kubernetes-nodes-cadvisor
         scheme: https
