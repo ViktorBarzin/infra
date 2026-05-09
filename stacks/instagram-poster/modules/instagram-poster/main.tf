@@ -79,6 +79,10 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "TELEGRAM_CHAT_ID"
           remoteRef = { key = "instagram-poster", property = "telegram_chat_id" }
         },
+        {
+          secretKey = "POSTIZ_INTEGRATION_ID"
+          remoteRef = { key = "instagram-poster", property = "postiz_integration_id" }
+        },
       ]
     }
   }
