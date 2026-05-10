@@ -2,10 +2,12 @@
 #
 # Auto-reboots nodes when /var/run/reboot-required exists on the host (set by
 # unattended-upgrades). The reboot process is gated by a custom sentinel file
-# (kured-sentinel-gate DaemonSet below) so reboots only happen when:
+# (kured-sentinel-gate DaemonSet below) and by Prometheus alerts so reboots
+# only happen when:
 #   - all nodes Ready
 #   - all calico-node pods Running
-#   - no node has transitioned Ready in the last 30 minutes (cool-down)
+#   - no node has transitioned Ready in the last 24 hours (24h soak)
+#   - no Prometheus alert is firing (excluding self-referential ignore-list)
 #
 # History:
 #   - 2026-03 post-mortem (memory 390): 26h cluster outage triggered by kured
@@ -14,6 +16,14 @@
 #     (Mon-Fri 02:00-06:00 London).
 #   - 2026-04-18: adopted into Terraform (Wave 5a). Previously helm-installed
 #     manually + kubectl-applied sentinel gate.
+#   - 2026-05-10: re-enabled unattended-upgrades (cloud_init.yaml flipped from
+#     remove → install). Sentinel cool-down stretched 30m → 24h. Added Helm
+#     values prometheusUrl + alertFilterRegexp so any non-ignored firing alert
+#     halts the rollout. New "Upgrade Gates" alert group in monitoring stack
+#     (KubeAPIServerDown, KubeStateMetricsDown, PrometheusRuleEvaluationFailing,
+#     PVCStuckPending, RecentNodeReboot, MysqlStandaloneDown,
+#     ClusterPodReadyRatioDropped, NodeMemoryPressure, NodeDiskPressure,
+#     KubeQuotaAlmostFull) provides explicit cluster-health gating.
 
 resource "kubernetes_namespace" "kured" {
   metadata {
@@ -50,6 +60,17 @@ resource "helm_release" "kured" {
       rebootDays     = ["mo", "tu", "we", "th", "fr"]
       rebootSentinel = "/sentinel/gated-reboot-required"
       notifyUrl      = data.vault_kv_secret_v2.secrets.data["slack_kured_webhook"]
+      concurrency    = 1
+      rebootDelay    = "30s"
+      # Halt rolling reboots when ANY firing Prometheus alert is not in the
+      # ignore-list. The ignore-list excludes self-referential / always-firing
+      # alerts that would otherwise deadlock kured. alertFilterMatchOnly stays
+      # false (default) so the regex marks alerts to IGNORE — every other
+      # firing alert blocks. See "Upgrade Gates" group in monitoring stack.
+      prometheusUrl        = "http://prometheus-server.monitoring.svc.cluster.local:80"
+      alertFilterRegexp    = "^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$"
+      alertFiringOnly      = true
+      alertFilterMatchOnly = false
     }
     reboot_days  = "mon,tue,wed,thu,fri"
     window_end   = "06:00"
@@ -192,14 +213,16 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 fi
                 echo "  All calico-node pods Running"
 
-                # Check 4: No node rebooted in last 30 minutes (cool-down)
+                # Check 4: No node rebooted in last 24 hours (soak window).
+                # Stretched from 30m to 24h on 2026-05-10 so the de-facto canary
+                # node has a full day of observation before the next node drains.
                 RECENT_REBOOT=0
                 while IFS= read -r transition_time; do
                   if [ -n "$transition_time" ]; then
                     transition_epoch=$(date -d "$transition_time" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$transition_time" +%s 2>/dev/null)
                     now_epoch=$(date +%s)
                     diff=$(( now_epoch - transition_epoch ))
-                    if [ "$diff" -lt 1800 ]; then
+                    if [ "$diff" -lt 86400 ]; then
                       RECENT_REBOOT=1
                       break
                     fi
@@ -207,12 +230,12 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
                 done < <(kubectl get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
 
                 if [ "$RECENT_REBOOT" -eq 1 ]; then
-                  echo "  BLOCKED: A node transitioned Ready within the last 30 minutes (cool-down)"
+                  echo "  BLOCKED: A node transitioned Ready within the last 24 hours (soak window)"
                   rm -f /host/var-run/gated-reboot-required
                   sleep 300
                   continue
                 fi
-                echo "  No recent node reboots (30m cool-down clear)"
+                echo "  No recent node reboots (24h soak window clear)"
 
                 # All checks passed — create gated sentinel
                 echo "  ALL CHECKS PASSED — creating /var/run/gated-reboot-required"
