@@ -95,7 +95,8 @@ locals {
   # capability is filtered.
   default_policy_yaml = <<-EOT
     bots:
-      # Hard-deny known-bad bots first.
+      # Hard-deny known-bad bots first — runs before the method bypass so
+      # a declared bad bot can't sneak through by sending a POST.
       - import: (data)/bots/_deny-pathological.yaml
       - import: (data)/bots/aggressive-brazilian-scrapers.yaml
       # Hard-deny declared AI/LLM crawlers (ClaudeBot, GPTBot, Bytespider, …).
@@ -107,9 +108,19 @@ locals {
       # Allow /.well-known, /robots.txt, /favicon.*, /sitemap.xml — keeps
       # the internet working for benign crawlers and discovery clients.
       - import: (data)/common/keep-internet-working.yaml
-      # Catch-all: every remaining request must solve the challenge. This
-      # closes the "unmatched UA falls through to ALLOW" gap that lets
-      # curl/wget/Python-requests scrape non-CDN-fronted hosts.
+      # Allow every non-GET request through. Rationale: AI scrapers steal
+      # the body of GETs (page content) — they don't POST. State-mutating
+      # methods come from app XHRs (PrivateBin paste creation, Komga
+      # uploads, SPA actions) and CORS preflight (OPTIONS). Challenging
+      # those breaks the app, because the JS expects JSON and gets the
+      # Anubis HTML challenge page. CrowdSec + rate-limit + per-app auth
+      # already cover abuse on these methods.
+      - name: allow-non-get-methods
+        action: ALLOW
+        expression: method != "GET"
+      # Catch-all: every remaining (GET) request must solve the challenge.
+      # This closes the "unmatched UA falls through to ALLOW" gap that
+      # lets curl/wget/Python-requests scrape non-CDN-fronted hosts.
       - name: catchall-challenge
         path_regex: .*
         action: CHALLENGE
@@ -185,6 +196,12 @@ resource "kubernetes_deployment" "anubis" {
     template {
       metadata {
         labels = local.labels
+        annotations = {
+          # Roll the deployment whenever the policy YAML changes — Anubis
+          # reads the policy at startup, so a ConfigMap update alone
+          # doesn't take effect until pods restart.
+          "checksum/policy" = sha256(coalesce(var.policy_yaml, local.default_policy_yaml))
+        }
       }
 
       spec {
