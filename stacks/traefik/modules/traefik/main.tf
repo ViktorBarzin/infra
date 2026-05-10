@@ -10,6 +10,11 @@ variable "auth_fallback_htpasswd" {
   description = "htpasswd-format string for emergency basicAuth fallback when Authentik is down"
   sensitive   = true
 }
+variable "x402_wallet_address" {
+  type        = string
+  default     = ""
+  description = "EVM wallet (Base mainnet, 0x…) that receives USDC from x402 payments. Empty = DRY_RUN, gateway always returns 200 to forwardAuth so traffic is unaffected."
+}
 
 resource "kubernetes_namespace" "traefik" {
   metadata {
@@ -455,6 +460,177 @@ resource "kubernetes_service" "bot_block_proxy" {
       name        = "http"
       port        = 8080
       target_port = 8080
+    }
+  }
+}
+
+# x402 payment gateway — shared forwardAuth target for every ingress that
+# wants to issue HTTP 402 to declared AI-bot UAs / accept X-PAYMENT for paid
+# access. One deployment serves all hosts; each consumer ingress just adds
+# `traefik-x402@kubernetescrd` to its middleware chain.
+#
+# DRY_RUN until `var.x402_wallet_address` is set. While dry-run, every
+# auth call returns 200 (allow) so traffic is unaffected.
+resource "kubernetes_deployment" "x402_gateway" {
+  metadata {
+    name      = "x402-gateway"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels    = { app = "x402-gateway" }
+  }
+
+  spec {
+    replicas = 2 # Stateless; HA across two pods is cheap.
+    selector {
+      match_labels = { app = "x402-gateway" }
+    }
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = 1
+        max_unavailable = 0
+      }
+    }
+    template {
+      metadata {
+        labels = { app = "x402-gateway" }
+      }
+      spec {
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "ScheduleAnyway"
+          label_selector {
+            match_labels = { app = "x402-gateway" }
+          }
+        }
+        container {
+          name  = "x402-gateway"
+          image = "forgejo.viktorbarzin.me/viktor/x402-gateway:f4804d62"
+          port {
+            name           = "http"
+            container_port = 8923
+          }
+          port {
+            name           = "metrics"
+            container_port = 9090
+          }
+          env {
+            name  = "MODE"
+            value = "forwardauth"
+          }
+          env {
+            name  = "BIND"
+            value = ":8923"
+          }
+          env {
+            name  = "METRICS_BIND"
+            value = ":9090"
+          }
+          env {
+            name  = "WALLET_ADDRESS"
+            value = var.x402_wallet_address
+          }
+          env {
+            name  = "PRICE_LABEL"
+            value = "$0.01"
+          }
+          env {
+            name  = "PRICE_USDC_MICROS"
+            value = "10000"
+          }
+          env {
+            name  = "NETWORK"
+            value = "base"
+          }
+          env {
+            name  = "FACILITATOR_URL"
+            value = "https://x402.org/facilitator"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = "metrics"
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = "metrics"
+            }
+            initial_delay_seconds = 1
+            period_seconds        = 5
+          }
+          security_context {
+            run_as_non_root            = true
+            run_as_user                = 65532
+            run_as_group               = 65532
+            allow_privilege_escalation = false
+            read_only_root_filesystem  = true
+            capabilities {
+              drop = ["ALL"]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_service" "x402_gateway" {
+  metadata {
+    name      = "x402-gateway"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels    = { app = "x402-gateway" }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = "9090"
+    }
+  }
+
+  spec {
+    selector = { app = "x402-gateway" }
+    port {
+      name        = "http"
+      port        = 8080
+      target_port = 8923
+    }
+    port {
+      name        = "metrics"
+      port        = 9090
+      target_port = 9090
+    }
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "x402_gateway" {
+  metadata {
+    name      = "x402-gateway"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+  spec {
+    min_available = "1"
+    selector {
+      match_labels = { app = "x402-gateway" }
     }
   }
 }
