@@ -40,7 +40,7 @@ Parse the prompt's first JSON block to extract these. If anything is missing, ab
 - **Working dir**: `/workspace/infra` (`WORKSPACE_DIR` env var)
 - **Kubeconfig**: `/workspace/infra/config` (use `kubectl --kubeconfig $WORKSPACE_DIR/config ...` in every kubectl call)
 - **Prometheus**: `http://prometheus-server.monitoring.svc.cluster.local:80` (in-cluster, no auth)
-- **Etcd snapshot dir**: `/mnt/main/etcd-backup/` (NFS, exists, writeable from master)
+- **Etcd snapshot**: triggered as a one-shot Job from the existing `default/backup-etcd` CronJob (defined in `stacks/infra-maintenance/`). The Job runs on `k8s-master` with hostNetwork (so etcdctl reaches etcd at 127.0.0.1:2379), mounts the PV-backed NFS export `192.168.1.127:/srv/nfs/etcd-backup`, and writes `etcd-snapshot-<TIMESTAMP>.db` there. Do NOT shell into master with etcdctl directly — the cert paths + NFS mount are already wired into the CronJob.
 - **Library script**: `/workspace/infra/scripts/update_k8s.sh` — pipe via SSH to each node, do NOT modify on the fly. Invoke as `ssh ... 'bash -s' < update_k8s.sh --role <role> --release <X.Y.Z>`.
 
 ### Credentials — fetched at startup
@@ -198,34 +198,44 @@ Slack: `Pre-flight clean. Proceeding to etcd snapshot.`
 
 ## Stage 2: Etcd snapshot (`stages` includes `snapshot`)
 
-Always run — patch OR minor.
+Always run — patch OR minor. Triggers a one-shot Job from the existing `default/backup-etcd` CronJob and waits for it to complete.
 
 ```bash
-TARGET_PATH="/mnt/main/etcd-backup/k8s-upgrade-pre-${target_version}-$(date +%s).db"
+JOB_NAME="pre-upgrade-etcd-${target_version}-$(date +%s)"
 
 if [ "$dry_run" = "false" ]; then
-  $SSH \
-    wizard@k8s-master "sudo /usr/bin/env ETCDCTL_API=3 etcdctl snapshot save '$TARGET_PATH' \
-      --endpoints=https://127.0.0.1:2379 \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key"
+  $KUBECTL -n default create job --from=cronjob/backup-etcd "$JOB_NAME"
 
-  # Verify size > 0
-  SIZE=$($SSH \
-    wizard@k8s-master "sudo stat -c %s '$TARGET_PATH'")
+  # Wait up to 10 min for snapshot Job to complete
+  $KUBECTL -n default wait --for=condition=complete --timeout=600s "job/$JOB_NAME" || {
+    slack "ABORT Stage 2 — etcd snapshot Job did not complete in 10 min"
+    $KUBECTL -n default describe "job/$JOB_NAME" | tail -30
+    exit 1
+  }
+
+  # Parse the Job's pod log for "Backup done: <file> (<bytes> bytes)"
+  LOG=$($KUBECTL -n default logs "job/$JOB_NAME" -c backup-manage --tail=20)
+  echo "$LOG"
+  SNAPSHOT_LINE=$(echo "$LOG" | grep -E '^Backup done:')
+  SIZE=$(echo "$SNAPSHOT_LINE" | grep -oE '\([0-9]+ bytes\)' | grep -oE '[0-9]+')
+  SNAPSHOT_FILE=$(echo "$SNAPSHOT_LINE" | awk '{print $3}')
+
   if [ -z "$SIZE" ] || [ "$SIZE" -lt 1024 ]; then
-    slack "ABORT — etcd snapshot empty or missing ($SIZE bytes at $TARGET_PATH)"
+    slack "ABORT Stage 2 — etcd snapshot empty or missing (size='$SIZE' line='$SNAPSHOT_LINE')"
     exit 1
   fi
 
-  kubectl --kubeconfig $WORKSPACE_DIR/config annotate ns k8s-upgrade \
+  TARGET_PATH="nfs://192.168.1.127:/srv/nfs/etcd-backup/$SNAPSHOT_FILE"
+  $KUBECTL annotate ns k8s-upgrade \
     viktorbarzin.me/k8s-upgrade-snapshot-path="$TARGET_PATH" --overwrite
 
   push_metric k8s_upgrade_snapshot_taken 1
+else
+  TARGET_PATH="WOULD: trigger default/backup-etcd Job, wait, verify size"
+  SIZE="dry-run"
 fi
 
-slack "Etcd snapshot saved at $TARGET_PATH ($SIZE bytes)"
+slack "Etcd snapshot saved at $TARGET_PATH (size=$SIZE)"
 ```
 
 ## Stage 3: Master containerd skew fix (`stages` includes `containerd`)
