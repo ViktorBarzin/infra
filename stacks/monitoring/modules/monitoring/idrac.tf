@@ -124,8 +124,14 @@ resource "kubernetes_service" "idrac-redfish-exporter" {
 }
 
 module "idrac-redfish-exporter-ingress" {
-  source                  = "../../../../modules/kubernetes/ingress_factory"
-  auth                    = "required"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Auth disabled: HA Sofia + Prometheus scrape this endpoint
+  # programmatically (no browser, no SSO cookie). The
+  # allow_local_access_only middleware (192.168.0.0/16 + 10.0.0.0/8)
+  # already gates external access, so layering Authentik on top only
+  # breaks the REST sensor in HA Sofia (it gets a 302 to authentik.viktorbarzin.me
+  # and parses HTML instead of metrics).
+  auth                    = "none"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "idrac-redfish-exporter"
   root_domain             = "viktorbarzin.lan"

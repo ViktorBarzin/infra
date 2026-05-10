@@ -116,6 +116,13 @@ resource "kubernetes_persistent_volume_claim" "primary_config_encrypted" {
       }
     }
   }
+  lifecycle {
+    # Autoresizer expands; PVCs can't shrink. Without this, TF apply
+    # plans destroy+recreate which leaves the PVC in Terminating while
+    # the technitium primary pod still uses it. See incident on
+    # 2026-05-10 (both prometheus-data-proxmox + this PVC).
+    ignore_changes = [spec[0].resources[0].requests]
+  }
 }
 
 resource "kubernetes_deployment" "technitium" {
