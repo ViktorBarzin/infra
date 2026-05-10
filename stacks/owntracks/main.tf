@@ -226,7 +226,12 @@ resource "kubernetes_service" "owntracks" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # OwnTracks mobile clients post location data over HTTP basic-auth (see the
+  # `owntracks-basic-auth` middleware below). They can't follow forward-auth
+  # 302s, so Authentik is bypassed; the `extra_annotations` block below
+  # overrides the factory's middleware list anyway.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.owntracks.metadata[0].name
   name            = "owntracks"
