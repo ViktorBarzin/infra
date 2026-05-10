@@ -228,6 +228,23 @@ resource "kubernetes_deployment" "windows_kms" {
           port {
             container_port = 1688
           }
+          # Gate Pod Ready on the listener actually being up. Required for
+          # ETP=Local: MetalLB only advertises 10.0.20.202 from a node where
+          # the backing pod is Ready, so without this the pod is "Ready"
+          # before vlmcsd has bound 1688 and ARP can briefly point at a node
+          # that drops connections during pod start.
+          readiness_probe {
+            tcp_socket { port = 1688 }
+            initial_delay_seconds = 1
+            period_seconds        = 5
+            failure_threshold     = 3
+          }
+          liveness_probe {
+            tcp_socket { port = 1688 }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+            failure_threshold     = 3
+          }
           volume_mount {
             name       = "vlmcsd-log"
             mount_path = "/var/log/vlmcsd"
@@ -300,14 +317,17 @@ resource "kubernetes_service" "windows_kms" {
       app = "kms-service"
     }
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      # Dedicated MetalLB IP (not shared) so ETP=Local can preserve real
+      # client IPs in the vlmcsd log. Sharing 10.0.20.200 isn't an option:
+      # all 10 services there are ETP=Cluster and MetalLB requires a single
+      # ETP per shared IP.
+      "metallb.io/loadBalancerIPs" = "10.0.20.202"
     }
   }
 
   spec {
     type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "kms-service"
     }
