@@ -1,9 +1,10 @@
 # Automated Upgrades
 
-This doc covers two independent automation paths:
+This doc covers three independent automation paths:
 
 1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
-2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section near the end and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
+2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
+3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — weekly detection CronJob → claude-agent-service → `k8s-version-upgrade` agent. See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
 
 ## Overview
 
@@ -242,3 +243,77 @@ The 26h cluster outage on 2026-03-16 was triggered by an unattended-upgrades ker
 
 ### Operational reference
 See `docs/runbooks/k8s-node-auto-upgrades.md` for: verifying health, halting rollout, restoring config to a re-imaged node, rolling back a bad upgrade, and the past-incident timeline.
+
+## K8s Version Upgrades
+
+Independent of the OS-upgrade and service-upgrade pipelines. Drives
+kubeadm/kubelet/kubectl bumps (patch + minor) on all 5 K8s VMs.
+
+### Architecture
+
+```
+k8s-version-check CronJob   (Sun 12:00 UTC, k8s-upgrade ns)
+  │ probe apt-cache madison kubeadm (master) → latest available patch
+  │ probe HEAD https://pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release → next minor?
+  │ push k8s_upgrade_available metric to Pushgateway
+  │
+  ▼ if running != latest
+POST claude-agent-service /execute  with target_version + kind
+  │
+  ▼
+k8s-version-upgrade agent (in claude-agent-service pod)
+  ├── pre-flight (5 nodes Ready, halt-on-alert, 24h-quiet, kubeadm plan match)
+  ├── etcd snapshot save → /mnt/main/etcd-backup/k8s-upgrade-pre-X.Y.Z-EPOCH.db
+  ├── master containerd bump (only if master version < workers')
+  ├── apt repo URL rewrite to v<NEW_MINOR>/deb on all 5 nodes (kind=minor only)
+  ├── drain master → ssh < update_k8s.sh --role master → uncordon → verify
+  ├── for each worker (k8s-node4 → 3 → 2 → 1):
+  │     halt-on-alert wait → drain → ssh < update_k8s.sh --role worker → uncordon → 10-min soak
+  └── post-flight (all nodes match target, alerts clean, pod-ready ratio ≥ 0.9)
+```
+
+### Components
+
+- **Detection CronJob**: `infra/stacks/k8s-version-upgrade/main.tf`. Image is the claude-agent-service image (alpine + kubectl + ssh-client + curl + jq). SA has cluster-read on nodes + ns-scoped get on `k8s-upgrade-creds` Secret.
+- **Agent prompt**: `infra/.claude/agents/k8s-version-upgrade.md`. Inputs: `target_version`, `kind=patch|minor`, `dry_run`, `stages`. Tools: Bash, Read, Write, Edit, Grep, Glob.
+- **Library node script**: `infra/scripts/update_k8s.sh`. Caller passes `--role master|worker --release X.Y.Z`. The agent pipes this via SSH onto each node.
+- **Two new Upgrade Gates alerts** (added in this work):
+  - `K8sVersionSkew` — kubelet/apiserver gitVersion count >1 for 30m. Catches a half-done rollout.
+  - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches Stage 2 failing silently.
+- **Pushgateway metrics**:
+  - `k8s_upgrade_in_flight` / `k8s_upgrade_snapshot_taken` (pushed by agent)
+  - `k8s_upgrade_available{kind,running,target}` (pushed by detection CronJob)
+  - `k8s_version_check_last_run_timestamp` (staleness watchdog)
+
+### Source of truth
+
+| Concern | Location |
+|---|---|
+| Detection CronJob, RBAC, ExternalSecret, Vault role | `stacks/k8s-version-upgrade/main.tf` |
+| Agent orchestration | `.claude/agents/k8s-version-upgrade.md` |
+| Library node script | `scripts/update_k8s.sh` |
+| Alerts | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |
+| Vault secrets | `secret/k8s-upgrade/{ssh_key, ssh_key_pub, slack_webhook}` |
+
+### Why this design
+
+The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply` is an outage. Mitigations:
+
+- **Mandatory etcd snapshot before every run** (even patch). Recovery point if master breaks.
+- **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Two new gate alerts catch upgrade-specific half-states (version skew, missing snapshot).
+- **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
+- **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
+- **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
+
+### Secrets
+
+| Secret | Vault Path | Purpose |
+|--------|-----------|---------|
+| SSH private key | `secret/k8s-upgrade.ssh_key` | Agent + detection CronJob SSH to all 5 nodes (user `wizard`) |
+| SSH public key | `secret/k8s-upgrade.ssh_key_pub` | Deployed to nodes' `~/.ssh/authorized_keys` |
+| Slack webhook | `secret/k8s-upgrade.slack_webhook` | Pipeline notifications (separate channel from kured) |
+| Agent service bearer | `secret/claude-agent-service.api_bearer_token` (reused) | Detection CronJob POSTs to `/execute` |
+
+### Operational reference
+
+See `docs/runbooks/k8s-version-upgrade.md` for: verifying health, manually triggering detection or the agent, rollback paths (master / worker / mid-flight abort), and SSH key rotation.

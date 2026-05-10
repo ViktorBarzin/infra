@@ -1890,14 +1890,13 @@ serverFiles:
             annotations:
               summary: "Kubelet/apiserver gitVersion skew detected — possible half-done k8s upgrade. Inspect: kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'"
           # EtcdPreUpgradeSnapshotMissing: the k8s-version-upgrade agent pushes
-          # k8s_upgrade_in_flight=1 when it starts, and k8s_upgrade_snapshot_taken=1
-          # after the etcdctl snapshot is verified. If we see in_flight=1 with no
-          # corresponding snapshot_taken=1 after 10 min, the agent has skipped or
-          # failed the snapshot — that's a critical safety hole.
+          # `k8s_upgrade_in_flight=1` + `k8s_upgrade_snapshot_taken=0` at Stage 0,
+          # then sets snapshot_taken=1 in Stage 2 after etcdctl confirms the
+          # snapshot file size. Anywhere in_flight=1 with snapshot_taken=0
+          # lasting >10m means the agent skipped or failed Stage 2 — a critical
+          # safety hole (no recovery point if master upgrade hangs).
           - alert: EtcdPreUpgradeSnapshotMissing
-            expr: |
-              k8s_upgrade_in_flight == 1
-              unless on() k8s_upgrade_snapshot_taken == 1
+            expr: k8s_upgrade_in_flight == 1 and k8s_upgrade_snapshot_taken == 0
             for: 10m
             labels:
               severity: critical
