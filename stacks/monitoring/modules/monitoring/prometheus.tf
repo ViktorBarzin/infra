@@ -5,7 +5,11 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
     name      = "prometheus-data-proxmox"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "90%"
+      # threshold = free-space % below which autoresizer expands.
+      # 10% means "expand when 90% used" (the conventional knob).
+      # WAS 90% — that's "expand when 10% used", which would
+      # autoresize this volume from 200Gi → 500Gi in 6 cycles.
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "10%"
       "resize.topolvm.io/storage_limit" = "500Gi"
     }
@@ -19,6 +23,16 @@ resource "kubernetes_persistent_volume_claim" "prometheus_server_pvc" {
         storage = "200Gi"
       }
     }
+  }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this ignore_changes, every TF apply
+    # tries to revert the live size back to 200Gi, hits the
+    # K8s shrink-forbidden rule, and forces a destroy+recreate that
+    # leaves the PVC stuck in Terminating until the pod releases it.
+    # (Root cause of the prometheus-data-proxmox + technitium-primary-config-encrypted
+    # Terminating-but-in-use incident on 2026-05-10.)
+    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
