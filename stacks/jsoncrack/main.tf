@@ -84,12 +84,22 @@ resource "kubernetes_service" "jsoncrack" {
   }
 }
 
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "json"
+  namespace  = kubernetes_namespace.jsoncrack.metadata[0].name
+  target_url = "http://${kubernetes_service.jsoncrack.metadata[0].name}.${kubernetes_namespace.jsoncrack.metadata[0].name}.svc.cluster.local"
+}
+
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.jsoncrack.metadata[0].name
-  name            = "json"
-  tls_secret_name = var.tls_secret_name
+  source           = "../../modules/kubernetes/ingress_factory"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.jsoncrack.metadata[0].name
+  name             = "json"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "JSON Crack"

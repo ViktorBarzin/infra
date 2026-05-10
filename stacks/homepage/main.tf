@@ -137,14 +137,23 @@ resource "kubernetes_service" "cache_proxy" {
   }
 }
 
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "homepage"
+  namespace  = kubernetes_namespace.homepage.metadata[0].name
+  target_url = "http://${kubernetes_service.cache_proxy.metadata[0].name}.${kubernetes_namespace.homepage.metadata[0].name}.svc.cluster.local"
+}
+
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.homepage.metadata[0].name
-  name            = "homepage"
-  host            = "home"
-  dns_type        = "proxied"
-  service_name    = kubernetes_service.cache_proxy.metadata[0].name
-  tls_secret_name = var.tls_secret_name
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.homepage.metadata[0].name
+  name             = "homepage"
+  host             = "home"
+  dns_type         = "proxied"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Homepage"

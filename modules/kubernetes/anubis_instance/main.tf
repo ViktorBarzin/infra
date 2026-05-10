@@ -56,8 +56,8 @@ variable "image_tag" {
 
 variable "replicas" {
   type        = number
-  default     = 2
-  description = "Replica count. 2 + matching ed25519 key = HA without sticky sessions."
+  default     = 1
+  description = "Replica count. Default 1 because Anubis stores in-flight challenges in process memory — with N>1 a challenge issued by pod A and solved against pod B fails with `store: key not found` (HTTP 500). For HA, configure a shared store (Redis) and bump this. Per-pod 128Mi @ idle is cheap, single-pod restart is sub-second, so 1 is fine for content sites."
 }
 
 variable "memory" {

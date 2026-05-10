@@ -330,13 +330,24 @@ resource "kubernetes_service" "realestate-crawler-api" {
   }
 }
 
+# Anubis fronts the UI ingress only; the /api ingress (`module "ingress-api"`)
+# stays direct so XHRs from the UI bypass the challenge.
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "wrongmove"
+  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
+  target_url = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
+}
+
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
-  name            = "wrongmove"
-  service_name    = "realestate-crawler-ui"
-  tls_secret_name = var.tls_secret_name
+  source           = "../../modules/kubernetes/ingress_factory"
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name             = "wrongmove"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  anti_ai_scraping = false
+  tls_secret_name  = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Wrongmove"
