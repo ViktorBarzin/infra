@@ -123,8 +123,12 @@ resource "kubernetes_service" "snmp-exporter" {
 }
 
 module "snmp-exporter-ingress" {
-  source                  = "../../../../modules/kubernetes/ingress_factory"
-  auth                    = "required"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Auth disabled — same rationale as idrac-redfish-exporter-ingress:
+  # HA Sofia REST sensors scrape /snmp endpoint programmatically and
+  # can't follow the Authentik OIDC flow. local-only IP allowlist
+  # already gates external access.
+  auth                    = "none"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "snmp-exporter"
   root_domain             = "viktorbarzin.lan"
