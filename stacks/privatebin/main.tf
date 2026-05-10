@@ -131,12 +131,11 @@ resource "kubernetes_service" "privatebin" {
   }
 }
 
-module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "privatebin"
-  namespace  = kubernetes_namespace.privatebin.metadata[0].name
-  target_url = "http://${kubernetes_service.privatebin.metadata[0].name}.${kubernetes_namespace.privatebin.metadata[0].name}.svc.cluster.local"
-}
+# Anubis intentionally NOT used here — PrivateBin creates pastes via XHR
+# `POST /`, which Anubis's catch-all CHALLENGE rule intercepts and serves
+# an HTML challenge page where the JS expects JSON. PrivateBin pastes are
+# client-side encrypted, so AI scrapers gain nothing from indexing them;
+# the default `anti_ai_scraping` middleware is sufficient protection.
 
 module "ingress" {
   source                         = "../../modules/kubernetes/ingress_factory"
@@ -144,10 +143,7 @@ module "ingress" {
   name                           = "privatebin"
   host                           = "pb"
   dns_type                       = "proxied"
-  service_name                   = module.anubis.service_name
-  port                           = module.anubis.service_port
   extra_middlewares              = ["traefik-x402@kubernetescrd"]
-  anti_ai_scraping               = false
   tls_secret_name                = var.tls_secret_name
   custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
   extra_annotations = {
