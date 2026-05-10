@@ -192,9 +192,9 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
         for_each = var.disk_slot == "scsi0" ? [1] : []
         content {
           disk {
-            storage  = "local-lvm"
-            size     = var.vm_disk_size
-            discard  = true # Enable TRIM passthrough to LVM thin pool — reduces CoW overhead
+            storage = "local-lvm"
+            size    = var.vm_disk_size
+            discard = true # Enable TRIM passthrough to LVM thin pool — reduces CoW overhead
           }
         }
       }
@@ -202,9 +202,9 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
         for_each = var.disk_slot == "scsi1" ? [1] : []
         content {
           disk {
-            storage  = "local-lvm"
-            size     = var.vm_disk_size
-            discard  = true
+            storage = "local-lvm"
+            size    = var.vm_disk_size
+            discard = true
           }
         }
       }

@@ -149,6 +149,7 @@ resource "kubernetes_service" "actualbudget" {
 
 module "ingress" {
   source            = "../../../modules/kubernetes/ingress_factory"
+  auth              = "required"
   namespace         = "actualbudget"
   name              = "budget-${var.name}"
   tls_secret_name   = var.tls_secret_name

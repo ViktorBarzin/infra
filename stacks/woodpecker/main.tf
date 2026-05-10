@@ -351,7 +351,11 @@ resource "kubernetes_cron_job_v1" "vault_secret_sync" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Forgejo webhooks + webhook_handler POSTs hit ci.viktorbarzin.me to trigger
+  # pipelines; the Woodpecker API + OAuth flows also live here. Forward-auth
+  # would block every machine-driven call. Woodpecker has its own OAuth login.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.woodpecker.metadata[0].name
   name            = "ci"

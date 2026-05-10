@@ -341,14 +341,15 @@ module "anubis" {
 
 module "ingress" {
   source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   dns_type          = "proxied"
   namespace         = kubernetes_namespace.realestate-crawler.metadata[0].name
   name              = "wrongmove"
   service_name      = module.anubis.service_name
   port              = module.anubis.service_port
   extra_middlewares = ["traefik-x402@kubernetescrd"]
-  anti_ai_scraping = false
-  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping  = false
+  tls_secret_name   = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Wrongmove"
@@ -360,7 +361,11 @@ module "ingress" {
 }
 
 module "ingress-api" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Wrongmove's public UI is Anubis-fronted (auth=none on the / path); this
+  # /api ingress serves XHRs from that public UI. Forward-auth here would
+  # break the UI.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
   name            = "wrongmove-api"

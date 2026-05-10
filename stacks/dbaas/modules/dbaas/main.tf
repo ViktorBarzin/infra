@@ -791,7 +791,7 @@ module "ingress" {
   namespace         = kubernetes_namespace.dbaas.metadata[0].name
   name              = "pma"
   tls_secret_name   = var.tls_secret_name
-  protected         = true
+  auth              = "required"
   extra_annotations = {}
 }
 
@@ -1461,7 +1461,7 @@ module "ingress-pgadmin" {
   namespace       = kubernetes_namespace.dbaas.metadata[0].name
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
 }
 
 

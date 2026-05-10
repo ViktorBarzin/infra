@@ -98,14 +98,14 @@ module "viktor" {
 
 # https://music-emo.viktorbarzin.me/
 module "emo" {
-  source          = "./factory"
-  name            = "emo"
-  tag             = "latest"
-  tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.freedify]
-  tier            = local.tiers.aux
-  protected       = true
-  genius_token    = lookup(local.credentials["emo"], "genius_token", null)
+  source             = "./factory"
+  name               = "emo"
+  tag                = "latest"
+  tls_secret_name    = var.tls_secret_name
+  depends_on         = [kubernetes_namespace.freedify]
+  tier               = local.tiers.aux
+  protected          = true
+  genius_token       = lookup(local.credentials["emo"], "genius_token", null)
   gemini_api_key     = lookup(local.credentials["emo"], "gemini_api_key", null)
   navidrome_scan_url = data.kubernetes_secret.eso_secrets.data["navidrome_scan_url"]
   ha_sofia_url       = lookup(data.kubernetes_secret.eso_secrets.data, "ha_sofia_url", "")

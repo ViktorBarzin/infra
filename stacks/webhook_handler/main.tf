@@ -259,7 +259,10 @@ resource "kubernetes_service" "webhook_handler" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Webhook receiver — third parties (Forgejo, GitHub, etc.) POST events without
+  # browser sessions. Forward-auth would block all webhook deliveries.
+  auth            = "none"
   namespace       = kubernetes_namespace.webhook-handler.metadata[0].name
   name            = "webhook-handler"
   host            = "webhook"

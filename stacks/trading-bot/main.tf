@@ -617,7 +617,7 @@ module "ingress" {
   name            = "trading"
   service_name    = "trading-bot-frontend"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Trading Bot"

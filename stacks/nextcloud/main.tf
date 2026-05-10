@@ -219,7 +219,11 @@ module "nfs_nextcloud_backup_host" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Native WebDAV / CalDAV / CardDAV clients (Nextcloud desktop+mobile apps,
+  # calendar sync) use HTTP basic-auth + app passwords, not browser sessions.
+  # Nextcloud has strong app-layer auth of its own.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "nextcloud"

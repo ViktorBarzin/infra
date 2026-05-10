@@ -236,7 +236,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
   name            = "insta2spotify"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   max_body_size   = "50m"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
@@ -256,7 +256,7 @@ module "ingress_api" {
   host            = "insta2spotify"
   service_name    = "insta2spotify"
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  auth            = "public"
   ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
   max_body_size   = "50m"
 }

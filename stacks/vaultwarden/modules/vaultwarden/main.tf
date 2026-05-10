@@ -196,7 +196,12 @@ resource "kubernetes_service" "vaultwarden" {
 }
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Bitwarden-compatible API — mobile app, browser extension, desktop app, and
+  # CLI all hit /api, /identity, /events with Bitwarden master-password / token
+  # auth. Forward-auth would block every native client. Vaultwarden's own auth
+  # is the gate.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   name            = "vaultwarden"

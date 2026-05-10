@@ -124,6 +124,7 @@ resource "kubernetes_service" "snmp-exporter" {
 
 module "snmp-exporter-ingress" {
   source                  = "../../../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "snmp-exporter"
   root_domain             = "viktorbarzin.lan"

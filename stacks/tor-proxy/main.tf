@@ -300,7 +300,7 @@ module "torrserver_ingress" {
   name             = "torrserver"
   tls_secret_name  = var.tls_secret_name
   port             = "8090"
-  protected        = true
+  auth             = "required"
   external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

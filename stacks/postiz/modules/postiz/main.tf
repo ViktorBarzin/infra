@@ -136,19 +136,19 @@ resource "helm_release" "postiz" {
 
     # Non-secret env. Note: BACKEND_INTERNAL_URL stays in-pod (Postiz convention).
     env = {
-      MAIN_URL                         = "https://postiz.viktorbarzin.me"
-      FRONTEND_URL                     = "https://postiz.viktorbarzin.me"
-      NEXT_PUBLIC_BACKEND_URL          = "https://postiz.viktorbarzin.me/api"
-      BACKEND_INTERNAL_URL             = "http://localhost:3000"
-      STORAGE_PROVIDER                 = "local"
-      UPLOAD_DIRECTORY                 = "/uploads"
-      NEXT_PUBLIC_UPLOAD_DIRECTORY     = "/uploads"
+      MAIN_URL                     = "https://postiz.viktorbarzin.me"
+      FRONTEND_URL                 = "https://postiz.viktorbarzin.me"
+      NEXT_PUBLIC_BACKEND_URL      = "https://postiz.viktorbarzin.me/api"
+      BACKEND_INTERNAL_URL         = "http://localhost:3000"
+      STORAGE_PROVIDER             = "local"
+      UPLOAD_DIRECTORY             = "/uploads"
+      NEXT_PUBLIC_UPLOAD_DIRECTORY = "/uploads"
       # Disabled — admin user already created; sign-in only.
-      DISABLE_REGISTRATION             = "true"
-      IS_GENERAL                       = "true"
-      NX_ADD_PLUGINS                   = "false"
+      DISABLE_REGISTRATION = "true"
+      IS_GENERAL           = "true"
+      NX_ADD_PLUGINS       = "false"
       # Postiz uses Temporal for cron/scheduling — bring our own; Helm chart doesn't.
-      TEMPORAL_ADDRESS                 = "temporal:7233"
+      TEMPORAL_ADDRESS = "temporal:7233"
     }
 
     # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
@@ -159,13 +159,13 @@ resource "helm_release" "postiz" {
     # postiz-redis-password) — both Services are ClusterIP, only routable
     # from inside the postiz namespace, so the well-known creds are safe.
     secrets = {
-      DATABASE_URL         = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
-      REDIS_URL            = "redis://default:postiz-redis-password@postiz-redis-master:6379"
-      JWT_SECRET           = ""
+      DATABASE_URL = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
+      REDIS_URL    = "redis://default:postiz-redis-password@postiz-redis-master:6379"
+      JWT_SECRET   = ""
       # IG-via-Facebook OAuth (Postiz Instagram-Business integration). Empty
       # placeholder; ESO patches the real values from Vault below.
-      FACEBOOK_APP_ID      = ""
-      FACEBOOK_APP_SECRET  = ""
+      FACEBOOK_APP_ID     = ""
+      FACEBOOK_APP_SECRET = ""
       # IG standalone (Postiz Instagram-Login integration). Uses the modern
       # `instagram_business_*` scopes — does not require the FB Login dance.
       INSTAGRAM_APP_ID     = ""
@@ -247,7 +247,7 @@ module "ingress_uploads_public" {
   host            = var.host
   service_name    = "postiz"
   port            = 80
-  protected       = false
+  auth            = "none"
   ingress_path    = ["/uploads"]
   tls_secret_name = var.tls_secret_name
 }
@@ -260,7 +260,7 @@ module "ingress" {
   host            = var.host
   service_name    = "postiz"
   port            = 80
-  protected       = true # Authentik forward-auth on the UI / API path
+  auth            = "required" # Authentik forward-auth on the UI / API path
   ingress_path    = ["/"]
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
@@ -473,7 +473,7 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
           spec {
             restart_policy = "OnFailure"
             container {
-              name    = "backup"
+              name = "backup"
               # Same image/pattern as dbaas/postgresql-backup: official postgres
               # client tools + apt-installed curl for the Pushgateway push. The
               # bitnamilegacy/postgresql variant is stripped (no curl/wget/python),

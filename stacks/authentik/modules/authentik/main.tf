@@ -70,8 +70,11 @@ resource "helm_release" "authentik" {
 
 
 module "ingress" {
-  source           = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Authentik's own UI cannot be gated by Authentik forward-auth — that
+  # creates a chicken-and-egg loop (users can't reach the login page).
+  auth             = "none"
+  dns_type         = "proxied"
   namespace        = kubernetes_namespace.authentik.metadata[0].name
   name             = "authentik"
   service_name     = "goauthentik-server"
@@ -91,7 +94,10 @@ module "ingress" {
 }
 
 module "ingress-outpost" {
-  source           = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Authentik forward-auth outpost callback path — protecting this with
+  # forward-auth would loop the outpost back onto itself.
+  auth             = "none"
   namespace        = kubernetes_namespace.authentik.metadata[0].name
   name             = "authentik-outpost"
   host             = "authentik"

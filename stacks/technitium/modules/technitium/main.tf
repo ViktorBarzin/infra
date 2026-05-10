@@ -329,6 +329,7 @@ resource "kubernetes_service" "technitium_dns_internal" {
 
 module "ingress" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.technitium.metadata[0].name
   name            = "technitium"

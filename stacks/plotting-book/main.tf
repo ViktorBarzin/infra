@@ -198,6 +198,7 @@ resource "kubernetes_service" "plotting-book" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.plotting-book.metadata[0].name
   name            = "plotting-book"

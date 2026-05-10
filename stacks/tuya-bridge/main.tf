@@ -180,6 +180,7 @@ resource "kubernetes_service" "tuya-bridge" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   name            = "tuya-bridge"
