@@ -1075,7 +1075,9 @@ resource "null_resource" "pg_cluster" {
         enableSuperuserAccess: true
         inheritedMetadata:
           annotations:
-            resize.topolvm.io/threshold: "80%"
+            # threshold = free-space % below which autoresizer expands.
+            # 10% means "expand when 90% used" (the conventional knob).
+            resize.topolvm.io/threshold: "10%"
             resize.topolvm.io/increase: "20%"
             resize.topolvm.io/storage_limit: "100Gi"
         storage:
