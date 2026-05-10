@@ -396,7 +396,7 @@ module "ingress_image_public" {
   name            = "instagram-poster-image"
   host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  auth            = "none"
   ingress_path    = ["/image", "/original"]
   port            = 80
   service_name    = "instagram-poster"
@@ -409,7 +409,7 @@ module "ingress_protected" {
   name            = "instagram-poster"
   host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   ingress_path    = ["/"]
   port            = 80
   service_name    = "instagram-poster"
@@ -433,6 +433,12 @@ locals {
 }
 
 resource "kubernetes_cron_job_v1" "ig_ingest_stories" {
+  # Temporarily disabled: the /ig-ingest endpoint exists in working-copy
+  # changes to instagram_poster/app.py but hasn't been committed/built/
+  # deployed yet, so every fire returns 404 and JobFailed alerts fire.
+  # Re-enable by removing `count = 0` once the endpoint is shipped.
+  count = 0
+
   metadata {
     name      = "ig-ingest-stories"
     namespace = kubernetes_namespace.instagram_poster.metadata[0].name
