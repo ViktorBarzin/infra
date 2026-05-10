@@ -66,6 +66,12 @@ variable "memory" {
   description = "requests==limits memory. Anubis docs suggest 128Mi handles many concurrent clients."
 }
 
+variable "policy_yaml" {
+  type        = string
+  default     = null
+  description = "Override the strict default bot-policy YAML. Leave null to use the catch-all CHALLENGE policy."
+}
+
 variable "cpu_request" {
   type        = string
   default     = "20m"
@@ -80,6 +86,45 @@ locals {
     "app.kubernetes.io/instance"   = local.full_name
     "app.kubernetes.io/component"  = "ai-bot-challenge"
     "app.kubernetes.io/managed-by" = "terraform"
+  }
+
+  # Strict bot policy. Default Anubis policy only WEIGHs Mozilla|Opera UAs
+  # and lets unmatched UAs (curl, wget, Python-requests, scrapy, headless
+  # CLI scrapers) fall through to ALLOW. We import the same upstream
+  # snippets and append a catch-all CHALLENGE so anyone without JS+PoW
+  # capability is filtered.
+  default_policy_yaml = <<-EOT
+    bots:
+      # Hard-deny known-bad bots first.
+      - import: (data)/bots/_deny-pathological.yaml
+      - import: (data)/bots/aggressive-brazilian-scrapers.yaml
+      # Hard-deny declared AI/LLM crawlers (ClaudeBot, GPTBot, Bytespider, …).
+      - import: (data)/meta/ai-block-aggressive.yaml
+      # Whitelist legitimate search-engine crawlers (Googlebot, Bingbot, …).
+      - import: (data)/crawlers/_allow-good.yaml
+      # Challenge Firefox AI previews specifically.
+      - import: (data)/clients/x-firefox-ai.yaml
+      # Allow /.well-known, /robots.txt, /favicon.*, /sitemap.xml — keeps
+      # the internet working for benign crawlers and discovery clients.
+      - import: (data)/common/keep-internet-working.yaml
+      # Catch-all: every remaining request must solve the challenge. This
+      # closes the "unmatched UA falls through to ALLOW" gap that lets
+      # curl/wget/Python-requests scrape non-CDN-fronted hosts.
+      - name: catchall-challenge
+        path_regex: .*
+        action: CHALLENGE
+  EOT
+}
+
+# Bot policy ConfigMap. Mounted into the pod and referenced by POLICY_FNAME.
+resource "kubernetes_config_map" "policy" {
+  metadata {
+    name      = "${local.full_name}-policy"
+    namespace = var.namespace
+    labels    = local.labels
+  }
+  data = {
+    "botPolicies.yaml" = coalesce(var.policy_yaml, local.default_policy_yaml)
   }
 }
 
@@ -222,10 +267,19 @@ resource "kubernetes_deployment" "anubis" {
             # Mounted from the ESO-managed Secret below.
             value = "/keys/key"
           }
+          env {
+            name  = "POLICY_FNAME"
+            value = "/config/botPolicies.yaml"
+          }
 
           volume_mount {
             name       = "ed25519-key"
             mount_path = "/keys"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "policy"
+            mount_path = "/config"
             read_only  = true
           }
 
@@ -279,6 +333,12 @@ resource "kubernetes_deployment" "anubis" {
               key  = "key"
               path = "key"
             }
+          }
+        }
+        volume {
+          name = "policy"
+          config_map {
+            name = kubernetes_config_map.policy.metadata[0].name
           }
         }
       }
