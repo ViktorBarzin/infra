@@ -143,8 +143,8 @@ resource "helm_release" "postiz" {
       STORAGE_PROVIDER                 = "local"
       UPLOAD_DIRECTORY                 = "/uploads"
       NEXT_PUBLIC_UPLOAD_DIRECTORY     = "/uploads"
-      # Set true after first admin user is created via UI
-      DISABLE_REGISTRATION             = "false"
+      # Disabled — admin user already created; sign-in only.
+      DISABLE_REGISTRATION             = "true"
       IS_GENERAL                       = "true"
       NX_ADD_PLUGINS                   = "false"
       # Postiz uses Temporal for cron/scheduling — bring our own; Helm chart doesn't.
