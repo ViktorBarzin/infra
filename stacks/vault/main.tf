@@ -63,6 +63,14 @@ resource "helm_release" "vault" {
         enabled      = true
         size         = "2Gi"
         storageClass = "proxmox-lvm-encrypted" # Migrated 2026-04-25 from nfs-proxmox
+        # Vault audit logs grow unbounded per request; let pvc-autoresizer
+        # expand the volume up to 10Gi rather than ride a stuck-Pending
+        # vault-0 the moment the PVC fills.
+        annotations = {
+          "resize.topolvm.io/threshold"     = "10%"
+          "resize.topolvm.io/increase"      = "100%"
+          "resize.topolvm.io/storage_limit" = "10Gi"
+        }
       }
 
       standalone = { enabled = false }
