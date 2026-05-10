@@ -282,7 +282,7 @@ module "ingress" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.crowdsec.metadata[0].name
   name             = "crowdsec-web"
-  protected        = true
+  auth             = "required"
   tls_secret_name  = var.tls_secret_name
   exclude_crowdsec = true
 }

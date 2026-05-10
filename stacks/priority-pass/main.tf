@@ -171,6 +171,6 @@ module "ingress" {
   namespace       = "priority-pass"
   name            = "priority-pass"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   max_body_size   = "10m"
 }

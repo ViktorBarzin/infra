@@ -123,7 +123,11 @@ resource "kubernetes_service" "immich-frame" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Photo-frame kiosk display — runs in headless browser mode on a TV/frame
+  # device and pulls images via an Immich API key (no user login). Forward-auth
+  # would 302 the device to Authentik with no way to complete login.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = "immich"
   name            = "highlights-immich"

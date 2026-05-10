@@ -416,7 +416,7 @@ module "ingress" {
   namespace        = kubernetes_namespace.beads.metadata[0].name
   name             = "dolt-workbench"
   tls_secret_name  = var.tls_secret_name
-  protected        = false
+  auth             = "none"
   exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
@@ -566,7 +566,7 @@ resource "kubernetes_deployment" "beadboard" {
         }
 
         container {
-          name  = "beadboard"
+          name = "beadboard"
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
           image = "forgejo.viktorbarzin.me/viktor/beadboard:${var.beadboard_image_tag}"
 
@@ -677,7 +677,7 @@ module "beadboard_ingress" {
   namespace        = kubernetes_namespace.beads.metadata[0].name
   name             = "beadboard"
   tls_secret_name  = var.tls_secret_name
-  protected        = true
+  auth             = "required"
   exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

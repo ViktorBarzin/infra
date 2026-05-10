@@ -188,7 +188,11 @@ resource "kubernetes_service" "ntfy" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # ntfy mobile/desktop apps + publisher scripts use HTTP basic-auth / bearer
+  # tokens against ntfy's own user.db (NTFY_AUTH_DEFAULT_ACCESS=deny-all).
+  # Forward-auth would block subscribers and publishers alike.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ntfy.metadata[0].name
   name            = "ntfy"

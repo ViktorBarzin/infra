@@ -254,6 +254,7 @@ resource "kubernetes_service" "paperless-ngx" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
   name            = "paperless-ngx"
   service_name    = "paperless-ngx"

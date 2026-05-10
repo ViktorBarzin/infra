@@ -225,7 +225,7 @@ module "ingress" {
   name              = "music-${var.name}"
   tls_secret_name   = var.tls_secret_name
   dns_type          = "non-proxied"
-  protected         = var.protected
+  auth              = var.protected ? "required" : "none"
   extra_annotations = var.extra_annotations
 }
 
@@ -235,9 +235,9 @@ resource "kubernetes_ingress_v1" "stream-noauth" {
     name      = "music-${var.name}-stream"
     namespace = "freedify"
     annotations = {
-      "traefik.ingress.kubernetes.io/router.middlewares"  = "traefik-retry@kubernetescrd,traefik-rate-limit@kubernetescrd"
-      "traefik.ingress.kubernetes.io/router.entrypoints"  = "websecure"
-      "traefik.ingress.kubernetes.io/router.priority"     = "100"
+      "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-retry@kubernetescrd,traefik-rate-limit@kubernetescrd"
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+      "traefik.ingress.kubernetes.io/router.priority"    = "100"
     }
   }
   spec {

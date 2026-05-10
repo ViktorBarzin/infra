@@ -229,6 +229,7 @@ resource "kubernetes_service" "navidrome" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.navidrome.metadata[0].name
   name            = "navidrome"

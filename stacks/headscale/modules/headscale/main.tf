@@ -298,7 +298,13 @@ resource "kubernetes_service" "headscale" {
 }
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Headscale is the Tailscale control plane — native Tailscale clients
+  # register, exchange keys, and pull DERP maps from headscale.viktorbarzin.me.
+  # Forward-auth would break every Tailscale client. Headscale has its own
+  # OIDC + preauth-key auth at the app layer; the web admin UI lives on a
+  # separate /web ingress that remains auth=required.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
   name            = "headscale"
@@ -354,6 +360,7 @@ resource "kubernetes_manifest" "derp_ingress_route" {
 
 module "ingress-ui" {
   source          = "../../../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
   name            = "headscale-ui"
   host            = "headscale"

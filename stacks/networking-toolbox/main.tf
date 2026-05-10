@@ -103,7 +103,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.networking-toolbox.metadata[0].name
   name            = "networking-toolbox"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Networking Toolbox"

@@ -228,7 +228,12 @@ resource "vault_identity_group_alias" "admins" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Vault has its own auth (OIDC, K8s, tokens). External CLI clients,
+  # `vault login -method=oidc`, the OIDC callback URL, and Terraform providers
+  # all hit https://vault.viktorbarzin.me — forward-auth would block every
+  # non-browser client and break the OIDC redirect flow itself.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.vault.metadata[0].name
   name            = "vault"

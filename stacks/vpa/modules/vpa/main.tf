@@ -111,7 +111,7 @@ module "ingress" {
   service_name    = "goldilocks-dashboard"
   port            = 80
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Goldilocks"

@@ -170,7 +170,7 @@ module "ingress" {
   namespace       = "servarr"
   name            = "lidarr"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   #   extra_annotations = {
   #     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
   #   }
@@ -183,5 +183,5 @@ module "ingress-deemix" {
   namespace       = "servarr"
   name            = "deemix"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
 }

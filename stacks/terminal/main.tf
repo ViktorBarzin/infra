@@ -65,7 +65,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.terminal.metadata[0].name
   name            = "terminal"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Terminal"
@@ -206,7 +206,7 @@ module "ingress_ro" {
   namespace       = kubernetes_namespace.terminal.metadata[0].name
   name            = "terminal-ro"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Terminal (Read-Only)"

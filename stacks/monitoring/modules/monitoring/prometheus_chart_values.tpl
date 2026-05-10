@@ -1874,6 +1874,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resourcequota }} {{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
+          # K8sVersionSkew: kubelet on any node disagrees with the apiserver's gitVersion.
+          # Catches a half-done kubeadm rollout — e.g. master at 1.34.5 but a worker
+          # still on 1.34.2 after the agent aborted mid-flight. Distinct gitVersion
+          # count >1 across kubernetes-nodes + kubernetes-apiservers means skew exists.
+          # 30m for: gives a normal rolling upgrade (master + 4 workers + 10-min soaks
+          # ≈ 60-90 min) room to be in mid-progress without firing during a healthy
+          # run — but only because Prometheus only counts a node post-restart, and the
+          # agent's soak between workers exceeds 10min anyway.
+          - alert: K8sVersionSkew
+            expr: count(count by (git_version) (kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"})) > 1
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubelet/apiserver gitVersion skew detected — possible half-done k8s upgrade. Inspect: kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'"
+          # EtcdPreUpgradeSnapshotMissing: the k8s-version-upgrade agent pushes
+          # k8s_upgrade_in_flight=1 when it starts, and k8s_upgrade_snapshot_taken=1
+          # after the etcdctl snapshot is verified. If we see in_flight=1 with no
+          # corresponding snapshot_taken=1 after 10 min, the agent has skipped or
+          # failed the snapshot — that's a critical safety hole.
+          - alert: EtcdPreUpgradeSnapshotMissing
+            expr: |
+              k8s_upgrade_in_flight == 1
+              unless on() k8s_upgrade_snapshot_taken == 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "K8s upgrade is in flight but no etcd snapshot was recorded — pipeline pre-flight failed silently"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown

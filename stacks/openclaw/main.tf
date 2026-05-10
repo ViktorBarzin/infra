@@ -404,8 +404,8 @@ resource "kubernetes_deployment" "openclaw" {
         # this the previously-baked kubeconfig retains a SA token bound to a
         # long-dead pod and kubectl returns "must be logged in to the server".
         init_container {
-          name    = "setup-kubeconfig"
-          image   = "busybox:1.37"
+          name  = "setup-kubeconfig"
+          image = "busybox:1.37"
           command = ["sh", "-c", <<-EOT
             cat > /home/node/.openclaw/kubeconfig <<'KUBECONFIG_EOF'
             apiVersion: v1
@@ -444,8 +444,8 @@ resource "kubernetes_deployment" "openclaw" {
 
         # Main container: OpenClaw
         container {
-          name    = "openclaw"
-          image   = "ghcr.io/openclaw/openclaw:2026.5.4"
+          name  = "openclaw"
+          image = "ghcr.io/openclaw/openclaw:2026.5.4"
           # Doctor --fix auto-promotes the highest-tier codex model (gpt-5-pro) after
           # auth-profile-based model discovery; pin gpt-5.4-mini back to default after it.
           command = ["sh", "-c", "node openclaw.mjs doctor --fix 2>/dev/null; node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null; exec node openclaw.mjs gateway --allow-unconfigured --bind lan"]
@@ -752,7 +752,7 @@ module "ingress" {
   name            = "openclaw"
   tls_secret_name = var.tls_secret_name
   port            = 80
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "OpenClaw"
@@ -952,6 +952,7 @@ resource "kubernetes_service" "task_webhook" {
 
 module "task_webhook_ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
+  auth             = "required"
   namespace        = kubernetes_namespace.openclaw.metadata[0].name
   name             = "task-webhook"
   tls_secret_name  = var.tls_secret_name
@@ -1275,5 +1276,5 @@ module "openlobster_ingress" {
   tls_secret_name = var.tls_secret_name
   host            = "openlobster"
   port            = 80
-  protected       = true
+  auth            = "required"
 }

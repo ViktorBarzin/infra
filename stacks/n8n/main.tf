@@ -386,7 +386,11 @@ resource "kubernetes_service" "n8n" {
   }
 }
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # n8n hosts webhook endpoints at /webhook/... (WEBHOOK_URL points here);
+  # external services POST to trigger workflows. Forward-auth would block
+  # every webhook trigger. n8n has its own user login + per-webhook auth.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.n8n.metadata[0].name
   name            = "n8n"

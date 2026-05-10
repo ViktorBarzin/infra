@@ -288,6 +288,7 @@ resource "kubernetes_service" "shlink" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "url"
@@ -438,7 +439,7 @@ module "ingress-web" {
   name            = "shlink"
   service_name    = "shlink-web"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "false"
     "gethomepage.dev/name"         = "Shlink Web"

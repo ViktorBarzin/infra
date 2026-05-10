@@ -112,14 +112,15 @@ module "anubis" {
 
 module "ingress" {
   source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   dns_type          = "non-proxied"
   namespace         = kubernetes_namespace.kms.metadata[0].name
   name              = "kms"
   service_name      = module.anubis.service_name
   port              = module.anubis.service_port
   extra_middlewares = ["traefik-x402@kubernetescrd"]
-  tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "KMS"
