@@ -26,12 +26,16 @@ module "nfs_data" {
 ## ~~iSCSI Storage~~ (REMOVED — replaced by proxmox-lvm)
 > iSCSI via democratic-csi and TrueNAS has been fully removed (2026-04). All database storage now uses `StorageClass: proxmox-lvm` (Proxmox CSI, LVM-thin hotplug). TrueNAS has been decommissioned.
 
-## Anti-AI Scraping (3 Active Layers) (Updated 2026-04-17)
+## Anti-AI Scraping (4 Active Layers) (Updated 2026-05-10)
 Default `anti_ai_scraping = true` in ingress_factory. Disable per-service: `anti_ai_scraping = false`.
-1. Bot blocking (ForwardAuth → poison-fountain) 2. X-Robots-Tag noai 3. Tarpit/poison content (standalone at poison.viktorbarzin.me)
-Trap links (formerly layer 3) removed April 2026 — rewrite-body plugin broken on Traefik v3.6.12 (Yaegi bugs). `strip-accept-encoding` and `anti-ai-trap-links` middlewares deleted.
+1. **Anubis PoW challenge** (per-site reverse proxy) — `modules/kubernetes/anubis_instance/`. Latest: `ghcr.io/techarohq/anubis:v1.25.0`. Difficulty 2 (~250 ms desktop / ~700 ms mobile), 30-day JWT cookie scoped to `viktorbarzin.me` so a single solve covers every Anubis-fronted subdomain. Active on: `viktorbarzin.me`, `kms.viktorbarzin.me`, `travel.viktorbarzin.me`. Add to a stack: `module "anubis" { source = "../../modules/kubernetes/anubis_instance"; name = "X"; namespace = ...; target_url = "http://<svc>.<ns>.svc.cluster.local" }`, then point ingress_factory at `module.anubis.service_name` + `port = module.anubis.service_port` and set `anti_ai_scraping = false`. Shared ed25519 signing key in Vault `secret/viktor` -> `anubis_ed25519_key`. **Avoid putting Anubis in front of CLI/API/Git endpoints (Forgejo, APIs, WebDAV)** — clients without JS can't solve PoW.
+2. **Bot blocking forwardAuth** (ForwardAuth → bot-block-proxy → poison-fountain) — global default for non-Anubis sites. `bot-block-proxy` (OpenResty in `traefik` ns) is fail-open with 100 ms connect / 200 ms read timeouts so a downed poison-fountain costs ≤200 ms per request. Source: `stacks/traefik/modules/traefik/main.tf`.
+3. **X-Robots-Tag noai** — set by `traefik-anti-ai-headers` middleware. Anubis additionally serves a comprehensive `/robots.txt` (`SERVE_ROBOTS_TXT=true`) to well-behaved bots.
+4. **Tarpit/poison content** (standalone at poison.viktorbarzin.me, `stacks/poison-fountain/`). Currently scaled to `replicas = 0` — fail-open path means no live traffic, no penalty.
+
+Trap links (formerly a layer) removed April 2026 — rewrite-body plugin broken on Traefik v3.6.12 (Yaegi bugs). `strip-accept-encoding` and `anti-ai-trap-links` middlewares deleted.
 Rybbit analytics injection now via Cloudflare Worker (`stacks/rybbit/worker/`, HTMLRewriter, wildcard route `*.viktorbarzin.me/*`, 28 site ID mappings).
-Key files: `stacks/poison-fountain/`, `stacks/rybbit/worker/`, `stacks/platform/modules/traefik/middleware.tf`
+Key files: `modules/kubernetes/anubis_instance/`, `stacks/poison-fountain/`, `stacks/rybbit/worker/`, `stacks/traefik/modules/traefik/main.tf`
 
 ## Terragrunt Architecture
 - Root `terragrunt.hcl`: DRY providers, backend, variable loading, `generate "tiers"` block
