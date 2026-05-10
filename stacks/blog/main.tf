@@ -112,14 +112,26 @@ resource "kubernetes_service" "blog" {
   }
 }
 
+# Anubis reverse proxy in front of the blog. First-time visitors solve a
+# tiny PoW (~250ms desktop), get a 30-day cookie, and pass through. Replaces
+# the global ai-bot-block forwardAuth for this site.
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "blog"
+  namespace  = kubernetes_namespace.website.metadata[0].name
+  target_url = "http://${kubernetes_service.blog.metadata[0].name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local"
+}
+
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.website.metadata[0].name
-  name            = "blog"
-  service_name    = "blog"
-  full_host       = "viktorbarzin.me"
-  dns_type        = "proxied"
-  tls_secret_name = var.tls_secret_name
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.website.metadata[0].name
+  name             = "blog"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  full_host        = "viktorbarzin.me"
+  dns_type         = "proxied"
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Anubis is the gatekeeper now — drop the redundant ai-bot-block forwardAuth.
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Blog"
@@ -131,10 +143,12 @@ module "ingress" {
 }
 
 module "ingress-www" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.website.metadata[0].name
-  name            = "blog-www"
-  service_name    = "blog"
-  full_host       = "www.viktorbarzin.me"
-  tls_secret_name = var.tls_secret_name
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.website.metadata[0].name
+  name             = "blog-www"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  full_host        = "www.viktorbarzin.me"
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
 }
