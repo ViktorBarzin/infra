@@ -176,6 +176,7 @@ resource "kubernetes_service" "ytdlp" {
 }
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "ytdlp"
   tls_secret_name = var.tls_secret_name
@@ -355,7 +356,7 @@ module "highlights_ingress" {
   name            = "yt-highlights"
   tls_secret_name = var.tls_secret_name
   host            = "yt-highlights"
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "YT Highlights"

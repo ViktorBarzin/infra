@@ -132,5 +132,5 @@ module "ingress" {
   namespace       = kubernetes_namespace.dashy.metadata[0].name
   name            = "dashy"
   tls_secret_name = var.tls_secret_name
-  protected       = true # hidden as we use homepage now
+  auth            = "required" # hidden as we use homepage now
 }

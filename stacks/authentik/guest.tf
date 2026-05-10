@@ -101,8 +101,8 @@ resource "authentik_flow_stage_binding" "public_login" {
   # request.context, so the expression policy's mutation would no-op. With
   # evaluate_on_plan=false + re_evaluate_policies=true, the policy fires
   # right before the stage runs, when flow_plan is fully populated.
-  evaluate_on_plan       = false
-  re_evaluate_policies   = true
+  evaluate_on_plan     = false
+  re_evaluate_policies = true
 }
 
 resource "authentik_policy_binding" "set_guest_before_login" {
@@ -198,7 +198,10 @@ resource "authentik_outpost" "public" {
 # `Provider for Public` external_host points here, so all redirect_uris in
 # the OAuth flow resolve to this hostname.
 module "ingress_public_outpost" {
-  source           = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Public-tier outpost callback — the OAuth flow's redirect_uris all resolve
+  # here; gating it with forward-auth would loop the public outpost onto itself.
+  auth             = "none"
   namespace        = "authentik"
   name             = "public-outpost"
   host             = "public-auth"

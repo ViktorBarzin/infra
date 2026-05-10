@@ -111,9 +111,9 @@ resource "kubernetes_config_map" "hermes_config" {
 
       # Context compression
       compression = {
-        enabled      = true
-        threshold    = 0.50
-        target_ratio = 0.20
+        enabled        = true
+        threshold      = 0.50
+        target_ratio   = 0.20
         protect_last_n = 20
       }
 
@@ -411,7 +411,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.hermes_agent.metadata[0].name
   name            = "hermes-agent"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Hermes Agent"

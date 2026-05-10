@@ -254,7 +254,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.ebook2audiobook.metadata[0].name
   name            = "ebook2audiobook"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Ebook2Audiobook"
@@ -445,7 +445,7 @@ module "audiblez-web-ingress" {
   host            = "audiblez"
   dns_type        = "non-proxied"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   max_body_size   = "500m" # Allow large EPUB uploads
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

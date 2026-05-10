@@ -194,7 +194,11 @@ resource "kubernetes_service" "forgejo" {
   }
 }
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Git + OCI registry (/v2/) — native clients (git, docker/podman) use HTTP
+  # basic-auth / bearer tokens, NOT browser sessions. Forward-auth would 302
+  # them into a redirect they can't follow.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"

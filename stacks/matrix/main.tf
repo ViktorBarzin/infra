@@ -224,7 +224,12 @@ resource "kubernetes_service" "matrix" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Matrix homeserver — both client-server (/_matrix/client) and
+  # server-server (/_matrix/federation) APIs use bearer tokens / signed
+  # requests, not browser sessions. Forward-auth would break federation
+  # and all native Matrix clients.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.matrix.metadata[0].name
   name            = "matrix"

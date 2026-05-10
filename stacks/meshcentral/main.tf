@@ -271,7 +271,7 @@ module "ingress" {
   name             = "meshcentral"
   tls_secret_name  = var.tls_secret_name
   port             = 80
-  protected        = true
+  auth             = "required"
   anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

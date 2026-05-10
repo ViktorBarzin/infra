@@ -138,11 +138,12 @@ resource "kubernetes_service" "aiostreams" {
 
 module "ingress" {
   source          = "../../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.aiostreams.metadata[0].name
   name            = "aiostreams"
   tls_secret_name = var.tls_secret_name
-  #   protected       = true
+  #   auth = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "AIOStreams"

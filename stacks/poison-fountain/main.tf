@@ -210,6 +210,7 @@ resource "kubernetes_service" "poison_fountain" {
 # Deliberately NO rate limiting, NO CrowdSec, NO anti-AI (we WANT scrapers here)
 module "ingress" {
   source                  = "../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   namespace               = kubernetes_namespace.poison_fountain.metadata[0].name
   name                    = "poison-fountain"
   host                    = "poison"

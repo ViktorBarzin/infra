@@ -217,7 +217,9 @@ resource "kubernetes_service" "xray-reality" {
 }
 
 module "ingress_ws" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # VPN protocol (WebSocket transport) — native xray clients, not browsers.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-ws"
@@ -228,7 +230,9 @@ module "ingress_ws" {
 }
 
 module "ingress_grpc" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # VPN protocol (gRPC transport) — native xray clients, not browsers.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-grpc"
@@ -243,7 +247,9 @@ module "ingress_grpc" {
 }
 
 module "ingress_vless" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # VPN protocol (VLESS) — native xray clients, not browsers.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.xray.metadata[0].name
   name            = "xray-vless"

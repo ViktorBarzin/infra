@@ -96,7 +96,7 @@ module "ingress" {
   host             = "k8s"
   dns_type         = "proxied"
   tls_secret_name  = var.tls_secret_name
-  protected        = true
+  auth             = "required"
   backend_protocol = "HTTPS"
   port             = 443
   extra_annotations = {
