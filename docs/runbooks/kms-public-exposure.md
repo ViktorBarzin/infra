@@ -15,6 +15,20 @@ how to tune the rate limit, how to revoke if abused.
   the kube-proxy SNAT too). Same pattern mailserver used pre-2026-04-19.
   Sharing `10.0.20.200` isn't an option — all 10 services there are
   ETP=Cluster and MetalLB requires a single ETP per shared IP.
+- **Native DNS auto-discovery for LAN clients**: any Windows client with
+  DNS suffix `viktorbarzin.lan` activates with zero config — Windows
+  queries `_vlmcs._tcp.viktorbarzin.lan` SRV by default, the SRV target
+  resolves to `vlmcs.viktorbarzin.lan` → `10.0.20.202`, and `slmgr /ato`
+  succeeds. Records:
+  - `_vlmcs._tcp.viktorbarzin.lan` SRV 0 0 1688 vlmcs.viktorbarzin.lan
+  - `vlmcs.viktorbarzin.lan` A `10.0.20.202`
+  - `kms.viktorbarzin.lan` A `10.0.20.200` (Traefik — for the user-facing
+    website at `https://kms.viktorbarzin.lan/`; **not** the KMS server)
+  Manual override (e.g., for clients without the suffix or for clients
+  on the public internet): `slmgr /skms kms.viktorbarzin.me:1688` (WAN
+  path via pfSense forward) or `slmgr /skms 10.0.20.202:1688` (direct).
+  To revert a manually-overridden client back to auto-discovery:
+  `slmgr /ckms`.
 - **Pod fluidity**: deployment has `replicas=1` (notifier dedup state is
   per-pod) with no node affinity. TCP readiness/liveness probes on 1688
   gate Pod Ready on the listener actually being up, so MetalLB only
