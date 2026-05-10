@@ -1149,7 +1149,8 @@ resource "null_resource" "pg_terraform_state_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'terraform_state'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE ROLE terraform_state WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
@@ -1173,7 +1174,8 @@ resource "null_resource" "pg_payslip_ingest_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE ROLE payslip_ingest WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
@@ -1197,13 +1199,43 @@ resource "null_resource" "pg_job_hunter_db" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas pg-cluster-1 -c postgres -- \
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
         bash -c '
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'job_hunter'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE ROLE job_hunter WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'job_hunter'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE DATABASE job_hunter OWNER job_hunter"
           psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE job_hunter TO job_hunter"
+        '
+    EOT
+  }
+}
+
+# Postiz: 3 databases (postiz, temporal, temporal_visibility) all owned by the
+# `postiz` role. Bundled bitnami PostgreSQL was retired 2026-05-09 in favour of
+# this CNPG cluster — covered by postgresql-backup-per-db automatically.
+# Role password placeholder; Vault static role `pg-postiz` rotates 7d.
+resource "null_resource" "pg_postiz_dbs" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    role = "postiz"
+    dbs  = "postiz,temporal,temporal_visibility"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'postiz'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE postiz WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          for db in postiz temporal temporal_visibility; do
+            psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'$db'"'"'" | grep -q 1 || \
+              psql -U postgres -c "CREATE DATABASE $db OWNER postiz"
+            psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE $db TO postiz"
+          done
         '
     EOT
   }

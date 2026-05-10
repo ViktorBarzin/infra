@@ -103,6 +103,26 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "IMMICH_PG_PASSWORD"
           remoteRef = { key = "instagram-poster", property = "immich_pg_password" }
         },
+        # IG-archive dedup: tokens for Meta Graph API live ingest. Token
+        # is the long-lived (60-day) IG user access token. The token-refresh
+        # CronJob writes the rotated value back to Vault; ESO syncs it
+        # back into this Secret on its 15m interval.
+        {
+          secretKey = "IG_GRAPH_TOKEN"
+          remoteRef = { key = "instagram-poster", property = "ig_graph_long_lived_token" }
+        },
+        {
+          secretKey = "IG_GRAPH_APP_ID"
+          remoteRef = { key = "instagram-poster", property = "ig_graph_app_id" }
+        },
+        {
+          secretKey = "IG_GRAPH_APP_SECRET"
+          remoteRef = { key = "instagram-poster", property = "ig_graph_app_secret" }
+        },
+        {
+          secretKey = "IG_BUSINESS_ACCOUNT_ID"
+          remoteRef = { key = "instagram-poster", property = "ig_business_account_id" }
+        },
       ]
     }
   }
@@ -215,6 +235,20 @@ resource "kubernetes_deployment" "instagram_poster" {
             name  = "LOG_LEVEL"
             value = "INFO"
           }
+          # IG-archive dedup config. Defaults match the Python Settings
+          # class; override here so a flag flip is a `terraform apply`
+          # not a code change. `enabled=false` until the export-zip
+          # backfill + a few days of /ig-ingest produce a populated
+          # ig_posted_media table — we don't want to filter everything
+          # out on day one when the table is empty.
+          env {
+            name  = "IG_DEDUP_ENABLED"
+            value = "false"
+          }
+          env {
+            name  = "IG_ML_URL"
+            value = "http://immich-machine-learning.immich.svc.cluster.local:3003"
+          }
 
           volume_mount {
             name       = "data"
@@ -321,4 +355,152 @@ module "ingress_protected" {
   ingress_path    = ["/"]
   port            = 80
   service_name    = "instagram-poster"
+}
+
+# IG-archive dedup live ingest. Three CronJobs all curl back into the
+# in-cluster Service. /ig-ingest is idempotent (ON CONFLICT DO NOTHING),
+# so missed runs / restarts are harmless.
+#
+# Cadence rationale (plan §4):
+#   stories — */30. Stories age out at 24h; running every 30m means a
+#             missed run still catches the entire window with margin.
+#   feed    — every 6h. Feed posts don't expire; this is just for
+#             "what's been posted since last poll".
+#   refresh — daily 02:00. Long-lived token has 60-day TTL; refreshing
+#             daily is wildly conservative but cheap, and the
+#             alternative ("rotate at expiry-7d") needs persistent state.
+
+locals {
+  ig_cron_image = "curlimages/curl:8.10.1"
+}
+
+resource "kubernetes_cron_job_v1" "ig_ingest_stories" {
+  metadata {
+    name      = "ig-ingest-stories"
+    namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule                      = "*/30 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "ingest"
+              image = local.ig_cron_image
+              command = [
+                "sh", "-c",
+                "curl -fsS -X POST http://instagram-poster.instagram-poster.svc.cluster.local/ig-ingest -H 'Content-Type: application/json' -d '{\"include\":[\"stories\"]}'",
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_deployment.instagram_poster]
+}
+
+resource "kubernetes_cron_job_v1" "ig_ingest_feed" {
+  metadata {
+    name      = "ig-ingest-feed"
+    namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule                      = "0 */6 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "ingest"
+              image = local.ig_cron_image
+              command = [
+                "sh", "-c",
+                "curl -fsS -X POST http://instagram-poster.instagram-poster.svc.cluster.local/ig-ingest -H 'Content-Type: application/json' -d '{\"include\":[\"feed\"]}'",
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_deployment.instagram_poster]
+}
+
+# Daily token refresh. Hits /ig-refresh-token which returns the new token
+# in JSON; we don't write it back to Vault here — that's a follow-up
+# decision (plan §6, open item #2). For now the new token is logged and
+# operators rotate manually if it ever fails. The 60-day TTL gives plenty
+# of room.
+resource "kubernetes_cron_job_v1" "ig_refresh_token" {
+  metadata {
+    name      = "ig-refresh-token"
+    namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule                      = "0 2 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "refresh"
+              image = local.ig_cron_image
+              command = [
+                "sh", "-c",
+                "curl -fsS -X POST http://instagram-poster.instagram-poster.svc.cluster.local/ig-refresh-token",
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_deployment.instagram_poster]
 }

@@ -14,6 +14,11 @@ choosing between **Qwen3-VL-8B**, **MiniCPM-V-4.5**, and
 Future consumers (Home Assistant, agentic tooling) can hit the same
 endpoint via LiteLLM at the cluster gateway.
 
+First benchmark run (2026-05-10): see
+`infra/docs/benchmarks/2026-05-10-vision-llm.md`. Verdict: **qwen3vl-4b**
+for the request path (3.55 s p50, 100% parse, decisive top-N
+distribution). qwen3vl-8b for caption polish on top picks.
+
 ## Why llama.cpp + llama-swap (not Ollama)
 
 Verified across 7+7 research/challenger subagents (2026-05-10):
