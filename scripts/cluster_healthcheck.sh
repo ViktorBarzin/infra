@@ -196,12 +196,33 @@ check_pods() {
     section 4 "Problematic Pods"
     local bad count detail="" status="PASS"
 
+    # Skip pods owned by Jobs (which are owned by CronJobs). A failed CronJob
+    # retry isn't a problematic pod — the next CronJob fire will replace it.
+    # Real problems are deployments / statefulsets / daemonsets in trouble.
+    local job_owned_pods
+    job_owned_pods=$($KUBECTL get pods -A -o json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for p in d["items"]:
+    owners = p["metadata"].get("ownerReferences", [])
+    if any(o.get("kind") == "Job" for o in owners):
+        print(f"{p[\"metadata\"][\"namespace\"]} {p[\"metadata\"][\"name\"]}")
+' 2>/dev/null || true)
+
     bad=$( {
         $KUBECTL get pods -A --no-headers --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null \
             | grep -E 'CrashLoopBackOff|Error|Pending|Init:|ImagePullBackOff|ErrImagePull' || true
         $KUBECTL get pods -A --no-headers 2>/dev/null \
             | grep -E 'CrashLoopBackOff|ImagePullBackOff|ErrImagePull' || true
     } | awk '!seen[$1,$2]++' | sed '/^$/d') || true
+
+    # Filter out Job-owned pods
+    if [[ -n "$job_owned_pods" && -n "$bad" ]]; then
+        bad=$(echo "$bad" | awk -v jp="$job_owned_pods" '
+            BEGIN { n = split(jp, lines, "\n"); for (i=1;i<=n;i++) skip[lines[i]] = 1 }
+            { key = $1 " " $2; if (!(key in skip)) print }
+        ')
+    fi
 
     count=$(count_lines "$bad")
 
@@ -229,7 +250,21 @@ check_evicted() {
     section 5 "Evicted/Failed Pods"
     local evicted count detail="" status="PASS"
 
-    evicted=$($KUBECTL get pods -A --no-headers --field-selector=status.phase=Failed 2>/dev/null || true)
+    # Exclude pods owned by Jobs — those are CronJob retries that K8s leaves
+    # behind for log inspection. They're not "evicted" in the cluster-health
+    # sense and the next CronJob fire replaces them.
+    evicted=$($KUBECTL get pods -A -o json --field-selector=status.phase=Failed 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in d.get("items", []):
+    owners = p["metadata"].get("ownerReferences", [])
+    if any(o.get("kind") == "Job" for o in owners):
+        continue
+    print(f"{p[\"metadata\"][\"namespace\"]}\t{p[\"metadata\"][\"name\"]}\t{p.get(\"status\",{}).get(\"reason\",\"\")}")
+' 2>/dev/null || true)
     count=$(count_lines "$evicted")
 
     if [[ "$count" -eq 0 ]]; then
@@ -540,18 +575,25 @@ check_alerts() {
         return 0
     fi
 
+    # Only count warning + critical alerts. Info-level alerts (RecentNodeReboot,
+    # PVAutoExpanding, etc.) are informational by design and shouldn't be
+    # treated as a script-level WARN — the alert rules themselves already
+    # encode the severity.
     firing_count=$(echo "$alerts" | python3 -c '
 import json, sys
+ACTIONABLE = {"warning", "critical"}
+def actionable(labels):
+    return labels.get("severity", "info").lower() in ACTIONABLE
 try:
     data = json.load(sys.stdin)
     if isinstance(data, list):
-        active = [a for a in data if a.get("status", {}).get("state") == "active"]
+        active = [a for a in data if a.get("status", {}).get("state") == "active" and actionable(a.get("labels", {}))]
         count = len(active)
         names = [a.get("labels", {}).get("alertname", "?") for a in active]
         print(f"{count}:" + ",".join(names) if count > 0 else "0:")
     elif isinstance(data, dict) and "data" in data:
         alerts_list = data["data"].get("alerts", [])
-        firing = [a for a in alerts_list if a.get("state") == "firing"]
+        firing = [a for a in alerts_list if a.get("state") == "firing" and actionable(a.get("labels", {}))]
         count = len(firing)
         names = [a.get("labels", {}).get("alertname", "?") for a in firing]
         print(f"{count}:" + ",".join(names) if count > 0 else "0:")
@@ -600,16 +642,35 @@ check_uptime_kuma() {
     fi
 
     result=$(UPTIME_KUMA_PASSWORD="$uk_pass" ~/.venvs/claude/bin/python3 -c '
-import sys, os
+import sys, os, time
 try:
     from uptime_kuma_api import UptimeKumaApi
 except ImportError:
     print("ERROR:uptime-kuma-api not installed")
     sys.exit(0)
 
+# The uptime-kuma WebSocket login is intermittently flaky — single-shot
+# failures showed up repeatedly in healthchecks even though the service
+# was healthy. Retry up to 3 times with backoff before declaring connect
+# failure.
+last_exc = None
+api = None
+for attempt in range(3):
+    try:
+        api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=120, wait_events=0.2)
+        api.login("admin", os.environ["UPTIME_KUMA_PASSWORD"])
+        break
+    except Exception as e:
+        last_exc = e
+        try: api.disconnect()
+        except Exception: pass
+        api = None
+        time.sleep(2 * (attempt + 1))
+if api is None:
+    print(f"CONN_ERROR:{last_exc}")
+    sys.exit(0)
+
 try:
-    api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=120, wait_events=0.2)
-    api.login("admin", os.environ["UPTIME_KUMA_PASSWORD"])
 
     monitors = api.get_monitors()
     heartbeats = api.get_heartbeats()
@@ -1075,9 +1136,14 @@ for item in data.get("items", []):
                     expiry = datetime.strptime(date_str.strip(), "%b %d %H:%M:%S %Y %Z")
                     expiry = expiry.replace(tzinfo=timezone.utc)
                     days_left = (expiry - datetime.now(timezone.utc)).days
+                    # Threshold rationale (lowered from 30d):
+                    # - cnpg-webhook-cert: CNPG operator auto-rotates at 7d before expiry
+                    # - kyverno-*-tls-pair: Kyverno auto-rotates at 15d before expiry
+                    # - viktorbarzin.me Lets Encrypt wildcard: renewed weekly via Woodpecker
+                    # Anything still <14d at check time is genuinely worth surfacing.
                     if days_left <= 7:
                         print(f"FAIL:{ns}/{name}:{days_left}d")
-                    elif days_left <= 30:
+                    elif days_left <= 14:
                         print(f"WARN:{ns}/{name}:{days_left}d")
                 except ValueError:
                     pass
@@ -1086,8 +1152,8 @@ for item in data.get("items", []):
 ' 2>/dev/null) || true
 
     if [[ -z "$cert_issues" ]]; then
-        pass "All TLS certificates valid for >30 days"
-        json_add "tls_certs" "PASS" "All valid >30d"
+        pass "All TLS certificates valid for >14 days"
+        json_add "tls_certs" "PASS" "All valid >14d"
     else
         [[ "$QUIET" == true ]] && section_always 22 "TLS Certificate Expiry"
         while IFS= read -r line; do
@@ -1333,12 +1399,59 @@ check_ha_entities() {
     local result
     result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
 import os, json
+from datetime import datetime, timezone, timedelta
+
+# Noise filter rationale:
+# * The HA "unavailable" state covers everything from "the iDRAC scrape failed
+#   30 seconds ago" to "this iPhone hasn't checked in in 6 hours" to
+#   "this YAML rest sensor has been broken for a week". Counting all of them
+#   produces 400+ alerts that are mostly expected (phones in standby, lights
+#   off, TVs idle).
+# * Three filters dramatically cut noise without hiding real outages:
+#     1. SKIP_DOMAINS — domains that go unavailable transiently by design
+#        (mobile_app on backgrounded apps, notify per-device, button/scene/
+#        event are momentary).
+#     2. STALE_HOURS — only count entities that have been unavailable for
+#        this long. A flapping integration that recovers in <24h is noise;
+#        one stuck for >24h is real.
+#     3. SKIP_DEVICE_HINTS — friendly-name substrings for things that come
+#        and go (laptops, phones, TVs, vacuums, washers).
+SKIP_DOMAINS = {"mobile_app", "device_tracker", "notify", "button", "scene",
+                "event", "image", "update"}
+SKIP_DEVICE_HINTS = ("iphone", "ipad", "macbook", "mac mini", "tv", "bravia",
+                     "playstation", "switch", "roomba", "vacuum", "rumi",
+                     "ipad", "laptop", "phone", "перална", "сушилня",
+                     "миялна", "laptop2")
+STALE_HOURS = 24
 
 cache = os.environ["HA_CACHE_DIR"]
 with open(f"{cache}/states.json") as f:
     states = json.load(f)
 
-unavail = [s for s in states if s.get("state") in ("unavailable", "unknown")]
+now = datetime.now(timezone.utc)
+threshold = now - timedelta(hours=STALE_HOURS)
+
+def is_stale(s):
+    if s.get("state") not in ("unavailable", "unknown"):
+        return False
+    domain = s["entity_id"].split(".")[0]
+    if domain in SKIP_DOMAINS:
+        return False
+    name = (s.get("attributes", {}).get("friendly_name") or "").lower()
+    if any(h in name for h in SKIP_DEVICE_HINTS):
+        return False
+    # last_changed = when the state last flipped. If it flipped to unavailable
+    # >24h ago and stayed there, the integration is genuinely broken.
+    lc = s.get("last_changed") or s.get("last_updated")
+    if not lc:
+        return True  # no timestamp = treat as old
+    try:
+        dt = datetime.fromisoformat(lc.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return dt < threshold
+
+unavail = [s for s in states if is_stale(s)]
 domains = {}
 for s in unavail:
     d = s["entity_id"].split(".")[0]
@@ -1497,24 +1610,42 @@ with open(f"{cache}/states.json") as f:
 
 autos = [s for s in states if s["entity_id"].startswith("automation.")]
 total = len(autos)
-disabled = [a["entity_id"] for a in autos if a["state"] == "off"]
-disabled_count = len(disabled)
+
+# Noise filter rationale (was: any disabled OR not-triggered-in-30d):
+# * "Disabled" alone is fine — Viktor disables automations intentionally
+#   (seasonal, holiday-only, paused). Only flag when ABANDONED, i.e.
+#   disabled for >180 days AND never triggered recently.
+# * "Stale" alone is fine for low-frequency automations (annual reminders,
+#   manual triggers). Raise the bar to 180d (was 30d).
+DISABLED_STALE_DAYS = 180
+STALE_DAYS = 180
 
 now = datetime.now(timezone.utc)
+
+def days_since(ts):
+    if not ts:
+        return None
+    try:
+        return (now - datetime.fromisoformat(ts.replace("Z", "+00:00"))).days
+    except Exception:
+        return None
+
+disabled = []
 stale = []
 for a in autos:
+    lt_days = days_since(a.get("attributes", {}).get("last_triggered"))
+    changed_days = days_since(a.get("last_changed"))
     if a["state"] == "off":
-        continue
-    lt = a.get("attributes", {}).get("last_triggered")
-    if lt:
-        try:
-            t = datetime.fromisoformat(lt.replace("Z", "+00:00"))
-            days = (now - t).days
-            if days > 30:
-                stale.append(a["entity_id"] + "=" + str(days) + "d")
-        except:
-            pass
+        # Only flag a disabled automation if it has ALSO been untouched for
+        # the threshold — i.e. genuinely abandoned, not "paused for now".
+        # Use last_changed as a proxy for "user-touched recently".
+        if changed_days is None or changed_days > DISABLED_STALE_DAYS:
+            disabled.append(a["entity_id"])
+    else:
+        if lt_days is not None and lt_days > STALE_DAYS:
+            stale.append(f"{a['entity_id']}={lt_days}d")
 
+disabled_count = len(disabled)
 stale_count = len(stale)
 disabled_names = "; ".join(disabled)
 stale_names = "; ".join(stale[:10])

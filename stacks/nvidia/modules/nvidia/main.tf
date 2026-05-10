@@ -217,8 +217,11 @@ resource "kubernetes_service" "nvidia-exporter" {
 
 
 module "ingress" {
-  source                  = "../../../../modules/kubernetes/ingress_factory"
-  auth                    = "required"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Auth disabled — HA Sofia REST sensors poll /metrics; the OIDC flow
+  # would 302 every request. Same pattern as idrac-redfish-exporter +
+  # snmp-exporter (commit 5c594291).
+  auth                    = "none"
   namespace               = kubernetes_namespace.nvidia.metadata[0].name
   name                    = "nvidia-exporter"
   root_domain             = "viktorbarzin.lan"
