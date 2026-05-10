@@ -45,8 +45,8 @@ DEDUP_WINDOW = int(os.environ.get("DEDUP_WINDOW_SECONDS", "3600"))
 DEDUP_MAX = 4096
 METRICS_PORT = int(os.environ.get("METRICS_PORT", "9101"))
 
-OPEN_RE = re.compile(r":\s*IPv[46] connection accepted:\s*([0-9a-f.:\[\]]+):\d+")
-CLOSE_RE = re.compile(r":\s*IPv[46] connection closed:\s*([0-9a-f.:\[\]]+):\d+")
+OPEN_RE = re.compile(r":\s*IPv[46] connection accepted:\s*([0-9a-f.:\[\]]+):(\d+)")
+CLOSE_RE = re.compile(r":\s*IPv[46] connection closed:\s*([0-9a-f.:\[\]]+):(\d+)")
 APP_RE = re.compile(r":\s*Application ID\s*:\s*[0-9a-f-]+\s*\(([^)]+)\)")
 PROD_RE = re.compile(r":\s*Activation ID \(Product\)\s*:\s*[0-9a-f-]+\s*\(([^)]+)\)")
 HOST_RE = re.compile(r":\s*Workstation name\s*:\s*(.+?)\s*$")
@@ -106,40 +106,53 @@ class Event:
 def process_line(line: str, state: dict):
     """Drive the parser one line at a time. Returns (new_state, event_or_None).
 
-    On `connection accepted`, a new state dict is started.
-    On `connection closed`, an Event is emitted and state is reset.
-    Other lines accumulate fields into the current state.
+    `state` tracks per-connection state keyed by `ip:port` (vlmcsd is
+    multi-threaded — concurrent connections interleave in the log, so a
+    single shared dict gets clobbered). The special key `__current` points
+    at the most recent OPEN's key so detail lines (which lack ip:port
+    info) can be attributed to the right connection. Detail lines arrive
+    before the next OPEN under vlmcsd's processing model.
     """
     if (m := OPEN_RE.search(line)):
-        return {"ip": m.group(1)}, None
-    if not state:
+        ip = m.group(1)
+        key = f"{ip}:{m.group(2)}"
+        state[key] = {"ip": ip}
+        state["__current"] = key
         return state, None
-    if (m := APP_RE.search(line)):
-        state["app"] = m.group(1)
-        return state, None
-    if (m := PROD_RE.search(line)):
-        state["product"] = m.group(1)
-        return state, None
-    if (m := HOST_RE.search(line)):
-        state["host"] = m.group(1)
-        return state, None
-    if (m := STATUS_RE.search(line)):
-        state["status"] = m.group(1)
-        return state, None
-    if CLOSE_RE.search(line):
-        ip = state.get("ip", "?")
+
+    if (m := CLOSE_RE.search(line)):
+        key = f"{m.group(1)}:{m.group(2)}"
+        conn = state.pop(key, None)
+        if state.get("__current") == key:
+            state.pop("__current", None)
+        if conn is None:
+            return state, None  # orphan close (e.g., notifier started mid-conn)
+        ip = conn.get("ip", "?")
         source = classify_source(ip)
-        if is_probe(state):
+        if is_probe(conn):
             event = Event("probe", ip, source)
         else:
             event = Event(
                 "activation", ip, source,
-                app=state.get("app", ""),
-                product=state.get("product", state.get("app", "unknown")),
-                host=state.get("host", "?"),
-                status=state.get("status", "unknown"),
+                app=conn.get("app", ""),
+                product=conn.get("product", conn.get("app", "unknown")),
+                host=conn.get("host", "?"),
+                status=conn.get("status", "unknown"),
             )
-        return {}, event
+        return state, event
+
+    current = state.get("__current")
+    if not current or current not in state:
+        return state, None
+    conn = state[current]
+    if (m := APP_RE.search(line)):
+        conn["app"] = m.group(1)
+    elif (m := PROD_RE.search(line)):
+        conn["product"] = m.group(1)
+    elif (m := HOST_RE.search(line)):
+        conn["host"] = m.group(1)
+    elif (m := STATUS_RE.search(line)):
+        conn["status"] = m.group(1)
     return state, None
 
 
