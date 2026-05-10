@@ -15,6 +15,12 @@ variable "x402_wallet_address" {
   default     = ""
   description = "EVM wallet (Base mainnet, 0x…) that receives USDC from x402 payments. Empty = DRY_RUN, gateway always returns 200 to forwardAuth so traffic is unaffected."
 }
+variable "x402_notify_webhook_url" {
+  type        = string
+  default     = ""
+  description = "Slack-compatible incoming-webhook URL the gateway POSTs to on every successful payment. Empty = no notifications."
+  sensitive   = true
+}
 
 resource "kubernetes_namespace" "traefik" {
   metadata {
@@ -508,7 +514,7 @@ resource "kubernetes_deployment" "x402_gateway" {
         }
         container {
           name  = "x402-gateway"
-          image = "forgejo.viktorbarzin.me/viktor/x402-gateway:f4804d62"
+          image = "forgejo.viktorbarzin.me/viktor/x402-gateway:d9b83125"
           port {
             name           = "http"
             container_port = 8923
@@ -548,6 +554,13 @@ resource "kubernetes_deployment" "x402_gateway" {
           env {
             name  = "FACILITATOR_URL"
             value = "https://x402.org/facilitator"
+          }
+          # Slack incoming-webhook for real-time payment notifications.
+          # Reuses the existing Alertmanager channel — payment events appear
+          # alongside infra alerts. Reads from secret/viktor.alertmanager_slack_api_url.
+          env {
+            name  = "NOTIFY_WEBHOOK_URL"
+            value = var.x402_notify_webhook_url
           }
           resources {
             requests = {
