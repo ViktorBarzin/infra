@@ -117,7 +117,7 @@ Contributing distractions:
 
 | Priority | Action | Type | Details | Status |
 |----------|--------|------|---------|--------|
-| P2 | Codify the catch-all Proxy provider + embedded outpost config in Terraform | Architecture | Adopt `goauthentik/authentik` Terraform provider in `infra/stacks/authentik/`. Import the existing UUID `0eecac07-97c7-443c-8925-05f2f4fe3e47` and the catch-all provider pk=5. Move `kubernetes_json_patches` into TF so the fix is reviewable in git. | TODO |
+| P2 | Codify the catch-all Proxy provider + embedded outpost config in Terraform | Architecture | Adopt `goauthentik/authentik` Terraform provider in `infra/stacks/authentik/`. Import the existing UUID `0eecac07-97c7-443c-8925-05f2f4fe3e47` and the catch-all provider pk=5. Move `kubernetes_json_patches` into TF so the fix is reviewable in git. **Done 2026-05-10**: `authentik_outpost.embedded` resource + `authentik_provider_proxy.catchall.access_token_validity` codified, plan-to-zero on the whole stack. The `Outpost.managed` field is server-set (not in provider schema) and preserved across applies because TF only writes known fields. Same-day work also flipped the outpost's session backend from filesystem (`/dev/shm`) to PostgreSQL — see `.claude/reference/authentik-state.md`. | **DONE** |
 | P2 | Runbook: Authentik forward-auth troubleshooting | Docs | Add a runbook at `docs/runbooks/authentik-forward-auth-400.md` with the "grep outpost logs first" first step, plus pointer commands for `/dev/shm` usage, session file count, and recent authorize events. | TODO |
 
 ### P3 — Upstream + architectural
@@ -125,8 +125,8 @@ Contributing distractions:
 | Priority | Action | Type | Details | Status |
 |----------|--------|------|---------|--------|
 | P3 | Comment/support on authentik issue [#20093](https://github.com/goauthentik/authentik/issues/20093) | Upstream | Request either a persistent-backed session store (Redis/DB) OR a configurable GC interval shorter than the default 5 min. | TODO |
-| P3 | Consider shortening `access_token_validity` from 168h (7 days) to 24h | Config | Reduces steady-state session file count from ~181k to ~26k (7× reduction). Trade-off: users re-auth daily. Viktor's call on UX tolerance. | TODO |
-| P3 | Evaluate moving forward-auth away from the embedded outpost | Architecture | The embedded outpost is a single replica Go binary with in-memory session state. An external, multi-replica outpost with Redis-backed sessions is the production-grade deployment. Probably overkill for a home-lab, but worth noting. | TODO (paused) |
+| P3 | Consider shortening `access_token_validity` from 168h (7 days) to 24h | Config | Original idea: shrink steady-state session file count (~7× reduction) at the cost of daily re-auth. **Resolved differently 2026-05-10**: switched the outpost to the PostgreSQL session backend (`Outpost.managed = goauthentik.io/outposts/embedded` + `AUTHENTIK_POSTGRESQL__*` envFrom), which makes session count irrelevant for tmpfs sizing and lets us BUMP `access_token_validity` to `weeks=4` for better UX without cost. | **DONE (alt)** |
+| P3 | Evaluate moving forward-auth away from the embedded outpost | Architecture | Original framing: external, multi-replica outpost with Redis-backed sessions. **Resolved 2026-05-10** by enabling the postgres-backed session store on the embedded outpost itself (PR goauthentik/authentik#16628). Sessions now persist across pod restarts; the original "in-memory state" concern is moot. Multi-replica still requires a goauthentik upstream fix (PgBouncer-friendly session migration), but the loss-of-state class of failures is gone. | **DONE (alt)** |
 
 ## Lessons Learned
 
