@@ -159,7 +159,9 @@ module "ingress" {
   }
 }
 
-# Unprotected ingress for the setup script and agent endpoint (needs to be curl-able without auth)
+# Unprotected ingress for the setup script and agent endpoint (needs to be
+# curl-able without auth). `auth = "public"` would 302+cookie-dance on
+# first visit, breaking automation that doesn't preserve cookies.
 module "ingress_setup_script" {
   source          = "../../../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
@@ -168,5 +170,5 @@ module "ingress_setup_script" {
   service_name    = "k8s-portal"
   ingress_path    = ["/setup/script", "/agent"]
   tls_secret_name = var.tls_secret_name
-  auth            = "public"
+  auth            = "none"
 }
