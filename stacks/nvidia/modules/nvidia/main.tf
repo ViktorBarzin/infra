@@ -218,6 +218,7 @@ resource "kubernetes_service" "nvidia-exporter" {
 
 module "ingress" {
   source                  = "../../../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   namespace               = kubernetes_namespace.nvidia.metadata[0].name
   name                    = "nvidia-exporter"
   root_domain             = "viktorbarzin.lan"

@@ -731,6 +731,7 @@ resource "kubernetes_service" "immich-machine-learning" {
 
 module "ingress-immich" {
   source                  = "../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   dns_type                = "non-proxied"
   namespace               = kubernetes_namespace.immich.metadata[0].name
   name                    = "immich"
@@ -954,5 +955,5 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 #  namespace = kubernetes_namespace.immich.metadata[0].name
 #   name            = "immich-powertools"
 #   tls_secret_name = var.tls_secret_name
-#   protected       = true
+#   auth = "required"
 # }

@@ -563,6 +563,7 @@ resource "kubernetes_service" "rybbit-client" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
   name            = "rybbit"
@@ -579,7 +580,11 @@ module "ingress" {
 }
 
 module "ingress-api" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Analytics tracker beacon — public websites embed Rybbit's /api/script.js
+  # and post events to /api/event. Forward-auth would 302 every tracking
+  # request and break analytics collection. Rybbit's site_id is the gate.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name
   name            = "rybbit-api"

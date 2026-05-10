@@ -113,5 +113,5 @@ module "ingress" {
   namespace       = "servarr"
   name            = "soulseek"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
 }

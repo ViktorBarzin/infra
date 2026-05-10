@@ -288,7 +288,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.frigate.metadata[0].name
   name            = "frigate"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Frigate"
@@ -303,6 +303,7 @@ module "ingress" {
 
 module "ingress-internal" {
   source                  = "../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   namespace               = kubernetes_namespace.frigate.metadata[0].name
   name                    = "frigate-lan"
   host                    = "frigate-lan"

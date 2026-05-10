@@ -125,6 +125,7 @@ resource "kubernetes_service" "idrac-redfish-exporter" {
 
 module "idrac-redfish-exporter-ingress" {
   source                  = "../../../../modules/kubernetes/ingress_factory"
+  auth                    = "required"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "idrac-redfish-exporter"
   root_domain             = "viktorbarzin.lan"

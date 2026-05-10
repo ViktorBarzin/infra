@@ -378,6 +378,7 @@ resource "kubernetes_service" "calibre" {
 
 module "calibre_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "calibre"
@@ -502,7 +503,7 @@ module "stacks_ingress" {
   name            = "stacks"
   service_name    = "annas-archive-stacks"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
@@ -647,6 +648,7 @@ resource "kubernetes_service" "audiobookshelf" {
 
 module "audiobookshelf_ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "audiobookshelf"
@@ -921,7 +923,7 @@ module "book_search_ingress" {
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "book-search"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Book Search"
@@ -940,6 +942,6 @@ module "book_search_api_ingress" {
   host            = "book-search"
   service_name    = "book-search"
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  auth            = "none"
   ingress_path    = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
 }

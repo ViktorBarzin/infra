@@ -360,7 +360,7 @@ module "ingress" {
   service_name     = "grampsweb"
   tls_secret_name  = var.tls_secret_name
   max_body_size    = "500m"
-  protected        = true
+  auth             = "required"
   external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"

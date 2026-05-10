@@ -148,7 +148,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
   name            = "k8s-portal"
   tls_secret_name = var.tls_secret_name
-  protected       = true # Require Authentik login
+  auth            = "required" # Require Authentik login
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "K8s Portal"
@@ -168,5 +168,5 @@ module "ingress_setup_script" {
   service_name    = "k8s-portal"
   ingress_path    = ["/setup/script", "/agent"]
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  auth            = "public"
 }

@@ -102,6 +102,7 @@ resource "kubernetes_service" "echo" {
 
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"

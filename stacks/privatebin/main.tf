@@ -138,7 +138,11 @@ resource "kubernetes_service" "privatebin" {
 # the default `anti_ai_scraping` middleware is sufficient protection.
 
 module "ingress" {
-  source                         = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Public pastebin — anyone can create/read pastes. Pastes are client-side
+  # encrypted; AI scrapers gain nothing from indexing them. anti_ai_scraping
+  # defaults on for auth=none, which is the existing protection.
+  auth                           = "none"
   namespace                      = kubernetes_namespace.privatebin.metadata[0].name
   name                           = "privatebin"
   host                           = "pb"

@@ -432,7 +432,7 @@ module "ingress" {
   name            = "fire-planner"
   port            = 8080
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "FIRE Planner"
@@ -459,7 +459,7 @@ module "ingress_api" {
   port            = 8080
   ingress_path    = ["/api/"]
   tls_secret_name = var.tls_secret_name
-  protected       = false
+  auth            = "public"
 }
 
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource

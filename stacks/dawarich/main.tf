@@ -432,7 +432,12 @@ resource "kubernetes_service" "dawarich" {
 #   }
 # }
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # owntracks bridge hook posts to /api/v1/owntracks/points?api_key=... from
+  # outside the cluster; mobile location apps also POST programmatically with
+  # an api_key. Forward-auth would 302 these clients into a login they can't
+  # complete. Dawarich enforces api_key at app layer.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.dawarich.metadata[0].name
   name            = "dawarich"

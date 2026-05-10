@@ -237,10 +237,10 @@ module "tls_secret" {
 # (which load before any user has a chance to solve PoW), CHALLENGE
 # everything else — the HTML pages.
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "f1"
-  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
-  target_url = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
+  source      = "../../modules/kubernetes/anubis_instance"
+  name        = "f1"
+  namespace   = kubernetes_namespace.f1-stream.metadata[0].name
+  target_url  = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
   policy_yaml = <<-EOT
     bots:
       - import: (data)/bots/_deny-pathological.yaml
@@ -275,6 +275,7 @@ module "anubis" {
 
 module "ingress" {
   source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   dns_type          = "non-proxied"
   namespace         = kubernetes_namespace.f1-stream.metadata[0].name
   name              = "f1"

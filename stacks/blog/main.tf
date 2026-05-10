@@ -124,15 +124,16 @@ module "anubis" {
 
 module "ingress" {
   source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   namespace         = kubernetes_namespace.website.metadata[0].name
   name              = "blog"
   service_name      = module.anubis.service_name
   port              = module.anubis.service_port
   extra_middlewares = ["traefik-x402@kubernetescrd"]
-  full_host        = "viktorbarzin.me"
-  dns_type         = "proxied"
-  tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false # Anubis is the gatekeeper now — drop the redundant ai-bot-block forwardAuth.
+  full_host         = "viktorbarzin.me"
+  dns_type          = "proxied"
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false # Anubis is the gatekeeper now — drop the redundant ai-bot-block forwardAuth.
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Blog"
@@ -145,12 +146,13 @@ module "ingress" {
 
 module "ingress-www" {
   source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   namespace         = kubernetes_namespace.website.metadata[0].name
   name              = "blog-www"
   service_name      = module.anubis.service_name
   port              = module.anubis.service_port
   extra_middlewares = ["traefik-x402@kubernetescrd"]
-  full_host        = "www.viktorbarzin.me"
-  tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false
+  full_host         = "www.viktorbarzin.me"
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false
 }

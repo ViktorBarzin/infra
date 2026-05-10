@@ -354,7 +354,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.chrome_service.metadata[0].name
   name            = "chrome"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   # noVNC defaults to /vnc.html — auto-redirect / there.
   ingress_path = ["/"]
   extra_annotations = {

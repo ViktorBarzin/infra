@@ -31,9 +31,28 @@ variable "tls_secret_name" {}
 variable "backend_protocol" {
   default = "HTTP"
 }
-variable "protected" {
-  type    = bool
-  default = false
+variable "auth" {
+  type        = string
+  default     = "required"
+  description = <<-EOT
+    Authentik auth posture for this ingress:
+      * "required" (default): standard Authentik forward-auth — login required.
+        Catches the legacy `protected = true` semantics.
+      * "public": public-tier — auto-bind anonymous requests to the `guest`
+        Authentik user (no UI prompt), audited but not gated. Logged-in
+        users keep their real identity in X-authentik-username.
+      * "none": no Authentik forward-auth middleware at all. Use for
+        Anubis-fronted content sites, native-client APIs (Git, /v2/, WebDAV),
+        webhook receivers, and the Authentik outpost itself. Anti-AI
+        headers are auto-enabled when auth = "none" unless overridden.
+
+    Defaulting to "required" enforces "every ingress must have an explicit
+    auth decision recorded by Authentik" — accidental omission fails closed.
+  EOT
+  validation {
+    condition     = contains(["required", "public", "none"], var.auth)
+    error_message = "auth must be one of: required, public, none."
+  }
 }
 variable "ingress_path" {
   type    = list(string)
@@ -142,8 +161,19 @@ variable "homepage_enabled" {
 }
 
 locals {
-  effective_host    = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
-  effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : !var.protected
+  effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
+  # Anti-AI default: ON only when no Authentik auth is in front of the ingress
+  # (i.e. auth = "none" — public Anubis-fronted content sites, etc.). When
+  # Authentik gates the request (required/public), the auth flow already
+  # discourages bots, so anti-AI noise is redundant.
+  effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : (var.auth == "none")
+
+  # Auth middleware selection. "none" attaches no Authentik middleware at all.
+  auth_middleware = (
+    var.auth == "required" ? "traefik-authentik-forward-auth@kubernetescrd" :
+    var.auth == "public" ? "traefik-authentik-forward-auth-public@kubernetescrd" :
+    null
+  )
 
   # External monitor enabled by default when the ingress has a public DNS
   # record (either CF-proxied or direct A/AAAA). Explicit bool overrides.
@@ -254,7 +284,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
-        var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
+        local.auth_middleware,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
         var.max_body_size != null ? "${var.namespace}-buffering-${var.name}@kubernetescrd" : null,

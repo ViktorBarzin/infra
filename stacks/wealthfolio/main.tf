@@ -481,7 +481,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.wealthfolio.metadata[0].name
   name            = "wealthfolio"
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Wealthfolio"
@@ -514,7 +514,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
               name = "registry-credentials"
             }
             container {
-              name  = "sync"
+              name = "sync"
               # Phase 4 of forgejo-registry-consolidation 2026-05-07 +
               # post-cutover wealthfolio-sync rebuild: image is now
               # produced by /home/wizard/code/broker-sync (Forgejo

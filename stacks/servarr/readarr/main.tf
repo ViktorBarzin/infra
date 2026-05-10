@@ -147,5 +147,5 @@ module "ingress" {
   name            = "readarr"
   port            = 8787
   tls_secret_name = var.tls_secret_name
-  protected       = true
+  auth            = "required"
 }
