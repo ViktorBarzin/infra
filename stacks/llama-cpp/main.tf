@@ -65,7 +65,7 @@ locals {
           "-c ${cfg.ctx_size}",
           "-np 1",
           "--jinja",
-          "-fa",
+          "-fa on",
         ])
         ttl           = 600 # unload after 10 min idle
         checkEndpoint = "/health"
