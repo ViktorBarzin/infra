@@ -353,8 +353,11 @@ resource "kubernetes_service" "resume" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Public-facing resume page for HR/recruiters — they don't have Authentik
+  # accounts. `auth = "public"` auto-binds to guest, so the page renders
+  # invisibly while still being audited in Authentik's event log.
+  auth            = "public"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.resume.metadata[0].name
   name            = "resume"

@@ -179,8 +179,11 @@ resource "kubernetes_service" "tuya-bridge" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Smart-home automation HTTP API — Home Assistant and other automations
+  # call this with SERVICE_API_KEY in headers. Programmatic clients can't
+  # follow Authentik 302s.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
   name            = "tuya-bridge"
