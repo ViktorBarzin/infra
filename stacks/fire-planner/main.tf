@@ -230,9 +230,10 @@ resource "kubernetes_deployment" "fire_planner" {
         }
 
         init_container {
-          name    = "alembic-migrate"
-          image   = local.image
-          command = ["python", "-m", "fire_planner", "migrate"]
+          name              = "alembic-migrate"
+          image             = local.image
+          image_pull_policy = "Always"
+          command           = ["python", "-m", "fire_planner", "migrate"]
 
           env_from {
             secret_ref {
