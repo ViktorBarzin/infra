@@ -1789,6 +1789,89 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
+      # Upgrade Gates: any firing alert here halts kured rolling reboots via
+      # --prometheus-url + alertFilterRegexp ignore-list (see stacks/kured/main.tf).
+      # These are silent-failure detectors and cluster-health velocity signals
+      # that catch cascade-style failures (March 2026 26h outage class).
+      - name: "Upgrade Gates"
+        rules:
+          - alert: KubeAPIServerDown
+            expr: up{job="kubernetes-apiservers"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kubernetes apiserver {{ $labels.instance }} is down — control plane degraded, blocks kured"
+          - alert: KubeStateMetricsDown
+            expr: absent(kube_node_info)
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "kube-state-metrics not responding — many alerts are SILENT until this is fixed"
+          - alert: PrometheusRuleEvaluationFailing
+            expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Prometheus rule evaluation failing — alerting itself is degraded ({{ $value | printf \"%.0f\" }} failures in 10m)"
+          - alert: PVCStuckPending
+            expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} stuck Pending for 10m+"
+          - alert: RecentNodeReboot
+            expr: (time() - process_start_time_seconds{job="kubernetes-nodes"}) < 86400
+            for: 0m
+            labels:
+              severity: info
+            annotations:
+              summary: "Node {{ $labels.node }} kubelet started {{ $value | humanizeDuration }} ago — 24h soak window halts further reboots"
+          - alert: MysqlStandaloneDown
+            expr: kube_statefulset_status_replicas_ready{statefulset="mysql-standalone"} < 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "mysql-standalone has 0 ready replicas — DB-dependent apps will fail"
+          - alert: ClusterPodReadyRatioDropped
+            expr: |
+              (
+                sum(kube_pod_status_ready{condition="true"})
+                / sum(kube_pod_status_phase{phase="Running"})
+              ) < 0.9
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster pod-ready ratio is {{ $value | printf \"%.1f\" }} (threshold: 0.9) — possible cascade"
+          - alert: NodeMemoryPressure
+            expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.node }} reports MemoryPressure=true — kubelet may evict pods"
+          - alert: NodeDiskPressure
+            expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.node }} reports DiskPressure=true — image GC may not keep up"
+          - alert: KubeQuotaAlmostFull
+            expr: |
+              kube_resourcequota{type="used"}
+              / on(namespace, resource) kube_resourcequota{type="hard"} > 0.95
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
@@ -2368,12 +2451,41 @@ serverFiles:
             # Sudden 400 spike from the outpost means forward-auth is broken
             # for all protected services. The /dev/shm ENOSPC class of failures
             # manifests as the outpost returning 400 on /outpost.goauthentik.io/auth/traefik.
-            expr: sum by (service) (increase(traefik_service_requests_total{code="400", service=~"authentik-authentik-outpost.*"}[5m])) > 10
+            # Service label format is `authentik-ak-outpost-authentik-embedded-outpost-9000@kubernetes`
+            # — the original regex `authentik-authentik-outpost.*` never matched anything (fixed 2026-05-10).
+            expr: sum by (service) (increase(traefik_service_requests_total{code="400", service=~"authentik-ak-outpost-.*"}[5m])) > 10
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: "Authentik outpost returning {{ $value | printf \"%.0f\" }} 400s in 5m on {{ $labels.service }} — forward-auth broken for all 43 protected services"
+          - alert: AuthentikForwardAuthFallbackActive
+            # Catches the auth-proxy "Emergency Access" Basic-Auth fallback firing
+            # at the edge — symptom of the outpost service having zero ready
+            # endpoints (selector mismatch, label drift, controller bug). The
+            # auth-proxy nginx returns 401 with `WWW-Authenticate: Basic` and
+            # `X-Auth-Fallback: true` in that case; Traefik proxies the 401
+            # back through the websecure entrypoint.
+            #
+            # Why this rule and not `kube_endpoint_address_available == 0`:
+            # kube-state-metrics endpoint metrics are silently dropped by the
+            # Prometheus pipeline in this cluster (kube_endpoint_* series
+            # exist but never have current values). Detecting the failure
+            # signal at the edge is more reliable than instrumenting the
+            # broken middle.
+            #
+            # Baseline 401/s on websecure is ~0.02 (linkwarden API). Threshold
+            # of 5 leaves ~250x headroom; fallback firing on a busy site
+            # immediately pushes 401/s well above that.
+            #
+            # See `.claude/reference/authentik-state.md` for the upgrade
+            # validation checklist that exercises the same path.
+            expr: sum(rate(traefik_entrypoint_requests_total{code="401",entrypoint="websecure"}[5m])) > 5
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "websecure 401 rate {{ $value | printf \"%.1f\" }}/s for 5m — Authentik forward-auth Emergency Access fallback likely firing. Check `kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost`."
           - alert: AuthentikServerReplicasMismatch
             # With 3 replicas + PDB minAvailable=2, a sustained drop to <3
             # means a node is unschedulable, image pull failing, or quota hit.
