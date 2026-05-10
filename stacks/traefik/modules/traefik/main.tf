@@ -314,9 +314,13 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
                   ngx.req.clear_header("If-Unmodified-Since")
               }
               proxy_pass http://poison_fountain;
-              proxy_connect_timeout 3s;
-              proxy_read_timeout 5s;
-              proxy_send_timeout 5s;
+              # Tight timeouts: poison-fountain may be scaled to 0 (graveyard
+              # endpoints) — failing open in <200ms keeps the 68-ingress chain
+              # responsive instead of paying 3s per request. Healthy upstream
+              # responds in <50ms anyway.
+              proxy_connect_timeout 100ms;
+              proxy_read_timeout 200ms;
+              proxy_send_timeout 200ms;
               proxy_intercept_errors on;
               error_page 502 503 504 =200 /fallback-allow;
               proxy_set_header Host $host;

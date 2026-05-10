@@ -102,12 +102,21 @@ resource "kubernetes_service" "travel-blog" {
   }
 }
 
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "travel"
+  namespace  = kubernetes_namespace.travel-blog.metadata[0].name
+  target_url = "http://${kubernetes_service.travel-blog.metadata[0].name}.${kubernetes_namespace.travel-blog.metadata[0].name}.svc.cluster.local"
+}
+
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.travel-blog.metadata[0].name
-  name            = "travel"
-  tls_secret_name = var.tls_secret_name
-  service_name    = "travel-blog"
+  source           = "../../modules/kubernetes/ingress_factory"
+  namespace        = kubernetes_namespace.travel-blog.metadata[0].name
+  name             = "travel"
+  tls_secret_name  = var.tls_secret_name
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Travel Blog"
