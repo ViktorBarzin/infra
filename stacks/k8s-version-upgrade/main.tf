@@ -226,29 +226,60 @@ resource "kubernetes_role_binding" "claude_agent_reads_creds" {
   }
 }
 
-# The claude-agent ClusterRole already grants `get,list,watch` on namespaces
-# but NOT patch — so we need to extend it here for the annotation write.
-# Bound via a separate ClusterRoleBinding so we don't fork the upstream stack.
-resource "kubernetes_cluster_role" "claude_agent_annotates_ns" {
+# The base claude-agent ClusterRole grants get/list/watch on most resources
+# but not the mutating verbs the upgrade agent needs. Rather than fork the
+# upstream stack, we add a sibling ClusterRole here scoped to exactly the
+# verbs+resources required:
+#   - patch on namespace k8s-upgrade (in-flight annotation)
+#   - create on batch/jobs (trigger etcd snapshot Job from cronjob/backup-etcd)
+#   - patch on nodes (cordon/uncordon — drain needs this)
+#   - create on pods/eviction (drain evicts pods)
+resource "kubernetes_cluster_role" "claude_agent_upgrade_ops" {
   metadata {
-    name = "claude-agent-annotates-k8s-upgrade-ns"
+    name = "claude-agent-upgrade-ops"
   }
+  # Annotate the k8s-upgrade namespace
   rule {
     api_groups     = [""]
     resources      = ["namespaces"]
     resource_names = ["k8s-upgrade"]
     verbs          = ["patch", "update"]
   }
+  # Trigger etcd snapshot Jobs (from cronjob/backup-etcd in default ns).
+  # Cluster-scoped because we may also create test Jobs in k8s-upgrade ns.
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["create", "delete"]
+  }
+  # Cordon / uncordon nodes
+  rule {
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["patch", "update"]
+  }
+  # Drain (evict pods)
+  rule {
+    api_groups = [""]
+    resources  = ["pods/eviction"]
+    verbs      = ["create"]
+  }
+  # Delete pods stuck during drain (sometimes evict isn't enough)
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["delete"]
+  }
 }
 
-resource "kubernetes_cluster_role_binding" "claude_agent_annotates_ns" {
+resource "kubernetes_cluster_role_binding" "claude_agent_upgrade_ops" {
   metadata {
-    name = "claude-agent-annotates-k8s-upgrade-ns"
+    name = "claude-agent-upgrade-ops"
   }
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.claude_agent_annotates_ns.metadata[0].name
+    name      = kubernetes_cluster_role.claude_agent_upgrade_ops.metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
