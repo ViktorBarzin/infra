@@ -253,8 +253,11 @@ resource "kubernetes_service" "paperless-ngx" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Paperless has a mobile app (`Paperless`) that uses /api/* with token
+  # auth. The app can't follow Authentik 302s. Paperless's own login
+  # gates the web UI.
+  auth            = "none"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
   name            = "paperless-ngx"
   service_name    = "paperless-ngx"

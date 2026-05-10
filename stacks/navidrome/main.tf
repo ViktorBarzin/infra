@@ -228,8 +228,11 @@ resource "kubernetes_service" "navidrome" {
   }
 }
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Subsonic API at /rest/* is consumed by mobile clients (DSub, Symfonium,
+  # play:sub) which can't follow Authentik forward-auth 302s. Navidrome's
+  # own user/password auth still gates everything.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.navidrome.metadata[0].name
   name            = "navidrome"

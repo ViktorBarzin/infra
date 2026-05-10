@@ -64,8 +64,7 @@ resource "authentik_group" "public_guests" {
 # don't propagate, since policy request.context is not the same dict as
 # flow_plan.context.
 resource "authentik_policy_expression" "set_guest_user" {
-  name              = "set-public-guest-user"
-  execution_logging = true
+  name = "set-public-guest-user"
   expression = trimspace(<<-EOT
     request.context["flow_plan"].context["pending_user"] = ak_user_by(username="guest")
     return True
