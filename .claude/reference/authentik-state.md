@@ -138,3 +138,54 @@ Notes:
 - `ProxyProvider.remember_me_offset` stays UI-managed via `ignore_changes`.
 - The Authentik provider's resource schema does **not** expose the `Outpost.managed` field. We rely on TF's "write only fields it knows about" semantic: the server-set `goauthentik.io/outposts/embedded` value is preserved across applies because Terraform never writes `managed`. Don't change the resource provider schema expectations without verifying this assumption holds.
 - The `unauthenticated_age` env var is injected via `server.env` / `worker.env` (not `authentik.sessions.unauthenticated_age`) because we set `authentik.existingSecret.secretName: goauthentik`, which makes the chart skip rendering its own `AUTHENTIK_*` Secret. The `authentik.*` value block is therefore inert in this stack — anything new under `authentik.*` must use the `*.env` arrays instead. The same applies to the existing `authentik.cache.*`, `authentik.web.*`, `authentik.worker.*` blocks (currently inert; live values come from the orphaned, helm-keep-policy `goauthentik` Secret created by chart 2025.10.3 before `existingSecret` was introduced).
+
+## Upgrade Validation Checklist
+
+Run after **any** of these:
+- Authentik chart version bump in `stacks/authentik/modules/authentik/main.tf` (the `version = "..."` line on `helm_release.authentik`).
+- `goauthentik/authentik` Terraform provider version bump.
+- Outpost pod recreation (kured reboot, eviction, manual `rollout restart`, scheduler move).
+
+The fragile surfaces are the `kubernetes_json_patches` and the `Outpost.managed` field — both rely on assumptions that can silently break across upgrades. The checklist exercises the same path the alerts watch, so it doubles as a smoke test for the alerts.
+
+```bash
+# 1. Service routes to the outpost pod (NOT the server pods).
+#    Empty endpoints => auth-proxy fallback fires; expected: ONE pod IP, ports 9000/9300/9443.
+kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost
+
+# 2. Service selector still excludes the server pods. Expected: includes
+#    `app.kubernetes.io/name: authentik-outpost-proxy`. If it flips to
+#    `name: authentik`, the goauthentik upstream bug came back or our
+#    JSON patch was unset.
+kubectl -n authentik get svc ak-outpost-authentik-embedded-outpost -o jsonpath='{.spec.selector}'
+
+# 3. Outpost mode + session backend. Expected log lines on startup:
+#      {"embedded":true,"event":"Outpost mode",...}
+#      {"event":"using PostgreSQL session backend",...}
+#    If embedded=false or `using filesystem session backend`, the postgres
+#    fix is broken — likely `Outpost.managed` got cleared, or the upstream
+#    schema started exposing `managed` and TF reset it.
+kubectl -n authentik logs deploy/ak-outpost-authentik-embedded-outpost | grep -E '"Outpost mode"|"session backend"' | head -3
+
+# 4. /dev/shm is essentially empty (postgres backend = no filesystem use).
+#    A row count > a few dozen indicates filesystem fallback is firing.
+kubectl -n authentik exec deploy/ak-outpost-authentik-embedded-outpost -- sh -c 'df -h /dev/shm; ls /dev/shm | wc -l'
+
+# 5. Postgres session table is growing with traffic. Expected: rows with
+#    `expires` ~28 days out (matches access_token_validity = weeks=4).
+kubectl -n authentik exec deploy/goauthentik-server -- ak shell -c "
+from django.db import connection; c = connection.cursor()
+c.execute('SELECT COUNT(*), MAX(expires) FROM authentik_providers_proxy_proxysession')
+print(c.fetchone())"
+
+# 6. Edge auth flow: should be 302 → authentik. NOT 401 with WWW-Authenticate.
+curl -sS -o /dev/null -D - 'https://terminal.viktorbarzin.me/' -H 'User-Agent: Mozilla/5.0' \
+  | grep -iE '^HTTP|^location|x-auth-fallback|www-authenticate'
+
+# 7. Terraform plan-to-zero on the whole authentik stack.
+( cd stacks/authentik && /home/wizard/code/infra/scripts/tg plan ) | grep -E 'No changes|Plan:'
+```
+
+Steps 1, 3, 6 cover the failure modes the Prometheus alerts trigger on (`AuthentikForwardAuthFallbackActive`, `AuthentikOutpostForwardAuth400Spike`). Steps 4 and 5 cover the silent-regression case (filesystem fallback) where the alerts don't fire but the system loses its postgres-backed session persistence on the next pod restart.
+
+If step 2 shows the controller restored `app.kubernetes.io/name=authentik`, watch goauthentik/authentik issue tracker for fixes around `internal/outpost/controllers/k8s/service.py:52` — the upstream patch might let us drop our `kubernetes_json_patches.service` workaround.
