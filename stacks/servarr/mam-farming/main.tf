@@ -27,7 +27,7 @@ resource "kubernetes_persistent_volume_claim" "mam_data" {
     name      = local.data_pvc
     namespace = var.namespace
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

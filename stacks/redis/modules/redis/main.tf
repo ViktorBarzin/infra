@@ -650,7 +650,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
       metadata {
         name = "data"
         annotations = {
-          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/threshold"     = "10%"
           "resize.topolvm.io/increase"      = "100%"
           "resize.topolvm.io/storage_limit" = "20Gi"
         }

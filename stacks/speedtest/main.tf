@@ -63,7 +63,7 @@ resource "kubernetes_persistent_volume_claim" "config_proxmox" {
     name      = "speedtest-config-proxmox"
     namespace = kubernetes_namespace.speedtest.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

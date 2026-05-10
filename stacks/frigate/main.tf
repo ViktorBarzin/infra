@@ -33,7 +33,7 @@ resource "kubernetes_persistent_volume_claim" "config_encrypted" {
     name      = "frigate-config-encrypted"
     namespace = kubernetes_namespace.frigate.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

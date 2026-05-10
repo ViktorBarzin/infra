@@ -32,7 +32,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     name      = "send-data-proxmox"
     namespace = kubernetes_namespace.send.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
