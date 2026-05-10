@@ -66,9 +66,13 @@ resource "kubernetes_deployment" "pgbouncer" {
           }
         }
         container {
-          name              = "pgbouncer"
-          image             = "edoburu/pgbouncer:latest"
-          image_pull_policy = "IfNotPresent"
+          name  = "pgbouncer"
+          image = "edoburu/pgbouncer:latest"
+          # `:latest` tag — keep `Always` so pod restarts pick up upstream
+          # updates. The previous `IfNotPresent` value was declared at module
+          # creation but the live cluster has reconciled to `Always` (likely
+          # via a Helm/operator default). Match reality to drop the drift.
+          image_pull_policy = "Always"
 
           port {
             container_port = 6432
