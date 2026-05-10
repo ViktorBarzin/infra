@@ -268,23 +268,17 @@ module "anubis" {
   EOT
 }
 
-module "x402" {
-  source     = "../../modules/kubernetes/x402_instance"
-  name       = "f1"
-  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
-  target_url = "http://${module.anubis.service_name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local:${module.anubis.service_port}"
-}
-
 module "ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  dns_type         = "non-proxied"
-  namespace        = kubernetes_namespace.f1-stream.metadata[0].name
-  name             = "f1"
-  service_name     = module.x402.service_name
-  port             = module.x402.service_port
-  tls_secret_name  = var.tls_secret_name
-  exclude_crowdsec = true
-  anti_ai_scraping = false
+  source            = "../../modules/kubernetes/ingress_factory"
+  dns_type          = "non-proxied"
+  namespace         = kubernetes_namespace.f1-stream.metadata[0].name
+  name              = "f1"
+  service_name      = module.anubis.service_name
+  port              = module.anubis.service_port
+  tls_secret_name   = var.tls_secret_name
+  exclude_crowdsec  = true
+  anti_ai_scraping  = false
+  extra_middlewares = ["traefik-x402@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"

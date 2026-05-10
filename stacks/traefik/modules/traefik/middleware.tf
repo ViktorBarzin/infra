@@ -322,6 +322,31 @@ resource "kubernetes_manifest" "middleware_ai_bot_block" {
   depends_on = [helm_release.traefik]
 }
 
+# x402 payment-required middleware. Traefik calls the shared x402-gateway
+# in this namespace; the gateway returns 200 (allow) to browsers and curl,
+# 402 with x402 PaymentRequiredResponse to declared AI-bot UAs (or to any
+# request whose X-PAYMENT header fails facilitator validation).
+# DRY_RUN until WALLET_ADDRESS is set on the gateway, in which case the
+# gateway always returns 200.
+resource "kubernetes_manifest" "middleware_x402" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "x402"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      forwardAuth = {
+        address            = "http://x402-gateway.traefik.svc.cluster.local:8080/auth"
+        trustForwardHeader = true
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik, kubernetes_service.x402_gateway]
+}
+
 # X-Robots-Tag header to discourage compliant AI crawlers
 resource "kubernetes_manifest" "middleware_anti_ai_headers" {
   manifest = {
