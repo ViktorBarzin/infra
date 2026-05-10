@@ -101,8 +101,11 @@ resource "kubernetes_service" "echo" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # echo is a header-reflecting diagnostic — public so it's reachable for
+  # forward-auth smoke-testing. Anyone visiting echo.viktorbarzin.me sees
+  # exactly which X-authentik-* headers Traefik forwarded to backends.
+  auth            = "public"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"

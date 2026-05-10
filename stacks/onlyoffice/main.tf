@@ -249,8 +249,14 @@ resource "kubernetes_service" "onlyoffice" {
   }
 }
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Iframe-loaded by Nextcloud with JWT-signed session tokens; OnlyOffice
+  # validates the JWT itself. Authentik forward-auth would 302 the iframe
+  # load if the browser doesn't already have an Authentik cookie, AND
+  # OnlyOffice's server-to-server callback URLs (Nextcloud → OnlyOffice
+  # for save events, etc.) run outside any browser session entirely.
+  # The JWT is the auth gate.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.onlyoffice.metadata[0].name
   name            = "onlyoffice"
