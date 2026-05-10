@@ -196,7 +196,7 @@ resource "null_resource" "grafana_admin_only_folder_acl" {
       for i in $(seq 1 12); do
         FOLDER_UID=$(kubectl $KUBECONFIG_FLAG exec -n monitoring "$POD" -c grafana -- \
           curl -sf -u "admin:$ADMIN_PW" "http://localhost:3000/api/folders" \
-          | python3 -c "import json,sys; folders=json.load(sys.stdin); print(next((f['uid'] for f in folders if f['title']==sys.argv[1]), ''))" "$FOLDER" || true)
+          | jq -r --arg t "$FOLDER" 'first(.[] | select(.title == $t) | .uid) // ""' || true)
         if [ -n "$FOLDER_UID" ]; then break; fi
         sleep 5
       done
