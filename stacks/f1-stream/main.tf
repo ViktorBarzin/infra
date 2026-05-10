@@ -228,23 +228,18 @@ module "tls_secret" {
 }
 
 
-module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "f1"
-  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
-  target_url = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
-}
-
+# NOTE: f1-stream serves its SPA + JSON data endpoints (/schedule, /embed,
+# /embed-asset, …) all on the same path tree, so putting Anubis in front
+# breaks XHR data fetches with "Unexpected token '<', '<!doctype '" — the
+# challenge HTML lands where JSON is expected. Anubis is removed for f1
+# until/unless we add a /api carve-out the way wrongmove does.
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
   dns_type         = "non-proxied"
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   name             = "f1"
-  service_name     = module.anubis.service_name
-  port             = module.anubis.service_port
   tls_secret_name  = var.tls_secret_name
   exclude_crowdsec = true
-  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"
