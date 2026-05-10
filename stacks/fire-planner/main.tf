@@ -420,6 +420,26 @@ module "ingress" {
   }
 }
 
+# Second ingress at the same host for the /api/ prefix WITHOUT Authentik
+# forward-auth. The SPA loads under Authentik (main ingress at /), then its
+# fetch() XHRs hit /api/* directly — forward-auth on /api/* would 302 the
+# XHR to a cross-origin Authentik login page, which fetch().json() can't
+# parse. App-layer bearer auth still gates writes (POST/PATCH/DELETE on
+# scenarios, /recompute, /simulate); read endpoints are open. Acceptable
+# for a personal tool whose only data is anonymous numeric projections.
+module "ingress_api" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "none"
+  namespace       = kubernetes_namespace.fire_planner.metadata[0].name
+  name            = "fire-planner-api"
+  host            = "fire-planner" # share effective_host with main ingress
+  service_name    = "fire-planner"
+  port            = 8080
+  ingress_path    = ["/api/"]
+  tls_secret_name = var.tls_secret_name
+  protected       = false
+}
+
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource
 # password. First-apply gotcha: must
 # `terragrunt apply -target=kubernetes_manifest.db_external_secret` so
