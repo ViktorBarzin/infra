@@ -1866,12 +1866,12 @@ serverFiles:
           - alert: KubeQuotaAlmostFull
             expr: |
               kube_resourcequota{type="used"}
-              / on(namespace, resource) kube_resourcequota{type="hard"} > 0.95
+              / on(namespace, resource, resourcequota) kube_resourcequota{type="hard"} > 0.95
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
+              summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resourcequota }} {{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown

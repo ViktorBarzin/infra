@@ -67,11 +67,44 @@ runcmd:
   - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
   - systemctl restart systemd-journald
   %{if is_k8s_template}
-  # Disable unattended-upgrades to prevent unexpected kernel updates that can break containerd/kubelet
-  # (Root cause of 26h cluster outage: unattended-upgrades → kernel update → containerd failure)
-  - systemctl disable --now unattended-upgrades || true
-  - apt-get remove -y unattended-upgrades || true
+  # Re-enabled 2026-05-10: unattended-upgrades is back on, but with a tight
+  # Allowed-Origins list, a Package-Blacklist for k8s/containerd/runc/calico,
+  # and Automatic-Reboot disabled (kured + sentinel-gate handles reboots in a
+  # 24h-soaked rolling window, gated by Prometheus alerts).
+  # Original outage (March 2026) was kernel update → containerd overlayfs corruption.
+  # Mitigations: 24h cool-down between node reboots, Prometheus halt-on-alert,
+  # apt-mark hold on k8s components, Package-Blacklist for runtime components.
+  - apt-get install -y unattended-upgrades update-notifier-common
+  - |
+    cat > /etc/apt/apt.conf.d/52unattended-upgrades-k8s <<'EOF'
+    Unattended-Upgrade::Allowed-Origins {
+        "$${distro_id}:$${distro_codename}";
+        "$${distro_id}:$${distro_codename}-security";
+        "$${distro_id}:$${distro_codename}-updates";
+        "$${distro_id}ESMApps:$${distro_codename}-apps-security";
+        "$${distro_id}ESM:$${distro_codename}-infra-security";
+    };
+    Unattended-Upgrade::Package-Blacklist {
+        "^containerd(\.io)?$$";
+        "^runc$$";
+        "^cri-tools$$";
+        "^kubernetes-cni$$";
+        "^calico-.*";
+        "^cni-plugins-.*";
+        "^docker-ce$$";
+    };
+    Unattended-Upgrade::DevRelease "false";
+    Unattended-Upgrade::Automatic-Reboot "false";
+    EOF
+  - |
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::Unattended-Upgrade "1";
+    EOF
+  - systemctl unmask unattended-upgrades 2>/dev/null || true
+  - systemctl enable --now unattended-upgrades
   - apt-mark hold kubelet kubeadm kubectl
+  - apt-mark hold containerd containerd.io runc 2>/dev/null || true
   - systemctl stop kubelet
   - containerd config default | sudo tee /etc/containerd/config.toml
   - ${containerd_config_update_command}

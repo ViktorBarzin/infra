@@ -179,13 +179,13 @@ resource "null_resource" "grafana_admin_only_folder_acl" {
   # Re-runs on tg apply (cheap, idempotent API call). Catches drift if anyone
   # edits permissions via the UI or the folder is rebuilt.
   triggers = {
-    folder    = each.value
-    always    = timestamp()
+    folder = each.value
+    always = timestamp()
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command = <<-EOT
+    command     = <<-EOT
       set -euo pipefail
       FOLDER='${each.value}'
       KUBECONFIG_FLAG='--kubeconfig ${var.kube_config_path}'
