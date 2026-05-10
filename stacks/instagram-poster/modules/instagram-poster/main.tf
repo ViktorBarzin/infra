@@ -129,6 +129,54 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.instagram_poster]
 }
 
+# Benchmark scoring DB — shared CNPG cluster, written by the
+# `instagram_poster.benchmark` CLI (vision-LLM scores per Immich asset).
+# Vault static role `pg-instagram-poster` rotates the password every 7 days;
+# ESO refreshes the K8s Secret every 15m. `reloader.stakater.com/match`
+# bounces the pod when the password changes.
+resource "kubernetes_manifest" "benchmark_db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "instagram-poster-benchmark-db"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "instagram-poster-benchmark-db"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            BENCHMARK_PG_HOST     = "pg-cluster-rw.dbaas.svc.cluster.local"
+            BENCHMARK_PG_PORT     = "5432"
+            BENCHMARK_PG_DATABASE = "instagram_poster"
+            BENCHMARK_PG_USER     = "instagram_poster"
+            BENCHMARK_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-instagram-poster"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.instagram_poster]
+}
+
 # Persistent state: SQLite + image cache. Sensitive (API tokens may end up
 # in cached images / debug logs), but the proxmox-lvm-encrypted SC is for
 # user-data DBs; this is a small app cache so plain proxmox-lvm fits the
@@ -212,6 +260,15 @@ resource "kubernetes_deployment" "instagram_poster" {
           env_from {
             secret_ref {
               name = "instagram-poster-secrets"
+            }
+          }
+          # Vault-rotated benchmark Postgres creds. Sources BENCHMARK_PG_*
+          # env vars into the container; benchmark.py builds the SQLAlchemy
+          # URL from them. Schema bootstraps via Base.metadata.create_all
+          # on first use.
+          env_from {
+            secret_ref {
+              name = "instagram-poster-benchmark-db"
             }
           }
 
@@ -302,6 +359,7 @@ resource "kubernetes_deployment" "instagram_poster" {
 
   depends_on = [
     kubernetes_manifest.external_secret,
+    kubernetes_manifest.benchmark_db_external_secret,
   ]
 }
 

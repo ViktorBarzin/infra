@@ -1296,6 +1296,35 @@ resource "null_resource" "pg_fire_planner_db" {
   }
 }
 
+# Create instagram_poster database for the IG-curation pipeline. Initial use:
+# benchmark_score table written by `instagram_poster.benchmark` CLI (vision-LLM
+# scoring per Immich asset). Future: migrate story_queue/decision/ig_posted_media
+# off the pod's sqlite PVC into this DB so the pod is fully stateless.
+# Role password is managed by Vault Database Secrets Engine
+# (static role `pg-instagram-poster`, 7d rotation).
+resource "null_resource" "pg_instagram_poster_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "instagram_poster"
+    username = "instagram_poster"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'instagram_poster'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE instagram_poster WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'instagram_poster'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE instagram_poster OWNER instagram_poster"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE instagram_poster TO instagram_poster"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {
