@@ -21,6 +21,7 @@ resource "helm_release" "proxmox_csi" {
 
   repository = "oci://ghcr.io/sergelogvinov/charts"
   chart      = "proxmox-csi-plugin"
+  version    = "0.5.6"
 
   values = [yamlencode({
     config = {
@@ -33,7 +34,11 @@ resource "helm_release" "proxmox_csi" {
       }]
     }
 
-    # StorageClass for block volumes on existing HDD thin pool
+    # StorageClass for block volumes on existing HDD thin pool.
+    # `resize.topolvm.io/enabled=true` opts the SC into pvc-autoresizer:
+    # without it, the controller filters this SC out and never patches its
+    # PVCs no matter how full they get. Required alongside the per-PVC
+    # threshold/increase/storage_limit annotations.
     storageClass = [
       {
         name                 = "proxmox-lvm"
@@ -44,6 +49,9 @@ resource "helm_release" "proxmox_csi" {
         cache                = "none"
         volumeBindingMode    = "WaitForFirstConsumer"
         allowVolumeExpansion = true
+        annotations = {
+          "resize.topolvm.io/enabled" = "true"
+        }
       },
       {
         name                 = "proxmox-lvm-encrypted"
@@ -54,6 +62,9 @@ resource "helm_release" "proxmox_csi" {
         cache                = "none"
         volumeBindingMode    = "WaitForFirstConsumer"
         allowVolumeExpansion = true
+        annotations = {
+          "resize.topolvm.io/enabled" = "true"
+        }
         extraParameters = {
           "csi.storage.k8s.io/node-stage-secret-name"       = "proxmox-csi-encryption"
           "csi.storage.k8s.io/node-stage-secret-namespace"  = "kube-system"
