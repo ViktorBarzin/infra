@@ -248,7 +248,9 @@ module "ingress" {
   }
 }
 
-# API ingress — unprotected (API key auth handled by backend)
+# API ingress — unprotected (API key auth handled by backend). XHR-based
+# endpoints; `auth = "public"` would 302+cookie-dance and break CORS
+# preflight, so we stay at `auth = "none"`.
 module "ingress_api" {
   source          = "../../modules/kubernetes/ingress_factory"
   namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
@@ -256,7 +258,7 @@ module "ingress_api" {
   host            = "insta2spotify"
   service_name    = "insta2spotify"
   tls_secret_name = var.tls_secret_name
-  auth            = "public"
+  auth            = "none"
   ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
   max_body_size   = "50m"
 }
