@@ -1,4 +1,9 @@
-# Automated Service Upgrades
+# Automated Upgrades
+
+This doc covers two independent automation paths:
+
+1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
+2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section near the end and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
 
 ## Overview
 
@@ -205,3 +210,35 @@ The `DIUN Upgrade Agent` workflow is imported once into n8n's PG DB — it is **
 - **`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`** must be set on the n8n deployment for expressions to read `$env.*` at all.
 - **Troubleshooting 401**: the workflow will show `success` status on the webhook node but error on `Run Upgrade Agent`. Inspect in n8n UI → Executions, or query `execution_entity` + `execution_data` directly. Claude-agent-service logs will also show `POST /execute HTTP/1.1 401 Unauthorized`.
 - **Patching the live workflow** (one-off, since it's not in TF): `UPDATE workflow_entity SET nodes = REPLACE(nodes::text, OLD, NEW)::json WHERE name = 'DIUN Upgrade Agent';`
+
+## K8s Node OS Upgrades
+
+Independent of the service-upgrade pipeline above. Drives apt package updates + reboots on the 5 K8s VMs (master + 4 workers).
+
+### Stack
+- **In-guest**: `unattended-upgrades` runs apt upgrades within Allowed-Origins (`-security`, `-updates`, ESM). Package-Blacklist excludes runtime components (`containerd`, `containerd.io`, `runc`, `cri-tools`, `kubernetes-cni`, `calico-*`, `cni-plugins-*`, `docker-ce`). `apt-mark hold` on `kubelet`, `kubeadm`, `kubectl` (and runtime pkgs as belt-and-braces). `Automatic-Reboot=false` — kured handles reboots.
+- **Reboot driver**: `kured` (chart `kured-5.11.0`, app `1.21.0`). Window Mon-Fri 02:00-06:00 Europe/London, period=1h, concurrency=1, reboot-delay=30s.
+- **Reboot gate (sentinel)**: `kured-sentinel-gate` DaemonSet creates `/var/run/gated-reboot-required` only when (a) host needs reboot, (b) all nodes Ready, (c) all calico-node pods Running, (d) **no node has transitioned Ready in the last 24h** (24h soak window).
+- **Reboot gate (Prometheus)**: kured `--prometheus-url` polls `prometheus-server.monitoring.svc:80` before each drain. ANY firing alert blocks unless it matches the ignore-regex `^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$`.
+- **Health alert library**: 10 alerts in the `Upgrade Gates` group (`prometheus_chart_values.tpl`): `KubeAPIServerDown`, `KubeStateMetricsDown`, `PrometheusRuleEvaluationFailing`, `PVCStuckPending`, `RecentNodeReboot` (the explicit 24h soak signal), `MysqlStandaloneDown`, `ClusterPodReadyRatioDropped`, `NodeMemoryPressure`, `NodeDiskPressure`, `KubeQuotaAlmostFull`. Plus the existing 200+ alerts in the cluster-wide library (anything firing blocks kured).
+- **Notifications**: kured `notifyUrl` posts drain-start/drain-finish to Slack via Vault `secret/kured.slack_kured_webhook`. Alertmanager separately routes critical alerts to `#alerts`.
+
+### Source of truth
+| Concern | Location |
+|---|---|
+| Package config (uu, holds, blacklist) | `modules/create-template-vm/cloud_init.yaml` (within `is_k8s_template`) |
+| kured Helm release + sentinel-gate DS | `stacks/kured/main.tf` |
+| Upgrade Gates alerts | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` |
+
+### Day-2 changes
+Cloud-init only runs on first boot. Existing nodes are brought into compliance with a one-shot SSH push — see the runbook section "Restore / re-apply unattended-upgrades config to existing nodes" in `docs/runbooks/k8s-node-auto-upgrades.md`.
+
+### Why this design
+The 26h cluster outage on 2026-03-16 was triggered by an unattended-upgrades kernel push that corrupted containerd's overlayfs snapshotter cluster-wide. The remediations:
+- 24h soak (sentinel-gate Check 4) gives a full day of observation between consecutive node reboots — broken updates show up as Prometheus alerts before any other node restarts.
+- Prometheus halt-on-alert turns ANY firing alert into a hard block — including the 6 Node Runtime Health alerts and the 10 Upgrade Gates alerts that explicitly model "the cluster is in a bad state."
+- Package-Blacklist on runtime components prevents the exact failure mode (containerd/runc auto-bumps).
+- `Automatic-Reboot=false` keeps reboot policy in kured (window, ordering, gating), not in apt.
+
+### Operational reference
+See `docs/runbooks/k8s-node-auto-upgrades.md` for: verifying health, halting rollout, restoring config to a re-imaged node, rolling back a bad upgrade, and the past-incident timeline.
