@@ -207,7 +207,15 @@ else
             dst="${BACKUP_ROOT}/pvc-data/${WEEK}/${ns_pvc}"
             mkdir -p "${dst}"
             rsync_rc=0
-            rsync -az --delete \
+            # Per-PVC rsync timeout (30 min). Without this, a single hung
+            # PVC blocks the entire backup until systemd's TimeoutStartSec
+            # kills the script (4h ceiling), leaving every later PVC
+            # unbacked and silently triggering WeeklyBackupFailing. Picked
+            # 30 min as well above the largest PVC's normal copy time
+            # (immich-postgres ~10 GiB, ~3 min on local ext4) and well
+            # below the unit-level budget so we still have headroom to
+            # finish the rest.
+            timeout 1800 rsync -az --delete \
                 ${PREV:+--link-dest="${PREV}/${ns_pvc}/"} \
                 "${PVC_MOUNT}/" "${dst}/" 2>&1 || rsync_rc=$?
             if [ "$rsync_rc" -eq 0 ]; then
@@ -217,6 +225,12 @@ else
                 # (in-flight writes have corrupt metadata from skipped journal replay)
                 PVC_COUNT=$((PVC_COUNT + 1))
                 log "  partial rsync (LUKS noload) for ${ns_pvc} — OK"
+            elif [ "$rsync_rc" -eq 124 ]; then
+                # `timeout` exit 124 = wall-clock killed the rsync. Track
+                # separately so the next run still produces a metric and
+                # doesn't pretend nothing happened.
+                warn "rsync timed out for ${ns_pvc} after 30 min — moving on"
+                PVC_FAIL=$((PVC_FAIL + 1))
             else
                 warn "rsync failed for ${ns_pvc} (rc=$rsync_rc)"
                 PVC_FAIL=$((PVC_FAIL + 1))
@@ -232,7 +246,11 @@ else
                         relpath="${dbfile#${PVC_MOUNT}/}"
                         dest_file="${BACKUP_ROOT}/sqlite-backup/${WEEK}/${ns_pvc}/${relpath}"
                         mkdir -p "$(dirname "${dest_file}")"
-                        if sqlite3 "file://${dbfile}?mode=ro" ".backup '${dest_file}'" 2>/dev/null; then
+                        # 5-min sqlite timeout — same hang-prevention idea
+                        # as rsync above. A corrupted SQLite or one held
+                        # open by a writer in the snapshot can otherwise
+                        # block .backup indefinitely.
+                        if timeout 300 sqlite3 "file://${dbfile}?mode=ro" ".backup '${dest_file}'" 2>/dev/null; then
                             log "    SQLite: ${ns_pvc}/${relpath}"
                         else
                             cp "${dbfile}" "${dest_file}" 2>/dev/null || true
@@ -326,7 +344,7 @@ fi
 # ============================================================
 log "--- Step 4: PVE host config ---"
 mkdir -p "${BACKUP_ROOT}/pve-config/scripts"
-rsync -az --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&1 || { warn "Failed to sync /etc/pve"; STATUS=1; }
+timeout 300 rsync -az --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&1 || { warn "Failed to sync /etc/pve"; STATUS=1; }
 for script in /usr/local/bin/lvm-pvc-snapshot /usr/local/bin/daily-backup /usr/local/bin/offsite-sync-backup; do
     [ -f "${script}" ] && cp "${script}" "${BACKUP_ROOT}/pve-config/scripts/" 2>/dev/null || true
 done
