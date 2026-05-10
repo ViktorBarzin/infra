@@ -362,8 +362,12 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 echo "Running version: v$RUNNING (minor $RUNNING_MINOR)"
 
                 # 3. Detect highest available patch within the running minor track.
+                # Refresh the local apt cache first — without this, a newly-published
+                # patch won't show up via `apt-cache madison` until something else
+                # triggers an `apt-get update`.
                 LATEST_PATCH=$($SSH wizard@k8s-master \
-                  "apt-cache madison kubeadm 2>/dev/null \
+                  "sudo apt-get update -qq -o Dir::Etc::sourcelist='sources.list.d/kubernetes.list' -o Dir::Etc::sourceparts='-' -o APT::Get::List-Cleanup='0' >/dev/null 2>&1 ; \
+                   apt-cache madison kubeadm 2>/dev/null \
                     | awk '{print \$3}' \
                     | sed 's/-.*//' \
                     | grep '^$RUNNING_MINOR\\.' \
@@ -421,8 +425,14 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
 
                 slack "K8s upgrade available: v$RUNNING → v$TARGET ($KIND)"
 
-                if [ "$DRY_RUN" = "true" ]; then
-                  echo "DRY_RUN=true — not POSTing to claude-agent-service"
+                # DRY_RUN_OVERRIDE wins over DRY_RUN — but a Job copied from
+                # this CronJob can't add new env vars (spec is immutable). The
+                # operator path for "trigger detection without dispatch" is
+                # toggling the CronJob's `var.detection_dry_run` then applying.
+                # Documented in the runbook.
+                EFFECTIVE_DRY_RUN="$${DRY_RUN_OVERRIDE:-$DRY_RUN}"
+                if [ "$EFFECTIVE_DRY_RUN" = "true" ]; then
+                  echo "dry_run=true — not POSTing to claude-agent-service"
                   slack "DRY_RUN — skipping agent dispatch"
                   exit 0
                 fi
