@@ -83,7 +83,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikDown
         target_matchers:
-          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections"
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|IngressErrorRate5xxHigh|AnubisChallengeStoreErrors"
       # Traefik down makes ForwardAuth alerts redundant
       - source_matchers:
           - alertname = TraefikDown
@@ -1882,6 +1882,71 @@ serverFiles:
           #     summary: OpenWRT high memory usage. Can cause services getting stuck.
           # MailServerDown, HackmdDown, PrivatebinDown moved to "Application Health" group
           # New Tailscale client moved to "Infrastructure Health" group
+      - name: "Slow Ingress Latency"
+        # Per-host slow-latency + Anubis-specific 5xx alerts. Sourced from
+        # `traefik_service_*` metrics scraped via `kubernetes-pods` (only fresh
+        # samples we have — `*_bucket` series are scraped but the `traefik`
+        # job's metric_relabel drops them, so `histogram_quantile` produces no
+        # samples). Once buckets are restored, replace the avg expressions with
+        # `histogram_quantile(0.95, ...)`. The `service` label format is
+        # `<ns>-<release>-<port>@kubernetes` and maps roughly 1:1 to a public
+        # host (e.g. `travel-blog-anubis-travel-8080@kubernetes`).
+        rules:
+          - alert: IngressTTFBHigh
+            expr: |
+              (
+                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+              ) > 1
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Slow ingress on {{ $labels.service }}: avg latency {{ $value | printf \"%.2f\" }}s (threshold: 1s for 10m)"
+          - alert: IngressTTFBCritical
+            expr: |
+              (
+                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+              ) > 3
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critically slow ingress on {{ $labels.service }}: avg latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
+          - alert: IngressErrorRate5xxHigh
+            expr: |
+              (
+                sum(rate(traefik_service_requests_total{code=~"5..", service!~".*nextcloud.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service)
+                * 100
+              ) > 5
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service) > 0.1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 5% for 5m)"
+          - alert: AnubisChallengeStoreErrors
+            # Anubis exposes only Go-runtime metrics on :9090 (no anubis_* /
+            # challenge_* counters), so we proxy via Traefik 5xx on services
+            # whose name contains `anubis`. Catches the "store: key not found"
+            # 500 we saw — every Anubis 5xx is suspicious because the only
+            # legitimate path through it is /.within.website/x/cmd/anubis or a
+            # redirect to the upstream, both 200/3xx in healthy operation.
+            expr: |
+              sum(rate(traefik_service_requests_total{service=~".*anubis.*",code=~"5.."}[5m])) by (service) > 0
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Anubis service {{ $labels.service }} returning 5xx ({{ $value | printf \"%.2f\" }} req/s) — likely challenge-store error"
       - name: "Networking & Access"
         rules:
           - alert: CloudflaredDown
