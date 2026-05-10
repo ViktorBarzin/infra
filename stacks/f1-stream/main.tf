@@ -262,6 +262,11 @@ module "anubis" {
       - name: f1-data-routes
         path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|schedule|streams)(/|\?|$)
         action: ALLOW
+      # Allow non-GET methods unconditionally — AI scrapers GET the body,
+      # they don't POST. Mutating XHRs and CORS preflight need to bypass.
+      - name: allow-non-get-methods
+        action: ALLOW
+        expression: method != "GET"
       - name: catchall-challenge
         path_regex: .*
         action: CHALLENGE
