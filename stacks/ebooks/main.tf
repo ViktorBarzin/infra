@@ -150,7 +150,7 @@ resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
     name      = "ebooks-calibre-config-proxmox"
     namespace = kubernetes_namespace.ebooks.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "50%"
       "resize.topolvm.io/storage_limit" = "10Gi"
     }
@@ -205,7 +205,7 @@ resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
     name      = "ebooks-abs-config-proxmox"
     namespace = kubernetes_namespace.ebooks.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

@@ -46,7 +46,7 @@ resource "kubernetes_persistent_volume_claim" "roundcube_html_encrypted" {
     name      = "roundcubemail-html-encrypted"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
@@ -68,7 +68,7 @@ resource "kubernetes_persistent_volume_claim" "roundcube_enigma_encrypted" {
     name      = "roundcubemail-enigma-encrypted"
     namespace = kubernetes_namespace.mailserver.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

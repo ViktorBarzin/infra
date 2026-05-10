@@ -288,7 +288,7 @@ resource "kubernetes_persistent_volume_claim" "home_proxmox" {
     name      = "openclaw-home-proxmox"
     namespace = kubernetes_namespace.openclaw.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
@@ -318,7 +318,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     name      = "openclaw-data-proxmox"
     namespace = kubernetes_namespace.openclaw.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
@@ -1112,7 +1112,7 @@ resource "kubernetes_persistent_volume_claim" "openlobster_data_proxmox" {
     name      = "openlobster-data-proxmox"
     namespace = kubernetes_namespace.openclaw.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

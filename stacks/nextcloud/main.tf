@@ -194,7 +194,7 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
     name      = "nextcloud-data-encrypted"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "20%"
       "resize.topolvm.io/storage_limit" = "100Gi"
     }

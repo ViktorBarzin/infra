@@ -43,7 +43,7 @@ resource "kubernetes_persistent_volume_claim" "uploads" {
     name      = "postiz-uploads"
     namespace = kubernetes_namespace.postiz.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "50Gi"
     }

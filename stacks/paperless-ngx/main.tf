@@ -70,7 +70,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     name      = "paperless-ngx-data-proxmox"
     namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
@@ -92,7 +92,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     name      = "paperless-ngx-data-encrypted"
     namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

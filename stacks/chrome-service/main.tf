@@ -74,7 +74,7 @@ resource "kubernetes_persistent_volume_claim" "profile_encrypted" {
     name      = "chrome-service-profile-encrypted"
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "10Gi"
     }
