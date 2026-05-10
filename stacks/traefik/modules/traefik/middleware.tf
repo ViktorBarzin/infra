@@ -26,7 +26,8 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
-# Authentik forward auth middleware
+# Authentik forward auth middleware (default — login required).
+# Used by ingress_factory `auth = "required"`.
 resource "kubernetes_manifest" "middleware_authentik_forward_auth" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -38,6 +39,46 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth" {
     spec = {
       forwardAuth = {
         address            = "http://auth-proxy.traefik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader = true
+        authResponseHeaders = [
+          "X-authentik-username",
+          "X-authentik-uid",
+          "X-authentik-email",
+          "X-authentik-name",
+          "X-authentik-groups",
+          "Set-Cookie",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Authentik forward auth — public tier. Calls the dedicated public outpost
+# (`ak-outpost-public.authentik.svc`) where the `Public` proxy provider is the
+# only bound provider, so every request runs the `public-auto-login` flow and
+# auto-binds anonymous users to the `guest` user. Users with an existing
+# Authentik session keep their real identity in `X-authentik-username`.
+# Used by ingress_factory `auth = "public"`.
+#
+# This is intentionally a different upstream from the standard middleware
+# (which targets the embedded outpost via the auth-proxy nginx fallback). The
+# `?app=` query param is NOT a working dispatch knob in current Authentik —
+# the embedded outpost dispatches by Host header alone, and the catchall's
+# forward_domain mode already claims viktorbarzin.me, so the only way to
+# isolate the public flow is via a dedicated outpost.
+resource "kubernetes_manifest" "middleware_authentik_forward_auth_public" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "authentik-forward-auth-public"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      forwardAuth = {
+        address            = "http://ak-outpost-public.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader = true
         authResponseHeaders = [
           "X-authentik-username",
