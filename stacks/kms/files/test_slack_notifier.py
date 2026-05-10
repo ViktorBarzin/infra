@@ -105,6 +105,47 @@ class StateMachineTests(unittest.TestCase):
         kinds = [e.kind for e in events]
         self.assertEqual(kinds, ["probe", "activation"])
 
+    def test_kubelet_probe_during_long_activation(self):
+        """vlmcsd is multi-threaded. While a real KMS RPC's connection
+        sits open (Windows holds it ~30s), kubelet's TCP readiness probe
+        every 5s opens+closes its own connection. The notifier MUST NOT
+        let the probe's OPEN/CLOSE wipe the in-flight activation's state.
+        Reproduces the production bug seen on 2026-05-10.
+        """
+        interleaved = [
+            "2026-05-10 13:12:17: IPv4 connection accepted: 192.168.1.230:53140.",
+            "2026-05-10 13:12:17: <<< Incoming KMS request",
+            "2026-05-10 13:12:17: Licensing status                : 1 (Licensed)",
+            "2026-05-10 13:12:17: Application ID                  : 55c92734-d682-4d71-983e-d6ec3f16059f (Windows)",
+            "2026-05-10 13:12:17: Activation ID (Product)         : 2de67392-b7a7-462a-b1ca-108dd189f588 (Windows 10 Professional)",
+            "2026-05-10 13:12:17: Workstation name                : WIN10Pro-DS32.viktorbarzin.lan",
+            # ── kubelet probe arrives mid-flight, MUST NOT clobber 53140's state ──
+            "2026-05-10 13:12:19: IPv4 connection accepted: 10.0.20.102:46498.",
+            "2026-05-10 13:12:19: IPv4 connection closed: 10.0.20.102:46498.",
+            "2026-05-10 13:12:24: IPv4 connection accepted: 10.0.20.102:54454.",
+            "2026-05-10 13:12:24: IPv4 connection closed: 10.0.20.102:54454.",
+            # ── activation closes 31s after open ──
+            "2026-05-10 13:12:48: IPv4 connection closed: 192.168.1.230:53140.",
+        ]
+        events, _ = self._drive(interleaved)
+        kinds = [e.kind for e in events]
+        self.assertEqual(kinds, ["probe", "probe", "activation"])
+        activation = events[-1]
+        self.assertEqual(activation.ip, "192.168.1.230")
+        self.assertEqual(activation.product, "Windows 10 Professional")
+        self.assertEqual(activation.host, "WIN10Pro-DS32.viktorbarzin.lan")
+        self.assertEqual(activation.status, "Licensed")
+
+    def test_orphan_close_no_event(self):
+        """If the notifier starts mid-conn, the open was missed but the
+        close still fires. We MUST NOT emit an event for that — it would
+        show up with empty fields and look like a probe."""
+        orphan = [
+            "2026-05-10 13:00:00: IPv4 connection closed: 192.168.1.230:55555.",
+        ]
+        events, _ = self._drive(orphan)
+        self.assertEqual(events, [])
+
 
 if __name__ == "__main__":
     unittest.main()
