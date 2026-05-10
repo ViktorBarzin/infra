@@ -122,12 +122,20 @@ module "anubis" {
   target_url = "http://${kubernetes_service.blog.metadata[0].name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local"
 }
 
+# x402 payment gateway in front of Anubis. DRY_RUN until wallet_address is set.
+module "x402" {
+  source     = "../../modules/kubernetes/x402_instance"
+  name       = "blog"
+  namespace  = kubernetes_namespace.website.metadata[0].name
+  target_url = "http://${module.anubis.service_name}.${kubernetes_namespace.website.metadata[0].name}.svc.cluster.local:${module.anubis.service_port}"
+}
+
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
   namespace        = kubernetes_namespace.website.metadata[0].name
   name             = "blog"
-  service_name     = module.anubis.service_name
-  port             = module.anubis.service_port
+  service_name     = module.x402.service_name
+  port             = module.x402.service_port
   full_host        = "viktorbarzin.me"
   dns_type         = "proxied"
   tls_secret_name  = var.tls_secret_name
@@ -146,8 +154,8 @@ module "ingress-www" {
   source           = "../../modules/kubernetes/ingress_factory"
   namespace        = kubernetes_namespace.website.metadata[0].name
   name             = "blog-www"
-  service_name     = module.anubis.service_name
-  port             = module.anubis.service_port
+  service_name     = module.x402.service_name
+  port             = module.x402.service_port
   full_host        = "www.viktorbarzin.me"
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
