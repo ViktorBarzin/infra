@@ -103,7 +103,12 @@ resource "kubernetes_service_account" "kured_sentinel_gate" {
     name      = "kured-sentinel-gate"
     namespace = kubernetes_namespace.kured.metadata[0].name
   }
-  automount_service_account_token = false
+  # Token IS mounted — the script uses kubectl to read nodes + pods state for
+  # the safety checks. Without an authenticated token, kubectl falls back to
+  # localhost:8080 (no proxy in distroless-ish image), every check silently
+  # no-ops on parse-empty stdout, and the gate appears to PASS when it
+  # shouldn't. Mount the token. (Found 2026-05-10 during Test 3 validation.)
+  automount_service_account_token = true
 }
 
 resource "kubernetes_cluster_role" "kured_sentinel_gate" {
@@ -161,8 +166,17 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
       }
       spec {
         service_account_name            = kubernetes_service_account.kured_sentinel_gate.metadata[0].name
-        automount_service_account_token = false
+        automount_service_account_token = true
         enable_service_links            = false
+        # bitnami/kubectl:latest runs as uid=1001 by default. The hostPath
+        # /var/run is root:root 0755 → final `touch
+        # /host/var-run/gated-reboot-required` fails with EACCES, so the gate
+        # never opens. Run as root inside the container (the hostPath mount
+        # already gives privileged-equivalent access; this just lets us write
+        # to /var/run). Found 2026-05-10 during Test 3 validation.
+        security_context {
+          run_as_user = 0
+        }
         toleration {
           effect   = "NoSchedule"
           key      = "node-role.kubernetes.io/control-plane"
