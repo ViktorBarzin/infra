@@ -6,6 +6,7 @@ variable "postgresql_host" { type = string }
 variable "claude_memory_db_password" {
   type      = string
   sensitive = true
+  default   = "" # falls back to Vault `secret/claude-memory.db_password` below
 }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -112,11 +113,13 @@ resource "kubernetes_job" "db_init" {
             "sh", "-c",
             <<-EOT
               set -e
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='claude_memory'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE ROLE claude_memory WITH LOGIN PASSWORD '${var.claude_memory_db_password}'"
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
-                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE claude_memory OWNER claude_memory"
-              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
+              # -d postgres: psql defaults database name to username; root user
+              # doesn't have a root-named database, so be explicit.
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='claude_memory'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE ROLE claude_memory WITH LOGIN PASSWORD '${coalesce(var.claude_memory_db_password, data.vault_kv_secret_v2.secrets.data["db_password"])}'"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
+                PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE claude_memory OWNER claude_memory"
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
               echo "Database init complete"
             EOT
           ]

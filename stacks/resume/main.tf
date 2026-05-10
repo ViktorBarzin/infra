@@ -2,7 +2,10 @@ variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
-variable "resume_database_url" { type = string }
+variable "resume_database_url" {
+  type    = string
+  default = ""
+}
 variable "nfs_server" { type = string }
 variable "mail_host" { type = string }
 
