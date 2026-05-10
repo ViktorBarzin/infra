@@ -77,6 +77,27 @@ resource "kubernetes_manifest" "external_secret" {
             property = "recompute_bearer_token"
           }
         },
+        {
+          secretKey = "ACTUALBUDGET_API_URL"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_api_url"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_API_KEY"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_api_key"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_SYNC_ID"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_sync_id"
+          }
+        },
       ]
     }
   }
