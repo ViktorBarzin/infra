@@ -309,8 +309,13 @@ module "ingress" {
 }
 
 module "ingress-internal" {
-  source                  = "../../modules/kubernetes/ingress_factory"
-  auth                    = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Auth disabled: HA Sofia's frigate integration uses an API key
+  # (set inside HA), not browser SSO. With auth=required, the integration
+  # gets a 302 to authentik.viktorbarzin.me on every poll and reports
+  # the integration as broken. local-only IP allowlist + Frigate's own
+  # API-key auth are sufficient.
+  auth                    = "none"
   namespace               = kubernetes_namespace.frigate.metadata[0].name
   name                    = "frigate-lan"
   host                    = "frigate-lan"
