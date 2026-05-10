@@ -444,11 +444,14 @@ module "ingress" {
 
 # Second ingress at the same host for the /api/ prefix WITHOUT Authentik
 # forward-auth. The SPA loads under Authentik (main ingress at /), then its
-# fetch() XHRs hit /api/* directly — forward-auth on /api/* would 302 the
-# XHR to a cross-origin Authentik login page, which fetch().json() can't
-# parse. App-layer bearer auth still gates writes (POST/PATCH/DELETE on
-# scenarios, /recompute, /simulate); read endpoints are open. Acceptable
-# for a personal tool whose only data is anonymous numeric projections.
+# fetch() XHRs hit /api/* directly — ANY forward-auth here (required OR
+# public-tier auto-bind) would 302 the XHR to a cross-origin Authentik
+# login page, which fetch() rejects under CORS preflight rules. Even the
+# `auth = "public"` flow needs a 302+cookie dance on first visit to set
+# the guest session cookie, so it doesn't help XHR APIs. App-layer bearer
+# auth still gates writes (POST/PATCH/DELETE on scenarios, /recompute,
+# /simulate); read endpoints are open. Acceptable for a personal tool
+# whose only data is anonymous numeric projections.
 module "ingress_api" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "none"
@@ -459,7 +462,7 @@ module "ingress_api" {
   port            = 8080
   ingress_path    = ["/api/"]
   tls_secret_name = var.tls_secret_name
-  auth            = "public"
+  auth            = "none"
 }
 
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource
