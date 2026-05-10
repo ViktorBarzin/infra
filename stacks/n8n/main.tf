@@ -124,7 +124,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     name      = "n8n-data-encrypted"
     namespace = kubernetes_namespace.n8n.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

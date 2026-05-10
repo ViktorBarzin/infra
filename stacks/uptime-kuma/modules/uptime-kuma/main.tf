@@ -50,7 +50,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     name      = "uptime-kuma-data-proxmox"
     namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "50%"
       "resize.topolvm.io/storage_limit" = "20Gi"
     }

@@ -240,7 +240,7 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       metadata {
         name = "data"
         annotations = {
-          "resize.topolvm.io/threshold"     = "80%"
+          "resize.topolvm.io/threshold"     = "10%"
           "resize.topolvm.io/increase"      = "100%"
           "resize.topolvm.io/storage_limit" = "50Gi"
         }
@@ -346,7 +346,7 @@ resource "kubernetes_persistent_volume_claim" "pgadmin_encrypted" {
     name      = "dbaas-pgadmin-encrypted"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }

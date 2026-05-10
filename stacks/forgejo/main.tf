@@ -30,7 +30,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     name      = "forgejo-data-encrypted"
     namespace = kubernetes_namespace.forgejo.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "50%"
       "resize.topolvm.io/storage_limit" = "50Gi"
     }

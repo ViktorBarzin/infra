@@ -12,7 +12,7 @@ resource "kubernetes_persistent_volume_claim" "secondary_config_encrypted" {
     name      = "technitium-secondary-config-encrypted"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
@@ -200,7 +200,7 @@ resource "kubernetes_persistent_volume_claim" "tertiary_config_encrypted" {
     name      = "technitium-tertiary-config-encrypted"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "80%"
+      "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
       "resize.topolvm.io/storage_limit" = "5Gi"
     }
