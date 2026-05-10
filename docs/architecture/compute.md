@@ -18,7 +18,7 @@ graph TB
     subgraph Proxmox["Proxmox VE"]
         direction TB
         MASTER["VM 200: k8s-master<br/>8c / 32GB<br/>10.0.20.100"]
-        NODE1["VM 201: k8s-node1<br/>16c / 32GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:PreferNoSchedule"]
+        NODE1["VM 201: k8s-node1<br/>16c / 48GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:PreferNoSchedule"]
         NODE2["VM 202: k8s-node2<br/>8c / 32GB"]
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
         NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
@@ -62,7 +62,7 @@ graph TB
 | Model | Dell PowerEdge R730 |
 | CPU | 1x Intel Xeon E5-2699 v4 (22 cores / 44 threads, CPU2 unpopulated) |
 | Total Cores/Threads | 22 cores / 44 threads |
-| RAM | 272GB DDR4-2400 ECC RDIMM physical (10 DIMMs: 8x32G Samsung + 2x8G Hynix). VMs use ~160GB total (5 K8s VMs x 32GB) |
+| RAM | 272GB DDR4-2400 ECC RDIMM physical (10 DIMMs: 8x32G Samsung + 2x8G Hynix). VMs use ~176GB total (k8s-node1 48GB + 4 K8s VMs x 32GB) |
 | GPU | NVIDIA Tesla T4 (16GB GDDR6, PCIe 0000:06:00.0) |
 | Storage | 1.1TB SSD + 931GB SSD + 10.7TB HDD |
 | Hypervisor | Proxmox VE |
@@ -72,12 +72,20 @@ graph TB
 | VM | VMID | vCPUs | RAM | Network | Role | Taints |
 |----|------|-------|-----|---------|------|--------|
 | k8s-master | 200 | 8 | 32GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
-| k8s-node1 | 201 | 16 | 32GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:PreferNoSchedule` (applied dynamically to whichever node carries the GPU) |
+| k8s-node1 | 201 | 16 | 48GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:PreferNoSchedule` (applied dynamically to whichever node carries the GPU) |
 | k8s-node2 | 202 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 
-**Total Cluster Resources**: 48 vCPUs, ~160GB RAM (5 nodes x 32GB)
+**Total Cluster Resources**: 48 vCPUs, ~176GB RAM (k8s-node1 48GB + 4 nodes x 32GB)
+
+> **node1 RAM (2026-05-10)**: bumped from 32 → 48 GiB out-of-band via
+> `qm set 201 --memory 49152` because VMID 201 is intentionally not
+> managed by Terraform yet (telmate/proxmox provider bug with iSCSI
+> PVCs — see `infra/stacks/infra/main.tf` line 442). Driver: GPU
+> multi-tenancy (frigate + ytdlp + llama-swap + immich-ml) was
+> hitting 94% memory-request saturation on the old size. Adopt this
+> VM into TF (`module "k8s-node1"`) once we've migrated to bpg/proxmox.
 
 ### GPU Passthrough
 
