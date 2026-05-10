@@ -228,18 +228,56 @@ module "tls_secret" {
 }
 
 
-# NOTE: f1-stream serves its SPA + JSON data endpoints (/schedule, /embed,
-# /embed-asset, …) all on the same path tree, so putting Anubis in front
-# breaks XHR data fetches with "Unexpected token '<', '<!doctype '" — the
-# challenge HTML lands where JSON is expected. Anubis is removed for f1
-# until/unless we add a /api carve-out the way wrongmove does.
+# f1-stream serves its SvelteKit SPA via the FastAPI `/{path}` catch-all
+# and exposes 14 JSON/proxy routes at root (/schedule, /streams, /embed,
+# /embed-asset, /relay, /proxy, /extract, /extractors, /health). A flat
+# Anubis catch-all CHALLENGE breaks the SPA's XHRs with "Unexpected token
+# '<', '<!doctype '" because the schedule fetch lands on the challenge HTML.
+# Custom policy: ALLOW the known JSON routes + SvelteKit `_app/` assets
+# (which load before any user has a chance to solve PoW), CHALLENGE
+# everything else — the HTML pages.
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "f1"
+  namespace  = kubernetes_namespace.f1-stream.metadata[0].name
+  target_url = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
+  policy_yaml = <<-EOT
+    bots:
+      - import: (data)/bots/_deny-pathological.yaml
+      - import: (data)/bots/aggressive-brazilian-scrapers.yaml
+      - import: (data)/meta/ai-block-aggressive.yaml
+      - import: (data)/crawlers/_allow-good.yaml
+      - import: (data)/clients/x-firefox-ai.yaml
+      - import: (data)/common/keep-internet-working.yaml
+      # SvelteKit immutable assets (CSS/JS chunks) and OpenAPI/health routes —
+      # served pre-cookie, must pass without challenge.
+      - name: f1-svelte-assets-and-meta
+        path_regex: ^/(_app/|openapi\.json|docs|api/)
+        action: ALLOW
+      # Application JSON routes — XHR'd by the SPA after the user has solved
+      # the PoW for `/`. We allow them unconditionally because the alternative
+      # (carve-out per route via separate Ingress objects) is brittle and
+      # because the data they expose (stream URLs, schedule metadata) is not
+      # the AI-scraping target — the HTML/SPA is.
+      - name: f1-data-routes
+        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|schedule|streams)(/|\?|$)
+        action: ALLOW
+      - name: catchall-challenge
+        path_regex: .*
+        action: CHALLENGE
+  EOT
+}
+
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
   dns_type         = "non-proxied"
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   name             = "f1"
+  service_name     = module.anubis.service_name
+  port             = module.anubis.service_port
   tls_secret_name  = var.tls_secret_name
   exclude_crowdsec = true
+  anti_ai_scraping = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"
