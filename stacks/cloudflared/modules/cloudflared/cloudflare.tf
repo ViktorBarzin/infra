@@ -50,6 +50,22 @@ locals {
   }
 }
 
+# Zone-level Bot Management. ai_bots_protection was "block" — CF returned
+# 403 to declared AI bot UAs at the edge, so the in-cluster x402 gateway
+# never got a chance to issue HTTP 402 with a payment offer. Flipped to
+# "disabled" so AI bots reach Traefik → x402, which returns 402 with the
+# wallet address. Generic Bot Fight Mode + crawler protection stay on.
+# (import {} stanza for adoption lives in the root stack — TF restriction.)
+resource "cloudflare_bot_management" "zone" {
+  zone_id            = var.cloudflare_zone_id
+  enable_js          = true
+  fight_mode         = true
+  ai_bots_protection = "disabled"
+  # crawler_protection / is_robots_txt_managed are settable only via newer
+  # provider versions; they retain whatever the API currently has
+  # (crawler_protection=enabled, is_robots_txt_managed=true).
+}
+
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
   account_id = var.cloudflare_account_id
   tunnel_id  = var.cloudflare_tunnel_id
@@ -152,57 +168,57 @@ resource "cloudflare_record" "mail_spf" {
 }
 
 resource "cloudflare_record" "mail_domainkey_rspamd" {
-  content  = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
-  name     = "mail._domainkey.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
+  content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
+  name    = "mail._domainkey.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "brevo_domainkey1" {
-  content  = "b1.viktorbarzin-me.dkim.brevo.com."
-  name     = "brevo1._domainkey.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "CNAME"
-  zone_id  = var.cloudflare_zone_id
+  content = "b1.viktorbarzin-me.dkim.brevo.com."
+  name    = "brevo1._domainkey.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "brevo_domainkey2" {
-  content  = "b2.viktorbarzin-me.dkim.brevo.com."
-  name     = "brevo2._domainkey.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "CNAME"
-  zone_id  = var.cloudflare_zone_id
+  content = "b2.viktorbarzin-me.dkim.brevo.com."
+  name    = "brevo2._domainkey.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "brevo_code" {
-  content  = "\"brevo-code:a6ef1dd91b248559900246eb4e7ceebd\""
-  name     = "viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
+  content = "\"brevo-code:a6ef1dd91b248559900246eb4e7ceebd\""
+  name    = "viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "mail_mta_sts" {
-  content  = "\"v=STSv1; id=20260412\""
-  name     = "_mta-sts.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
+  content = "\"v=STSv1; id=20260412\""
+  name    = "_mta-sts.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "mail_tlsrpt" {
-  content  = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
-  name     = "_smtp._tls.viktorbarzin.me"
-  proxied  = false
-  ttl      = 1
-  type     = "TXT"
-  zone_id  = var.cloudflare_zone_id
+  content = "\"v=TLSRPTv1; rua=mailto:postmaster@viktorbarzin.me\""
+  name    = "_smtp._tls.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "TXT"
+  zone_id = var.cloudflare_zone_id
 }
 
 resource "cloudflare_record" "mail_dmarc" {
