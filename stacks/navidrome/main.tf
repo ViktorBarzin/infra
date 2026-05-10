@@ -82,6 +82,13 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
       }
     }
   }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this, every TF apply tries to revert
+    # to the spec value, K8s rejects the shrink, and the PVC ends up
+    # in Terminating-but-in-use limbo.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
 }
 
 module "nfs_music" {

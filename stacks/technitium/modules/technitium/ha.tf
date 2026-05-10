@@ -26,6 +26,13 @@ resource "kubernetes_persistent_volume_claim" "secondary_config_encrypted" {
       }
     }
   }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this, every TF apply tries to revert
+    # to the spec value, K8s rejects the shrink, and the PVC ends up
+    # in Terminating-but-in-use limbo.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
 }
 
 # Primary-only service for zone transfers (AXFR) and API access
@@ -213,6 +220,13 @@ resource "kubernetes_persistent_volume_claim" "tertiary_config_encrypted" {
         storage = "2Gi"
       }
     }
+  }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this, every TF apply tries to revert
+    # to the spec value, K8s rejects the shrink, and the PVC ends up
+    # in Terminating-but-in-use limbo.
+    ignore_changes = [spec[0].resources[0].requests]
   }
 }
 
