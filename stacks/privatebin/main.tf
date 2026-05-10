@@ -138,14 +138,21 @@ module "anubis" {
   target_url = "http://${kubernetes_service.privatebin.metadata[0].name}.${kubernetes_namespace.privatebin.metadata[0].name}.svc.cluster.local"
 }
 
+module "x402" {
+  source     = "../../modules/kubernetes/x402_instance"
+  name       = "privatebin"
+  namespace  = kubernetes_namespace.privatebin.metadata[0].name
+  target_url = "http://${module.anubis.service_name}.${kubernetes_namespace.privatebin.metadata[0].name}.svc.cluster.local:${module.anubis.service_port}"
+}
+
 module "ingress" {
   source                         = "../../modules/kubernetes/ingress_factory"
   namespace                      = kubernetes_namespace.privatebin.metadata[0].name
   name                           = "privatebin"
   host                           = "pb"
   dns_type                       = "proxied"
-  service_name                   = module.anubis.service_name
-  port                           = module.anubis.service_port
+  service_name                   = module.x402.service_name
+  port                           = module.x402.service_port
   anti_ai_scraping               = false
   tls_secret_name                = var.tls_secret_name
   custom_content_security_policy = "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
