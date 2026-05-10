@@ -339,13 +339,20 @@ module "anubis" {
   target_url = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
 }
 
+module "x402" {
+  source     = "../../modules/kubernetes/x402_instance"
+  name       = "wrongmove"
+  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
+  target_url = "http://${module.anubis.service_name}.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local:${module.anubis.service_port}"
+}
+
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.realestate-crawler.metadata[0].name
   name             = "wrongmove"
-  service_name     = module.anubis.service_name
-  port             = module.anubis.service_port
+  service_name     = module.x402.service_name
+  port             = module.x402.service_port
   anti_ai_scraping = false
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {

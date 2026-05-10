@@ -91,13 +91,20 @@ module "anubis" {
   target_url = "http://${kubernetes_service.jsoncrack.metadata[0].name}.${kubernetes_namespace.jsoncrack.metadata[0].name}.svc.cluster.local"
 }
 
+module "x402" {
+  source     = "../../modules/kubernetes/x402_instance"
+  name       = "json"
+  namespace  = kubernetes_namespace.jsoncrack.metadata[0].name
+  target_url = "http://${module.anubis.service_name}.${kubernetes_namespace.jsoncrack.metadata[0].name}.svc.cluster.local:${module.anubis.service_port}"
+}
+
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.jsoncrack.metadata[0].name
   name             = "json"
-  service_name     = module.anubis.service_name
-  port             = module.anubis.service_port
+  service_name     = module.x402.service_name
+  port             = module.x402.service_port
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
   extra_annotations = {
