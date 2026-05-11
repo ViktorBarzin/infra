@@ -183,6 +183,7 @@ module "ingress" {
   # Smart-home automation HTTP API — Home Assistant and other automations
   # call this with SERVICE_API_KEY in headers. Programmatic clients can't
   # follow Authentik 302s.
+  # auth = "none": Smart-home automation API — SERVICE_API_KEY in headers; programmatic clients cannot follow Authentik redirects.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name

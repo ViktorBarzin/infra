@@ -591,6 +591,7 @@ module "ingress-api" {
   # Analytics tracker beacon — public websites embed Rybbit's /api/script.js
   # and post events to /api/event. Forward-auth would 302 every tracking
   # request and break analytics collection. Rybbit's site_id is the gate.
+  # auth = "none": Analytics tracker API — public websites embed /api/script.js and POST events; forward-auth breaks tracking collection.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.rybbit.metadata[0].name

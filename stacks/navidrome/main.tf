@@ -239,7 +239,8 @@ module "ingress" {
   # Subsonic API at /rest/* is consumed by mobile clients (DSub, Symfonium,
   # play:sub) which can't follow Authentik forward-auth 302s. Navidrome's
   # own user/password auth still gates everything.
-  auth            = "none"
+  # auth = "app": Subsonic API mobile clients (DSub, Symfonium, play:sub) use Navidrome's own user/password auth; backend manages authentication.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.navidrome.metadata[0].name
   name            = "navidrome"

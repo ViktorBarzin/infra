@@ -254,6 +254,7 @@ module "ingress_uploads_public" {
   host            = var.host
   service_name    = "postiz"
   port            = 80
+  # auth = "none": Meta's IG Graph API fetcher needs unprotected /uploads/* to pull JPEGs (forward-auth 302 causes error 36001).
   auth            = "none"
   ingress_path    = ["/uploads"]
   tls_secret_name = var.tls_secret_name

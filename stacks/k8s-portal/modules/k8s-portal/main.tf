@@ -170,5 +170,6 @@ module "ingress_setup_script" {
   service_name    = "k8s-portal"
   ingress_path    = ["/setup/script", "/agent"]
   tls_secret_name = var.tls_secret_name
+  # auth = "none": Setup script + agent endpoint must be curl-able without auth (no cookies preserved in automation).
   auth            = "none"
 }

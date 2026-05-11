@@ -315,6 +315,7 @@ module "ingress-internal" {
   # gets a 302 to authentik.viktorbarzin.me on every poll and reports
   # the integration as broken. local-only IP allowlist + Frigate's own
   # API-key auth are sufficient.
+  # auth = "none": HA Sofia Frigate integration uses API key, not browser SSO; forward-auth 302s break integration on every poll.
   auth                    = "none"
   namespace               = kubernetes_namespace.frigate.metadata[0].name
   name                    = "frigate-lan"

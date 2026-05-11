@@ -265,6 +265,7 @@ module "ingress_api" {
   host            = "insta2spotify"
   service_name    = "insta2spotify"
   tls_secret_name = var.tls_secret_name
+  # auth = "none": API endpoints consumed by browser fetch() XHRs; forward-auth 302 breaks CORS preflight.
   auth            = "none"
   ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
   max_body_size   = "50m"

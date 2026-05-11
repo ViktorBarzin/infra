@@ -236,6 +236,7 @@ module "ingress" {
   # server-server (/_matrix/federation) APIs use bearer tokens / signed
   # requests, not browser sessions. Forward-auth would break federation
   # and all native Matrix clients.
+  # auth = "none": Matrix client-server + federation APIs use bearer tokens / signed requests; forward-auth incompatible with native clients.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.matrix.metadata[0].name

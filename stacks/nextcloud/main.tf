@@ -230,7 +230,8 @@ module "ingress" {
   # Native WebDAV / CalDAV / CardDAV clients (Nextcloud desktop+mobile apps,
   # calendar sync) use HTTP basic-auth + app passwords, not browser sessions.
   # Nextcloud has strong app-layer auth of its own.
-  auth            = "none"
+  # auth = "app": Native WebDAV / CalDAV / CardDAV clients use HTTP Basic auth + app passwords; Nextcloud enforces app-layer authentication.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.nextcloud.metadata[0].name
   name            = "nextcloud"

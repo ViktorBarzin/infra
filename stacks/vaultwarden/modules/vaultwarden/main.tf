@@ -208,7 +208,8 @@ module "ingress" {
   # CLI all hit /api, /identity, /events with Bitwarden master-password / token
   # auth. Forward-auth would block every native client. Vaultwarden's own auth
   # is the gate.
-  auth            = "none"
+  # auth = "app": Bitwarden-compatible API — mobile app, browser extension, desktop app use token auth against Vaultwarden's own auth; backend is the gate.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.vaultwarden.metadata[0].name
   name            = "vaultwarden"

@@ -131,6 +131,7 @@ module "idrac-redfish-exporter-ingress" {
   # already gates external access, so layering Authentik on top only
   # breaks the REST sensor in HA Sofia (it gets a 302 to authentik.viktorbarzin.me
   # and parses HTML instead of metrics).
+  # auth = "none": HA Sofia REST sensors poll programmatically without cookies; Authentik OIDC flow incompatible with automation.
   auth                    = "none"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "idrac-redfish-exporter"

@@ -280,6 +280,7 @@ module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # MCP server — called by Claude Code (and other tools/agents) via app-layer
   # bearer-token auth; forward-auth would break programmatic clients.
+  # auth = "none": MCP server called by Claude Code via bearer-token auth; forward-auth would break programmatic clients.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.claude-memory.metadata[0].name
