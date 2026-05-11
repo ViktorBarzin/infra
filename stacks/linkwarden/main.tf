@@ -228,8 +228,11 @@ resource "kubernetes_service" "linkwarden" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Linkwarden uses NextAuth (NEXTAUTH_SECRET/URL set above)
+  # and exposes /api/* for its mobile clients. Authentik forward-auth would
+  # 302 those callers; app-level NextAuth gates users.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.linkwarden.metadata[0].name
   name            = "linkwarden"
