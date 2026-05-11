@@ -1134,20 +1134,18 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
-          - alert: PVAutoExpanding
-            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 80 and kubelet_volume_stats_capacity_bytes < 1099511627776
-            for: 5m
-            labels:
-              severity: info
-            annotations:
-              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — auto-expansion should trigger"
+          # PVAutoExpanding removed — was info-only at >80% used, but
+          # pvc-autoresizer's threshold is 10% free (= 90% used), so the
+          # alert always fired ~10 percentage points before any action
+          # was needed. Real failures are caught by PVFillingUp (autoresizer
+          # didn't keep up) and PVPredictedFull (trend toward exhaustion).
           - alert: PVFillingUp
             expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 95 and kubelet_volume_stats_capacity_bytes < 1099511627776
             for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — auto-expansion may have failed"
+              summary: "PV {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }}: {{ $value | printf \"%.0f\" }}% used — pvc-autoresizer didn't expand in time (storage_limit reached, expansion failing, or no autoresizer annotations)"
           - alert: PVPredictedFull
             expr: predict_linear(kubelet_volume_stats_used_bytes[6h], 3600*24) > kubelet_volume_stats_capacity_bytes and kubelet_volume_stats_capacity_bytes < 1099511627776
             for: 1h
