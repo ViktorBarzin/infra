@@ -44,7 +44,7 @@ graph TB
 | Authentik Worker | 2026.2.2 | `stacks/authentik/` | Background task processors (2 replicas) |
 | PgBouncer | Latest | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
 | Embedded Outpost | - | Built into Authentik | Forward auth endpoint for Traefik |
-| Traefik ForwardAuth | - | `ingress_factory` module | Middleware for protected ingresses |
+| Traefik ForwardAuth | - | `modules/kubernetes/ingress_factory/` | Middleware attached when `auth = "required"` or `"public"` |
 | Vault OIDC Method | - | `stacks/vault/` | Human SSO authentication to Vault |
 | Vault K8s Auth | - | `stacks/vault/` | Service account JWT authentication |
 
@@ -52,7 +52,16 @@ graph TB
 
 ### Forward Authentication Flow
 
-Services configured with `protected = true` in the `ingress_factory` module automatically get Traefik ForwardAuth middleware configured. When an unauthenticated user accesses a protected service:
+Services pick an auth tier via the `auth` enum on the `ingress_factory` module (default `"required"`, fail-closed):
+
+| Tier | Effect | When to use |
+|------|--------|-------------|
+| `"required"` | Authentik forward-auth gates every request | Backend has no own user auth — Authentik is the only gate |
+| `"app"` | No Authentik middleware; backend's own login is the gate | Backend handles its own user auth (NextAuth, Django, OAuth, bearer-token API) |
+| `"public"` | Authentik anonymous binding via `public` outpost | Audit trail without gating; only works for top-level browser navigation |
+| `"none"` | No Authentik middleware at all | Anubis-fronted content, webhooks, OAuth callbacks, native-client APIs (CalDAV, WebDAV, Git) |
+
+When `auth = "required"`, an unauthenticated request flows:
 
 1. Request hits Traefik ingress
 2. ForwardAuth middleware calls Authentik embedded outpost
@@ -63,6 +72,8 @@ Services configured with `protected = true` in the `ingress_factory` module auto
 7. Subsequent requests include session cookie, pass auth check, reach backend
 
 Authentik adds authentication headers (user, email, groups) to forwarded requests. These headers are stripped before reaching the backend to prevent confusion.
+
+**Anti-exposure guard**: every `auth = "app"` or `auth = "none"` line MUST have a preceding `# auth = "<tier>": <reason>` comment documenting what gates the backend (for `"app"`) or why the endpoint is intentionally public (for `"none"`). The convention is enforced by `scripts/check-ingress-auth-comments.py`, which `scripts/tg` runs on every `plan/apply/destroy/refresh` and blocks the terragrunt invocation if violated. Stack-scoped — each stack documents itself.
 
 ### Social Login & Invitation Flow
 
@@ -144,8 +155,9 @@ The public client flow:
 | Path | Purpose |
 |------|---------|
 | `stacks/authentik/` | Authentik deployment (servers, workers, PgBouncer) |
-| `stacks/platform/modules/ingress_factory/` | Traefik ForwardAuth middleware config |
-| `stacks/platform/modules/traefik/middleware.tf` | ForwardAuth middleware definition |
+| `modules/kubernetes/ingress_factory/` | Auth-tier enum + per-ingress middleware composition |
+| `stacks/traefik/modules/traefik/middleware.tf` | ForwardAuth middleware definitions (required + public outposts) |
+| `scripts/check-ingress-auth-comments.py` | Comment-convention guard wired into `scripts/tg` |
 | `stacks/vault/auth.tf` | Vault OIDC and K8s auth methods |
 
 ### Vault Paths
@@ -160,17 +172,40 @@ The public client flow:
 - `stacks/platform/` - Traefik ingress with ForwardAuth
 - `stacks/vault/` - Vault auth methods
 
-### Ingress Protection Example
+### Ingress Protection Examples
 
+Authentik-gated admin UI (default):
 ```hcl
 module "myapp_ingress" {
-  source = "./modules/ingress_factory"
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "myapp"
+  namespace       = "myapp"
+  tls_secret_name = var.tls_secret_name
+  # auth = "required" is the default — Authentik forward-auth is the gate.
+}
+```
 
-  name      = "myapp"
-  host      = "myapp.viktorbarzin.me"
-  protected = true  # Enables ForwardAuth middleware
+Backend with its own user auth (no Authentik in the way):
+```hcl
+module "myapp_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "myapp"
+  namespace       = "myapp"
+  tls_secret_name = var.tls_secret_name
+  # auth = "app": myapp uses NextAuth + Google OAuth; mobile clients can't follow Authentik 302.
+  auth            = "app"
+}
+```
 
-  # ... other config
+Intentionally public webhook receiver:
+```hcl
+module "myapp_ingress" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "webhook"
+  namespace       = "webhooks"
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": upstream signs payloads with HMAC; no user identity expected.
+  auth            = "none"
 }
 ```
 
