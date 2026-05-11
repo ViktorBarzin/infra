@@ -8,8 +8,10 @@ ARG KUBECTL_VERSION=1.34.0
 ARG VAULT_VERSION=1.18.1
 
 # Install system packages (single layer)
+# python3: required by scripts/check-ingress-auth-comments.py, invoked
+#   by scripts/tg before every plan/apply.
 RUN apk add --no-cache \
-    bash curl git git-crypt jq openssh-client openssl unzip \
+    bash curl git git-crypt jq openssh-client openssl python3 unzip \
     && rm -rf /var/cache/apk/*
 
 # Terraform
