@@ -1,44 +1,48 @@
 # k8s-version-upgrade — Automated K8s component (kubeadm/kubelet/kubectl) upgrade
 #
-# Detects new patch/minor versions via a weekly CronJob, then dispatches the
-# `k8s-version-upgrade` agent (infra/.claude/agents/k8s-version-upgrade.md)
-# through claude-agent-service for the actual rolling upgrade.
+# Architecture: detection CronJob → chain of small Jobs, one per phase. Each
+# Job's pod runs on a node that is NOT its drain target — eliminates the
+# self-preemption bug that killed the agent-based v1 (2026-05-11 incident).
+#
+# Chain (Job 0 → Job 6):
+#   preflight  (pinned: k8s-node1)
+#   master     (pinned: k8s-node1; drains k8s-master)
+#   worker     (pinned: k8s-node1; drains k8s-node4 → 3 → 2)
+#   worker     (pinned: k8s-master + control-plane toleration; drains k8s-node1 last)
+#   postflight (no pinning)
+#
+# Each phase Job's container runs scripts/upgrade-step.sh which:
+#   - dispatches on $PHASE
+#   - spawns the next Job via envsubst on job-template.yaml
+#   - uses deterministic naming (k8s-upgrade-${phase}-${target_version}[-${node}])
+#     so re-running on failure reconciles to a single Job per run.
 #
 # Reuse points:
-#   - claude-agent-service.claude-agent.svc:8080 — agent job runner
-#   - Vault secret/k8s-upgrade/* — operator populates ssh_key + slack_webhook
-#   - Prometheus + Pushgateway + Upgrade Gates alert group (in monitoring stack)
-#   - update_k8s.sh — library script the agent shells into nodes with
-#
-# Notes:
-#   - Schedule is Sun 12:00 UTC — well outside the kured Mon-Fri 02:00-06:00
-#     London window so OS reboots and K8s version rollouts can't overlap.
-#   - Patch detection uses `apt-cache madison kubeadm` on master via SSH.
-#     Minor detection probes the next-minor apt repo URL with HEAD.
+#   - claude-agent-service image (kubectl + ssh + jq + curl + envsubst)
+#   - Vault secret/k8s-upgrade/* (ssh_key, slack_webhook)
+#   - Prometheus + Pushgateway + Upgrade Gates alerts
+#   - default/backup-etcd CronJob (snapshot trigger)
+#   - infra/scripts/update_k8s.sh (per-node upgrade body)
 
 variable "schedule" {
   type    = string
-  default = "0 12 * * 0" # Sunday 12:00 UTC
+  default = "0 12 * * 0" # Sunday 12:00 UTC — outside kured window
 }
 
-# Toggle to suspend the detection CronJob without dropping the stack.
 variable "enabled" {
   type    = bool
   default = true
 }
 
-# Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — keep in
-# sync when the claude-agent-service image is rebuilt. Reused here because the
-# detection CronJob only needs kubectl, ssh-client, curl, jq — all of which
-# the claude-agent-service image already ships.
-variable "claude_agent_service_image_tag" {
+# Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — bump
+# in lockstep with claude-agent-service rebuilds. The image ships kubectl,
+# ssh-client, curl, jq, envsubst — everything the upgrade Jobs need.
+variable "image_tag" {
   type    = string
   default = "2fd7670d"
 }
 
-# If true, the CronJob runs the detection sequence but does NOT POST to
-# claude-agent-service. Used for Test 1 to confirm detection works without
-# firing a real upgrade.
+# When true, detection runs but does NOT spawn the preflight Job.
 variable "detection_dry_run" {
   type    = bool
   default = false
@@ -46,9 +50,9 @@ variable "detection_dry_run" {
 
 locals {
   namespace = "k8s-upgrade"
-  ca_image  = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.claude_agent_service_image_tag}"
+  image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.image_tag}"
   labels = {
-    app = "k8s-version-check"
+    app = "k8s-version-upgrade"
   }
 }
 
@@ -62,21 +66,19 @@ resource "kubernetes_namespace" "k8s_upgrade" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
   }
 }
 
-# --- ExternalSecret: ssh_key + slack_webhook + agent-service bearer ---
+# --- ExternalSecret: SSH key + Slack webhook ---
 #
 # Operator populates Vault `secret/k8s-upgrade/` with:
-#   - ssh_key         (PEM-encoded ed25519 private key)
-#   - ssh_key_pub     (the matching public key — distributed to nodes' authorized_keys)
-#   - slack_webhook   (Slack incoming-webhook URL, separate channel from kured for clean alerting)
+#   - ssh_key       (ed25519 PRIVATE key, used to SSH wizard@<node> from Jobs)
+#   - ssh_key_pub   (matching public key, deployed to nodes' authorized_keys)
+#   - slack_webhook (incoming-webhook URL)
 #
-# The claude-agent-service bearer token comes from secret/claude-agent-service
-# (reused — no parallel token needed).
-
+# No claude-agent bearer needed — the chain no longer POSTs to that service.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -109,191 +111,157 @@ resource "kubernetes_manifest" "external_secret" {
             property = "slack_webhook"
           }
         },
-        {
-          secretKey = "api_bearer_token"
-          remoteRef = {
-            key      = "claude-agent-service"
-            property = "api_bearer_token"
-          }
-        },
       ]
     }
   }
 }
 
-# --- ServiceAccount + RBAC for the detection CronJob ---
-
-resource "kubernetes_service_account" "k8s_version_check" {
-  metadata {
-    name      = "k8s-version-check"
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-}
-
-# Cluster-wide read on nodes (for kubeletVersion comparison)
-resource "kubernetes_cluster_role" "k8s_version_check" {
-  metadata {
-    name = "k8s-version-check"
-  }
-  rule {
-    api_groups = [""]
-    resources  = ["nodes"]
-    verbs      = ["get", "list"]
-  }
-}
-
-resource "kubernetes_cluster_role_binding" "k8s_version_check" {
-  metadata {
-    name = "k8s-version-check"
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.k8s_version_check.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.k8s_version_check.metadata[0].name
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-}
-
-# Namespace-scoped: detection CronJob reads its own creds Secret.
-resource "kubernetes_role" "k8s_version_check_secrets" {
-  metadata {
-    name      = "k8s-version-check-secrets"
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-  rule {
-    api_groups     = [""]
-    resources      = ["secrets"]
-    resource_names = ["k8s-upgrade-creds"]
-    verbs          = ["get"]
-  }
-}
-
-resource "kubernetes_role_binding" "k8s_version_check_secrets" {
-  metadata {
-    name      = "k8s-version-check-secrets"
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.k8s_version_check_secrets.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.k8s_version_check.metadata[0].name
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-}
-
-# --- Cross-namespace RBAC: claude-agent SA reads k8s-upgrade-creds + annotates ns ---
+# --- Unified ServiceAccount + RBAC ---
 #
-# The k8s-version-upgrade agent runs inside the claude-agent-service pod (SA
-# `claude-agent` in `claude-agent` ns). It needs:
-#   - GET on this namespace's k8s-upgrade-creds Secret (to fetch ssh_key + slack)
-#   - PATCH on the k8s-upgrade Namespace annotations (in-flight marker)
+# One SA serves BOTH the detection CronJob and every phase Job:
+#   - detection CronJob: needs nodes:get/list + secrets:get + jobs:create
+#     (to spawn Job 0 = preflight)
+#   - phase Jobs: same + pods/eviction:create + pods:delete + namespaces:patch
+#
+# Cluster-scoped because the chain spans the whole cluster (drain works on
+# any node, and the preflight Job creates a Job in `default` ns from
+# `cronjob/backup-etcd`).
 
-resource "kubernetes_role" "claude_agent_reads_creds" {
+resource "kubernetes_service_account" "k8s_upgrade_job" {
   metadata {
-    name      = "claude-agent-reads-creds"
+    name      = "k8s-upgrade-job"
     namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
-  }
-  rule {
-    api_groups     = [""]
-    resources      = ["secrets"]
-    resource_names = ["k8s-upgrade-creds"]
-    verbs          = ["get"]
   }
 }
 
-resource "kubernetes_role_binding" "claude_agent_reads_creds" {
+resource "kubernetes_cluster_role" "k8s_upgrade_job" {
   metadata {
-    name      = "claude-agent-reads-creds"
-    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+    name = "k8s-upgrade-job"
   }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role.claude_agent_reads_creds.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = "claude-agent"
-    namespace = "claude-agent"
-  }
-}
-
-# The base claude-agent ClusterRole grants get/list/watch on most resources
-# but not the mutating verbs the upgrade agent needs. Rather than fork the
-# upstream stack, we add a sibling ClusterRole here scoped to exactly the
-# verbs+resources required:
-#   - patch on namespace k8s-upgrade (in-flight annotation)
-#   - create on batch/jobs (trigger etcd snapshot Job from cronjob/backup-etcd)
-#   - patch on nodes (cordon/uncordon — drain needs this)
-#   - create on pods/eviction (drain evicts pods)
-resource "kubernetes_cluster_role" "claude_agent_upgrade_ops" {
-  metadata {
-    name = "claude-agent-upgrade-ops"
-  }
-  # Annotate the k8s-upgrade namespace
-  rule {
-    api_groups     = [""]
-    resources      = ["namespaces"]
-    resource_names = ["k8s-upgrade"]
-    verbs          = ["patch", "update"]
-  }
-  # Trigger etcd snapshot Jobs (from cronjob/backup-etcd in default ns).
-  # Cluster-scoped because we may also create test Jobs in k8s-upgrade ns.
-  rule {
-    api_groups = ["batch"]
-    resources  = ["jobs"]
-    verbs      = ["create", "delete"]
-  }
-  # Cordon / uncordon nodes
+  # Read nodes (version comparison + readiness check)
   rule {
     api_groups = [""]
     resources  = ["nodes"]
-    verbs      = ["patch", "update"]
+    verbs      = ["get", "list", "patch", "update"]
   }
-  # Drain (evict pods)
+  # Drain — evict pods
   rule {
     api_groups = [""]
     resources  = ["pods/eviction"]
     verbs      = ["create"]
   }
-  # Delete pods stuck during drain (sometimes evict isn't enough)
+  # Drain fallback — direct delete (predrain_unstick bypasses PDBs)
   rule {
     api_groups = [""]
     resources  = ["pods"]
-    verbs      = ["delete"]
+    verbs      = ["get", "list", "delete"]
+  }
+  # Read PDBs to find drain-blocking pods
+  rule {
+    api_groups = ["policy"]
+    resources  = ["poddisruptionbudgets"]
+    verbs      = ["get", "list"]
+  }
+  # Chain dispatch — create the next Job; reconcile via apply on retry.
+  # In `default` ns to also create the etcd-snapshot Job from cronjob/backup-etcd.
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["create", "get", "list", "delete", "patch", "watch"]
+  }
+  # Pull CronJob spec for `kubectl create job --from=cronjob/backup-etcd`
+  rule {
+    api_groups = ["batch"]
+    resources  = ["cronjobs"]
+    verbs      = ["get", "list"]
+  }
+  # Annotate the k8s-upgrade namespace (in-flight marker + snapshot path)
+  rule {
+    api_groups     = [""]
+    resources      = ["namespaces"]
+    resource_names = [local.namespace]
+    verbs          = ["get", "patch", "update"]
   }
 }
 
-resource "kubernetes_cluster_role_binding" "claude_agent_upgrade_ops" {
+resource "kubernetes_cluster_role_binding" "k8s_upgrade_job" {
   metadata {
-    name = "claude-agent-upgrade-ops"
+    name = "k8s-upgrade-job"
   }
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.claude_agent_upgrade_ops.metadata[0].name
+    name      = kubernetes_cluster_role.k8s_upgrade_job.metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
-    name      = "claude-agent"
-    namespace = "claude-agent"
+    name      = kubernetes_service_account.k8s_upgrade_job.metadata[0].name
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+  }
+}
+
+# Namespaced: read the credentials Secret in k8s-upgrade (SSH key + Slack URL)
+resource "kubernetes_role" "k8s_upgrade_job_ns" {
+  metadata {
+    name      = "k8s-upgrade-job-ns"
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["secrets"]
+    resource_names = ["k8s-upgrade-creds"]
+    verbs          = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding" "k8s_upgrade_job_ns" {
+  metadata {
+    name      = "k8s-upgrade-job-ns"
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.k8s_upgrade_job_ns.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.k8s_upgrade_job.metadata[0].name
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+  }
+}
+
+# --- ConfigMaps: scripts + Job template ---
+
+resource "kubernetes_config_map" "k8s_upgrade_scripts" {
+  metadata {
+    name      = "k8s-upgrade-scripts"
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+    labels    = local.labels
+  }
+  data = {
+    "upgrade-step.sh" = file("${path.module}/scripts/upgrade-step.sh")
+    "update_k8s.sh"   = file("${path.module}/../../scripts/update_k8s.sh")
+  }
+}
+
+resource "kubernetes_config_map" "k8s_upgrade_job_template" {
+  metadata {
+    name      = "k8s-upgrade-job-template"
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+    labels    = local.labels
+  }
+  data = {
+    "job-template.yaml" = file("${path.module}/job-template.yaml")
   }
 }
 
 # --- Detection CronJob ---
 #
-# Weekly: compares running cluster version against latest available patch
-# (apt-cache madison kubeadm on master) and latest available minor (HEAD on
-# next-minor pkgs.k8s.io repo). When a target is detected, POSTs to
-# claude-agent-service to kick the upgrade agent.
+# Probes for available patch/minor targets weekly. When one is found, renders
+# Job 0 (preflight) from the same job-template the chain uses. The CronJob no
+# longer POSTs to claude-agent-service; the whole pipeline now runs inside the
+# cluster via Job-chaining.
 
 resource "kubernetes_cron_job_v1" "k8s_version_check" {
   metadata {
@@ -320,33 +288,36 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
             labels = local.labels
           }
           spec {
-            service_account_name = kubernetes_service_account.k8s_version_check.metadata[0].name
+            service_account_name = kubernetes_service_account.k8s_upgrade_job.metadata[0].name
             restart_policy       = "Never"
             image_pull_secrets {
               name = "registry-credentials"
             }
+            volume {
+              name = "creds"
+              secret {
+                secret_name = "k8s-upgrade-creds"
+                # 0444 — non-root container needs read; SSH key gets re-installed
+                # with mode 0400 in the inline command before any ssh call.
+                default_mode = "0444"
+              }
+            }
+            volume {
+              name = "template"
+              config_map {
+                name = kubernetes_config_map.k8s_upgrade_job_template.metadata[0].name
+              }
+            }
             container {
               name  = "version-check"
-              image = local.ca_image
+              image = local.image
               command = ["/bin/bash", "-c", <<-EOT
                 set -euo pipefail
                 echo "==> k8s-version-check ($(date -u +%FT%TZ))"
 
-                # 1. Load SSH key from K8s Secret
-                mkdir -p /tmp
-                /usr/local/bin/kubectl get secret k8s-upgrade-creds \
-                  -o jsonpath='{.data.ssh_key}' | base64 -d > /tmp/k8s-upgrade-ssh-key
-                chmod 400 /tmp/k8s-upgrade-ssh-key
-
-                SLACK=$(/usr/local/bin/kubectl get secret k8s-upgrade-creds \
-                  -o jsonpath='{.data.slack_webhook}' | base64 -d)
-
-                AGENT_TOKEN=$(/usr/local/bin/kubectl get secret k8s-upgrade-creds \
-                  -o jsonpath='{.data.api_bearer_token}' | base64 -d)
-
-                SSH="ssh -i /tmp/k8s-upgrade-ssh-key \
-                  -o StrictHostKeyChecking=accept-new \
-                  -o UserKnownHostsFile=/tmp/known_hosts"
+                SLACK=$(cat /secrets/k8s-upgrade/slack_webhook)
+                install -m 0400 /secrets/k8s-upgrade/ssh_key /tmp/ssh_key
+                SSH="ssh -i /tmp/ssh_key -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts -o ConnectTimeout=10"
 
                 slack() {
                   curl -sS -X POST -H 'Content-Type: application/json' \
@@ -354,17 +325,13 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                     "$SLACK" || true
                 }
 
-                # 2. Detect running version
+                # 1. Detect running version
                 RUNNING=$(/usr/local/bin/kubectl get nodes \
-                  -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' \
-                  | tr -d v)
+                  -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' | tr -d v)
                 RUNNING_MINOR=$(echo "$RUNNING" | awk -F. '{print $1"."$2}')
                 echo "Running version: v$RUNNING (minor $RUNNING_MINOR)"
 
-                # 3. Detect highest available patch within the running minor track.
-                # Refresh the local apt cache first — without this, a newly-published
-                # patch won't show up via `apt-cache madison` until something else
-                # triggers an `apt-get update`.
+                # 2. Latest patch within current minor (refresh master's apt cache)
                 LATEST_PATCH=$($SSH wizard@k8s-master \
                   "sudo apt-get update -qq -o Dir::Etc::sourcelist='sources.list.d/kubernetes.list' -o Dir::Etc::sourceparts='-' -o APT::Get::List-Cleanup='0' >/dev/null 2>&1 ; \
                    apt-cache madison kubeadm 2>/dev/null \
@@ -372,9 +339,9 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                     | sed 's/-.*//' \
                     | grep '^$RUNNING_MINOR\\.' \
                     | sort -V | tail -1" || echo "")
-                echo "Latest patch (apt): v$LATEST_PATCH"
+                echo "Latest patch: v$LATEST_PATCH"
 
-                # 4. Detect next available minor by probing the apt repo URL.
+                # 3. Next-minor probe
                 NEXT_MINOR_NUM=$(( $(echo "$RUNNING_MINOR" | cut -d. -f2) + 1 ))
                 NEXT_MINOR="1.$NEXT_MINOR_NUM"
                 NEXT_MINOR_AVAILABLE="no"
@@ -385,14 +352,13 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 fi
                 echo "Next minor v$NEXT_MINOR available: $NEXT_MINOR_AVAILABLE"
 
-                # 5. Decide what to do
+                # 4. Choose target
                 TARGET=""
                 KIND=""
                 if [ -n "$LATEST_PATCH" ] && [ "$LATEST_PATCH" != "$RUNNING" ]; then
                   TARGET="$LATEST_PATCH"
                   KIND="patch"
                 elif [ "$NEXT_MINOR_AVAILABLE" = "yes" ]; then
-                  # Probe the minor track to get its latest patch.
                   NEXT_MINOR_PATCH=$($SSH wizard@k8s-master \
                     "curl -sf 'https://pkgs.k8s.io/core:/stable:/v$NEXT_MINOR/deb/Packages' \
                       | grep -oE 'Version: [0-9.-]+' \
@@ -404,7 +370,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   fi
                 fi
 
-                # 6. Push the discovery metric to Pushgateway
+                # 5. Pushgateway discovery metric
                 PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/k8s-version-check'
                 {
                   echo "# TYPE k8s_upgrade_available gauge"
@@ -417,54 +383,37 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   echo "k8s_version_check_last_run_timestamp $(date +%s)"
                 } | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 
-                # 7. Decide whether to dispatch
+                # 6. Decide whether to spawn Job 0
                 if [ -z "$TARGET" ]; then
-                  echo "No upgrade needed (running=$RUNNING, latest_patch=$LATEST_PATCH, next_minor_available=$NEXT_MINOR_AVAILABLE)"
+                  echo "No upgrade needed"
                   exit 0
                 fi
 
                 slack "K8s upgrade available: v$RUNNING → v$TARGET ($KIND)"
 
-                # DRY_RUN_OVERRIDE wins over DRY_RUN — but a Job copied from
-                # this CronJob can't add new env vars (spec is immutable). The
-                # operator path for "trigger detection without dispatch" is
-                # toggling the CronJob's `var.detection_dry_run` then applying.
-                # Documented in the runbook.
-                EFFECTIVE_DRY_RUN="$${DRY_RUN_OVERRIDE:-$DRY_RUN}"
-                if [ "$EFFECTIVE_DRY_RUN" = "true" ]; then
-                  echo "dry_run=true — not POSTing to claude-agent-service"
-                  slack "DRY_RUN — skipping agent dispatch"
+                if [ "$DRY_RUN" = "true" ]; then
+                  slack "DRY_RUN — not spawning preflight Job"
                   exit 0
                 fi
 
-                # 8. POST to claude-agent-service
-                PAYLOAD=$(jq -nc \
-                  --arg target "$TARGET" \
-                  --arg kind "$KIND" \
-                  '{
-                    prompt: ("Run the k8s-version-upgrade agent. Inputs: " + ({target_version: $target, kind: $kind, dry_run: false, stages: "all"} | tostring)),
-                    agent: ".claude/agents/k8s-version-upgrade",
-                    max_budget_usd: 30
-                  }')
+                # 7. Spawn Job 0 (preflight) via envsubst on the job-template
+                #    Idempotency: deterministic name reconciles via `apply`.
+                JOB_NAME="k8s-upgrade-preflight-$${TARGET//./-}"
 
-                echo "Dispatching agent: $PAYLOAD"
-                RESP=$(curl -sS -w '\n%%{http_code}' -X POST \
-                  -H "Authorization: Bearer $AGENT_TOKEN" \
-                  -H 'Content-Type: application/json' \
-                  -d "$PAYLOAD" \
-                  http://claude-agent-service.claude-agent.svc.cluster.local:8080/execute)
-                CODE=$(printf '%s' "$RESP" | tail -n1)
-                BODY=$(printf '%s' "$RESP" | sed '$d')
-
-                if [ "$CODE" = "200" ] || [ "$CODE" = "202" ]; then
-                  JOB_ID=$(printf '%s' "$BODY" | jq -r '.job_id // .id // "unknown"')
-                  slack "Agent dispatched: job=$JOB_ID (target=v$TARGET kind=$KIND)"
-                  echo "OK — job=$JOB_ID"
-                else
-                  slack "ERROR dispatching agent: HTTP $CODE — $BODY"
-                  echo "dispatch failed: HTTP $CODE — $BODY" >&2
-                  exit 1
+                if /usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" >/dev/null 2>&1; then
+                  slack "Preflight Job $JOB_NAME already exists (rerunning detection mid-flight?)"
+                  exit 0
                 fi
+
+                export JOB_NAME PHASE_NEXT=preflight TARGET_NODE_NEXT="" \
+                       TARGET_VERSION="$TARGET" TARGET_VERSION_LABEL="$${TARGET//./-}" \
+                       KIND="$KIND" IMAGE="$${IMAGE}" \
+                       SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1'
+
+                envsubst < /template/job-template.yaml \
+                  | /usr/local/bin/kubectl apply -f -
+
+                slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
               EOT
               ]
               env {
@@ -472,8 +421,22 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 value = tostring(var.detection_dry_run)
               }
               env {
+                name  = "IMAGE"
+                value = local.image
+              }
+              env {
                 name  = "HOME"
                 value = "/tmp"
+              }
+              volume_mount {
+                name       = "creds"
+                mount_path = "/secrets/k8s-upgrade"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "template"
+                mount_path = "/template"
+                read_only  = true
               }
               resources {
                 requests = {
