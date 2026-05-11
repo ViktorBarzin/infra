@@ -73,6 +73,7 @@ module "ingress" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # Authentik's own UI cannot be gated by Authentik forward-auth — that
   # creates a chicken-and-egg loop (users can't reach the login page).
+  # auth = "none": Authentik UI cannot be gated by Authentik forward-auth (chicken-and-egg loop prevents login).
   auth             = "none"
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.authentik.metadata[0].name
@@ -97,6 +98,7 @@ module "ingress-outpost" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # Authentik forward-auth outpost callback path — protecting this with
   # forward-auth would loop the outpost back onto itself.
+  # auth = "none": Authentik outpost callback path for forward-auth flow; protecting with forward-auth creates circular dependency.
   auth             = "none"
   namespace        = kubernetes_namespace.authentik.metadata[0].name
   name             = "authentik-outpost"

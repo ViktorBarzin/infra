@@ -437,6 +437,7 @@ module "ingress" {
   # outside the cluster; mobile location apps also POST programmatically with
   # an api_key. Forward-auth would 302 these clients into a login they can't
   # complete. Dawarich enforces api_key at app layer.
+  # auth = "none": Location tracking API — mobile apps + OwnTracks bridge POST via api_key; forward-auth 302s break programmatic clients.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.dawarich.metadata[0].name

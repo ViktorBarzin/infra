@@ -241,6 +241,7 @@ module "ingress" {
   # `vault login -method=oidc`, the OIDC callback URL, and Terraform providers
   # all hit https://vault.viktorbarzin.me — forward-auth would block every
   # non-browser client and break the OIDC redirect flow itself.
+  # auth = "none": Vault has its own auth (OIDC, K8s, tokens); external CLI clients + OIDC callbacks would break with forward-auth.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.vault.metadata[0].name

@@ -200,6 +200,7 @@ module "ingress_public_outpost" {
   source = "../../modules/kubernetes/ingress_factory"
   # Public-tier outpost callback — the OAuth flow's redirect_uris all resolve
   # here; gating it with forward-auth would loop the public outpost onto itself.
+  # auth = "none": Public outpost callback path for OAuth flow; protecting with forward-auth creates circular dependency.
   auth             = "none"
   namespace        = "authentik"
   name             = "public-outpost"

@@ -175,6 +175,7 @@ module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Send is an end-to-end encrypted file-drop — anonymous recipients open a
   # share link to download. Forward-auth would block every share-link user.
+  # auth = "none": End-to-end encrypted file-drop — anonymous recipients open share links; forward-auth blocks all share-link access.
   auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.send.metadata[0].name
