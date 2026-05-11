@@ -284,7 +284,7 @@
     {
       "id": 5,
       "title": "Net worth — total over time",
-      "description": "Daily total_value summed across all accounts (base GBP).",
+      "description": "Daily total_value summed across all accounts (base GBP). Declining segments overlaid in red.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -330,6 +330,37 @@
                 "value": "Net worth"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decline"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Decline"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
           }
         ]
       },
@@ -357,7 +388,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(total_value) AS net_worth FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), series AS (SELECT valuation_date, SUM(total_value) AS nw FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), labeled AS (SELECT valuation_date, nw, LAG(nw) OVER (ORDER BY valuation_date) AS prev_nw, LEAD(nw) OVER (ORDER BY valuation_date) AS next_nw FROM series) SELECT valuation_date::timestamp AS \"time\", nw AS net_worth, CASE WHEN (prev_nw IS NOT NULL AND nw < prev_nw) OR (next_nw IS NOT NULL AND next_nw < nw) THEN nw END AS decline FROM labeled ORDER BY valuation_date"
         }
       ]
     },
