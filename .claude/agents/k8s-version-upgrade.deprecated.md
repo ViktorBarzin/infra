@@ -1,9 +1,56 @@
 ---
-name: k8s-version-upgrade
-description: "Automated K8s version upgrader. Verifies cluster health, takes an etcd snapshot, optionally fixes containerd skew on master, upgrades the control plane, then rolls workers sequentially with halt-on-alert gating and Slack notification at every transition."
+name: k8s-version-upgrade-DEPRECATED
+description: "DEPRECATED 2026-05-11 — replaced by the Job-chain in stacks/k8s-version-upgrade. See header below."
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: opus
 ---
+
+# DEPRECATED — Do NOT invoke this agent
+
+Retired **2026-05-11** after a self-preemption incident: this agent ran inside
+the `claude-agent-service` Deployment (replicas=1, no nodeSelector) and was
+scheduled onto k8s-node4. When the agent tried to `kubectl drain k8s-node4`
+(Stage 6, first worker), it evicted itself. The bash process died mid-SSH,
+leaving node4 cordoned and the cluster half-upgraded (master at v1.34.7,
+workers at v1.34.2).
+
+## Replaced by
+
+A chain of small Kubernetes Jobs, each pinned (via `nodeSelector` +
+`kubernetes.io/hostname`) to a node that is NOT its drain target. No pod can
+preempt itself because each Job's pod and its target node are always
+different.
+
+| Old | New |
+|-----|-----|
+| Single agent run in claude-agent-service pod | Chain of 7 phase Jobs (preflight → master → worker × 4 → postflight) |
+| Whole pipeline in one prompt | Phase body in `stacks/k8s-version-upgrade/scripts/upgrade-step.sh`, dispatched per-phase via `case $PHASE` |
+| Detection CronJob POSTs to `claude-agent-service` | Detection CronJob renders Job 0 from `job-template.yaml` via `envsubst` + `kubectl apply` |
+| Drain blocks indefinitely on PDB=0 (e.g. single-replica Anubis) | New `predrain_unstick` deletes PDB-blocked pods so drain proceeds |
+| `K8sVersionSkew` + `EtcdPreUpgradeSnapshotMissing` alerts | Above + `K8sUpgradeStalled` (in_flight=1 and time()-started_timestamp > 5400s) |
+
+## Where the logic lives now
+
+- **`infra/stacks/k8s-version-upgrade/scripts/upgrade-step.sh`** — universal
+  phase body. Dispatches on `$PHASE`. Each phase spawns the next Job.
+- **`infra/stacks/k8s-version-upgrade/job-template.yaml`** — Job template
+  rendered by `envsubst` at runtime. ConfigMap-mounted at `/template` in
+  every Job pod.
+- **`infra/stacks/k8s-version-upgrade/main.tf`** — Terraform stack: ConfigMaps,
+  unified `k8s-upgrade-job` ServiceAccount + RBAC, detection CronJob.
+- **`infra/docs/runbooks/k8s-version-upgrade.md`** — operator runbook (kill a
+  stuck Job, skip a phase, manually re-trigger from a specific phase).
+
+## Why kept (not deleted)
+
+Documents the prompted-agent design and is useful as historical reference when
+reading post-mortem discussions or comparing approaches. The `name` field has
+been suffixed with `-DEPRECATED` so the agent cannot be invoked by name from
+`claude-agent-service`.
+
+---
+
+# Original prompt — DO NOT EXECUTE (reference only)
 
 You are the K8s Version Upgrade Agent for a 5-node home-lab Kubernetes cluster (1 master, 4 workers, stacked etcd, no HA).
 

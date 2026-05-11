@@ -3,12 +3,15 @@
 ## Overview
 
 Kubernetes component versions (`kubeadm`/`kubelet`/`kubectl`) on the 5 K8s
-VMs are upgraded automatically by a weekly detection CronJob that fires the
-`k8s-version-upgrade` agent through `claude-agent-service`. The agent walks
-the cluster through pre-flight → etcd snapshot → optional master containerd
-skew fix → optional apt repo URL rewrite (minor only) → master kubeadm
-upgrade → workers rolled sequentially → post-flight, with Slack notification
-at every transition and Prometheus halt-on-alert gating before every drain.
+VMs are upgraded automatically by a weekly detection CronJob that seeds a
+chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
+drain target** — so no pod in the chain can preempt itself.
+
+The chain (Sun 12:00 UTC weekly):
+
+```
+detection CronJob → preflight Job → master Job → worker × 4 Jobs → postflight Job
+```
 
 This is **independent** of the OS-side `unattended-upgrades + kured`
 pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts and
@@ -18,58 +21,106 @@ detection here runs Sun 12:00 UTC).
 ## Architecture
 
 ```
-k8s-version-check CronJob   (Sun 12:00 UTC)
+k8s-version-check CronJob   (Sun 12:00 UTC, k8s-upgrade ns, SA: k8s-upgrade-job)
   │ kubectl get nodes  → running version
   │ ssh master 'apt-cache madison kubeadm'  → latest patch (within current minor)
   │ HEAD pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release  → next minor available?
+  │ push k8s_upgrade_available{kind,running,target} → Pushgateway
   │
-  ▼ if running != latest_patch  OR  next minor available
-POST claude-agent-service /execute
-  { prompt: "Run k8s-version-upgrade agent. Inputs: {target_version, kind, dry_run, stages}" }
-  │
+  ▼ if a target is detected
+envsubst on /template/job-template.yaml  | kubectl apply -f -
+  │ creates k8s-upgrade-preflight-<target_version>
   ▼
-k8s-version-upgrade agent  (inside claude-agent-service pod)
-  ├── Stage 0: parse inputs, mark in-flight annotation + Pushgateway gauge
-  ├── Stage 1: pre-flight (5 nodes Ready + halt-on-alert + 24h-quiet + plan target match)
-  ├── Stage 2: etcd snapshot save → /mnt/main/etcd-backup/k8s-upgrade-pre-X.Y.Z-EPOCH.db
-  │            push k8s_upgrade_snapshot_taken=1
-  ├── Stage 3: master containerd bump (only if master < workers)
-  ├── Stage 4: apt repo URL rewrite to v<NEW_MINOR>/deb (only if kind=minor)
-  ├── Stage 5: drain master → ssh < update_k8s.sh --role master --release X.Y.Z → uncordon → verify
-  ├── Stage 6: each worker k8s-node4 → k8s-node3 → k8s-node2 → k8s-node1:
-  │            halt-on-alert wait → drain → ssh script --role worker → uncordon → 10-min soak
-  └── Stage 7: post-flight (all nodes match target, alerts clean, pod-ready ratio ≥ 0.9)
-               clear in-flight annotation, push k8s_upgrade_in_flight=0
+
+Job 0 — preflight       (pinned: k8s-node1)
+  ├── All nodes Ready + no Mem/Disk pressure
+  ├── halt-on-alert (kured-style ignore-list)
+  ├── 24h-quiet baseline (no Ready transitions <24h ago)
+  ├── kubeadm upgrade plan matches target
+  ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
+  ├── Trigger backup-etcd Job, wait, verify snapshot byte count
+  ├── SSH master: containerd skew fix (if master < workers)
+  ├── SSH all 5 nodes: apt repo URL rewrite (only kind=minor)
+  └── spawn_next → k8s-upgrade-master-<target_version>
+  ▼
+
+Job 1 — master upgrade  (pinned: k8s-node1)
+  ├── halt-on-alert recheck (no firing alerts)
+  ├── drain k8s-master (predrain_unstick deletes PDB-blocked pods)
+  ├── ssh wizard@k8s-master 'bash -s' < /scripts/update_k8s.sh -- --role master --release X.Y.Z
+  ├── kubectl uncordon k8s-master; wait Ready + version match
+  ├── verify control-plane pods Running
+  ├── halt-on-alert recheck (allows RecentNodeReboot)
+  └── spawn_next → k8s-upgrade-worker-<v>-k8s-node4
+  ▼
+
+Job 2 — worker k8s-node4 (pinned: k8s-node1)
+Job 3 — worker k8s-node3 (pinned: k8s-node1)
+Job 4 — worker k8s-node2 (pinned: k8s-node1)
+  (identical pattern: halt-on-alert wait 30m → drain → ssh script → uncordon → 10-min soak → spawn_next)
+  ▼
+
+Job 5 — worker k8s-node1 (pinned: k8s-master + control-plane toleration)
+  └── spawn_next → k8s-upgrade-postflight-<target_version>
+  ▼
+
+Job 6 — postflight       (no pinning)
+  ├── Verify all 5 nodes at target version
+  ├── Verify no firing Upgrade Gates alerts
+  ├── Compute pod-ready ratio (should be ≥ 0.9)
+  ├── Clear k8s-upgrade-* annotations on namespace
+  ├── Push k8s_upgrade_in_flight=0, k8s_upgrade_snapshot_taken=0, k8s_upgrade_started_timestamp=0
+  └── Slack: ✅ K8s upgrade complete
 ```
+
+**Pin choices summarised:**
+- k8s-node1 hosts every Job that drains master or another worker. k8s-node1
+  itself is upgraded **last**.
+- k8s-master hosts Job 5 (which drains k8s-node1). Job 5's spec includes a
+  toleration for `node-role.kubernetes.io/control-plane:NoSchedule`.
+- If anyone reorders the worker sequence, the pin for Job 5 needs to track
+  whatever worker is upgraded last. The mapping is in `scripts/upgrade-step.sh`
+  → the `case "${PHASE}:${TARGET_NODE:-}"` block.
 
 ## Components
 
-### Detection CronJob (`k8s-version-check`)
-- **Stack**: `infra/stacks/k8s-version-upgrade/main.tf`
-- **Image**: `forgejo.viktorbarzin.me/viktor/claude-agent-service` (ships kubectl, ssh-client, curl, jq)
-- **Schedule**: `0 12 * * 0` (Sunday 12:00 UTC). Outside kured window.
-- **SA**: `k8s-version-check` (cluster-read nodes, ns-scoped get on `k8s-upgrade-creds` Secret)
-- **Pushgateway metrics**:
-  - `k8s_upgrade_available{kind, running, target}` — 1 when a target is detected
-  - `k8s_version_check_last_run_timestamp` — staleness watchdog
+### Shared resources (one-time, Terraform-managed)
 
-### Agent (`k8s-version-upgrade`)
-- **Prompt**: `infra/.claude/agents/k8s-version-upgrade.md`
-- **Runtime**: claude-agent-service pod (claude-agent ns)
-- **Inputs** (JSON in prompt): `target_version`, `kind` (patch|minor), `dry_run`, `stages`
-- **Library script**: `infra/scripts/update_k8s.sh` (run on each node via SSH pipe — `ssh ... 'bash -s' < update_k8s.sh -- --role master|worker --release X.Y.Z`)
+| Resource | Purpose |
+|---|---|
+| **ConfigMap `k8s-upgrade-scripts`** | Mounts `/scripts/upgrade-step.sh` (universal phase body, dispatches on `$PHASE`) and `/scripts/update_k8s.sh` (per-node kubeadm/kubelet/kubectl upgrade body — same script the old manual loop used) in every Job pod. |
+| **ConfigMap `k8s-upgrade-job-template`** | Mounts `/template/job-template.yaml` — universal Job manifest with envsubst placeholders. Rendered by upgrade-step.sh and the detection CronJob via `envsubst | kubectl apply`. |
+| **ServiceAccount `k8s-upgrade-job`** | Used by both the detection CronJob and every chain Job. ClusterRole binding grants: nodes get/list/patch, pods/eviction create, pods delete, batch/jobs CRUD, PDB list (for predrain_unstick), CronJob get (snapshot trigger), namespaces patch on `k8s-upgrade` only. Namespace-scoped Role binding grants secrets:get on `k8s-upgrade-creds`. |
+| **ExternalSecret `k8s-upgrade-creds`** | Syncs `secret/k8s-upgrade/{ssh_key, slack_webhook}` from Vault. Mounted into every Job at `/secrets/k8s-upgrade`. |
+| **CronJob `k8s-version-check`** | Sun 12:00 UTC. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
 
-### Upgrade Gates alerts (additions for this pipeline)
-- **`K8sVersionSkew`** — distinct kubelet/apiserver `gitVersion` count >1 for 30m. Catches a half-done rollout where some nodes are upgraded and some aren't.
-- **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches Stage 2 failing silently.
-- Both join the existing 10 Upgrade Gates alerts (KubeAPIServerDown, RecentNodeReboot, etc.) — kured ALSO blocks rolling reboots whenever any of these are firing.
+### Pushgateway metrics
+
+Pushed by upgrade-step.sh during phase execution; observed by the
+`Upgrade Gates` alert group in `stacks/monitoring/.../prometheus_chart_values.tpl`:
+
+| Metric | Pushed by | Cleared by |
+|---|---|---|
+| `k8s_upgrade_in_flight` (1/0) | preflight Job (set to 1) | postflight Job (set to 0) |
+| `k8s_upgrade_started_timestamp` (epoch s) | preflight Job | postflight Job (set to 0) |
+| `k8s_upgrade_snapshot_taken` (1/0) | preflight Job (set to 1 after Job=`pre-upgrade-etcd-*` completes with `Backup done:` log of ≥1 KiB) | postflight Job (0) |
+| `k8s_upgrade_available{kind,running,target}` | detection CronJob | next detection run (overwrite) |
+| `k8s_version_check_last_run_timestamp` | detection CronJob | (cumulative) |
+
+### Upgrade Gates alerts (`Upgrade Gates` group in prometheus_chart_values.tpl)
+
+- **`K8sVersionSkew`** — distinct kubelet/apiserver `gitVersion` count > 1 for 30m. Catches a half-done rollout.
+- **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently.
+- **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a Job in the chain dying without spawning its successor.
+- All three alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
 
 ### Vault secrets
-- `secret/k8s-upgrade/ssh_key` — ed25519 PRIVATE key, used by detection CronJob + agent to SSH into all 5 nodes (user `wizard`)
-- `secret/k8s-upgrade/ssh_key_pub` — matching PUBLIC key, deployed to `/home/wizard/.ssh/authorized_keys` on every node
-- `secret/k8s-upgrade/slack_webhook` — Slack incoming-webhook URL (separate channel from kured for clean alerting)
 
-Both keys exposed in K8s via ExternalSecret `k8s-upgrade-creds` in `k8s-upgrade` namespace.
+- `secret/k8s-upgrade/ssh_key` — ed25519 PRIVATE key, used by Jobs to SSH `wizard@<node>`
+- `secret/k8s-upgrade/ssh_key_pub` — matching PUBLIC key, deployed to nodes' `~/.ssh/authorized_keys`
+- `secret/k8s-upgrade/slack_webhook` — Slack incoming-webhook URL
+
+Exposed in K8s via ExternalSecret `k8s-upgrade-creds` in the `k8s-upgrade` namespace. The previous `api_bearer_token` entry is GONE — the chain does not POST to `claude-agent-service`.
 
 ## Common Operations
 
@@ -78,13 +129,17 @@ Both keys exposed in K8s via ExternalSecret `k8s-upgrade-creds` in `k8s-upgrade`
 # CronJob present + not suspended
 kubectl -n k8s-upgrade get cronjob k8s-version-check
 
-# Latest run output
-kubectl -n k8s-upgrade get jobs -l app=k8s-version-check
-kubectl -n k8s-upgrade logs -l app=k8s-version-check --tail=200
+# Latest detection run output
+kubectl -n k8s-upgrade get jobs -l app=k8s-version-upgrade
+kubectl -n k8s-upgrade logs -l app=k8s-version-upgrade --tail=200
 
-# Pushgateway metric — fresh discovery?
-curl -s http://prometheus-prometheus-pushgateway.monitoring:9091/metrics | \
-  grep -E '^(k8s_upgrade_available|k8s_version_check_last_run_timestamp)'
+# Chain Jobs from the last run (retained 7 days via ttlSecondsAfterFinished)
+kubectl -n k8s-upgrade get jobs -l app=k8s-upgrade-chain
+
+# Pushgateway — running detection metric
+kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
+  wget -q -O- 'http://prometheus-prometheus-pushgateway.monitoring:9091/metrics' | \
+  grep -E '^(k8s_upgrade_(available|in_flight|started_timestamp|snapshot_taken)|k8s_version_check_last_run_timestamp)'
 
 # Upgrade Gates rules loaded
 kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
@@ -92,79 +147,116 @@ kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- \
   jq -r '.data.groups[] | select(.name == "Upgrade Gates") | .rules[] | "  \(.name): \(.state)"'
 ```
 
-### Manually trigger a detection run (no upgrade)
-Use `detection_dry_run=true` to short-circuit before the POST to
-claude-agent-service:
+### Manually trigger detection (no upgrade)
+Use `detection_dry_run=true` to short-circuit before spawning Job 0:
 
 ```bash
-# One-shot job from the cron, with DRY_RUN env override:
+# Toggle var in TF, apply, and trigger
+# (in stacks/k8s-version-upgrade/main.tf)
+#   variable "detection_dry_run" { default = true }
+# scripts/tg apply
 kubectl -n k8s-upgrade create job --from=cronjob/k8s-version-check version-check-test
 kubectl -n k8s-upgrade logs -l job-name=version-check-test -f
+# When done, flip back to false.
 ```
 
-To make `detection_dry_run` permanent (e.g. while debugging),
-toggle the var in `stacks/k8s-version-upgrade/main.tf` and `scripts/tg apply`.
-
-### Manually dispatch the agent (skip detection)
-Useful when you want to force a run on a specific version without waiting for
-Sunday, or when testing.
+### Manually trigger the chain (skip detection)
+Useful for testing or to force a specific target. Render Job 0 directly:
 
 ```bash
-TOKEN=$(vault kv get -field=api_bearer_token secret/claude-agent-service)
+TARGET=1.34.7
+KIND=patch
+IMAGE=$(kubectl -n k8s-upgrade get cronjob k8s-version-check \
+  -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}')
 
-# Dry-run (no mutations)
-curl -X POST http://claude-agent-service.claude-agent.svc.cluster.local:8080/execute \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Run the k8s-version-upgrade agent. Inputs: {\"target_version\":\"1.34.5\",\"kind\":\"patch\",\"dry_run\":true,\"stages\":\"all\"}",
-    "agent": ".claude/agents/k8s-version-upgrade",
-    "max_budget_usd": 5
-  }'
-
-# Snapshot-only (Test 3 in the plan)
-curl -X POST ... -d '{
-    "prompt": "Run the k8s-version-upgrade agent. Inputs: {\"target_version\":\"1.34.5\",\"kind\":\"patch\",\"dry_run\":false,\"stages\":\"preflight,snapshot\"}",
-    ...
-}'
-
-# Real run
-curl -X POST ... -d '{
-    "prompt": "... Inputs: {\"target_version\":\"1.34.5\",\"kind\":\"patch\",\"dry_run\":false,\"stages\":\"all\"}",
-    ...
-}'
+cat <<EOF | envsubst | kubectl apply -f -
+$(kubectl -n k8s-upgrade get cm k8s-upgrade-job-template -o jsonpath='{.data.job-template\.yaml}')
+EOF
+# Note: export JOB_NAME, PHASE_NEXT, etc. first — see the CronJob's command for
+# the full env block. Easier: just trigger detection with the right inputs.
 ```
 
-Poll job status:
+### Kill a stuck Job (chain halted mid-flight)
+The chain stalls if any Job dies without spawning its successor. `K8sUpgradeStalled`
+fires after 90 min. Recovery:
+
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" \
-  http://claude-agent-service.claude-agent.svc.cluster.local:8080/jobs/$JOB_ID | jq .
+# 1. Identify the failed Job
+kubectl -n k8s-upgrade get jobs -l app=k8s-upgrade-chain
+kubectl -n k8s-upgrade describe job/<failed-job-name> | tail -50
+kubectl -n k8s-upgrade logs job/<failed-job-name>
+
+# 2. Diagnose. Common causes:
+#    - drain stuck on PDB-violating pod (predrain_unstick should handle this;
+#      but a brand-new PDB pattern could escape it — manually delete the pod)
+#    - SSH from Job pod failing (node restarted? known_hosts mismatch?)
+#    - kubeadm upgrade failed on a node (check journalctl + apt history on that node)
+
+# 3. Fix the root cause first.
+
+# 4. Delete the failed Job + re-spawn it. Naming is deterministic so
+#    `kubectl apply` of the same name reconciles to a single Job.
+kubectl -n k8s-upgrade delete job/<failed-job-name>
+
+# 5. Manually render + apply the same Job. Pull the template + spec from the
+#    next-Job-creation block in upgrade-step.sh — easiest is to copy from a
+#    sibling Job's YAML:
+kubectl -n k8s-upgrade get job/<sibling-job-name> -o yaml \
+  | yq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.managedFields, .status)' \
+  | yq '.metadata.name = "<failed-job-name>"' \
+  | yq '.spec.template.spec.containers[0].env[] | select(.name=="PHASE") .value = "<right-phase>"' \
+  | kubectl apply -f -
+
+# The chain will continue from there. The next-Job-creation step in upgrade-step.sh
+# is idempotent (deterministic name) so re-running won't duplicate downstream.
+```
+
+### Skip a phase (advanced; use sparingly)
+If you've already done the work for a phase manually and want the chain to
+jump past it, manually create the NEXT phase's Job with the deterministic
+name. The previous phase's spawn-next will see the Job already exists and
+short-circuit. Example: master already on target; jump straight to worker:
+
+```bash
+TARGET=1.34.7
+TGT_LBL=${TARGET//./-}
+# (compose Job from upgrade-step.sh spawn_next code, name=k8s-upgrade-worker-$TGT_LBL-k8s-node4, run on k8s-node1)
 ```
 
 ### Halt the pipeline in an emergency
-The pipeline is gated by Prometheus alerts — any firing Upgrade Gates alert
-blocks the next drain. To explicitly halt:
 
 ```bash
-# Option 1: suspend the detection CronJob (won't stop an in-flight agent run)
+# Option 1: suspend the detection CronJob (won't stop an in-flight chain)
 kubectl -n k8s-upgrade patch cronjob k8s-version-check \
   -p '{"spec":{"suspend":true}}' --type=merge
-# Re-enable: --type=merge -p '{"spec":{"suspend":false}}'
+# Re-enable: -p '{"spec":{"suspend":false}}'
 
-# Option 2: kill an in-flight agent job
-TOKEN=$(vault kv get -field=api_bearer_token secret/claude-agent-service)
-JOB_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
-  http://claude-agent-service.claude-agent.svc.cluster.local:8080/jobs | \
-  jq -r '.[] | select(.agent | test("k8s-version-upgrade")) | .id' | head -1)
-curl -X DELETE -H "Authorization: Bearer $TOKEN" \
-  http://claude-agent-service.claude-agent.svc.cluster.local:8080/jobs/$JOB_ID
+# Option 2: delete all in-flight chain Jobs
+kubectl -n k8s-upgrade delete jobs -l app=k8s-upgrade-chain
+# This leaves the in-flight annotation + Pushgateway gauge intact —
+# K8sUpgradeStalled will fire to surface the halt.
 
-# Option 3: force a blocker alert (Upgrade Gates expression that always fires)
-# — see infra/docs/runbooks/k8s-node-auto-upgrades.md "Force halt by adding a custom blocker alert"
+# Option 3: force a blocker alert (same regex kured uses)
+# — see k8s-node-auto-upgrades.md "Force halt by adding a custom blocker alert"
+```
+
+### Clear orphaned in-flight state
+After deciding NOT to retry a halted chain:
+
+```bash
+kubectl annotate ns k8s-upgrade \
+  viktorbarzin.me/k8s-upgrade-in-flight- \
+  viktorbarzin.me/k8s-upgrade-target- \
+  viktorbarzin.me/k8s-upgrade-snapshot-path-
+
+# Reset Pushgateway gauges so K8sUpgradeStalled / EtcdPreUpgradeSnapshotMissing clear:
+kubectl -n monitoring port-forward svc/prometheus-prometheus-pushgateway 9091:9091 &
+printf '# TYPE k8s_upgrade_in_flight gauge\nk8s_upgrade_in_flight 0\n# TYPE k8s_upgrade_snapshot_taken gauge\nk8s_upgrade_snapshot_taken 0\n# TYPE k8s_upgrade_started_timestamp gauge\nk8s_upgrade_started_timestamp 0\n' \
+  | curl --data-binary @- http://localhost:9091/metrics/job/k8s-version-upgrade
+kill %1
 ```
 
 ### Rollback paths
-
 `kubeadm` does **not** support in-place downgrade. If a run fails:
 
 #### Master broke during/after kubeadm upgrade
@@ -187,21 +279,6 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 3. `kubectl uncordon <node>`
 4. The cluster continues running on the master + remaining workers throughout
 
-#### Pipeline aborts mid-flight (halt-on-alert blocks >30 min)
-- The agent posts a Slack message with the blocking alert list and exits non-zero
-- The in-flight annotation on `ns/k8s-upgrade` stays set → `EtcdPreUpgradeSnapshotMissing` may fire if Stage 2 didn't complete
-- Operator: triage the blocker, clear the alert, re-dispatch the agent manually (see "Manually dispatch the agent")
-- After successful retry: the agent's Stage 7 clears the annotation. If you decide NOT to retry, clear by hand:
-  ```bash
-  kubectl annotate ns k8s-upgrade \
-    viktorbarzin.me/k8s-upgrade-in-flight- \
-    viktorbarzin.me/k8s-upgrade-target- \
-    viktorbarzin.me/k8s-upgrade-snapshot-path-
-  # Also reset the Pushgateway gauge so the alert clears:
-  printf '# TYPE k8s_upgrade_in_flight gauge\nk8s_upgrade_in_flight 0\n' | \
-    curl --data-binary @- http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/k8s-version-upgrade
-  ```
-
 ### One-shot SSH key rotation
 1. Generate new keypair: `ssh-keygen -t ed25519 -f /tmp/k8s-upgrade -N ""`
 2. Update Vault:
@@ -213,26 +290,31 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 3. Push the new pubkey to every node:
    ```bash
    for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
-     # Remove old upgrade key (tag with "k8s-upgrade") then append new
      ssh wizard@$n 'sed -i "/k8s-upgrade-key$/d" ~/.ssh/authorized_keys'
      ssh wizard@$n 'echo "$(cat /tmp/k8s-upgrade.pub) k8s-upgrade-key" >> ~/.ssh/authorized_keys'
    done
    ```
-4. ESO refreshes the K8s Secret within 15 min — or force: `kubectl -n k8s-upgrade annotate externalsecret k8s-upgrade-creds force-sync=$(date +%s) --overwrite`
+4. ESO refreshes within 15 min — or force: `kubectl -n k8s-upgrade annotate externalsecret k8s-upgrade-creds force-sync=$(date +%s) --overwrite`
 
 ## Past Incidents
 
-- (none yet — pipeline went live 2026-05-10)
-- Pre-pipeline manual upgrades documented in commit history; the `update_k8s.sh` shell of those manual runs is preserved in `infra/scripts/update_k8s.sh` and is what the agent shells into nodes with.
+### 2026-05-11 — Self-preemption (agent → Job-chain rewrite)
+- The v1 agent ran inside the `claude-agent-service` Deployment (replicas=1, no nodeSelector) and was scheduled to k8s-node4.
+- During Stage 6 (first worker drain) the agent ran `kubectl drain k8s-node4` — evicting itself.
+- The bash process died after the drain but before the SSH-pipe to install kubeadm on node4.
+- Node4 was left cordoned; cluster stuck at master v1.34.7, workers v1.34.2 until manual recovery.
+- **Mitigation**: rewrote the pipeline as a chain of Jobs, each `nodeSelector`-pinned to a non-target node. New `predrain_unstick` step deletes PDB-blocked single-replica pods (Anubis pattern) before drain so they don't loop forever. Added `K8sUpgradeStalled` alert (in-flight + started_timestamp > 90 min).
 
 ## File Pointers
 
 | What | Where |
 |------|-------|
-| Detection CronJob + RBAC + ExternalSecret | `infra/stacks/k8s-version-upgrade/main.tf` |
-| Agent prompt | `infra/.claude/agents/k8s-version-upgrade.md` |
-| Library node script | `infra/scripts/update_k8s.sh` |
-| Upgrade Gates alerts (incl. K8sVersionSkew + EtcdPreUpgradeSnapshotMissing) | `infra/stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` |
+| Stack (CronJob + ConfigMaps + SA/RBAC + ExternalSecret) | `infra/stacks/k8s-version-upgrade/main.tf` |
+| Universal phase body | `infra/stacks/k8s-version-upgrade/scripts/upgrade-step.sh` |
+| Job template | `infra/stacks/k8s-version-upgrade/job-template.yaml` |
+| Per-node upgrade script | `infra/scripts/update_k8s.sh` |
+| Upgrade Gates alerts | `infra/stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |
 | Vault secrets | `secret/k8s-upgrade/{ssh_key, ssh_key_pub, slack_webhook}` |
-| Architecture doc | `infra/docs/architecture/automated-upgrades.md` — "K8s Version Upgrades" section |
+| Architecture doc | `infra/docs/architecture/automated-upgrades.md` (K8s Version Upgrades section) |
 | Related (OS reboots) | `infra/docs/runbooks/k8s-node-auto-upgrades.md` |
+| Deprecated agent prompt (reference) | `infra/.claude/agents/k8s-version-upgrade.deprecated.md` |

@@ -1917,6 +1917,21 @@ serverFiles:
               severity: critical
             annotations:
               summary: "K8s upgrade is in flight but no etcd snapshot was recorded — pipeline pre-flight failed silently"
+          # K8sUpgradeStalled: the v2 Job-chain pushes `k8s_upgrade_started_timestamp`
+          # in preflight and resets `k8s_upgrade_in_flight=0` in postflight. If
+          # in_flight=1 persists for >90 min, a Job in the chain failed
+          # (backoffLimit=1), got preempted/evicted, or is hung. Manual recovery:
+          # `kubectl -n k8s-upgrade get jobs` → identify failed/stuck Job → delete
+          # it → fix root cause → re-create the same Job. Next-Job creation in each
+          # phase is idempotent (deterministic name = `k8s-upgrade-<phase>-<target>`)
+          # so re-running won't duplicate downstream Jobs.
+          - alert: K8sUpgradeStalled
+            expr: k8s_upgrade_in_flight == 1 and (time() - k8s_upgrade_started_timestamp) > 5400
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "K8s upgrade has been in flight for >90 min — chain is stuck. Check: kubectl -n k8s-upgrade get jobs"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown

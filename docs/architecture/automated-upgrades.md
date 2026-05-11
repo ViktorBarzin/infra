@@ -4,7 +4,7 @@ This doc covers three independent automation paths:
 
 1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
 2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
-3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — weekly detection CronJob → claude-agent-service → `k8s-version-upgrade` agent. See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
+3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — weekly detection CronJob → chain of phase Jobs (preflight → master → worker × 4 → postflight). See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
 
 ## Overview
 
@@ -257,31 +257,62 @@ k8s-version-check CronJob   (Sun 12:00 UTC, k8s-upgrade ns)
   │ probe HEAD https://pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release → next minor?
   │ push k8s_upgrade_available metric to Pushgateway
   │
-  ▼ if running != latest
-POST claude-agent-service /execute  with target_version + kind
-  │
+  ▼ if a target is detected
+envsubst on /template/job-template.yaml | kubectl apply -f -
+  │ spawns Job 0 = k8s-upgrade-preflight-<target_version>
   ▼
-k8s-version-upgrade agent (in claude-agent-service pod)
-  ├── pre-flight (5 nodes Ready, halt-on-alert, 24h-quiet, kubeadm plan match)
-  ├── etcd snapshot save → /mnt/main/etcd-backup/k8s-upgrade-pre-X.Y.Z-EPOCH.db
-  ├── master containerd bump (only if master version < workers')
-  ├── apt repo URL rewrite to v<NEW_MINOR>/deb on all 5 nodes (kind=minor only)
-  ├── drain master → ssh < update_k8s.sh --role master → uncordon → verify
-  ├── for each worker (k8s-node4 → 3 → 2 → 1):
-  │     halt-on-alert wait → drain → ssh < update_k8s.sh --role worker → uncordon → 10-min soak
-  └── post-flight (all nodes match target, alerts clean, pod-ready ratio ≥ 0.9)
+
+Job 0 — preflight       (pinned: k8s-node1)
+Job 1 — master upgrade  (pinned: k8s-node1)        drains k8s-master
+Job 2 — worker          (pinned: k8s-node1)        drains k8s-node4
+Job 3 — worker          (pinned: k8s-node1)        drains k8s-node3
+Job 4 — worker          (pinned: k8s-node1)        drains k8s-node2
+Job 5 — worker          (pinned: k8s-master)       drains k8s-node1  ← control-plane toleration
+Job 6 — postflight      (no pinning)
 ```
+
+Each Job runs `scripts/upgrade-step.sh`, which dispatches on `$PHASE` and ends
+by spawning the next Job (`envsubst < /template/job-template.yaml | kubectl
+apply -f -`). Job names are deterministic (`k8s-upgrade-<phase>-<target_version>[-<node>]`)
+so `apply` reconciles to a single Job per run — re-running a failed Job
+won't duplicate downstream Jobs.
+
+### Self-preemption history (the reason for the Job-chain rewrite)
+
+The v1 design ran the whole upgrade inside the `claude-agent-service`
+Deployment (1 replica, no nodeSelector). On 2026-05-11 the agent's pod was
+scheduled to k8s-node4. When the agent ran `kubectl drain k8s-node4` during
+Stage 6, it evicted itself — the bash process died after the drain but
+before the SSH-pipe to install kubeadm on node4. The cluster ended up
+half-upgraded (master at v1.34.7, workers at v1.34.2). The rewrite to a
+chain of `nodeSelector`-pinned Jobs eliminates this failure mode because
+each Job's pod and its drain target are always different nodes.
 
 ### Components
 
-- **Detection CronJob**: `infra/stacks/k8s-version-upgrade/main.tf`. Image is the claude-agent-service image (alpine + kubectl + ssh-client + curl + jq). SA has cluster-read on nodes + ns-scoped get on `k8s-upgrade-creds` Secret.
-- **Agent prompt**: `infra/.claude/agents/k8s-version-upgrade.md`. Inputs: `target_version`, `kind=patch|minor`, `dry_run`, `stages`. Tools: Bash, Read, Write, Edit, Grep, Glob.
-- **Library node script**: `infra/scripts/update_k8s.sh`. Caller passes `--role master|worker --release X.Y.Z`. The agent pipes this via SSH onto each node.
-- **Two new Upgrade Gates alerts** (added in this work):
-  - `K8sVersionSkew` — kubelet/apiserver gitVersion count >1 for 30m. Catches a half-done rollout.
-  - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches Stage 2 failing silently.
+- **Detection CronJob + ConfigMaps + RBAC**: `infra/stacks/k8s-version-upgrade/main.tf`.
+  - Image is the claude-agent-service image (kubectl + ssh-client + curl + jq + envsubst).
+  - One unified ServiceAccount `k8s-upgrade-job` serves both the detection CronJob and every chain Job.
+- **Phase body**: `infra/stacks/k8s-version-upgrade/scripts/upgrade-step.sh`.
+  Dispatches on `$PHASE` (preflight | master | worker | postflight). Computes
+  `NEXT_PHASE` / `NEXT_TARGET_NODE` / `NEXT_RUN_ON` and spawns the next Job.
+  Includes a `predrain_unstick` helper that pre-deletes pods on the target
+  node whose PDB has `disruptionsAllowed=0` (otherwise drain loops forever on
+  single-replica deployments like Anubis instances).
+- **Job template**: `infra/stacks/k8s-version-upgrade/job-template.yaml`.
+  envsubst-rendered at runtime. Mounts a `creds` Secret, a `scripts`
+  ConfigMap, and a `template` ConfigMap into each Job pod.
+- **Per-node script**: `infra/scripts/update_k8s.sh`. Caller passes
+  `--role master|worker --release X.Y.Z`. Piped via SSH into each node by
+  upgrade-step.sh.
+- **Three Upgrade Gates alerts**:
+  - `K8sVersionSkew` — kubelet/apiserver `gitVersion` count >1 for 30m. Catches a half-done rollout.
+  - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently.
+  - `K8sUpgradeStalled` — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a chain Job dying without spawning its successor.
 - **Pushgateway metrics**:
-  - `k8s_upgrade_in_flight` / `k8s_upgrade_snapshot_taken` (pushed by agent)
+  - `k8s_upgrade_in_flight` (set in preflight, cleared in postflight)
+  - `k8s_upgrade_snapshot_taken` (set after etcd snapshot Job completes with ≥1 KiB)
+  - `k8s_upgrade_started_timestamp` (set in preflight; used by `K8sUpgradeStalled`)
   - `k8s_upgrade_available{kind,running,target}` (pushed by detection CronJob)
   - `k8s_version_check_last_run_timestamp` (staleness watchdog)
 
@@ -289,31 +320,36 @@ k8s-version-upgrade agent (in claude-agent-service pod)
 
 | Concern | Location |
 |---|---|
-| Detection CronJob, RBAC, ExternalSecret, Vault role | `stacks/k8s-version-upgrade/main.tf` |
-| Agent orchestration | `.claude/agents/k8s-version-upgrade.md` |
-| Library node script | `scripts/update_k8s.sh` |
+| Stack (CronJob + ConfigMaps + SA/RBAC + ExternalSecret) | `stacks/k8s-version-upgrade/main.tf` |
+| Phase orchestration | `stacks/k8s-version-upgrade/scripts/upgrade-step.sh` |
+| Job template | `stacks/k8s-version-upgrade/job-template.yaml` |
+| Per-node upgrade script | `scripts/update_k8s.sh` |
 | Alerts | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |
 | Vault secrets | `secret/k8s-upgrade/{ssh_key, ssh_key_pub, slack_webhook}` |
+| Deprecated agent prompt (reference) | `.claude/agents/k8s-version-upgrade.deprecated.md` |
 
 ### Why this design
 
 The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply` is an outage. Mitigations:
 
 - **Mandatory etcd snapshot before every run** (even patch). Recovery point if master breaks.
-- **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Two new gate alerts catch upgrade-specific half-states (version skew, missing snapshot).
+- **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Three gate alerts catch upgrade-specific half-states (version skew, missing snapshot, stalled chain).
+- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target. k8s-node1 hosts every Job except the one that drains it (which runs on k8s-master with a control-plane toleration).
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
+- **PDB-blocked pods don't stall the chain**. `predrain_unstick` deletes PDB=0 pods on the target node directly (bypassing the eviction API), so the parent Deployment recreates them elsewhere. This was the workaround applied manually during the 2026-05-11 recovery for Anubis single-replica instances.
 
 ### Secrets
 
 | Secret | Vault Path | Purpose |
 |--------|-----------|---------|
-| SSH private key | `secret/k8s-upgrade.ssh_key` | Agent + detection CronJob SSH to all 5 nodes (user `wizard`) |
+| SSH private key | `secret/k8s-upgrade.ssh_key` | Jobs SSH `wizard@<node>` |
 | SSH public key | `secret/k8s-upgrade.ssh_key_pub` | Deployed to nodes' `~/.ssh/authorized_keys` |
 | Slack webhook | `secret/k8s-upgrade.slack_webhook` | Pipeline notifications (separate channel from kured) |
-| Agent service bearer | `secret/claude-agent-service.api_bearer_token` (reused) | Detection CronJob POSTs to `/execute` |
+
+The previous `api_bearer_token` entry is gone — the chain does not POST to `claude-agent-service`.
 
 ### Operational reference
 
-See `docs/runbooks/k8s-version-upgrade.md` for: verifying health, manually triggering detection or the agent, rollback paths (master / worker / mid-flight abort), and SSH key rotation.
+See `docs/runbooks/k8s-version-upgrade.md` for: verifying health, manually triggering detection, killing a stuck Job, skipping a phase, rollback paths (master / worker / mid-flight abort), and SSH key rotation.
