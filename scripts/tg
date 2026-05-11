@@ -102,6 +102,30 @@ for arg in "$@"; do
   esac
 done
 
+# Detect if this is a plan/apply/destroy/refresh — anything that reads or
+# writes infra state. Cheap pre-flight check below scans only the current
+# stack's .tf files for the ingress_factory auth-comment convention. Other
+# tg verbs (init, fmt, validate) skip the check.
+is_tf_op=false
+for arg in "$@"; do
+  case "$arg" in
+    plan|apply|destroy|refresh) is_tf_op=true ;;
+  esac
+done
+
+# Anti-exposure guard: every `auth = "app"` or `auth = "none"` in this stack
+# must have a preceding `# auth = "<tier>":` comment documenting what gates
+# the app or why the endpoint is intentionally public. See:
+# - infra/modules/kubernetes/ingress_factory/main.tf (variable description)
+# - infra/.claude/CLAUDE.md "Auth" section
+# Stack-scoped: untouched stacks aren't blocked from future applies until
+# they're actually edited, at which point the convention applies.
+if $is_tf_op && [ -n "$STACK_NAME" ]; then
+  if ! "$REPO_ROOT/scripts/check-ingress-auth-comments.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
+    exit 1
+  fi
+fi
+
 # Acquire lock for mutating operations (Tier 0 only — Tier 1 uses pg_advisory_lock)
 if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
   if command -v vault &>/dev/null && [ -n "${VAULT_TOKEN:-}" ]; then
