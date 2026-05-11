@@ -2152,20 +2152,24 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Mail server has no available replicas - mail may not be received"
-          - alert: BankSyncFailing
-            expr: bank_sync_success == 0
-            for: 6h
-            labels:
-              severity: warning
-            annotations:
-              summary: "Bank sync failing. Accounts may need GoCardless reauthorization. Check Pushgateway for which instance."
+          # Note: no BankSyncFailing alert — GoCardless enforces per-account
+          # PSD2 quotas (4 successful pulls per account per 24h). Manual UI
+          # syncs consume the same quota, so the nightly cron routinely hits
+          # rate-limits without any real outage. Alert only on staleness.
           - alert: BankSyncStale
             expr: (time() - bank_sync_last_success_timestamp) > 172800
             for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "Bank sync has not succeeded in more than 48h. Check CronJob and account auth."
+              summary: "Bank sync (instance {{ $labels.instance }}): NO account has synced in over 48h. Likely a real outage — check CronJob, http-api logs, and GoCardless re-auth."
+          - alert: BankSyncAccountStale
+            expr: (time() - bank_sync_account_last_success_timestamp) > 259200
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync (instance {{ $labels.instance }}): account {{ $labels.account }} has not synced in over 72h. GoCardless requisition may have expired — re-link in Settings → Bank Sync."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
             for: 60m
