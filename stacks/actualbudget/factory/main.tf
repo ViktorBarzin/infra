@@ -282,48 +282,93 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
           spec {
             container {
               name  = "bank-sync"
-              image = "curlimages/curl"
+              image = "alpine:3.20"
               command = ["/bin/sh", "-c", <<-EOT
-              PUSHGATEWAY="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/bank-sync-${var.name}"
+              set -u
+              apk add --no-cache curl jq >/dev/null 2>&1
+
+              USER_NAME='${var.name}'
+              SYNC_ID='${var.sync_id}'
+              API_KEY='${random_string.api-key.result}'
+              PW='${var.budget_encryption_password}'
+              PG="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/bank-sync-$USER_NAME"
+              API="http://budget-http-api-$USER_NAME"
+
               START=$(date +%s)
 
-              HTTP_CODE=$(curl -s -o /tmp/response.txt -w '%%{http_code}' \
-                -X POST --location \
-                'http://budget-http-api-${var.name}/v1/budgets/${var.sync_id}/accounts/banksync' \
-                --header 'accept: application/json' \
-                --header 'budget-encryption-password: ${var.budget_encryption_password}' \
-                --header 'x-api-key: ${random_string.api-key.result}')
+              # Enumerate active accounts: open + on-budget.
+              ACCOUNTS=$(curl -fsS "$API/v1/budgets/$SYNC_ID/accounts" \
+                -H "x-api-key: $API_KEY" \
+                -H "budget-encryption-password: $PW" \
+                | jq -c '.data[] | select(.closed == false and .offbudget == false) | {id, name}')
 
-              END=$(date +%s)
-              DURATION=$((END - START))
-
-              if [ "$HTTP_CODE" = "200" ]; then
-                SUCCESS=1
-                LAST_SUCCESS=$END
-              else
-                SUCCESS=0
-                echo "Bank sync failed with HTTP $HTTP_CODE:"
-                cat /tmp/response.txt
-                echo ""
+              if [ -z "$ACCOUNTS" ]; then
+                echo "ERROR: GET /accounts returned no eligible accounts; aborting"
+                exit 1
               fi
 
-              # Pushgateway POST preserves metrics not in the payload, so on
-              # failure we omit bank_sync_last_success_timestamp to keep the
-              # prior success value — this prevents BankSyncStale from firing
-              # alongside BankSyncFailing after a single failed run.
-              {
-                printf '# HELP bank_sync_success Whether the last bank sync succeeded (1=ok, 0=fail)\n'
-                printf '# TYPE bank_sync_success gauge\n'
-                printf 'bank_sync_success %s\n' "$SUCCESS"
-                printf '# HELP bank_sync_duration_seconds Duration of the last bank sync run\n'
-                printf '# TYPE bank_sync_duration_seconds gauge\n'
-                printf 'bank_sync_duration_seconds %s\n' "$DURATION"
-                if [ "$SUCCESS" = "1" ]; then
-                  printf '# HELP bank_sync_last_success_timestamp Unix timestamp of the last successful sync\n'
-                  printf '# TYPE bank_sync_last_success_timestamp gauge\n'
-                  printf 'bank_sync_last_success_timestamp %s\n' "$LAST_SUCCESS"
+              : > /tmp/payload
+              rm -f /tmp/any_success
+
+              # Per-account sync. Each account has its own PSD2/GoCardless
+              # quota (4 successful pulls per 24h), so we treat them
+              # independently — one rate-limited account doesn't mark the
+              # run as a failure.
+              echo "$ACCOUNTS" | while IFS= read -r ACCT; do
+                [ -z "$ACCT" ] && continue
+                ID=$(echo "$ACCT" | jq -r '.id')
+                NAME=$(echo "$ACCT" | jq -r '.name')
+                LABEL=$(echo "$NAME" | sed -E 's/[^a-zA-Z0-9]+/_/g')
+
+                HTTP_CODE=$(curl -s -o /tmp/r.txt -w '%%{http_code}' \
+                  -X POST "$API/v1/budgets/$SYNC_ID/accounts/$ID/banksync" \
+                  -H 'accept: application/json' \
+                  -H "x-api-key: $API_KEY" \
+                  -H "budget-encryption-password: $PW") || HTTP_CODE=0
+
+                NOW=$(date +%s)
+                if [ "$HTTP_CODE" = "200" ]; then
+                  echo "OK account=$NAME"
+                  printf 'bank_sync_account_success{account="%s"} 1\n' "$LABEL" >> /tmp/payload
+                  printf 'bank_sync_account_last_success_timestamp{account="%s"} %s\n' "$LABEL" "$NOW" >> /tmp/payload
+                  : > /tmp/any_success
+                else
+                  echo "FAIL account=$NAME http=$HTTP_CODE body=$(cat /tmp/r.txt)"
+                  printf 'bank_sync_account_success{account="%s"} 0\n' "$LABEL" >> /tmp/payload
                 fi
-              } | curl -s --data-binary @- "$PUSHGATEWAY"
+              done
+
+              END=$(date +%s)
+              DUR=$((END - START))
+
+              if [ -f /tmp/any_success ]; then
+                ANY=1
+              else
+                ANY=0
+              fi
+
+              # Pushgateway POST preserves prior values for label sets not
+              # in the payload, so per-account last_success_timestamp values
+              # for accounts that failed this run keep their prior good
+              # values — that's what BankSyncAccountStale alerts on.
+              {
+                printf '# HELP bank_sync_account_success Per-account sync result (1=ok, 0=fail)\n'
+                printf '# TYPE bank_sync_account_success gauge\n'
+                printf '# HELP bank_sync_account_last_success_timestamp Per-account Unix timestamp of last successful sync\n'
+                printf '# TYPE bank_sync_account_last_success_timestamp gauge\n'
+                cat /tmp/payload
+                printf '# HELP bank_sync_success 1 if at least one account synced this run\n'
+                printf '# TYPE bank_sync_success gauge\n'
+                printf 'bank_sync_success %s\n' "$ANY"
+                printf '# HELP bank_sync_duration_seconds Total duration of the cron run\n'
+                printf '# TYPE bank_sync_duration_seconds gauge\n'
+                printf 'bank_sync_duration_seconds %s\n' "$DUR"
+                if [ "$ANY" = "1" ]; then
+                  printf '# HELP bank_sync_last_success_timestamp Unix timestamp of the most recent successful sync of any account\n'
+                  printf '# TYPE bank_sync_last_success_timestamp gauge\n'
+                  printf 'bank_sync_last_success_timestamp %s\n' "$END"
+                fi
+              } | curl -fsS --data-binary @- "$PG"
               EOT
               ]
             }
