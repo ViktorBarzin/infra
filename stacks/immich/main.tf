@@ -738,10 +738,10 @@ resource "kubernetes_service" "immich-machine-learning" {
 
 module "ingress-immich" {
   source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": Immich has its own user auth + bearer-token API. Authentik
+  # auth = "app": Immich has its own user auth + bearer-token API. Authentik
   # forward-auth on `/api/*` was 302-ing the iOS/Android Immich app and any
   # external API consumer. App-level auth is the gate now.
-  auth                    = "none"
+  auth                    = "app"
   dns_type                = "non-proxied"
   namespace               = kubernetes_namespace.immich.metadata[0].name
   name                    = "immich"
