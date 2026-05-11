@@ -355,6 +355,7 @@ module "ingress" {
   # Forgejo webhooks + webhook_handler POSTs hit ci.viktorbarzin.me to trigger
   # pipelines; the Woodpecker API + OAuth flows also live here. Forward-auth
   # would block every machine-driven call. Woodpecker has its own OAuth login.
+  # auth = "none": Forgejo webhooks + API calls trigger pipelines; Woodpecker OAuth handles login; forward-auth blocks webhook deliveries.
   auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.woodpecker.metadata[0].name

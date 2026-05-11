@@ -199,7 +199,8 @@ module "ingress" {
   # ntfy mobile/desktop apps + publisher scripts use HTTP basic-auth / bearer
   # tokens against ntfy's own user.db (NTFY_AUTH_DEFAULT_ACCESS=deny-all).
   # Forward-auth would block subscribers and publishers alike.
-  auth            = "none"
+  # auth = "app": ntfy mobile/desktop apps + scripts use HTTP Basic auth / bearer tokens against ntfy's own user.db (NTFY_AUTH_DEFAULT_ACCESS=deny-all); backend auth is the gate.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ntfy.metadata[0].name
   name            = "ntfy"

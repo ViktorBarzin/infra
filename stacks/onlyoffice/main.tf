@@ -263,6 +263,7 @@ module "ingress" {
   # OnlyOffice's server-to-server callback URLs (Nextcloud → OnlyOffice
   # for save events, etc.) run outside any browser session entirely.
   # The JWT is the auth gate.
+  # auth = "none": Iframe loaded by Nextcloud with JWT-signed tokens; JWT is the auth gate; forward-auth breaks iframe + server-to-server callbacks.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.onlyoffice.metadata[0].name

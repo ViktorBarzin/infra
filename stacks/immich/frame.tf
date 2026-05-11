@@ -127,6 +127,7 @@ module "ingress" {
   # Photo-frame kiosk display — runs in headless browser mode on a TV/frame
   # device and pulls images via an Immich API key (no user login). Forward-auth
   # would 302 the device to Authentik with no way to complete login.
+  # auth = "none": Photo-frame kiosk display — headless browser with API key; no user login; forward-auth breaks device automation.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = "immich"

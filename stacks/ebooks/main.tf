@@ -959,6 +959,7 @@ module "book_search_api_ingress" {
   host            = "book-search"
   service_name    = "book-search"
   tls_secret_name = var.tls_secret_name
+  # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
   auth            = "none"
   ingress_path    = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
 }

@@ -462,6 +462,7 @@ module "ingress_api" {
   port            = 8080
   ingress_path    = ["/api/"]
   tls_secret_name = var.tls_secret_name
+  # auth = "none": XHR-based API endpoints; forward-auth 302+cookie-dance breaks CORS preflight and browser fetch().
   auth            = "none"
 }
 

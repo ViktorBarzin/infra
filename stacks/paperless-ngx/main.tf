@@ -271,7 +271,8 @@ module "ingress" {
   # Paperless has a mobile app (`Paperless`) that uses /api/* with token
   # auth. The app can't follow Authentik 302s. Paperless's own login
   # gates the web UI.
-  auth            = "none"
+  # auth = "app": Paperless mobile app uses /api/* with token auth; Paperless enforces app-layer login for web UI; backend manages authentication.
+  auth            = "app"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
   name            = "paperless-ngx"
   service_name    = "paperless-ngx"

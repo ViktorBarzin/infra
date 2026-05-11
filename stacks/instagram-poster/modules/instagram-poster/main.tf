@@ -403,6 +403,7 @@ module "ingress_image_public" {
   name            = "instagram-poster-image"
   host            = "instagram-poster"
   tls_secret_name = var.tls_secret_name
+  # auth = "none": Meta's content fetcher needs to render image derivatives without auth headers (Instagram photos).
   auth            = "none"
   ingress_path    = ["/image", "/original"]
   port            = 80

@@ -397,6 +397,7 @@ module "ingress" {
   # n8n hosts webhook endpoints at /webhook/... (WEBHOOK_URL points here);
   # external services POST to trigger workflows. Forward-auth would block
   # every webhook trigger. n8n has its own user login + per-webhook auth.
+  # auth = "none": n8n webhook endpoints — external services POST to trigger workflows; forward-auth blocks all webhook deliveries.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.n8n.metadata[0].name
