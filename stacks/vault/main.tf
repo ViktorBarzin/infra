@@ -63,14 +63,13 @@ resource "helm_release" "vault" {
         enabled      = true
         size         = "2Gi"
         storageClass = "proxmox-lvm-encrypted" # Migrated 2026-04-25 from nfs-proxmox
-        # Vault audit logs grow unbounded per request; let pvc-autoresizer
-        # expand the volume up to 10Gi rather than ride a stuck-Pending
-        # vault-0 the moment the PVC fills.
-        annotations = {
-          "resize.topolvm.io/threshold"     = "10%"
-          "resize.topolvm.io/increase"      = "100%"
-          "resize.topolvm.io/storage_limit" = "10Gi"
-        }
+        # Note: pvc-autoresizer annotations on audit-vault-{0,1,2} are
+        # NOT declared here. The chart maps `annotations` into the
+        # StatefulSet's volumeClaimTemplates, which is immutable
+        # post-creation — every helm upgrade with this block set fails
+        # with "StatefulSet spec: Forbidden" (rev 16-19 on 2026-05-10).
+        # Instead, the annotations are applied directly to the live
+        # PVCs via the kubernetes_annotations resources below.
       }
 
       standalone = { enabled = false }
@@ -164,6 +163,29 @@ resource "helm_release" "vault" {
     injector = { enabled = false }
     csi      = { enabled = false }
   })]
+}
+
+# pvc-autoresizer annotations on the audit PVCs. Applied here (not via
+# the chart's `server.auditStorage.annotations`) because StatefulSet
+# volumeClaimTemplates are immutable post-creation — the chart-mediated
+# path fails the helm upgrade with "spec: Forbidden". Audit logs grow
+# unbounded per request; allow the volume to expand to 10Gi rather
+# than ride a stuck-Pending vault-N the moment the PVC fills.
+resource "kubernetes_annotations" "audit_vault_autoresizer" {
+  for_each    = toset(["0", "1", "2"])
+  api_version = "v1"
+  kind        = "PersistentVolumeClaim"
+  metadata {
+    name      = "audit-vault-${each.key}"
+    namespace = "vault"
+  }
+  annotations = {
+    "resize.topolvm.io/threshold"     = "10%"
+    "resize.topolvm.io/increase"      = "100%"
+    "resize.topolvm.io/storage_limit" = "10Gi"
+  }
+  force      = true
+  depends_on = [helm_release.vault]
 }
 
 # --- Self-read: Vault's own OIDC credentials from KV ---
