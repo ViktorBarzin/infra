@@ -1054,8 +1054,8 @@ resource "null_resource" "pg_cluster" {
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
-    memory_limit  = "2Gi"
-    pg_params     = "v2-shared512-walcomp-workmem16"
+    memory_limit  = "3Gi"
+    pg_params     = "v3-shared1024-walcomp-workmem16-max200"
   }
 
   provisioner "local-exec" {
@@ -1072,8 +1072,15 @@ resource "null_resource" "pg_cluster" {
         postgresql:
           parameters:
             search_path: '"$user", public'
-            shared_buffers: "512MB"
-            effective_cache_size: "1536MB"
+            # Cluster grew past the 100-conn default ceiling (~90/100 idle
+            # steady-state in May 2026; authentik+matrix alone hold ~55).
+            # Bumped to 200 with shared_buffers/effective_cache_size/memory
+            # scaled proportionally. work_mem stays at 16MB — that's per
+            # sort/hash op, not per connection, so 16MB * 200 isn't the
+            # worst case.
+            max_connections: "200"
+            shared_buffers: "1024MB"
+            effective_cache_size: "2560MB"
             work_mem: "16MB"
             wal_compression: "on"
             random_page_cost: "4"
@@ -1093,9 +1100,9 @@ resource "null_resource" "pg_cluster" {
         resources:
           requests:
             cpu: "50m"
-            memory: "2Gi"
+            memory: "3Gi"
           limits:
-            memory: "2Gi"
+            memory: "3Gi"
       EOF
     EOT
   }

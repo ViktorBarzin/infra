@@ -1632,6 +1632,23 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CNPG operator down — PostgreSQL failover/management degraded"
+          - alert: PGConnectionsHigh
+            # Per-cluster connection utilisation. Sums per-database backend
+            # counts on each pod, then takes max across pods (primary holds
+            # the real workload; replicas only have streaming_replica conns).
+            expr: (max by (cnpg_cluster) (sum by (cnpg_cluster, instance) (cnpg_backends_total))) / (max by (cnpg_cluster) (cnpg_pg_settings_setting{name="max_connections"})) > 0.85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: connection utilisation {{ $value | humanizePercentage }} — approaching max_connections ceiling"
+          - alert: PGConnectionsCritical
+            expr: (max by (cnpg_cluster) (sum by (cnpg_cluster, instance) (cnpg_backends_total))) / (max by (cnpg_cluster) (cnpg_pg_settings_setting{name="max_connections"})) > 0.95
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL {{ $labels.cnpg_cluster }}: connection utilisation {{ $value | humanizePercentage }} — new client connections will be refused soon. Bump max_connections or reap idle backends."
       - name: Cluster
         rules:
           - alert: NodeDown
@@ -2601,6 +2618,26 @@ extraScrapeConfigs: |
     - source_labels: [__meta_kubernetes_pod_container_port_name]
       action: keep
       regex: '.*-envoy-prom'
+
+  - job_name: 'cnpg'
+    # Scrapes the CNPG built-in postgres exporter (port 9187, named "metrics")
+    # on every cluster instance pod. Adds cnpg_cluster + cnpg_role labels so
+    # alerts (PGConnectionsHigh/Critical) can group by cluster.
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - dbaas
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_label_cnpg_io_podRole, __meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: 'instance;metrics'
+    - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+      target_label: cnpg_cluster
+    - source_labels: [__meta_kubernetes_pod_label_cnpg_io_instanceRole]
+      target_label: cnpg_role
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
 
   - job_name: 'crowdsec'
     static_configs:
