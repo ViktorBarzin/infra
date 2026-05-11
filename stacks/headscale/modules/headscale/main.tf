@@ -311,7 +311,8 @@ module "ingress" {
   # Forward-auth would break every Tailscale client. Headscale has its own
   # OIDC + preauth-key auth at the app layer; the web admin UI lives on a
   # separate /web ingress that remains auth=required.
-  auth            = "none"
+  # auth = "app": Headscale control plane — native Tailscale clients register + exchange keys using headscale's own OIDC + preauth-key auth; backend manages authentication.
+  auth            = "app"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.headscale.metadata[0].name
   name            = "headscale"

@@ -149,6 +149,7 @@ module "ingress" {
   # Public pastebin — anyone can create/read pastes. Pastes are client-side
   # encrypted; AI scrapers gain nothing from indexing them. anti_ai_scraping
   # defaults on for auth=none, which is the existing protection.
+  # auth = "none": Client-side encrypted pastes — AI scrapers gain nothing from indexing; anti-AI middleware fronts the ingress. No backend user auth by design.
   auth                           = "none"
   namespace                      = kubernetes_namespace.privatebin.metadata[0].name
   name                           = "privatebin"

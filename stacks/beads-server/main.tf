@@ -423,6 +423,7 @@ module "ingress" {
   namespace        = kubernetes_namespace.beads.metadata[0].name
   name             = "dolt-workbench"
   tls_secret_name  = var.tls_secret_name
+  # auth = "none": Dolt Workbench is client-side encrypted task database; no backend user auth required; Anubis PoW fronts ingress.
   auth             = "none"
   exclude_crowdsec = true
   extra_annotations = {

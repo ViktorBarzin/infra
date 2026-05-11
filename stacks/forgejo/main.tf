@@ -198,6 +198,7 @@ module "ingress" {
   # Git + OCI registry (/v2/) — native clients (git, docker/podman) use HTTP
   # basic-auth / bearer tokens, NOT browser sessions. Forward-auth would 302
   # them into a redirect they can't follow.
+  # auth = "none": Git + OCI registry clients use HTTP Basic auth / bearer tokens; native CLI tools cannot follow forward-auth redirects.
   auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name

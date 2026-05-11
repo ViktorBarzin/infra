@@ -128,6 +128,7 @@ module "snmp-exporter-ingress" {
   # HA Sofia REST sensors scrape /snmp endpoint programmatically and
   # can't follow the Authentik OIDC flow. local-only IP allowlist
   # already gates external access.
+  # auth = "none": HA Sofia REST sensors scrape /snmp endpoint programmatically; OIDC flow would 302 every request.
   auth                    = "none"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "snmp-exporter"

@@ -231,6 +231,7 @@ module "ingress" {
   # `owntracks-basic-auth` middleware below). They can't follow forward-auth
   # 302s, so Authentik is bypassed; the `extra_annotations` block below
   # overrides the factory's middleware list anyway.
+  # auth = "none": OwnTracks mobile clients POST location via HTTP Basic auth; Authentik 302s incompatible with non-browser clients.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.owntracks.metadata[0].name
