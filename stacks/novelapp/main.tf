@@ -223,8 +223,12 @@ resource "kubernetes_service" "novelapp" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": novelapp handles its own auth via NextAuth + Google OAuth
+  # (AUTH_URL/AUTH_SECRET/GOOGLE_CLIENT_{ID,SECRET} env vars above). Putting
+  # Authentik forward-auth in front double-gates the app and breaks iOS/Android
+  # webview clients that can't complete the Authentik 302/cookie dance.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   name            = "novelapp"
