@@ -641,7 +641,28 @@ check_uptime_kuma() {
         return 0
     fi
 
-    result=$(UPTIME_KUMA_PASSWORD="$uk_pass" ~/.venvs/claude/bin/python3 -c '
+    # Connect via kubectl port-forward to the internal Service. The public
+    # URL (uptime.viktorbarzin.me) is behind Authentik forward-auth, which
+    # 302-redirects the Socket.IO handshake the library uses — there's no
+    # way for an unauthenticated script to complete the OAuth dance.
+    # Port-forward gives us a direct path to the in-cluster ClusterIP
+    # service and works from any host with kubectl access.
+    local pf_port=18444 pf_pid
+    $KUBECTL port-forward -n uptime-kuma svc/uptime-kuma "$pf_port:80" >/dev/null 2>&1 &
+    pf_pid=$!
+    # Detach from job control so bash doesn't print "Killed" to stderr
+    # when we SIGKILL the port-forward at the end of this check — that
+    # message corrupts stdout when stderr is merged for JSON parsing.
+    disown "$pf_pid" 2>/dev/null || true
+    # Wait up to 5s for the local listener to come up.
+    local i
+    for i in 1 2 3 4 5; do
+        if (echo >"/dev/tcp/127.0.0.1/$pf_port") 2>/dev/null; then break; fi
+        sleep 1
+    done
+
+    result=$(UPTIME_KUMA_PASSWORD="$uk_pass" UK_URL="http://127.0.0.1:$pf_port" \
+        ~/.venvs/claude/bin/python3 -c '
 import sys, os, time
 try:
     from uptime_kuma_api import UptimeKumaApi
@@ -649,15 +670,13 @@ except ImportError:
     print("ERROR:uptime-kuma-api not installed")
     sys.exit(0)
 
-# The uptime-kuma WebSocket login is intermittently flaky — single-shot
-# failures showed up repeatedly in healthchecks even though the service
-# was healthy. Retry up to 3 times with backoff before declaring connect
-# failure.
+# Retry up to 3 times — the Socket.IO handshake is occasionally flaky
+# even against the internal service during cluster churn.
 last_exc = None
 api = None
 for attempt in range(3):
     try:
-        api = UptimeKumaApi("https://uptime.viktorbarzin.me", timeout=120, wait_events=0.2)
+        api = UptimeKumaApi(os.environ["UK_URL"], timeout=120, wait_events=0.2)
         api.login("admin", os.environ["UPTIME_KUMA_PASSWORD"])
         break
     except Exception as e:
@@ -724,6 +743,13 @@ try:
 except Exception as e:
     print(f"CONN_ERROR:{e}")
 ' 2>/dev/null) || result="CONN_ERROR:python execution failed"
+
+    # Always tear down the port-forward. Use SIGKILL directly — kubectl
+    # port-forward sometimes ignores SIGTERM during teardown and we don't
+    # need a graceful exit for a localhost listener. Skip `wait` because
+    # in `set -m` mode the backgrounded child may not be reapable here,
+    # causing the script to hang indefinitely; the shell reaps it on exit.
+    kill -9 "$pf_pid" 2>/dev/null || true
 
     if [[ "$result" == "ERROR:"* ]]; then
         [[ "$QUIET" == true ]] && section_always 14 "Uptime Kuma Monitors"
