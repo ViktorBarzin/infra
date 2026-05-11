@@ -258,8 +258,11 @@ resource "kubernetes_service" "tandoor" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Tandoor uses Django auth (SECRET_KEY set above) and exposes
+  # /api/* with token auth for its mobile clients. Authentik forward-auth was
+  # 302-ing those callers; Django session/token auth gates users.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.tandoor.metadata[0].name
   name            = "tandoor"
