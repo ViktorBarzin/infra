@@ -229,10 +229,10 @@ resource "kubernetes_service" "freshrss" {
 }
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": FreshRSS has built-in user login and exposes Fever +
+  # auth = "app": FreshRSS has built-in user login and exposes Fever +
   # GReader APIs (/api/fever.php, /api/greader.php) used by mobile RSS
   # readers like Reeder/FeedMe. Authentik forward-auth was 302-ing those.
-  auth            = "none"
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = "freshrss"
   name            = "rss"

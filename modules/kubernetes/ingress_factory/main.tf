@@ -35,23 +35,48 @@ variable "auth" {
   type        = string
   default     = "required"
   description = <<-EOT
-    Authentik auth posture for this ingress:
-      * "required" (default): standard Authentik forward-auth — login required.
-        Catches the legacy `protected = true` semantics.
-      * "public": public-tier — auto-bind anonymous requests to the `guest`
-        Authentik user (no UI prompt), audited but not gated. Logged-in
-        users keep their real identity in X-authentik-username.
-      * "none": no Authentik forward-auth middleware at all. Use for
-        Anubis-fronted content sites, native-client APIs (Git, /v2/, WebDAV),
-        webhook receivers, and the Authentik outpost itself. Anti-AI
-        headers are auto-enabled when auth = "none" unless overridden.
+    Auth posture for this ingress. Pick by asking "what gates the app?":
 
-    Defaulting to "required" enforces "every ingress must have an explicit
-    auth decision recorded by Authentik" — accidental omission fails closed.
+      * "required" (default, fail-closed): Authentik forward-auth gates every
+        request. Pick this when the backend has NO built-in user auth and
+        Authentik is the only thing standing between strangers and the app.
+        Examples: prowlarr, qbittorrent, netbox, phpipam, k8s-dashboard, any
+        admin UI shipped without its own login.
+
+      * "app": the backend handles its own user authentication (NextAuth,
+        Django sessions, OAuth, bearer-token API, etc.) and Authentik would
+        only get in the way. No Authentik middleware is attached; the app's
+        own login is the gate. Examples: immich, linkwarden, tandoor,
+        freshrss, affine, actualbudget, audiobookshelf, novelapp.
+        **Functionally identical to "none"** — the distinct name exists to
+        record intent at the call site so future readers don't have to guess.
+
+      * "public": Authentik anonymous binding via the `public` outpost.
+        Strangers are auto-bound to the `guest` Authentik user; logged-in
+        users keep their identity in X-authentik-username. Only works for
+        top-level browser navigation — CORS preflight rejects XHR/fetch and
+        automation can't replay the cookie dance. Audit trail, not a gate.
+
+      * "none": no Authentik middleware, no own-auth claim — explicitly
+        public or unauthenticated-by-design. Use for: Anubis-fronted content
+        sites (where Anubis is the gate), native-client APIs that auth
+        themselves (Git, /v2/, WebDAV/CalDAV, CardDAV), webhook receivers,
+        OAuth callbacks, and Authentik outposts themselves.
+
+    **Anti-exposure rule** (the reason "app" exists as a distinct mode):
+    only pick "app" or "none" AFTER you have verified the app has its own
+    user auth (for "app") OR the endpoint is intentionally public (for
+    "none"). Picking either of these on a naked admin UI exposes it to the
+    internet. The default is "required" specifically so accidental omission
+    fails closed.
+
+    **Convention**: when using "app" or "none", add a comment line above
+    the `auth = "..."` line stating what gates the app or why it's public.
+    Future-you reads the call site, not the module description.
   EOT
   validation {
-    condition     = contains(["required", "public", "none"], var.auth)
-    error_message = "auth must be one of: required, public, none."
+    condition     = contains(["required", "app", "public", "none"], var.auth)
+    error_message = "auth must be one of: required, app, public, none."
   }
 }
 variable "ingress_path" {
@@ -162,13 +187,17 @@ variable "homepage_enabled" {
 
 locals {
   effective_host = var.full_host != null ? var.full_host : "${var.host != null ? var.host : var.name}.${var.root_domain}"
-  # Anti-AI default: ON only when no Authentik auth is in front of the ingress
-  # (i.e. auth = "none" — public Anubis-fronted content sites, etc.). When
-  # Authentik gates the request (required/public), the auth flow already
-  # discourages bots, so anti-AI noise is redundant.
-  effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : (var.auth == "none")
+  # Anti-AI default: ON when no Authentik auth fronts the ingress (auth =
+  # "none" or auth = "app" — either the app gates users itself or the site
+  # is intentionally public). When Authentik gates the request
+  # (required/public), the auth flow already discourages bots.
+  effective_anti_ai = var.anti_ai_scraping != null ? var.anti_ai_scraping : (var.auth == "none" || var.auth == "app")
 
-  # Auth middleware selection. "none" attaches no Authentik middleware at all.
+  # Auth middleware selection. "app" and "none" both attach no Authentik
+  # middleware — "app" signals "the backend has its own user auth", "none"
+  # signals "intentionally public / native-client API / webhook". The
+  # distinction lives at the call site for human readers; the runtime
+  # effect is identical.
   auth_middleware = (
     var.auth == "required" ? "traefik-authentik-forward-auth@kubernetescrd" :
     var.auth == "public" ? "traefik-authentik-forward-auth-public@kubernetescrd" :
