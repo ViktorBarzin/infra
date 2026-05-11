@@ -191,34 +191,25 @@ resource "kubernetes_cluster_role_binding" "claude_agent" {
 }
 
 # --- Storage ---
-
-resource "kubernetes_persistent_volume_claim" "workspace" {
-  wait_until_bound = false
-  metadata {
-    name      = "claude-agent-workspace-encrypted"
-    namespace = kubernetes_namespace.claude_agent.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "20Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = {
-        storage = "10Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+#
+# The `workspace` volume in the deployment is intentionally emptyDir — agent
+# jobs do fresh git clones each run, so a per-pod scratch dir on node disk
+# is faster and isolated. The 10Gi `claude-agent-workspace-encrypted` PVC
+# that previously sat next to this comment was created but never wired
+# into the deployment (sat idle from 2026-04-15 to 2026-05-11).
+#
+# For cases where the agent DOES need to persist state across pod restarts
+# (caches, ad-hoc outputs, anything that should survive a pod reschedule),
+# `module.persistent` below provides a 5Gi NFS-backed RWX volume mounted
+# at /persistent. RWX so all 3 replicas can read/write the same dir;
+# sequential job mutex in the service prevents concurrent writes.
+module "persistent" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "claude-agent-persistent"
+  namespace  = kubernetes_namespace.claude_agent.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/claude-agent-persistent"
+  storage    = "5Gi"
 }
 
 # --- Deployment ---
@@ -258,17 +249,25 @@ resource "kubernetes_deployment" "claude_agent" {
           fs_group     = 1000
         }
 
-        # Fix workspace ownership (PVC may have root-owned files from prior run)
+        # Fix workspace ownership. Kubelet creates the Dockerfile WORKDIR
+        # (/workspace/infra) inside the emptyDir as root:gid=fsGroup with
+        # the setgid bit — uid 1000 can't write into it without explicit
+        # chown + chmod. Pre-create so the path is guaranteed, then chown
+        # recursively and chmod the infra subdir for safety.
         init_container {
           name    = "fix-perms"
           image   = "busybox:1.37"
-          command = ["sh", "-c", "chown -R 1000:1000 /workspace"]
+          command = ["sh", "-c", "mkdir -p /workspace/infra /persistent && chown -R 1000:1000 /workspace /persistent && chmod 0775 /workspace/infra /persistent"]
           security_context {
             run_as_user = 0
           }
           volume_mount {
             name       = "workspace"
             mount_path = "/workspace"
+          }
+          volume_mount {
+            name       = "persistent"
+            mount_path = "/persistent"
           }
           resources {
             requests = {
@@ -439,6 +438,10 @@ resource "kubernetes_deployment" "claude_agent" {
             mount_path = "/workspace"
           }
           volume_mount {
+            name       = "persistent"
+            mount_path = "/persistent"
+          }
+          volume_mount {
             name       = "sops-age-key"
             mount_path = "/home/agent/.config/sops/age"
           }
@@ -460,8 +463,16 @@ resource "kubernetes_deployment" "claude_agent" {
 
         volume {
           name = "workspace"
+          # Per-pod ephemeral scratch — agent does fresh git clones each
+          # job, so node-disk emptyDir is faster than a network-backed PVC
+          # and avoids RWO contention across the 3 replicas.
+          empty_dir {}
+        }
+
+        volume {
+          name = "persistent"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.workspace.metadata[0].name
+            claim_name = module.persistent.claim_name
           }
         }
 
