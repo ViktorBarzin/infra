@@ -79,6 +79,37 @@ data "kubernetes_secret" "eso_secrets" {
 
 locals {
   notification_settings = jsondecode(data.kubernetes_secret.eso_secrets.data["notification_settings"])
+
+  # Periodic scrape schedules consumed by celery-beat via SCRAPE_SCHEDULES env var.
+  # Schema: config/schedule_config.py:ScheduleConfig. Cron fields are UTC.
+  # Daily RENT London 1-2 bed £1900-4000 at 03:00 UTC (~04:00 BST).
+  # Weekly BUY London 1-2 bed £400k-1.2M at Sun 04:00 UTC.
+  scrape_schedules = jsonencode([
+    {
+      name           = "london-rent-daily"
+      listing_type   = "RENT"
+      minute         = "0"
+      hour           = "3"
+      day_of_week    = "*"
+      min_bedrooms   = 1
+      max_bedrooms   = 2
+      min_price      = 1900
+      max_price      = 4000
+      district_names = ["London"]
+    },
+    {
+      name           = "london-buy-weekly"
+      listing_type   = "BUY"
+      minute         = "0"
+      hour           = "4"
+      day_of_week    = "0"
+      min_bedrooms   = 1
+      max_bedrooms   = 2
+      min_price      = 400000
+      max_price      = 1200000
+      district_names = ["London"]
+    },
+  ])
 }
 
 
@@ -362,9 +393,10 @@ module "ingress" {
 
 module "ingress-api" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Wrongmove's public UI is Anubis-fronted (auth=none on the / path); this
+  # Wrongmove's public UI is Anubis-fronted (auth = "none" on the / path); this
   # /api ingress serves XHRs from that public UI. Forward-auth here would
   # break the UI.
+  # auth = "none": XHR endpoint for the Anubis-fronted public UI; forward-auth would break CORS.
   auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.realestate-crawler.metadata[0].name
@@ -581,7 +613,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
           }
           env {
             name  = "SCRAPE_SCHEDULES"
-            value = try(tostring(local.notification_settings["scrape_schedules"]), "")
+            value = local.scrape_schedules
           }
           volume_mount {
             name       = "data"
