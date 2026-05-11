@@ -358,8 +358,11 @@ resource "kubernetes_service" "affine" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": AFFiNE has its own workspace auth + bearer-token API
+  # used by desktop/mobile sync clients. Authentik forward-auth was 302-ing
+  # those API callers; AFFiNE's own auth gates users.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.affine.metadata[0].name
   name            = "affine"
