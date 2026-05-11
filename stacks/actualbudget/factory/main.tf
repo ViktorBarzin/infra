@@ -155,8 +155,11 @@ resource "kubernetes_service" "actualbudget" {
 }
 
 module "ingress" {
-  source            = "../../../modules/kubernetes/ingress_factory"
-  auth              = "required"
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "none": Actual Budget enforces a server password + per-user login
+  # on its own sync API. Authentik forward-auth was 302-ing the mobile/web
+  # sync clients; Actual's own auth gates users.
+  auth              = "none"
   namespace         = "actualbudget"
   name              = "budget-${var.name}"
   tls_secret_name   = var.tls_secret_name

@@ -661,8 +661,11 @@ resource "kubernetes_service" "audiobookshelf" {
 }
 
 module "audiobookshelf_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Audiobookshelf has its own user/password login + API
+  # tokens used by the iOS/Android Audiobookshelf app. Authentik forward-auth
+  # was 302-ing the mobile clients; ABS's own auth gates users.
+  auth            = "none"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "audiobookshelf"
