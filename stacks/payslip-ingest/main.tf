@@ -334,6 +334,13 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
     namespace = kubernetes_namespace.payslip_ingest.metadata[0].name
   }
   spec {
+    # Suspended 2026-05-12 — chronic JobFailed with
+    # `KeyError: 'ACTUALBUDGET_API_KEY'` / `..._ENCRYPTION_PASSWORD`.
+    # Vault `secret/payslip-ingest` now has `actualbudget_api_key` and
+    # `actualbudget_budget_sync_id` (copied from `secret/fire-planner`),
+    # but `actualbudget_encryption_password` is still missing. Unsuspend
+    # by removing this line once the encryption password is in Vault.
+    suspend                       = true
     schedule                      = "0 2 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
