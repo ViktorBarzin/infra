@@ -102,6 +102,21 @@ alertmanager:
           - alertname = HomeAssistantDown
         target_matchers:
           - alertname =~ "HomeAssistantCriticalSensorUnavailable|HomeAssistantMetricsMissing"
+      # PVFillingUp (95% used) is the immediate critical; PVPredictedFull
+      # (linear projection over 6h) is the leading indicator. When the disk
+      # is actually full, the prediction is redundant.
+      - source_matchers:
+          - alertname = PVFillingUp
+        target_matchers:
+          - alertname = PVPredictedFull
+        equal: [namespace, persistentvolumeclaim]
+      # EmailRoundtripFailing = active outage right now (probe failed).
+      # EmailRoundtripStale = derivative ("haven't seen success in 60min").
+      # The Failing alert subsumes the Stale alert.
+      - source_matchers:
+          - alertname = EmailRoundtripFailing
+        target_matchers:
+          - alertname = EmailRoundtripStale
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -1216,16 +1231,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.node }}: {{ $labels.condition }} active"
+          # `for: 2h` requires the failure to persist across at least 2
+          # cron iterations of a typical 5-min/15-min/1h job before paging —
+          # transient single-run failures (network blip, upstream timeout)
+          # are recovered by the next iteration without alerting.
           - alert: JobFailed
             expr: |
               kube_job_status_failed > 0
               and on(namespace, job_name)
               (time() - kube_job_status_start_time) < 3600
-            for: 30m
+            for: 2h
             labels:
               severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+          # `KubeletImagePullErrors` measures node-level pull-error rate,
+          # which is too coarse to catch one pod stuck in ImagePullBackOff.
+          # Council-complaints sat in ImagePullBackOff for 10h on 2026-05-12
+          # without paging because the rate stayed below threshold.
+          - alert: PodImagePullBackOff
+            expr: |
+              sum by (namespace, pod, container) (
+                kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName"}
+              ) > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) cannot pull image"
+              description: "Check the deployment's image reference — often a stale tag, a removed registry, or a credentials mismatch. `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` shows the pull error."
       - name: Infrastructure Health
         rules:
           - alert: HomeAssistantDown
