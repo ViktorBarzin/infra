@@ -542,6 +542,14 @@ resource "kubernetes_cron_job_v1" "ig_refresh_token" {
     labels    = local.labels
   }
   spec {
+    # Suspended 2026-05-12 — chronic JobFailed because the deployed image
+    # (currently :da5b4191) doesn't yet contain the `POST /ig-refresh-token`
+    # FastAPI route. The route is in the working copy at
+    # `instagram-poster/instagram_poster/app.py:695` but uncommitted, so
+    # the cron returns 404 every night. Unsuspend after the new image
+    # rolls (commit + push to instagram-poster repo, GHA builds + Woodpecker
+    # deploys, then remove this `suspend = true` line).
+    suspend                       = true
     schedule                      = "0 2 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
