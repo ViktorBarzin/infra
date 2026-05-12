@@ -1964,17 +1964,21 @@ serverFiles:
           # Remediation: `kubectl -n traefik delete pod <stale-pod>` — the
           # Deployment recreates it with a fresh informer cache. PDB
           # minAvailable=2 keeps the other two replicas serving.
-          # Window 2h + for 2h tolerates pod restarts (rate normalizes within
-          # an hour); the bug pattern persists indefinitely until restart.
+          # 30m rate window lets stale (deleted) pod series age out quickly;
+          # `for: 1h` tolerates startup ramp-up but catches sustained drift.
+          # The `min(rate) > 0.0005` guard filters out both stale-zero series
+          # (recently-deleted pods linger with rate=0) and fresh pods that
+          # haven't accumulated samples — bug pattern rate (~0.00076 ≈ 2.75/hr
+          # in the 2026-05-12 incident) sits comfortably above the floor.
           - alert: TraefikReplicaConfigStale
             expr: |
               (
-                max(rate(traefik_config_reloads_total[2h]))
+                max(rate(traefik_config_reloads_total[30m]))
                 /
-                clamp_min(min(rate(traefik_config_reloads_total[2h])), 0.0001)
+                min(rate(traefik_config_reloads_total[30m]))
               ) > 5
-              and max(rate(traefik_config_reloads_total[2h])) > 0.001
-            for: 2h
+              and min(rate(traefik_config_reloads_total[30m])) > 0.0005
+            for: 1h
             labels:
               severity: warning
             annotations:
