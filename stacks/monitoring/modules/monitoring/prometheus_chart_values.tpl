@@ -73,12 +73,12 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|HomeAssistantDown"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -89,6 +89,19 @@ alertmanager:
           - alertname = TraefikDown
         target_matchers:
           - alertname =~ "PoisonFountainDown|ForwardAuthFallbackActive"
+      # A stale Traefik replica returns 404 for a fraction of requests; the same
+      # bug surfaces as TTFB / 4xx / 5xx / external-divergence symptoms downstream.
+      # When TraefikReplicaConfigStale fires, the root cause is identified —
+      # suppress the symptom alerts so only the actionable one pages.
+      - source_matchers:
+          - alertname = TraefikReplicaConfigStale
+        target_matchers:
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
+      # HA down → every sensor goes unavailable. One root-cause alert is enough.
+      - source_matchers:
+          - alertname = HomeAssistantDown
+        target_matchers:
+          - alertname =~ "HomeAssistantCriticalSensorUnavailable|HomeAssistantMetricsMissing"
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -1941,6 +1954,32 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Traefik pod {{ $labels.instance }} is down"
+          # Detects a Traefik replica whose K8s Ingress informer cache has gone
+          # stale — pod reloads at a fraction of the rate of peers, returns 404
+          # for ingresses it never re-listed. Pattern observed 2026-05-12 when
+          # pod traefik-db7696fbf-k42wp came back after a SIGTERM with only 6
+          # routers vs 119 on healthy peers (11 vs 145 config reloads). Symptom:
+          # ~33% of requests to viktorbarzin.me hosts returned a Go-style
+          # "404 page not found" depending on which replica kube-proxy picked.
+          # Remediation: `kubectl -n traefik delete pod <stale-pod>` — the
+          # Deployment recreates it with a fresh informer cache. PDB
+          # minAvailable=2 keeps the other two replicas serving.
+          # Window 2h + for 2h tolerates pod restarts (rate normalizes within
+          # an hour); the bug pattern persists indefinitely until restart.
+          - alert: TraefikReplicaConfigStale
+            expr: |
+              (
+                max(rate(traefik_config_reloads_total[2h]))
+                /
+                clamp_min(min(rate(traefik_config_reloads_total[2h])), 0.0001)
+              ) > 5
+              and max(rate(traefik_config_reloads_total[2h])) > 0.001
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Traefik replica config divergence: max/min reload rate = {{ $value | printf \"%.1f\" }}x"
+              description: "One Traefik replica is reloading config much less than its peers — likely a stale K8s informer cache returning 404 for ingresses. Identify the stale pod by comparing `traefik_config_reloads_total` across pods and delete it: `kubectl -n traefik delete pod <pod-name>`."
           - alert: HighServiceErrorRate
             expr: |
               (
