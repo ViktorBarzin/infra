@@ -217,15 +217,24 @@ module "ingress_ro" {
   }
 }
 
-# === Multi-session lobby cutover on terminal.viktorbarzin.me ===
+# === Multi-session lobby on terminal.viktorbarzin.me ===
 #
-# The `terminal` Service+Endpoints (port 7681) above now backs the
-# multi-session lobby — ttyd.service on the DevVM runs tmux-attach.sh with
-# `-a`, serving index.html (the lobby HTML, ex-index-multi.html). DevVM-side
-# units ship from files/devvm/ — see files/devvm/README.md.
+# Application code (frontend, tmux-api, clipboard-upload, DevVM
+# systemd units / scripts / config) lives in a separate Forgejo repo:
+#   https://forgejo.viktorbarzin.me/viktor/terminal-lobby
 #
-# The lobby's REST API (`/api/sessions/*`) is reverse-proxied to a small Go
-# binary on port 7684 via the IngressRoute below.
+# That repo's ./scripts/deploy.sh ships everything to wizard@10.0.10.10
+# and restarts ttyd / ttyd-ro / tmux-api / clipboard-upload. This stack
+# only owns the Kubernetes side: Services, Endpoints pointing at
+# 10.0.10.10:{7681,7682,7683,7684}, the IngressRoutes, and the Traefik
+# middlewares that gate everything behind Authentik forward-auth.
+#
+# Service map (DevVM):
+#   ttyd               :7681  →  serves lobby + xterm WS
+#   ttyd-ro            :7682  →  read-only mirror at terminal-ro.viktorbarzin.me
+#   clipboard-upload   :7683  →  POST /upload, returns saved path
+#   tmux-api           :7684  →  GET /sessions, DELETE /sessions/<n>,
+#                                POST /sessions/<n>/rename, GET /whoami
 
 # Service+Endpoints → tmux-api on the DevVM (port 7684).
 resource "kubernetes_service" "tmux_api" {
