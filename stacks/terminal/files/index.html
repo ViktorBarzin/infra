@@ -8,6 +8,7 @@
     <style>
         html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
         #terminal { height: 100%; width: 100%; }
+        .hidden { display: none !important; }
         #toast {
             position: fixed; top: 16px; right: 16px; z-index: 9999;
             background: #1a1a2e; color: #a29bfe; border: 1px solid #333;
@@ -43,10 +44,61 @@
         #img-btn:hover { background: rgba(108, 92, 231, 0.85); }
         #img-btn:active { transform: scale(0.92); }
         #img-input { display: none; }
+
+        /* Lobby */
+        #lobby {
+            display: none; padding: 32px; height: 100vh; box-sizing: border-box;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
+            color: #eee; background: #1a1a2e; overflow-y: auto;
+        }
+        #lobby.visible { display: block; }
+        .lobby-header { font-size: 22px; color: #a29bfe; margin: 0 0 4px 0; }
+        .lobby-sub { color: #888; font-size: 13px; margin: 0 0 24px 0; }
+        .new-row { display: flex; gap: 8px; margin-bottom: 24px; max-width: 640px; }
+        .new-row input {
+            flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #333;
+            background: #0f0f1f; color: #eee; font-family: inherit; font-size: 14px;
+        }
+        .new-row input:focus { outline: none; border-color: #a29bfe; }
+        .new-row button {
+            padding: 10px 18px; border-radius: 8px; border: 1px solid rgba(162, 155, 254, 0.4);
+            background: rgba(108, 92, 231, 0.6); color: #eee; font-family: inherit;
+            font-size: 14px; cursor: pointer;
+        }
+        .new-row button:hover { background: rgba(108, 92, 231, 0.85); }
+        .session-list { display: grid; gap: 12px; max-width: 640px; }
+        .session-card {
+            display: flex; align-items: center; justify-content: space-between;
+            background: #0f0f1f; border: 1px solid #2a2a3f; border-radius: 10px;
+            padding: 14px 18px;
+        }
+        .session-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .session-name { font-size: 16px; font-weight: 600; color: #eee; }
+        .session-detail { font-size: 12px; color: #888; }
+        .session-detail.attached { color: #2ecc71; }
+        .session-actions { display: flex; gap: 8px; }
+        .session-actions button {
+            padding: 8px 14px; border-radius: 6px; border: 1px solid #333;
+            background: #1f1f33; color: #eee; font-family: inherit;
+            font-size: 13px; cursor: pointer;
+        }
+        .session-actions button.open { color: #a29bfe; border-color: rgba(162, 155, 254, 0.4); }
+        .session-actions button.kill { color: #e74c3c; border-color: rgba(231, 76, 60, 0.4); }
+        .session-actions button:hover { filter: brightness(1.3); }
+        .empty { color: #888; font-style: italic; padding: 16px 0; }
     </style>
 </head>
 <body>
     <div id="terminal"></div>
+    <div id="lobby">
+        <h1 class="lobby-header">tmux sessions</h1>
+        <p class="lobby-sub">Pick an existing session or create a new one. Sessions persist after you close the tab.</p>
+        <div class="new-row">
+            <input id="new-name" type="text" placeholder="new session name (a-z, 0-9, _, -)" maxlength="32" autocomplete="off">
+            <button id="new-btn">Create &amp; Open</button>
+        </div>
+        <div id="session-list" class="session-list"></div>
+    </div>
     <div id="toast"></div>
     <button id="img-btn" title="Upload image">&#128247;</button>
     <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
@@ -58,17 +110,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
     <script>
     (function() {
-        // ttyd binary protocol: first byte is message type
-        const MSG_OUTPUT = 0x30; // '0' - terminal output
-        const MSG_SET_PREFS = 0x31; // '1' - JSON preferences
-        const MSG_SET_TITLE = 0x32; // '2' - window title
-
-        const MSG_INPUT = '0';   // client sends: '0' + data
-        const MSG_RESIZE = '1';  // client sends: '1' + JSON {columns, rows}
-
-        let ws = null;
-        const textEncoder = new TextEncoder();
-        const textDecoder = new TextDecoder();
+        const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+        const SESSIONS_API = '/api/sessions/sessions';
+        const params = new URLSearchParams(location.search);
+        const rawArg = params.get('arg');
+        const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
 
         function showToast(msg, type, duration) {
             const el = document.getElementById('toast');
@@ -77,6 +123,153 @@
             clearTimeout(el._timer);
             el._timer = setTimeout(() => { el.className = ''; }, duration || 3000);
         }
+
+        function clearChildren(el) {
+            while (el.firstChild) el.removeChild(el.firstChild);
+        }
+
+        function emptyState(text) {
+            const e = document.createElement('div');
+            e.className = 'empty';
+            e.textContent = text;
+            return e;
+        }
+
+        if (!validArg) {
+            // ============================================================
+            // LOBBY MODE — no valid ?arg=, show session picker
+            // ============================================================
+            document.getElementById('terminal').classList.add('hidden');
+            document.getElementById('paste-btn').classList.add('hidden');
+            document.getElementById('img-btn').classList.add('hidden');
+            document.getElementById('lobby').classList.add('visible');
+            document.title = 'tmux sessions';
+
+            const listEl    = document.getElementById('session-list');
+            const newNameEl = document.getElementById('new-name');
+            const newBtnEl  = document.getElementById('new-btn');
+
+            function relativeTime(epochSec) {
+                if (!epochSec) return '';
+                const diff = Math.floor(Date.now() / 1000) - epochSec;
+                if (diff < 60)    return diff + 's ago';
+                if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+                if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+                return Math.floor(diff / 86400) + 'd ago';
+            }
+
+            function openSession(name) {
+                if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
+                location.search = '?arg=' + encodeURIComponent(name);
+            }
+
+            async function killSession(name) {
+                if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
+                if (!confirm('Kill tmux session "' + name + '"? Any running processes inside it will be terminated.')) return;
+                try {
+                    const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(name), {
+                        method: 'DELETE', credentials: 'same-origin'
+                    });
+                    if (resp.ok) {
+                        showToast('Killed ' + name, 'success');
+                    } else if (resp.status === 404) {
+                        showToast('Session not found', 'error');
+                    } else {
+                        showToast('Kill failed: HTTP ' + resp.status, 'error');
+                    }
+                    renderLobby();
+                } catch (err) {
+                    showToast('Kill error: ' + err.message, 'error');
+                }
+            }
+
+            function renderCard(s) {
+                const card = document.createElement('div');
+                card.className = 'session-card';
+
+                const meta = document.createElement('div');
+                meta.className = 'session-meta';
+                const name = document.createElement('div');
+                name.className = 'session-name';
+                name.textContent = s.name;
+                meta.appendChild(name);
+                const detail = document.createElement('div');
+                detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
+                const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
+                detail.textContent = attachedText + ' · last activity ' + relativeTime(s.lastActivity);
+                meta.appendChild(detail);
+                card.appendChild(meta);
+
+                const actions = document.createElement('div');
+                actions.className = 'session-actions';
+                const openBtn = document.createElement('button');
+                openBtn.className = 'open';
+                openBtn.textContent = 'Open';
+                openBtn.onclick = () => openSession(s.name);
+                actions.appendChild(openBtn);
+                const killBtn = document.createElement('button');
+                killBtn.className = 'kill';
+                killBtn.textContent = 'Kill';
+                killBtn.onclick = () => killSession(s.name);
+                actions.appendChild(killBtn);
+                card.appendChild(actions);
+
+                return card;
+            }
+
+            async function renderLobby() {
+                try {
+                    const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
+                    if (!resp.ok) {
+                        clearChildren(listEl);
+                        listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + resp.status));
+                        return;
+                    }
+                    const sessions = await resp.json();
+                    clearChildren(listEl);
+                    if (sessions.length === 0) {
+                        listEl.appendChild(emptyState('No tmux sessions. Create one above.'));
+                        return;
+                    }
+                    sessions.sort((a, b) => b.lastActivity - a.lastActivity);
+                    for (const s of sessions) listEl.appendChild(renderCard(s));
+                } catch (err) {
+                    clearChildren(listEl);
+                    listEl.appendChild(emptyState('Error: ' + err.message));
+                }
+            }
+
+            newBtnEl.addEventListener('click', () => {
+                const name = newNameEl.value.trim();
+                if (!NAME_RE.test(name)) {
+                    showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return;
+                }
+                openSession(name);
+            });
+            newNameEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') newBtnEl.click();
+            });
+
+            renderLobby();
+            setInterval(renderLobby, 5000);
+            return;
+        }
+
+        // ============================================================
+        // TERMINAL MODE — valid ?arg=<session>, attach via ttyd
+        // ============================================================
+
+        // ttyd binary protocol
+        const MSG_OUTPUT    = 0x30; // '0' - terminal output
+        const MSG_SET_PREFS = 0x31; // '1' - JSON preferences
+        const MSG_SET_TITLE = 0x32; // '2' - window title
+        const MSG_INPUT     = '0';  // client → server: input data
+        const MSG_RESIZE    = '1';  // client → server: {columns, rows}
+
+        let ws = null;
+        const textEncoder = new TextEncoder();
+        const textDecoder = new TextDecoder();
 
         const term = new Terminal({
             cursorBlink: true,
@@ -107,7 +300,8 @@
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
 
-        // Send binary input to ttyd
+        document.title = 'tmux: ' + validArg;
+
         function sendInput(data) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = textEncoder.encode(data);
@@ -117,7 +311,6 @@
             ws.send(buf.buffer);
         }
 
-        // Send resize
         function sendResize() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const json = JSON.stringify({ columns: term.cols, rows: term.rows });
@@ -128,7 +321,6 @@
             ws.send(buf.buffer);
         }
 
-        // Terminal input
         term.onData(sendInput);
         term.onBinary((data) => {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -138,11 +330,9 @@
             ws.send(bytes.buffer);
         });
 
-        // Resize handling
         term.onResize(() => sendResize());
         window.addEventListener('resize', () => fitAddon.fit());
 
-        // Clipboard: Ctrl+V / Cmd+V
         term.attachCustomKeyEventHandler((e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
                 navigator.clipboard.writeText(term.getSelection());
@@ -154,7 +344,6 @@
             return true;
         });
 
-        // Image + text paste
         document.addEventListener('paste', async (e) => {
             const items = e.clipboardData?.items;
             if (!items) return;
@@ -190,13 +379,11 @@
             }
         }, true);
 
-        // Paste button (iOS + universal)
         document.getElementById('paste-btn').addEventListener('click', async () => {
             try {
                 if (navigator.clipboard.read) {
                     const items = await navigator.clipboard.read();
                     for (const item of items) {
-                        // Check for image types
                         const imageType = item.types.find(t => t.startsWith('image/'));
                         if (imageType) {
                             const blob = await item.getType(imageType);
@@ -210,7 +397,6 @@
                             showToast('Pasted: ' + path, 'success', 4000);
                             return;
                         }
-                        // Text
                         if (item.types.includes('text/plain')) {
                             const blob = await item.getType('text/plain');
                             const text = await blob.text();
@@ -218,7 +404,6 @@
                         }
                     }
                 } else {
-                    // Fallback for older browsers
                     const text = await navigator.clipboard.readText();
                     if (text) sendInput(text);
                 }
@@ -229,7 +414,6 @@
             term.focus();
         });
 
-        // Image upload button (works on iOS + all browsers)
         document.getElementById('img-btn').addEventListener('click', () => {
             document.getElementById('img-input').click();
         });
@@ -253,12 +437,13 @@
             term.focus();
         });
 
-        // Connect
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = proto + '//' + location.host + location.pathname.replace(/\/+$/, '') + '/ws';
+            const argSuffix = '?arg=' + encodeURIComponent(validArg);
+            const base = location.pathname.replace(/\/+$/, '');
+            const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
 
-            fetch(location.pathname.replace(/\/+$/, '') + '/token', { credentials: 'same-origin' })
+            fetch(base + '/token' + argSuffix, { credentials: 'same-origin' })
                 .then(r => r.json())
                 .then(tokenData => {
                     const token = tokenData.token || '';
@@ -266,8 +451,7 @@
                     ws.binaryType = 'arraybuffer';
 
                     ws.onopen = () => {
-                        console.log('Connected to ttyd');
-                        // Send auth + initial size as JSON
+                        console.log('Connected to ttyd (session: ' + validArg + ')');
                         const initMsg = JSON.stringify({
                             AuthToken: token,
                             columns: term.cols,
