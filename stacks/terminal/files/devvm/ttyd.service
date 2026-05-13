@@ -1,0 +1,11 @@
+[Unit]
+Description=ttyd Terminal Service (multi-session lobby + attach on port 7681)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ttyd -W -a -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target
