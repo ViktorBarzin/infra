@@ -6,7 +6,7 @@
     <title>Terminal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <style>
-        /* Themes — set on <body> as theme-{carbon,slate,mono,ink}. Carbon is the default. */
+        /* Themes — set on <body> as theme-{carbon,slate,mono,ink}. Slate is the default. */
         body.theme-carbon {
             --bg-page: #0c0c0a;
             --bg-sidebar: #131311;
@@ -78,8 +78,8 @@
 
         html, body {
             margin: 0; padding: 0; height: 100%; overflow: hidden;
-            background: var(--bg-page, #0c0c0a);
-            color: var(--text-primary, #e8e3d6);
+            background: var(--bg-page, #0d1117);
+            color: var(--text-primary, #e6e8eb);
         }
         #terminal { height: 100%; width: 100%; }
         .hidden { display: none !important; }
@@ -300,8 +300,8 @@
         function getTheme() {
             try {
                 const t = localStorage.getItem(THEME_KEY);
-                return THEMES.includes(t) ? t : 'carbon';
-            } catch (e) { return 'carbon'; }
+                return THEMES.includes(t) ? t : 'slate';
+            } catch (e) { return 'slate'; }
         }
         function applyTheme(t) {
             THEMES.forEach(x => document.body.classList.remove('theme-' + x));
@@ -311,10 +311,10 @@
             const cs = getComputedStyle(document.body);
             const v = k => cs.getPropertyValue(k).trim();
             return {
-                background: v('--terminal-bg') || '#0c0c0a',
-                foreground: v('--terminal-fg') || '#e8e3d6',
-                cursor: v('--terminal-cursor') || '#d4a574',
-                selectionBackground: v('--terminal-selection') || 'rgba(255,255,255,0.2)'
+                background: v('--terminal-bg') || '#0d1117',
+                foreground: v('--terminal-fg') || '#e6e8eb',
+                cursor: v('--terminal-cursor') || '#4493f8',
+                selectionBackground: v('--terminal-selection') || 'rgba(68,147,248,0.22)'
             };
         }
         applyTheme(getTheme());
