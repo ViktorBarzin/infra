@@ -124,10 +124,14 @@
             background: #1f1f33; color: #eee; font-family: inherit;
             font-size: 11px; cursor: pointer;
         }
+        .session-actions button.rename {
+            color: #a29bfe; border-color: rgba(162, 155, 254, 0.4);
+        }
         .session-actions button.kill {
             color: #e74c3c; border-color: rgba(231, 76, 60, 0.4);
         }
         .session-actions button:hover { filter: brightness(1.3); }
+        .session-card.dragging { opacity: 0.4; cursor: grabbing; }
         .empty { color: #888; font-style: italic; padding: 12px 0; font-size: 12px; }
 
         @media (max-width: 720px) {
@@ -259,6 +263,9 @@
             const emptyEl   = document.getElementById('lobby-empty');
 
             let currentActive = null;
+            let dragSrcCard = null;
+            let isDragging = false;
+            const ORDER_KEY = 'tmux-session-order-' + whoami.osUser;
 
             function relativeTime(epochSec) {
                 if (!epochSec) return '';
@@ -267,6 +274,41 @@
                 if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
                 if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
                 return Math.floor(diff / 86400) + 'd ago';
+            }
+
+            function getSavedOrder() {
+                try {
+                    const raw = localStorage.getItem(ORDER_KEY);
+                    if (!raw) return [];
+                    const arr = JSON.parse(raw);
+                    return Array.isArray(arr) ? arr.filter(n => typeof n === 'string') : [];
+                } catch (e) { return []; }
+            }
+            function saveOrder(names) {
+                try { localStorage.setItem(ORDER_KEY, JSON.stringify(names)); } catch (e) {}
+            }
+            function captureOrderFromDom() {
+                return Array.from(listEl.querySelectorAll('.session-card')).map(c => c.dataset.name);
+            }
+            function applySavedOrder(sessions) {
+                const saved = getSavedOrder();
+                const byName = new Map(sessions.map(s => [s.name, s]));
+                const out = [];
+                for (const name of saved) {
+                    const s = byName.get(name);
+                    if (s) { out.push(s); byName.delete(name); }
+                }
+                for (const s of sessions) {
+                    if (byName.has(s.name)) out.push(s);
+                }
+                return out;
+            }
+            function renameInOrder(oldName, newName) {
+                const order = getSavedOrder();
+                const i = order.indexOf(oldName);
+                if (i < 0) return;
+                order[i] = newName;
+                saveOrder(order);
             }
 
             function updateActiveCard() {
@@ -324,6 +366,47 @@
                 }
             }
 
+            async function renameSession(oldName) {
+                if (!NAME_RE.test(oldName)) { showToast('Invalid name', 'error'); return; }
+                const input = prompt('Rename "' + oldName + '" to:', oldName);
+                if (input === null) return;
+                const newName = input.trim();
+                if (!NAME_RE.test(newName)) {
+                    showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return;
+                }
+                if (newName === oldName) return;
+                try {
+                    const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(oldName) + '/rename', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: newName })
+                    });
+                    if (resp.status === 204) {
+                        renameInOrder(oldName, newName);
+                        showToast('Renamed to ' + newName, 'success');
+                        if (currentActive === oldName) {
+                            currentActive = newName;
+                            frameEl.src = '/?arg=' + encodeURIComponent(newName);
+                            history.replaceState(null, '', '#' + newName);
+                            document.title = 'tmux: ' + whoami.osUser + '/' + newName;
+                        }
+                        renderLobby();
+                    } else if (resp.status === 404) {
+                        showToast('Session not found', 'error');
+                    } else if (resp.status === 409) {
+                        showToast('Name "' + newName + '" already taken', 'error', 4000);
+                    } else if (resp.status === 400) {
+                        showToast('Invalid name', 'error');
+                    } else {
+                        showToast('Rename failed: HTTP ' + resp.status, 'error');
+                    }
+                } catch (err) {
+                    showToast('Rename error: ' + err.message, 'error');
+                }
+            }
+
             function renderCard(s) {
                 const card = document.createElement('div');
                 card.className = 'session-card';
@@ -331,6 +414,7 @@
                 card.setAttribute('role', 'button');
                 card.setAttribute('tabindex', '0');
                 card.setAttribute('aria-label', 'Activate session ' + s.name);
+                card.draggable = true;
                 if (s.name === currentActive) card.classList.add('active');
 
                 const meta = document.createElement('div');
@@ -348,9 +432,19 @@
 
                 const actions = document.createElement('div');
                 actions.className = 'session-actions';
+                const renameBtn = document.createElement('button');
+                renameBtn.className = 'rename';
+                renameBtn.textContent = 'Rename';
+                renameBtn.draggable = false;
+                renameBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    renameSession(s.name);
+                });
+                actions.appendChild(renameBtn);
                 const killBtn = document.createElement('button');
                 killBtn.className = 'kill';
                 killBtn.textContent = 'Kill';
+                killBtn.draggable = false;
                 killBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     killSession(s.name);
@@ -366,10 +460,34 @@
                     }
                 });
 
+                card.addEventListener('dragstart', (e) => {
+                    dragSrcCard = card;
+                    isDragging = true;
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', s.name);
+                    card.classList.add('dragging');
+                });
+                card.addEventListener('dragend', () => {
+                    card.classList.remove('dragging');
+                    if (dragSrcCard === card) saveOrder(captureOrderFromDom());
+                    dragSrcCard = null;
+                    isDragging = false;
+                });
+                card.addEventListener('dragover', (e) => {
+                    if (!dragSrcCard || dragSrcCard === card) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = card.getBoundingClientRect();
+                    const after = (e.clientY - rect.top) > rect.height / 2;
+                    if (after) card.after(dragSrcCard);
+                    else card.before(dragSrcCard);
+                });
+
                 return card;
             }
 
             async function renderLobby() {
+                if (isDragging) return;
                 try {
                     const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
                     if (!resp.ok) {
@@ -386,8 +504,8 @@
                         listEl.appendChild(emptyState('No sessions yet.'));
                         return;
                     }
-                    sessions.sort((a, b) => b.lastActivity - a.lastActivity);
-                    for (const s of sessions) listEl.appendChild(renderCard(s));
+                    const ordered = applySavedOrder(sessions);
+                    for (const s of ordered) listEl.appendChild(renderCard(s));
                 } catch (err) {
                     clearChildren(listEl);
                     listEl.appendChild(emptyState('Error: ' + err.message));
