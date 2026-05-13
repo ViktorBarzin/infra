@@ -18,6 +18,11 @@ variable "budget_encryption_password" {
 # and are unknown at plan time on first apply, so we cannot base `count` on
 # them directly. Callers pass these booleans as hardcoded plan-time constants
 # that reflect whether the corresponding credentials are expected to exist.
+variable "enabled" {
+  type        = bool
+  default     = true
+  description = "Deploy this instance. When false, only the PVC is kept (data preservation); deployment, service, ingress, http-api, and cronjob are not created. Flip back to true to bring the instance back."
+}
 variable "enable_http_api" {
   type        = bool
   default     = false
@@ -68,6 +73,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 }
 
 resource "kubernetes_deployment" "actualbudget" {
+  count = var.enabled ? 1 : 0
   metadata {
     name      = "actualbudget-${var.name}"
     namespace = "actualbudget"
@@ -134,6 +140,7 @@ resource "kubernetes_deployment" "actualbudget" {
 }
 
 resource "kubernetes_service" "actualbudget" {
+  count = var.enabled ? 1 : 0
   metadata {
     name      = "budget-${var.name}"
     namespace = "actualbudget"
@@ -155,6 +162,7 @@ resource "kubernetes_service" "actualbudget" {
 }
 
 module "ingress" {
+  count  = var.enabled ? 1 : 0
   source = "../../../modules/kubernetes/ingress_factory"
   # auth = "app": Actual Budget enforces a server password + per-user login
   # on its own sync API. Authentik forward-auth was 302-ing the mobile/web
@@ -174,7 +182,7 @@ resource "random_string" "api-key" {
 }
 
 resource "kubernetes_deployment" "actualbudget-http-api" {
-  count = var.enable_http_api ? 1 : 0
+  count = var.enabled && var.enable_http_api ? 1 : 0
   metadata {
     name      = "actualbudget-http-api-${var.name}"
     namespace = "actualbudget"
@@ -240,6 +248,7 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
 }
 
 resource "kubernetes_service" "actualbudget-http-api" {
+  count = var.enabled && var.enable_http_api ? 1 : 0
   metadata {
     name      = "budget-http-api-${var.name}"
     namespace = "actualbudget"
@@ -261,7 +270,7 @@ resource "kubernetes_service" "actualbudget-http-api" {
 }
 
 resource "kubernetes_cron_job_v1" "bank-sync" {
-  count = var.enable_bank_sync ? 1 : 0
+  count = var.enabled && var.enable_bank_sync ? 1 : 0
   metadata {
     name      = "bank-sync-${var.name}"
     namespace = "actualbudget"
@@ -381,4 +390,25 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
+}
+
+# State migration for the new `enabled` toggle (2026-05-13): adding
+# count to these resources shifts their addresses to [0]. Without
+# moved {}, Terraform would destroy+recreate. Existing http-api / bank-sync
+# resources already had count, so no migration needed there.
+moved {
+  from = kubernetes_deployment.actualbudget
+  to   = kubernetes_deployment.actualbudget[0]
+}
+moved {
+  from = kubernetes_service.actualbudget
+  to   = kubernetes_service.actualbudget[0]
+}
+moved {
+  from = kubernetes_service.actualbudget-http-api
+  to   = kubernetes_service.actualbudget-http-api[0]
+}
+moved {
+  from = module.ingress
+  to   = module.ingress[0]
 }
