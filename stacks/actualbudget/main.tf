@@ -120,6 +120,10 @@ module "anca" {
 }
 
 # https://budget-emo.viktorbarzin.me/
+# Disabled 2026-05-13: Emo isn't using this instance. PVC is preserved so
+# we can flip enabled back to true to bring the instance back as-was.
+# The empty accounts list (vs. anca/viktor) was causing the daily bank-sync
+# CronJob to fail and trigger BankSyncStale.
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
@@ -128,16 +132,10 @@ module "emo" {
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
   tier                       = local.tiers.edge
-  enable_http_api            = true
-  enable_bank_sync           = true
+  enabled                    = false
+  enable_http_api            = false
+  enable_bank_sync           = false
   budget_encryption_password = lookup(local.credentials["emo"], "password", null)
   sync_id                    = lookup(local.credentials["emo"], "sync_id", null)
-  homepage_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Budget Emo"
-    "gethomepage.dev/description"  = "Personal budget"
-    "gethomepage.dev/icon"         = "actual-budget.png"
-    "gethomepage.dev/group"        = "Finance & Personal"
-    "gethomepage.dev/pod-selector" = ""
-  }
+  homepage_annotations       = {}
 }
