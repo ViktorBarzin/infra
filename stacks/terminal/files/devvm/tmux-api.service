@@ -1,0 +1,11 @@
+[Unit]
+Description=tmux-api (port 7684) - REST API for listing and killing tmux sessions
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/tmux-api
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target

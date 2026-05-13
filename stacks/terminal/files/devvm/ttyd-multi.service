@@ -1,0 +1,11 @@
+[Unit]
+Description=ttyd multi-session (port 7685) - tmux session lobby + per-session attach
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ttyd -W -a -t enableClipboard=true -I /usr/local/share/ttyd/index-multi.html -p 7685 /usr/local/bin/tmux-attach.sh
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target
