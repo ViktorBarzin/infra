@@ -181,14 +181,12 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSessionByName(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/sessions/")
-	name = strings.TrimSuffix(name, "/")
+	path := strings.TrimPrefix(r.URL.Path, "/sessions/")
+	path = strings.TrimSuffix(path, "/")
+	parts := strings.Split(path, "/")
+	name := parts[0]
 	if !sessionNameRe.MatchString(name) {
 		http.Error(w, "invalid session name", http.StatusBadRequest)
-		return
-	}
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	osUser := resolveOSUser(w, r)
@@ -196,6 +194,26 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 1 {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		killSession(w, osUser, name)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "rename" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		renameSession(w, r, osUser, name)
+		return
+	}
+	http.Error(w, "not found", http.StatusNotFound)
+}
+
+func killSession(w http.ResponseWriter, osUser, name string) {
 	out, err := tmuxCmd(osUser, "kill-session", "-t", name).CombinedOutput()
 	if err != nil {
 		msg := string(out)
@@ -205,6 +223,42 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("kill-session %s as %s failed: %v: %s", name, osUser, err, msg)
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName string) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	newName := strings.TrimSpace(body.Name)
+	if !sessionNameRe.MatchString(newName) {
+		http.Error(w, "invalid new name", http.StatusBadRequest)
+		return
+	}
+	if newName == oldName {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	out, err := tmuxCmd(osUser, "rename-session", "-t", oldName, newName).CombinedOutput()
+	if err != nil {
+		msg := string(out)
+		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		if strings.Contains(msg, "duplicate session") || strings.Contains(msg, "session already exists") {
+			http.Error(w, "target name already exists", http.StatusConflict)
+			return
+		}
+		log.Printf("rename-session %s→%s as %s failed: %v: %s", oldName, newName, osUser, err, msg)
+		http.Error(w, "rename-session failed", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
