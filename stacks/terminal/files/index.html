@@ -47,57 +47,120 @@
 
         /* Lobby */
         #lobby {
-            display: none; padding: 32px; height: 100vh; box-sizing: border-box;
+            display: none; height: 100vh; box-sizing: border-box;
             font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
-            color: #eee; background: #1a1a2e; overflow-y: auto;
+            color: #eee; background: #1a1a2e;
         }
         #lobby.visible { display: block; }
-        .lobby-header { font-size: 22px; color: #a29bfe; margin: 0 0 4px 0; }
-        .lobby-sub { color: #888; font-size: 13px; margin: 0 0 24px 0; }
-        .new-row { display: flex; gap: 8px; margin-bottom: 24px; max-width: 640px; }
+        #lobby.access-denied { padding: 32px; overflow-y: auto; }
+
+        #lobby-shell {
+            display: grid; grid-template-columns: 260px 1fr; height: 100vh;
+        }
+        #lobby-sidebar {
+            padding: 20px 14px; overflow-y: auto; border-right: 1px solid #2a2a3f;
+            background: #1a1a2e; min-width: 0;
+        }
+        #lobby-content {
+            position: relative; background: #000; min-width: 0;
+            height: 100vh; overflow: hidden;
+        }
+        #session-frame { width: 100%; height: 100%; border: 0; display: block; }
+        #session-frame.hidden { display: none; }
+        #lobby-empty {
+            color: #888; display: flex; align-items: center; justify-content: center;
+            height: 100%; font-style: italic; padding: 24px; text-align: center;
+        }
+        #lobby-empty.hidden { display: none; }
+
+        .lobby-header { font-size: 18px; color: #a29bfe; margin: 0 0 4px 0; }
+        .lobby-sub { color: #888; font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
+        .new-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
         .new-row input {
-            flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #333;
-            background: #0f0f1f; color: #eee; font-family: inherit; font-size: 14px;
+            box-sizing: border-box; padding: 8px 12px; border-radius: 8px;
+            border: 1px solid #333; background: #0f0f1f; color: #eee;
+            font-family: inherit; font-size: 13px;
         }
         .new-row input:focus { outline: none; border-color: #a29bfe; }
         .new-row button {
-            padding: 10px 18px; border-radius: 8px; border: 1px solid rgba(162, 155, 254, 0.4);
-            background: rgba(108, 92, 231, 0.6); color: #eee; font-family: inherit;
-            font-size: 14px; cursor: pointer;
+            padding: 8px 12px; border-radius: 8px;
+            border: 1px solid rgba(162, 155, 254, 0.4);
+            background: rgba(108, 92, 231, 0.6); color: #eee;
+            font-family: inherit; font-size: 13px; cursor: pointer;
         }
         .new-row button:hover { background: rgba(108, 92, 231, 0.85); }
-        .session-list { display: grid; gap: 12px; max-width: 640px; }
+
+        .session-list { display: flex; flex-direction: column; gap: 6px; }
         .session-card {
             display: flex; align-items: center; justify-content: space-between;
-            background: #0f0f1f; border: 1px solid #2a2a3f; border-radius: 10px;
-            padding: 14px 18px;
+            background: #0f0f1f; border: 1px solid #2a2a3f;
+            border-left: 3px solid transparent; border-radius: 8px;
+            padding: 10px 12px; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            font-family: inherit; color: inherit; text-align: left;
         }
-        .session-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-        .session-name { font-size: 16px; font-weight: 600; color: #eee; }
-        .session-detail { font-size: 12px; color: #888; }
+        .session-card:hover { background: #161629; }
+        .session-card:focus-visible {
+            outline: 2px solid rgba(162, 155, 254, 0.6); outline-offset: -2px;
+        }
+        .session-card.active {
+            background: #161629;
+            border-color: rgba(162, 155, 254, 0.5);
+            border-left-color: rgba(162, 155, 254, 0.95);
+        }
+        .session-meta {
+            display: flex; flex-direction: column; gap: 2px;
+            min-width: 0; flex: 1;
+        }
+        .session-name {
+            font-size: 14px; font-weight: 600; color: #eee;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .session-detail { font-size: 11px; color: #888; }
         .session-detail.attached { color: #2ecc71; }
-        .session-actions { display: flex; gap: 8px; }
+        .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
         .session-actions button {
-            padding: 8px 14px; border-radius: 6px; border: 1px solid #333;
+            padding: 4px 8px; border-radius: 6px; border: 1px solid #333;
             background: #1f1f33; color: #eee; font-family: inherit;
-            font-size: 13px; cursor: pointer;
+            font-size: 11px; cursor: pointer;
         }
-        .session-actions button.open { color: #a29bfe; border-color: rgba(162, 155, 254, 0.4); }
-        .session-actions button.kill { color: #e74c3c; border-color: rgba(231, 76, 60, 0.4); }
+        .session-actions button.kill {
+            color: #e74c3c; border-color: rgba(231, 76, 60, 0.4);
+        }
         .session-actions button:hover { filter: brightness(1.3); }
-        .empty { color: #888; font-style: italic; padding: 16px 0; }
+        .empty { color: #888; font-style: italic; padding: 12px 0; font-size: 12px; }
+
+        @media (max-width: 720px) {
+            #lobby-shell {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 60vh;
+            }
+            #lobby-sidebar {
+                border-right: 0; border-bottom: 1px solid #2a2a3f;
+                max-height: 40vh;
+            }
+            #lobby-content { height: 60vh; }
+        }
     </style>
 </head>
 <body>
     <div id="terminal"></div>
     <div id="lobby">
-        <h1 class="lobby-header">tmux sessions</h1>
-        <p class="lobby-sub">Pick an existing session or create a new one. Sessions persist after you close the tab.</p>
-        <div class="new-row">
-            <input id="new-name" type="text" placeholder="new session name (a-z, 0-9, _, -)" maxlength="32" autocomplete="off">
-            <button id="new-btn">Create &amp; Open</button>
+        <div id="lobby-shell">
+            <aside id="lobby-sidebar">
+                <h1 class="lobby-header">tmux sessions</h1>
+                <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
+                <div class="new-row">
+                    <input id="new-name" type="text" placeholder="new session name" maxlength="32" autocomplete="off">
+                    <button id="new-btn">Create &amp; Open</button>
+                </div>
+                <div id="session-list" class="session-list"></div>
+            </aside>
+            <main id="lobby-content">
+                <div id="lobby-empty">Pick a session, or create one above.</div>
+                <iframe id="session-frame" class="hidden" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write" title="terminal session"></iframe>
+            </main>
         </div>
-        <div id="session-list" class="session-list"></div>
     </div>
     <div id="toast"></div>
     <button id="img-btn" title="Upload image">&#128247;</button>
@@ -154,7 +217,7 @@
             p2.className = 'lobby-sub';
             p2.textContent = 'Authentik logs you in; access here requires an OS-user mapping in /etc/ttyd-user-map. Ask Viktor to add one.';
             lobby.appendChild(p2);
-            lobby.classList.add('visible');
+            lobby.classList.add('visible', 'access-denied');
             document.title = 'access denied';
         }
 
@@ -178,19 +241,24 @@
 
         if (!validArg) {
             // ============================================================
-            // LOBBY MODE — no valid ?arg=, show session picker
+            // LOBBY MODE — no valid ?arg=, render sidebar + iframe shell
             // ============================================================
             document.getElementById('terminal').classList.add('hidden');
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
             document.getElementById('lobby').classList.add('visible');
-            document.title = 'tmux sessions (' + whoami.osUser + ')';
+            const baseTitle = 'tmux sessions (' + whoami.osUser + ')';
+            document.title = baseTitle;
             document.querySelector('#lobby .lobby-sub').textContent =
                 'Logged in as ' + whoami.osUser + ' (' + whoami.authentik + '). Sessions are kernel-isolated per Unix user; you only see your own.';
 
             const listEl    = document.getElementById('session-list');
             const newNameEl = document.getElementById('new-name');
             const newBtnEl  = document.getElementById('new-btn');
+            const frameEl   = document.getElementById('session-frame');
+            const emptyEl   = document.getElementById('lobby-empty');
+
+            let currentActive = null;
 
             function relativeTime(epochSec) {
                 if (!epochSec) return '';
@@ -201,9 +269,38 @@
                 return Math.floor(diff / 86400) + 'd ago';
             }
 
-            function openSession(name) {
+            function updateActiveCard() {
+                listEl.querySelectorAll('.session-card').forEach(c => {
+                    if (c.dataset.name === currentActive) c.classList.add('active');
+                    else c.classList.remove('active');
+                });
+            }
+
+            function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
-                location.search = '?arg=' + encodeURIComponent(name);
+                if (currentActive === name) { updateActiveCard(); return; }
+                currentActive = name;
+                emptyEl.classList.add('hidden');
+                frameEl.classList.remove('hidden');
+                frameEl.src = '/?arg=' + encodeURIComponent(name);
+                if (location.hash.slice(1) !== name) {
+                    history.replaceState(null, '', '#' + name);
+                }
+                document.title = 'tmux: ' + whoami.osUser + '/' + name;
+                updateActiveCard();
+            }
+
+            function deactivateSession() {
+                if (!currentActive && frameEl.classList.contains('hidden')) return;
+                currentActive = null;
+                frameEl.classList.add('hidden');
+                emptyEl.classList.remove('hidden');
+                frameEl.src = 'about:blank';
+                if (location.hash) {
+                    history.replaceState(null, '', location.pathname + location.search);
+                }
+                document.title = baseTitle;
+                updateActiveCard();
             }
 
             async function killSession(name) {
@@ -220,6 +317,7 @@
                     } else {
                         showToast('Kill failed: HTTP ' + resp.status, 'error');
                     }
+                    if (currentActive === name) deactivateSession();
                     renderLobby();
                 } catch (err) {
                     showToast('Kill error: ' + err.message, 'error');
@@ -229,6 +327,11 @@
             function renderCard(s) {
                 const card = document.createElement('div');
                 card.className = 'session-card';
+                card.dataset.name = s.name;
+                card.setAttribute('role', 'button');
+                card.setAttribute('tabindex', '0');
+                card.setAttribute('aria-label', 'Activate session ' + s.name);
+                if (s.name === currentActive) card.classList.add('active');
 
                 const meta = document.createElement('div');
                 meta.className = 'session-meta';
@@ -239,23 +342,29 @@
                 const detail = document.createElement('div');
                 detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
                 const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
-                detail.textContent = attachedText + ' · last activity ' + relativeTime(s.lastActivity);
+                detail.textContent = attachedText + ' · ' + relativeTime(s.lastActivity);
                 meta.appendChild(detail);
                 card.appendChild(meta);
 
                 const actions = document.createElement('div');
                 actions.className = 'session-actions';
-                const openBtn = document.createElement('button');
-                openBtn.className = 'open';
-                openBtn.textContent = 'Open';
-                openBtn.onclick = () => openSession(s.name);
-                actions.appendChild(openBtn);
                 const killBtn = document.createElement('button');
                 killBtn.className = 'kill';
                 killBtn.textContent = 'Kill';
-                killBtn.onclick = () => killSession(s.name);
+                killBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    killSession(s.name);
+                });
                 actions.appendChild(killBtn);
                 card.appendChild(actions);
+
+                card.addEventListener('click', () => activateSession(s.name));
+                card.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        activateSession(s.name);
+                    }
+                });
 
                 return card;
             }
@@ -269,9 +378,12 @@
                         return;
                     }
                     const sessions = await resp.json();
+                    if (currentActive && !sessions.some(s => s.name === currentActive)) {
+                        deactivateSession();
+                    }
                     clearChildren(listEl);
                     if (sessions.length === 0) {
-                        listEl.appendChild(emptyState('No tmux sessions. Create one above.'));
+                        listEl.appendChild(emptyState('No sessions yet.'));
                         return;
                     }
                     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -288,14 +400,29 @@
                     showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
                     return;
                 }
-                openSession(name);
+                newNameEl.value = '';
+                activateSession(name);
             });
             newNameEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') newBtnEl.click();
             });
 
+            window.addEventListener('hashchange', () => {
+                const hash = location.hash.slice(1);
+                if (hash && NAME_RE.test(hash)) {
+                    if (hash !== currentActive) activateSession(hash);
+                } else if (currentActive) {
+                    deactivateSession();
+                }
+            });
+
             renderLobby();
             setInterval(renderLobby, 5000);
+
+            const initialHash = location.hash.slice(1);
+            if (initialHash && NAME_RE.test(initialHash)) {
+                activateSession(initialHash);
+            }
             return;
         }
 
