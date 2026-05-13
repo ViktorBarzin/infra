@@ -109,9 +109,10 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
     <script>
-    (function() {
+    (async function() {
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
         const SESSIONS_API = '/api/sessions/sessions';
+        const WHOAMI_API   = '/api/sessions/whoami';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
@@ -135,6 +136,46 @@
             return e;
         }
 
+        function showAccessDenied(detail) {
+            document.getElementById('terminal').classList.add('hidden');
+            document.getElementById('paste-btn').classList.add('hidden');
+            document.getElementById('img-btn').classList.add('hidden');
+            const lobby = document.getElementById('lobby');
+            clearChildren(lobby);
+            const h = document.createElement('h1');
+            h.className = 'lobby-header';
+            h.textContent = 'Access denied';
+            lobby.appendChild(h);
+            const p = document.createElement('p');
+            p.className = 'lobby-sub';
+            p.textContent = detail || 'You do not have a terminal account on this server.';
+            lobby.appendChild(p);
+            const p2 = document.createElement('p');
+            p2.className = 'lobby-sub';
+            p2.textContent = 'Authentik logs you in; access here requires an OS-user mapping in /etc/ttyd-user-map. Ask Viktor to add one.';
+            lobby.appendChild(p2);
+            lobby.classList.add('visible');
+            document.title = 'access denied';
+        }
+
+        // Preflight: ask tmux-api who we are. 403 = unmapped Authentik user → deny.
+        let whoami = null;
+        try {
+            const resp = await fetch(WHOAMI_API, { credentials: 'same-origin' });
+            if (resp.status === 401 || resp.status === 403) {
+                showAccessDenied((await resp.text()).trim());
+                return;
+            }
+            if (!resp.ok) {
+                showAccessDenied('Preflight failed: HTTP ' + resp.status);
+                return;
+            }
+            whoami = await resp.json();
+        } catch (err) {
+            showAccessDenied('Preflight failed: ' + err.message);
+            return;
+        }
+
         if (!validArg) {
             // ============================================================
             // LOBBY MODE — no valid ?arg=, show session picker
@@ -143,7 +184,9 @@
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
             document.getElementById('lobby').classList.add('visible');
-            document.title = 'tmux sessions';
+            document.title = 'tmux sessions (' + whoami.osUser + ')';
+            document.querySelector('#lobby .lobby-sub').textContent =
+                'Logged in as ' + whoami.osUser + ' (' + whoami.authentik + '). Sessions are kernel-isolated per Unix user; you only see your own.';
 
             const listEl    = document.getElementById('session-list');
             const newNameEl = document.getElementById('new-name');
@@ -300,7 +343,7 @@
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
 
-        document.title = 'tmux: ' + validArg;
+        document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
         function sendInput(data) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
