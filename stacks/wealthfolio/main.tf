@@ -349,6 +349,29 @@ resource "kubernetes_deployment" "wealthfolio" {
             notes TEXT
           );
           CREATE INDEX IF NOT EXISTS idx_act_date ON activities(activity_date);
+          CREATE TABLE IF NOT EXISTS assets (
+            id TEXT PRIMARY KEY,
+            symbol TEXT,
+            name TEXT,
+            currency TEXT,
+            kind TEXT,
+            exchange TEXT,
+            is_active BOOLEAN
+          );
+          CREATE TABLE IF NOT EXISTS quote_latest (
+            asset_id TEXT PRIMARY KEY,
+            day DATE NOT NULL,
+            close NUMERIC NOT NULL,
+            currency TEXT
+          );
+          CREATE TABLE IF NOT EXISTS positions_latest (
+            asset_id TEXT PRIMARY KEY,
+            snapshot_date DATE NOT NULL,
+            quantity NUMERIC NOT NULL,
+            average_cost NUMERIC NOT NULL,
+            total_cost_basis NUMERIC NOT NULL,
+            currency TEXT
+          );
           SQL
 
           # Snapshot SQLite (online backup — non-blocking).
@@ -384,13 +407,55 @@ resource "kubernetes_deployment" "wealthfolio" {
           FROM activities WHERE status='POSTED';
           SQ
 
+          sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/assets.tsv
+          SELECT id,
+                 COALESCE(display_code, instrument_symbol) AS symbol,
+                 name,
+                 quote_ccy AS currency,
+                 kind,
+                 COALESCE(instrument_exchange_mic, '') AS exchange,
+                 is_active
+          FROM assets;
+          SQ
+
+          # Latest quote per asset, preferring YAHOO over MANUAL when both exist on the same day.
+          sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/quote_latest.tsv
+          SELECT asset_id, day, CAST(close AS REAL) AS close, currency
+          FROM (
+            SELECT asset_id, day, close, currency,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY asset_id
+                     ORDER BY day DESC, CASE source WHEN 'YAHOO' THEN 1 ELSE 2 END
+                   ) AS rn
+            FROM quotes
+          )
+          WHERE rn = 1;
+          SQ
+
+          # Currently-held positions only, from the TOTAL aggregate snapshot (sums lots across accounts).
+          sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/positions_latest.tsv
+          SELECT je.key AS asset_id,
+                 snapshot_date,
+                 CAST(json_extract(je.value, '$.quantity') AS REAL) AS quantity,
+                 CAST(json_extract(je.value, '$.averageCost') AS REAL) AS average_cost,
+                 CAST(json_extract(je.value, '$.totalCostBasis') AS REAL) AS total_cost_basis,
+                 json_extract(je.value, '$.currency') AS currency
+          FROM holdings_snapshots, json_each(holdings_snapshots.positions) AS je
+          WHERE account_id = 'TOTAL'
+            AND snapshot_date = (SELECT MAX(snapshot_date) FROM holdings_snapshots WHERE account_id = 'TOTAL')
+            AND CAST(json_extract(je.value, '$.quantity') AS REAL) > 0.0001;
+          SQ
+
           # Truncate-and-reload (small tables; simpler than upserts).
           psql -v ON_ERROR_STOP=1 <<SQL
           BEGIN;
-          TRUNCATE accounts, daily_account_valuation, activities;
+          TRUNCATE accounts, daily_account_valuation, activities, assets, quote_latest, positions_latest;
           \copy accounts FROM '/tmp/wf-sync/accounts.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy daily_account_valuation FROM '/tmp/wf-sync/dav.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy activities FROM '/tmp/wf-sync/activities.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
+          \copy assets FROM '/tmp/wf-sync/assets.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
+          \copy quote_latest FROM '/tmp/wf-sync/quote_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
+          \copy positions_latest FROM '/tmp/wf-sync/positions_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           COMMIT;
           SQL
 
