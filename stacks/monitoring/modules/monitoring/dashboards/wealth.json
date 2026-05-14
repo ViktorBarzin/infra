@@ -1948,6 +1948,203 @@
           "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) a.name, d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT name AS account, ROUND(((total_value - net_contribution) / NULLIF(net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM latest WHERE net_contribution > 0 ORDER BY roi_pct DESC"
         }
       ]
+    },
+    {
+      "id": 26,
+      "title": "Positions",
+      "description": "Currently-held positions: shares, cost basis, latest market price, and unrealised return. Latest holdings_snapshots TOTAL aggregate + latest quote per asset.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 110
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg cost"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "market value"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "gain"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "return %"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT a.symbol, a.name, p.quantity AS shares, p.average_cost AS \"avg cost\", q.close AS \"last\", (p.quantity * q.close) AS \"market value\", p.total_cost_basis AS cost, ((p.quantity * q.close) - p.total_cost_basis) AS gain, CASE WHEN p.total_cost_basis > 0 THEN ((p.quantity * q.close) / p.total_cost_basis - 1) * 100 END AS \"return %\", p.currency, q.day AS \"as of\" FROM positions_latest p LEFT JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY (p.quantity * q.close) DESC NULLS LAST"
+        }
+      ]
     }
   ],
   "refresh": "5m",
