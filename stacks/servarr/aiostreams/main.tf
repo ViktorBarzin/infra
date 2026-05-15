@@ -272,6 +272,131 @@ sys.exit(0 if success else 1)
   }
 }
 
+module "nfs_backup" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "aiostreams-backup"
+  namespace  = kubernetes_namespace.aiostreams.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/aiostreams-backup"
+  storage    = "1Gi"
+}
+
+resource "kubernetes_cron_job_v1" "config_backup" {
+  metadata {
+    name      = "aiostreams-config-backup"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 3 * * 0" # Sunday 03:00 weekly
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "backup"
+              image   = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check requests && python3 -c '
+import requests, os, time, json, sys, datetime, glob
+
+BASE = "http://aiostreams.aiostreams.svc.cluster.local"
+PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/aiostreams-config-backup"
+UUID = os.environ["AIOSTREAMS_UUID"]
+PW = os.environ["AIOSTREAMS_PASSWORD"]
+BACKUP_DIR = "/backup"
+RETENTION_DAYS = 90
+
+success = 0
+bytes_written = 0
+start = time.time()
+
+try:
+    r = requests.get(f"{BASE}/api/v1/user/", params={"uuid": UUID, "password": PW, "raw": "true"}, timeout=30)
+    r.raise_for_status()
+    data = r.json()["data"]["userData"]
+    if not data:
+        raise RuntimeError("empty userData from API")
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%d_%H%M")
+    path = f"{BACKUP_DIR}/config-{ts}.json"
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    bytes_written = os.path.getsize(path)
+    os.chmod(path, 0o600)
+    print(f"OK wrote {path} ({bytes_written} bytes)")
+
+    # Prune backups older than RETENTION_DAYS
+    cutoff = time.time() - (RETENTION_DAYS * 86400)
+    pruned = 0
+    for f in glob.glob(f"{BACKUP_DIR}/config-*.json"):
+        if os.path.getmtime(f) < cutoff:
+            os.unlink(f)
+            pruned += 1
+    if pruned:
+        print(f"Pruned {pruned} old backups")
+    success = 1
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+
+duration = time.time() - start
+body = (
+    "# TYPE aiostreams_config_backup_success gauge\n"
+    f"aiostreams_config_backup_success {success}\n"
+    "# TYPE aiostreams_config_backup_bytes gauge\n"
+    f"aiostreams_config_backup_bytes {bytes_written}\n"
+    "# TYPE aiostreams_config_backup_duration_seconds gauge\n"
+    f"aiostreams_config_backup_duration_seconds {duration:.3f}\n"
+    "# TYPE aiostreams_config_backup_last_run_timestamp gauge\n"
+    f"aiostreams_config_backup_last_run_timestamp {int(time.time())}\n"
+)
+try:
+    requests.post(PUSHGATEWAY, data=body, timeout=10).raise_for_status()
+except Exception as e:
+    print(f"WARN: pushgateway POST failed: {e}", file=sys.stderr)
+
+sys.exit(0 if success else 1)
+'
+              EOT
+              ]
+              env_from {
+                secret_ref { name = "aiostreams-probe-secrets" }
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+              resources {
+                requests = { memory = "64Mi", cpu = "10m" }
+                limits   = { memory = "128Mi" }
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_manifest.probe_secrets, kubernetes_deployment.aiostreams, module.nfs_backup]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 module "ingress" {
   source = "../../../modules/kubernetes/ingress_factory"
   # auth = "app": AIOStreams enforces its own UUID + password gate on /configure
