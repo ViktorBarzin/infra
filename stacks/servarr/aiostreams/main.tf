@@ -93,6 +93,15 @@ resource "kubernetes_deployment" "aiostreams" {
             name  = "DATABASE_URI"
             value = var.aiostreams_database_connection_string
           }
+          env {
+            # Cache stream-response payloads for 1h. Default is -1 (disabled),
+            # which made every Stremio request hit all 5 upstream addons live —
+            # slow, and contributed to the perceived empty-list issue when an
+            # upstream was slow/erroring. 1h is short enough that RD cache
+            # invalidations are picked up quickly.
+            name  = "STREAM_CACHE_TTL"
+            value = "3600"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/data"
@@ -140,6 +149,126 @@ resource "kubernetes_service" "aiostreams" {
       port        = 80
       target_port = 3000
     }
+  }
+}
+
+resource "kubernetes_manifest" "probe_secrets" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "aiostreams-probe-secrets"
+      namespace = kubernetes_namespace.aiostreams.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = { name = "aiostreams-probe-secrets" }
+      data = [
+        { secretKey = "AIOSTREAMS_UUID", remoteRef = { key = "viktor", property = "aiostreams_uuid" } },
+        { secretKey = "AIOSTREAMS_PASSWORD", remoteRef = { key = "viktor", property = "aiostreams_password" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.aiostreams]
+}
+
+resource "kubernetes_cron_job_v1" "stream_probe" {
+  metadata {
+    name      = "aiostreams-stream-probe"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/5 * * * *"
+    concurrency_policy            = "Replace"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "probe"
+              image   = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check requests && python3 -c '
+import requests, os, time, urllib.parse, sys
+
+BASE = "http://aiostreams.aiostreams.svc.cluster.local"
+PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/aiostreams-stream-probe"
+UUID = os.environ["AIOSTREAMS_UUID"]
+PW = os.environ["AIOSTREAMS_PASSWORD"]
+TEST_ID = "tt0903747:1:1"  # Breaking Bad S01E01 - stable, always has many streams
+THRESHOLD = 50
+
+count = 0
+success = 0
+duration = 0
+start = time.time()
+
+try:
+    r = requests.get(f"{BASE}/api/v1/user/", params={"uuid": UUID, "password": PW}, timeout=10)
+    r.raise_for_status()
+    enc = r.json()["data"]["encryptedPassword"]
+    enc_url = urllib.parse.quote(enc, safe="")
+    r2 = requests.get(
+        f"{BASE}/stremio/{UUID}/{enc_url}/stream/series/{TEST_ID}.json",
+        headers={"User-Agent": "AIOStreams/probe"}, timeout=60,
+    )
+    r2.raise_for_status()
+    count = len(r2.json().get("streams", []))
+    success = 1 if count >= THRESHOLD else 0
+    print(f"streams={count} success={success}")
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    success = 0
+
+duration = time.time() - start
+
+body = (
+    "# TYPE aiostreams_stream_count gauge\n"
+    f"aiostreams_stream_count {count}\n"
+    "# TYPE aiostreams_probe_success gauge\n"
+    f"aiostreams_probe_success {success}\n"
+    "# TYPE aiostreams_probe_duration_seconds gauge\n"
+    f"aiostreams_probe_duration_seconds {duration:.3f}\n"
+    "# TYPE aiostreams_probe_last_run_timestamp gauge\n"
+    f"aiostreams_probe_last_run_timestamp {int(time.time())}\n"
+)
+try:
+    requests.post(PUSHGATEWAY, data=body, timeout=10).raise_for_status()
+except Exception as e:
+    print(f"WARN: pushgateway POST failed: {e}", file=sys.stderr)
+
+sys.exit(0 if success else 1)
+'
+              EOT
+              ]
+              env_from {
+                secret_ref { name = "aiostreams-probe-secrets" }
+              }
+              resources {
+                requests = { memory = "64Mi", cpu = "10m" }
+                limits   = { memory = "128Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_manifest.probe_secrets, kubernetes_deployment.aiostreams]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 
