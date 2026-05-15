@@ -2298,6 +2298,30 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Email round-trip monitor never reported - check CronJob in mailserver namespace"
+          - alert: AIOStreamsStreamCountLow
+            expr: aiostreams_stream_count{job="aiostreams-stream-probe"} < 50
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AIOStreams returning <50 streams for the canary title for 30m"
+              description: "Probe for Breaking Bad S01E01 returned {{ $value }} streams. Could indicate an upstream addon outage, RD filter expansion, or a regression in the user's preset filters. Check `kubectl -n aiostreams get cronjob aiostreams-stream-probe` and the most recent job pod logs."
+          - alert: AIOStreamsProbeFailing
+            expr: aiostreams_probe_success{job="aiostreams-stream-probe"} == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AIOStreams stream-probe failing for 30m"
+              description: "The /api/v1/user fetch or stream search is returning errors, or stream count is below threshold. Check probe logs."
+          - alert: AIOStreamsProbeStale
+            expr: (time() - aiostreams_probe_last_run_timestamp{job="aiostreams-stream-probe"}) > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AIOStreams stream-probe hasn't run in >30 min"
+              description: "CronJob may be unschedulable or failing before pushgateway POST."
           - alert: ClaudeOAuthTokenExpiringSoon
             expr: (claude_oauth_token_expiry_timestamp{job="claude-oauth-expiry-monitor"} - time()) < (30 * 86400)
             for: 1h
