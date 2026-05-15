@@ -17,6 +17,8 @@ locals {
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
   # mmproj.gguf are created after download so llama-swap config can be
   # filename-agnostic.
+  # `text_only = true` skips mmproj download + --mmproj flag (text-only LLM).
+  # Vision models keep `text_only = false` (default).
   models = {
     qwen3vl-8b = {
       hf_repo        = "Qwen/Qwen3-VL-8B-Instruct-GGUF"
@@ -24,6 +26,7 @@ locals {
       mmproj_pattern = "*mmproj*.gguf"
       ctx_size       = 3072
       gpu_layers     = 99
+      text_only      = false
     }
     minicpm-v-4-5 = {
       hf_repo        = "openbmb/MiniCPM-V-4_5-gguf"
@@ -31,6 +34,7 @@ locals {
       mmproj_pattern = "*mmproj*.gguf"
       ctx_size       = 3072
       gpu_layers     = 99
+      text_only      = false
     }
     qwen3vl-4b = {
       hf_repo        = "Qwen/Qwen3-VL-4B-Instruct-GGUF"
@@ -38,6 +42,21 @@ locals {
       mmproj_pattern = "*mmproj*.gguf"
       ctx_size       = 3072
       gpu_layers     = 99
+      text_only      = false
+    }
+    # Text-only triage / drafting model for recruiter-responder.
+    # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
+    # for recruiter emails + extraction prompt + JSON output).
+    # Unsloth's GGUF: well-maintained, includes Q4_K_M. Qwen3 is a
+    # thinking-capable model; recruiter-responder disables thinking via
+    # `enable_thinking=false` in the chat-template kwargs.
+    qwen3-8b = {
+      hf_repo        = "unsloth/Qwen3-8B-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
     }
   }
 
@@ -55,18 +74,20 @@ locals {
 
     models = {
       for mid, cfg in local.models : mid => {
-        cmd = join(" ", [
+        cmd = join(" ", concat([
           "/app/llama-server",
           "--host 0.0.0.0",
           "--port $${PORT}",
           "-m /models/${mid}/model.gguf",
+          ], cfg.text_only ? [] : [
           "--mmproj /models/${mid}/mmproj.gguf",
+          ], [
           "-ngl ${cfg.gpu_layers}",
           "-c ${cfg.ctx_size}",
           "-np 1",
           "--jinja",
           "-fa on",
-        ])
+        ]))
         ttl           = 600 # unload after 10 min idle
         checkEndpoint = "/health"
       }
@@ -133,11 +154,15 @@ resource "kubernetes_job_v1" "download_models" {
             for mid, cfg in models.items():
                 local_dir = f"/models/{mid}"
                 os.makedirs(local_dir, exist_ok=True)
-                print(f"==> downloading {mid} from {cfg['hf_repo']} -> {local_dir}", flush=True)
+                text_only = cfg.get("text_only", False)
+                patterns = [cfg["gguf_pattern"]]
+                if not text_only and cfg.get("mmproj_pattern"):
+                    patterns.append(cfg["mmproj_pattern"])
+                print(f"==> downloading {mid} from {cfg['hf_repo']} -> {local_dir} (text_only={text_only})", flush=True)
                 snapshot_download(
                     repo_id=cfg["hf_repo"],
                     local_dir=local_dir,
-                    allow_patterns=[cfg["gguf_pattern"], cfg["mmproj_pattern"]],
+                    allow_patterns=patterns,
                     token=os.environ.get("HF_TOKEN") or None,
                     # Single-threaded download — multi-worker buffers
                     # multi-GB chunks per worker and OOMs the Job at 2Gi.
@@ -146,17 +171,20 @@ resource "kubernetes_job_v1" "download_models" {
                 # Resolve actual filenames and create stable symlinks so
                 # llama-swap config is filename-agnostic.
                 ggufs = [p for p in glob.glob(f"{local_dir}/*Q4_K_M*.gguf") if "mmproj" not in p.lower()]
-                mmprojs = glob.glob(f"{local_dir}/*mmproj*.gguf")
                 if not ggufs:
                     raise SystemExit(f"no GGUF found in {local_dir}")
-                if not mmprojs:
-                    raise SystemExit(f"no mmproj found in {local_dir}")
                 gguf_link = f"{local_dir}/model.gguf"
-                mmproj_link = f"{local_dir}/mmproj.gguf"
-                for link, target in ((gguf_link, ggufs[0]), (mmproj_link, mmprojs[0])):
-                    if os.path.islink(link) or os.path.exists(link):
-                        os.unlink(link)
-                    os.symlink(os.path.basename(target), link)
+                if os.path.islink(gguf_link) or os.path.exists(gguf_link):
+                    os.unlink(gguf_link)
+                os.symlink(os.path.basename(ggufs[0]), gguf_link)
+                if not text_only:
+                    mmprojs = glob.glob(f"{local_dir}/*mmproj*.gguf")
+                    if not mmprojs:
+                        raise SystemExit(f"no mmproj found in {local_dir}")
+                    mmproj_link = f"{local_dir}/mmproj.gguf"
+                    if os.path.islink(mmproj_link) or os.path.exists(mmproj_link):
+                        os.unlink(mmproj_link)
+                    os.symlink(os.path.basename(mmprojs[0]), mmproj_link)
                 print(f"==> done {mid}", flush=True)
                 for f in sorted(os.listdir(local_dir)):
                     full = os.path.join(local_dir, f)
