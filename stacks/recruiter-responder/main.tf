@@ -6,6 +6,11 @@ variable "image_tag" {
 
 variable "postgresql_host" { type = string }
 
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+
 locals {
   namespace = "recruiter-responder"
   image     = "forgejo.viktorbarzin.me/viktor/recruiter-responder:${var.image_tag}"
@@ -243,6 +248,12 @@ resource "kubernetes_deployment" "recruiter_responder" {
             value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
           }
           # Telegram bot (no URL env needed — token in secret)
+          # Public callback base URL for inline-keyboard URL buttons.
+          # Must match the ingress host below (proxied via Cloudflare).
+          env {
+            name  = "CALLBACK_BASE_URL"
+            value = "https://recruiter-responder.viktorbarzin.me"
+          }
 
           readiness_probe {
             http_get {
@@ -297,4 +308,28 @@ resource "kubernetes_service" "recruiter_responder" {
       target_port = 8080
     }
   }
+}
+
+# Kyverno ClusterPolicy `sync-tls-secret` auto-clones the wildcard TLS
+# secret into every namespace, so we don't need a setup_tls_secret module.
+
+# Public ingress for the /cb/* callback endpoints driven by Telegram URL
+# buttons. /api/* and /healthz stay internal — they're routed via cluster
+# DNS from the OpenClaw plugin / kubelet probes respectively.
+#
+# auth = "none": the /cb endpoints are gated by HMAC-signed query params
+# (sig + exp) generated from WEBHOOK_BEARER_TOKEN. Authentik would force
+# a login flow before the GET could fire and break the one-tap flow.
+module "ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": HMAC + expiry gate the /cb endpoints — Authentik would
+  # force a login dance and break Telegram's one-tap UX. See callback_links.py.
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.recruiter_responder.metadata[0].name
+  name             = "recruiter-responder"
+  port             = 8080
+  ingress_path     = ["/cb"]
+  tls_secret_name  = var.tls_secret_name
 }
