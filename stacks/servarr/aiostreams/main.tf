@@ -76,7 +76,7 @@ resource "kubernetes_deployment" "aiostreams" {
       }
       spec {
         container {
-          image = "viren070/aiostreams:nightly"
+          image = "viren070/aiostreams:2026.05.14.1326-nightly"
           name  = "aiostreams"
           port {
             container_port = 3000
@@ -144,13 +144,17 @@ resource "kubernetes_service" "aiostreams" {
 }
 
 module "ingress" {
-  source          = "../../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../../modules/kubernetes/ingress_factory"
+  # auth = "app": AIOStreams enforces its own UUID + password gate on /configure
+  # and /api/*, and Stremio addon URLs (/stremio/{uuid}/{encryptedPassword}/...)
+  # use the encryptedPassword path segment as a bearer token. Authentik forward-auth
+  # broke Stremio clients (cannot follow OAuth 302) and is redundant with the app's
+  # own auth. UUIDs are 128-bit random; password attempts are rate-limited.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.aiostreams.metadata[0].name
   name            = "aiostreams"
   tls_secret_name = var.tls_secret_name
-  #   auth = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "AIOStreams"
