@@ -191,6 +191,8 @@ resource "kubernetes_manifest" "probe_secrets" {
       data = [
         { secretKey = "AIOSTREAMS_UUID", remoteRef = { key = "viktor", property = "aiostreams_uuid" } },
         { secretKey = "AIOSTREAMS_PASSWORD", remoteRef = { key = "viktor", property = "aiostreams_password" } },
+        { secretKey = "STREMIO_EMAIL", remoteRef = { key = "viktor", property = "stremio_email" } },
+        { secretKey = "STREMIO_PASSWORD", remoteRef = { key = "viktor", property = "stremio_password" } },
       ]
     }
   }
@@ -412,6 +414,133 @@ sys.exit(0 if success else 1)
     }
   }
   depends_on = [kubernetes_manifest.probe_secrets, kubernetes_deployment.aiostreams, module.nfs_backup]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_cron_job_v1" "stremio_account_backup" {
+  metadata {
+    name      = "stremio-account-backup"
+    namespace = kubernetes_namespace.aiostreams.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 4 * * 0" # Sunday 04:00 weekly (1h after config-backup)
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "backup"
+              image   = "docker.io/library/python:3.12-alpine"
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check requests && python3 -c '
+import requests, os, time, json, sys, datetime, glob
+
+BASE = "https://api.strem.io/api"
+PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/stremio-account-backup"
+EMAIL = os.environ["STREMIO_EMAIL"]
+PASSWORD = os.environ["STREMIO_PASSWORD"]
+BACKUP_DIR = "/backup"
+RETENTION_DAYS = 90
+
+success = 0
+bytes_written = 0
+addon_count = 0
+start = time.time()
+
+try:
+    r = requests.post(f"{BASE}/login", json={"type":"Login","email":EMAIL,"password":PASSWORD}, timeout=20)
+    r.raise_for_status()
+    auth = r.json()["result"]["authKey"]
+
+    r2 = requests.post(f"{BASE}/addonCollectionGet", json={"type":"AddonCollectionGet","authKey":auth,"update":True}, timeout=30)
+    r2.raise_for_status()
+    addons = r2.json()["result"]["addons"]
+    addon_count = len(addons)
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d_%H%M")
+    path = f"{BACKUP_DIR}/stremio-collection-{ts}.json"
+    payload = {"capturedAt": ts, "email": EMAIL, "addonCount": addon_count, "addons": addons}
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    bytes_written = os.path.getsize(path)
+    os.chmod(path, 0o600)
+    print(f"OK wrote {path} ({bytes_written} bytes, {addon_count} addons)")
+
+    # Logout to invalidate the auth key
+    try:
+        requests.post(f"{BASE}/logout", json={"type":"Logout","authKey":auth}, timeout=10)
+    except Exception:
+        pass
+
+    # Prune older than RETENTION_DAYS
+    cutoff = time.time() - (RETENTION_DAYS * 86400)
+    pruned = 0
+    for f in glob.glob(f"{BACKUP_DIR}/stremio-collection-*.json"):
+        if os.path.getmtime(f) < cutoff:
+            os.unlink(f); pruned += 1
+    if pruned: print(f"Pruned {pruned} old backups")
+    success = 1
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+
+duration = time.time() - start
+body = (
+    "# TYPE stremio_account_backup_success gauge\n"
+    f"stremio_account_backup_success {success}\n"
+    "# TYPE stremio_account_backup_bytes gauge\n"
+    f"stremio_account_backup_bytes {bytes_written}\n"
+    "# TYPE stremio_account_backup_addon_count gauge\n"
+    f"stremio_account_backup_addon_count {addon_count}\n"
+    "# TYPE stremio_account_backup_duration_seconds gauge\n"
+    f"stremio_account_backup_duration_seconds {duration:.3f}\n"
+    "# TYPE stremio_account_backup_last_run_timestamp gauge\n"
+    f"stremio_account_backup_last_run_timestamp {int(time.time())}\n"
+)
+try:
+    requests.post(PUSHGATEWAY, data=body, timeout=10).raise_for_status()
+except Exception as e:
+    print(f"WARN: pushgateway POST failed: {e}", file=sys.stderr)
+
+sys.exit(0 if success else 1)
+'
+              EOT
+              ]
+              env_from {
+                secret_ref { name = "aiostreams-probe-secrets" }
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+              resources {
+                requests = { memory = "64Mi", cpu = "10m" }
+                limits   = { memory = "128Mi" }
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_backup.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_manifest.probe_secrets, module.nfs_backup]
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
