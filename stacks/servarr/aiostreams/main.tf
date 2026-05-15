@@ -102,6 +102,27 @@ resource "kubernetes_deployment" "aiostreams" {
             name  = "STREAM_CACHE_TTL"
             value = "3600"
           }
+          env {
+            # Whitelisted regex sync URLs. Vidhin's regexes.json contains release-group
+            # patterns (TRaSH Guides-aligned).
+            name  = "WHITELISTED_REGEX_PATTERNS_URLS"
+            value = jsonencode([
+              "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/regexes.json",
+            ])
+          }
+          env {
+            # Whitelisted SEL (Stream Expression Language) sync URLs. Stream-expression
+            # files (Vidhin's ranked expressions + Tamtaro's ISE/PSE/ESE) go here, NOT
+            # in WHITELISTED_REGEX_PATTERNS_URLS — AIOStreams validates each field
+            # against the correct whitelist.
+            name  = "WHITELISTED_SEL_URLS"
+            value = jsonencode([
+              "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/expressions.json",
+              "https://raw.githubusercontent.com/Tam-Taro/SEL-Filtering-and-Sorting/main/AIOStreams-SyncedURLs/Tamtaro-synced-ISEs.json",
+              "https://raw.githubusercontent.com/Tam-Taro/SEL-Filtering-and-Sorting/main/AIOStreams-SyncedURLs/Tamtaro-synced-PSEs.json",
+              "https://raw.githubusercontent.com/Tam-Taro/SEL-Filtering-and-Sorting/main/AIOStreams-SyncedURLs/Tamtaro-synced-ESEs-standard.json",
+            ])
+          }
           volume_mount {
             name       = "data"
             mount_path = "/app/data"
