@@ -1,0 +1,4 @@
+# git-crypt encrypts these at rest; the working-tree plaintext is local-only.
+# gitleaks scans the staged working-tree copy and can't see that they're
+# encrypted on disk in git, so allowlist by fingerprint.
+stacks/recruiter-responder/secrets/privkey.pem:private-key:1
