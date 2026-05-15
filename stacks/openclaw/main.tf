@@ -472,6 +472,12 @@ resource "kubernetes_deployment" "openclaw" {
             ls -la /home/node/.openclaw/extensions/recruiter-api
           EOT
           ]
+          # /home/node/.openclaw is uid 1000 on NFS; recruiter-responder image
+          # otherwise drops to uid 10001 which can't write or chown. Run as
+          # root so mkdir + chown succeed.
+          security_context {
+            run_as_user = 0
+          }
           volume_mount {
             name       = "openclaw-home"
             mount_path = "/home/node/.openclaw"

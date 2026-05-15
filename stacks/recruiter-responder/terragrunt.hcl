@@ -18,7 +18,6 @@ dependency "external-secrets" {
 }
 
 inputs = {
-  # Override per-deploy in CI / commit. Initial build will land on forgejo
-  # as `forgejo.viktorbarzin.me/viktor/recruiter-responder:<8-char-sha>`.
-  image_tag = "latest"
+  # Override per-deploy in CI / commit.
+  image_tag = "0500c3d3"
 }
