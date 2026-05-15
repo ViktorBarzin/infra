@@ -456,6 +456,32 @@ resource "kubernetes_deployment" "openclaw" {
         # Dotfiles already exist on NFS at /home/node/.openclaw/dotfiles from
         # a previous clone. To update, run git pull manually or via CronJob.
 
+        # Init 3: install the recruiter-api OpenClaw plugin from the
+        # recruiter-responder image into NFS extensions/. Plugin lifecycle
+        # is coupled to the recruiter-responder image tag — bumping that
+        # tag re-installs the plugin on next openclaw pod restart.
+        init_container {
+          name  = "install-recruiter-plugin"
+          image = "forgejo.viktorbarzin.me/viktor/recruiter-responder:latest"
+          command = ["sh", "-c", <<-EOT
+            set -eu
+            mkdir -p /home/node/.openclaw/extensions/recruiter-api
+            cp -r /app/openclaw-plugin/. /home/node/.openclaw/extensions/recruiter-api/
+            chown -R 1000:1000 /home/node/.openclaw/extensions/recruiter-api
+            echo "recruiter-api plugin installed at /home/node/.openclaw/extensions/recruiter-api"
+            ls -la /home/node/.openclaw/extensions/recruiter-api
+          EOT
+          ]
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "128Mi" }
+          }
+        }
+
         # Main container: OpenClaw
         container {
           name  = "openclaw"
@@ -530,6 +556,23 @@ resource "kubernetes_deployment" "openclaw" {
               secret_key_ref {
                 name = "openclaw-secrets"
                 key  = "claude_memory_api_key"
+              }
+            }
+          }
+          # Recruiter Responder API — consumed by the recruiter-api plugin
+          # (mounted into /home/node/.openclaw/extensions/recruiter-api/ via
+          # the install-recruiter-plugin init container below).
+          env {
+            name  = "RECRUITER_RESPONDER_URL"
+            value = "http://recruiter-responder.recruiter-responder.svc.cluster.local:8080"
+          }
+          env {
+            name = "RECRUITER_RESPONDER_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "openclaw-secrets"
+                key      = "recruiter_responder_bearer_token"
+                optional = true
               }
             }
           }
