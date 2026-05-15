@@ -38,8 +38,9 @@ resource "kubernetes_namespace" "recruiter_responder" {
 #     imap_spam_pass         — IMAP password for spam@
 #     smtp_password          — SMTP password for me@viktorbarzin.me
 #     claude_agent_token     — Bearer for claude-agent-service (Tier-2)
-#     task_webhook_token     — Bearer for OpenClaw task-webhook (optional;
-#                              empty allowed if task-webhook is unauthed)
+#     telegram_bot_token     — Bot token for @ViktorBarzinOpenClawBot
+#                              (same as secret/openclaw.telegram_bot_token)
+#     telegram_chat_id       — Viktor's Telegram chat id (8281953845)
 #
 # Schema in CNPG: `recruiter_responder` (alembic creates on first migrate).
 # DB user: created via Vault database engine — see static-creds/pg-recruiter-responder.
@@ -75,7 +76,8 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "IMAP_SPAM_PASS", remoteRef = { key = "recruiter-responder", property = "imap_spam_pass" } },
         { secretKey = "SMTP_PASSWORD", remoteRef = { key = "recruiter-responder", property = "smtp_password" } },
         { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "recruiter-responder", property = "claude_agent_token" } },
-        { secretKey = "TASK_WEBHOOK_TOKEN", remoteRef = { key = "recruiter-responder", property = "task_webhook_token" } },
+        { secretKey = "TELEGRAM_BOT_TOKEN", remoteRef = { key = "recruiter-responder", property = "telegram_bot_token" } },
+        { secretKey = "TELEGRAM_CHAT_ID", remoteRef = { key = "recruiter-responder", property = "telegram_chat_id" } },
       ]
     }
   }
@@ -240,11 +242,7 @@ resource "kubernetes_deployment" "recruiter_responder" {
             name  = "CLAUDE_AGENT_URL"
             value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
           }
-          # OpenClaw proactive push
-          env {
-            name  = "TASK_WEBHOOK_URL"
-            value = "http://task-webhook.openclaw.svc.cluster.local"
-          }
+          # Telegram bot (no URL env needed — token in secret)
 
           readiness_probe {
             http_get {

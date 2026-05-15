@@ -577,6 +577,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
     "pg-wealthfolio-sync", "pg-fire-planner",
     "pg-postiz", "pg-instagram-poster",
+    "pg-recruiter-responder",
   ]
 
   postgresql {
@@ -762,6 +763,14 @@ resource "vault_database_secret_backend_static_role" "pg_instagram_poster" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-instagram-poster"
   username        = "instagram_poster"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_recruiter_responder" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-recruiter-responder"
+  username        = "recruiter_responder"
   rotation_period = 604800
 }
 
