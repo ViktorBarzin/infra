@@ -35,6 +35,7 @@ resource "kubernetes_namespace" "trading-bot" {
     name = "trading-bot"
     labels = {
       tier = local.tiers.edge
+      "keel.sh/enrolled" = "true"
     }
   }
 }
