@@ -69,29 +69,31 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
               annotations = {
                 # `+(...)` only adds if not present; per-workload overrides win.
                 #
-                # DEFAULT IS `never` — Keel ignores the workload.
+                # DEFAULT IS `patch` — Keel auto-updates only PATCH versions
+                # within the current major.minor. e.g. 0.26.6 → 0.26.7 is OK,
+                # 0.26.6 → 0.27.0 is NOT, 0.26.6 → :nightly-latest is NOT.
                 #
-                # Rationale (post 2026-05-16 incident): Keel's `force` policy
-                # is documented as "always update to the newest tag in the
-                # registry," not "watch current tag for digest changes." On
-                # services pinned to semver (e.g. calico/node:v3.26.1,
-                # affine:0.26.6), force triggers a tag REWRITE — Keel switched
-                # affine → :nightly-latest and calico → :master. Calico was
-                # auto-healed by tigera-operator; affine had to be rolled back.
+                # Why not `force`: the 2026-05-16 incident — Keel's `force`
+                # policy is "always update to the newest tag in the registry,"
+                # not "watch current tag for digest changes." On semver-pinned
+                # workloads, force triggered tag-rewrites (affine → nightly,
+                # calico → master). `patch` is semver-parser-bounded and safe.
                 #
-                # Safe enablement now requires per-WORKLOAD opt-in:
-                #   (a) ensure the Deployment's image is on a MUTABLE tag —
-                #       `:latest` (force works), `:<major>` like `:16`/`:7`,
-                #       or a vendor "stable" tag.
-                #   (b) override THIS default by setting the Deployment's
-                #       metadata.annotations["keel.sh/policy"] to `force`
-                #       (digest tracking on the mutable tag) or `patch`/`minor`
-                #       (semver bumps, requires `ignore_changes` on image).
+                # Caveats of `patch`:
+                #   - Tags that aren't parseable as semver (e.g. `:latest`,
+                #     `:11`, `:nightly`, SHA tags) are ignored by Keel.
+                #   - For services pinned to semver, Keel will REWRITE the
+                #     tag (0.26.6 → 0.26.7). This causes Terraform drift
+                #     until the stack is updated or its lifecycle adds
+                #     `ignore_changes` on the container[].image field.
+                #     For now, accepting periodic drift (drift_detection.yml
+                #     pipeline will surface it).
                 #
-                # The namespace enrollment label + V2 lifecycle remain in
-                # place so opt-in is a one-line annotation per Deployment,
-                # without touching the namespace or refactoring lifecycle.
-                "+(keel.sh/policy)"       = "never"
+                # Per-workload overrides:
+                #   "keel.sh/policy" = "force"  — for mutable tags (:latest)
+                #   "keel.sh/policy" = "minor"  — wider semver bumps
+                #   "keel.sh/policy" = "never"  — opt out (CI-bumped, deliberate pins)
+                "+(keel.sh/policy)"       = "patch"
                 "+(keel.sh/trigger)"      = "poll"
                 "+(keel.sh/pollSchedule)" = "@every 1h"
               }
