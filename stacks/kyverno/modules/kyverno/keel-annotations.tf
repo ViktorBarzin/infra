@@ -30,7 +30,14 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
       }
     }
     spec = {
-      background = true
+      # Retroactively mutate workloads that existed BEFORE their namespace
+      # got the keel.sh/enrolled=true label. Without this, Kyverno only
+      # fires on admission events, so old workloads stay unannotated and
+      # Keel doesn't watch them. With this flag, Kyverno's BackgroundScan
+      # controller applies the mutate on existing matching resources when
+      # the policy is created or updated.
+      mutateExistingOnPolicyUpdate = true
+      background                   = true
       rules = [{
         name = "add-keel-annotations"
         match = {
@@ -69,6 +76,13 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
           ]
         }
         mutate = {
+          # Required when mutateExistingOnPolicyUpdate=true — tells the
+          # background controller which existing resources to mutate.
+          targets = [
+            { apiVersion = "apps/v1", kind = "Deployment" },
+            { apiVersion = "apps/v1", kind = "StatefulSet" },
+            { apiVersion = "apps/v1", kind = "DaemonSet" },
+          ]
           patchStrategicMerge = {
             metadata = {
               annotations = {
