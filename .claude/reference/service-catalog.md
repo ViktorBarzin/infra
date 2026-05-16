@@ -78,6 +78,7 @@
 | paperless-ngx | Document management | paperless-ngx |
 | jsoncrack | JSON visualizer | jsoncrack |
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
+| aiostreams | Stremio stream aggregator (Real-Debrid + Torrentio/Comet/MediaFusion/StremThru/Knaben). `auth=app` (own UUID+password); canary stream-probe + 3 alerts; weekly NFS config + Stremio-account-collection backups to `/srv/nfs/aiostreams-backup/`. PG-backed user config. | servarr/aiostreams |
 | ntfy | Push notifications | ntfy |
 | cyberchef | Data transformation | cyberchef |
 | diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |
