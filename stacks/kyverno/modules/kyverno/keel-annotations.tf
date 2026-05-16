@@ -49,7 +49,12 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
           any = [
             {
               resources = {
-                namespaces = ["keel"]
+                # Keel must not auto-update itself (decision #11).
+                # calico-system: managed by tigera-operator via Installation CR.
+                #   Keel rewriting the calico-node DaemonSet image causes an
+                #   hourly fight loop (Keel → v3.26.5, operator → v3.26.1).
+                #   Calico version is bumped manually via the Installation CR.
+                namespaces = ["keel", "calico-system"]
               }
             },
             {
