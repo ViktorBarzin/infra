@@ -21,7 +21,7 @@ resource "kubernetes_namespace" "openclaw" {
       tier                                    = local.tiers.aux
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                      = "true"
     }
   }
   lifecycle {
@@ -186,9 +186,16 @@ resource "kubernetes_config_map" "openclaw_config" {
         allow = ["memory-core"]
         slots = { memory = "memory-core" }
         load = {
-          paths = ["/home/node/.openclaw/extensions", "/app/extensions"]
+          # /app/extensions is the legacy bundled-plugins path; OpenClaw
+          # already loads bundled plugins natively (doctor warning).
+          paths = ["/home/node/.openclaw/extensions"]
         }
       }
+      # Note: mcp.servers is configured via `openclaw mcp set` in the main
+      # container startup command (see below) rather than in this ConfigMap.
+      # OpenClaw's `doctor --fix` (which runs on every pod start) strips
+      # bulk-loaded mcp blocks from openclaw.json, but preserves CLI-set
+      # entries. The CLI is the canonical writer.
       commands = {
         native       = true
         nativeSkills = true
@@ -493,9 +500,25 @@ resource "kubernetes_deployment" "openclaw" {
         container {
           name  = "openclaw"
           image = "ghcr.io/openclaw/openclaw:2026.5.4"
-          # Doctor --fix auto-promotes the highest-tier codex model (gpt-5-pro) after
-          # auth-profile-based model discovery; pin gpt-5.4-mini back to default after it.
-          command = ["sh", "-c", "node openclaw.mjs doctor --fix 2>/dev/null; node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null; exec node openclaw.mjs gateway --allow-unconfigured --bind lan"]
+          # Startup sequence:
+          #   1. doctor --fix     — repair sessions/state (also resets some config)
+          #   2. models set       — pin gpt-5.4-mini (doctor auto-promotes to gpt-5-pro otherwise)
+          #   3. mcp set <name>   — register MCP servers via the CLI (the
+          #                          ConfigMap-baked mcp.servers block gets
+          #                          stripped by doctor --fix, but CLI-written
+          #                          entries persist). Values: ha URL from
+          #                          $HA_SOFIA_MCP_URL env (Vault-sourced),
+          #                          others hard-coded.
+          #   4. gateway          — exec into the gateway process
+          command = ["sh", "-c", <<-EOC
+            node openclaw.mjs doctor --fix 2>/dev/null
+            node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null
+            node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
+            node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
+            node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
+            exec node openclaw.mjs gateway --allow-unconfigured --bind lan
+          EOC
+          ]
           port {
             container_port = 18789
           }
@@ -546,6 +569,12 @@ resource "kubernetes_deployment" "openclaw" {
           env {
             name  = "HOME_ASSISTANT_SOFIA_TOKEN"
             value = local.skill_secrets["home_assistant_sofia_token"]
+          }
+          # MCP URL for ha-mcp add-on on ha-sofia (secret-path auth).
+          # Consumed in the startup command by `openclaw mcp set ha ...`.
+          env {
+            name  = "HA_SOFIA_MCP_URL"
+            value = data.vault_kv_secret_v2.secrets.data["ha_sofia_mcp_url"]
           }
           # Skill secrets - Uptime Kuma
           env {
@@ -1155,6 +1184,117 @@ resource "kubernetes_cron_job_v1" "task_processor" {
                 limits = {
                   memory = "64Mi"
                 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# --- CronJob: claude-memory → memory-core sync (daily) ---
+# Pulls all (non-sensitive) memories from claude-memory's REST API and
+# writes them into memory-core's QMD-backed tree at
+# /home/node/.openclaw/memory/projects/claude-memory-sync/. Then runs
+# `openclaw memory index --force` to rebuild the search index so the
+# OpenClaw agent can `memory_search` over the shared knowledge.
+#
+# Note: the central claude-memory MCP transport (/mcp/mcp) is broken
+# on the deployed image (beads code-z1so) — this REST sync is the
+# workaround. Once that's fixed we can also wire claude_memory as a
+# native MCP server in the mcp.servers block above.
+
+resource "kubernetes_config_map" "memory_sync_script" {
+  metadata {
+    name      = "memory-sync-script"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+  }
+  data = {
+    "memory-sync.py" = file("${path.module}/files/memory-sync.py")
+  }
+}
+
+resource "kubernetes_cron_job_v1" "memory_sync" {
+  metadata {
+    name      = "memory-sync"
+    namespace = kubernetes_namespace.openclaw.metadata[0].name
+    labels = {
+      app  = "memory-sync"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    schedule                      = "0 3 * * *"
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 3
+
+    job_template {
+      metadata {
+        labels = {
+          app = "memory-sync"
+        }
+      }
+      spec {
+        active_deadline_seconds    = 600
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = {
+              app = "memory-sync"
+            }
+          }
+          spec {
+            # Reuses the SA created for the (decommissioned) cluster
+            # healthcheck job — already has pods + pods/exec in this ns.
+            service_account_name = kubernetes_service_account.healthcheck.metadata[0].name
+            restart_policy       = "Never"
+
+            container {
+              name  = "memory-sync"
+              image = "bitnami/kubectl:latest"
+              command = ["bash", "-c", <<-EOF
+                set -eu
+                POD=$(kubectl get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}')
+                if [ -z "$POD" ]; then
+                  echo "ERROR: no openclaw pod"
+                  exit 1
+                fi
+                echo "syncing into pod $POD ..."
+                kubectl exec -n openclaw "$POD" -c openclaw -i -- python3 -u - < /scripts/memory-sync.py
+                echo "reindexing memory-core ..."
+                kubectl exec -n openclaw "$POD" -c openclaw -- sh -c 'cd /app && node openclaw.mjs memory index --force 2>&1 | tail -20'
+                echo "memory-sync complete."
+              EOF
+              ]
+
+              volume_mount {
+                name       = "script"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+
+              resources {
+                requests = {
+                  cpu    = "20m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map.memory_sync_script.metadata[0].name
               }
             }
           }
