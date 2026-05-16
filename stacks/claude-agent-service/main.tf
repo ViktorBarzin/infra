@@ -12,7 +12,7 @@ locals {
   namespace = "claude-agent"
   # Phase 3 cutover 2026-05-07 — see infra/docs/plans/2026-05-07-forgejo-registry-consolidation-plan.md.
   image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service"
-  image_tag = "2fd7670d"
+  image_tag = "1b3350c0"
   labels = {
     app = "claude-agent-service"
   }
@@ -374,6 +374,7 @@ resource "kubernetes_deployment" "claude_agent" {
             mkdir -p /workspace/.beads /workspace/scratch /home/agent/.claude/agents
             cp /usr/share/agent-seed/beads-metadata.json /workspace/.beads/metadata.json
             cp /usr/share/agent-seed/beads-task-runner.md /home/agent/.claude/agents/beads-task-runner.md
+            cp /usr/share/agent-seed/recruiter-triage.md /home/agent/.claude/agents/recruiter-triage.md
           EOT
           ]
 
