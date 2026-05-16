@@ -103,10 +103,11 @@ resource "kubernetes_service" "travel-blog" {
 }
 
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "travel"
-  namespace  = kubernetes_namespace.travel-blog.metadata[0].name
-  target_url = "http://${kubernetes_service.travel-blog.metadata[0].name}.${kubernetes_namespace.travel-blog.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "travel"
+  namespace        = kubernetes_namespace.travel-blog.metadata[0].name
+  target_url       = "http://${kubernetes_service.travel-blog.metadata[0].name}.${kubernetes_namespace.travel-blog.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/11"
 }
 
 module "ingress" {

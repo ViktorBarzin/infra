@@ -138,10 +138,11 @@ resource "kubernetes_service" "cache_proxy" {
 }
 
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "homepage"
-  namespace  = kubernetes_namespace.homepage.metadata[0].name
-  target_url = "http://${kubernetes_service.cache_proxy.metadata[0].name}.${kubernetes_namespace.homepage.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "homepage"
+  namespace        = kubernetes_namespace.homepage.metadata[0].name
+  target_url       = "http://${kubernetes_service.cache_proxy.metadata[0].name}.${kubernetes_namespace.homepage.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/9"
 }
 
 module "ingress" {
