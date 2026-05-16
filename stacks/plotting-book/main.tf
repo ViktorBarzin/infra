@@ -9,6 +9,7 @@ resource "kubernetes_namespace" "plotting-book" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
