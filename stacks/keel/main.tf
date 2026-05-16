@@ -11,6 +11,13 @@
 # (stacks/kyverno/modules/kyverno/keel-annotations.tf) on namespaces
 # labeled keel.sh/enrolled=true.
 
+# Slack bot token for posting upgrade notifications. Existing token in
+# Vault — same one used elsewhere — see secret/viktor -> slack_bot_token.
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
 resource "kubernetes_namespace" "keel" {
   metadata {
     name = "keel"
@@ -51,6 +58,17 @@ resource "helm_release" "keel" {
     notificationLevel = "info"
     persistence = {
       enabled = false
+    }
+    # Slack notifications: post every rollout to the configured channel.
+    # Bot token from Vault (secret/viktor -> slack_bot_token). The Keel
+    # chart sets SLACK_BOT_TOKEN, SLACK_CHANNELS, etc. on the deployment
+    # from these values.
+    slack = {
+      enabled  = true
+      botToken = data.vault_kv_secret_v2.viktor.data["slack_bot_token"]
+      channel  = "general"
+      # No approval flow — opt-out-pure means everything auto-rolls.
+      # If we ever introduce gated rollouts, set approvalsChannel here.
     }
     # Keel uses each watched Deployment's own imagePullSecrets to query
     # its registry. Forgejo creds (`registry-credentials`) are auto-synced
