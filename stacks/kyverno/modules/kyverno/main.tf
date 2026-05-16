@@ -48,12 +48,17 @@ resource "helm_release" "kyverno" {
 
     backgroundController = {
       resources = {
+        # Bumped 2026-05-16 from 384Mi → 2Gi because the controller OOMKilled
+        # while processing 176 UpdateRequests for the inject-keel-annotations
+        # mutate-existing scan. With mutateExistingOnPolicyUpdate=true the
+        # background controller needs significantly more memory during the
+        # initial bulk scan.
         limits = {
-          memory = "384Mi"
+          memory = "2Gi"
         }
         requests = {
           cpu    = "100m"
-          memory = "384Mi"
+          memory = "256Mi"
         }
       }
     }
