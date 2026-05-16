@@ -105,10 +105,11 @@ resource "kubernetes_service" "cyberchef" {
 
 
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "cc"
-  namespace  = kubernetes_namespace.cyberchef.metadata[0].name
-  target_url = "http://${kubernetes_service.cyberchef.metadata[0].name}.${kubernetes_namespace.cyberchef.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "cc"
+  namespace        = kubernetes_namespace.cyberchef.metadata[0].name
+  target_url       = "http://${kubernetes_service.cyberchef.metadata[0].name}.${kubernetes_namespace.cyberchef.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/5"
 }
 
 module "ingress" {

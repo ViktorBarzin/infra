@@ -56,8 +56,24 @@ variable "image_tag" {
 
 variable "replicas" {
   type        = number
-  default     = 1
-  description = "Replica count. Default 1 because Anubis stores in-flight challenges in process memory — with N>1 a challenge issued by pod A and solved against pod B fails with `store: key not found` (HTTP 500). For HA, configure a shared store (Redis) and bump this. Per-pod 128Mi @ idle is cheap, single-pod restart is sub-second, so 1 is fine for content sites."
+  default     = null
+  description = "Optional replica count override. When null, defaults to 1 if shared_store_url is null and 2 otherwise. Capped at 2 — Redis can handle more but anti-affinity assumes ≤2 replicas per Anubis instance on a 5-node cluster."
+
+  validation {
+    condition     = var.replicas == null || (var.replicas >= 1 && var.replicas <= 2)
+    error_message = "replicas must be 1 or 2 (or null to auto-pick from shared_store_url presence)."
+  }
+}
+
+variable "shared_store_url" {
+  type        = string
+  default     = null
+  description = "If set, Anubis stores in-flight challenge state in this Valkey/Redis-protocol URL instead of in-process memory, enabling HA across replicas. Format: redis://host:port/<db-index>. The DB index MUST be unique per Anubis instance (this module assumes 16 DBs available, common in standalone Redis). Cluster Redis is redis-master.redis.svc.cluster.local:6379 with HA via Sentinel + haproxy. Without this, replicas>1 causes ~50% PoW failures (challenge issued by pod A, solved against pod B → 500)."
+
+  validation {
+    condition     = var.shared_store_url == null || can(regex("^redis://[a-zA-Z0-9_.-]+:[0-9]+/[0-9]+$", var.shared_store_url))
+    error_message = "shared_store_url must look like redis://host:port/<db-index> (explicit DB index required)."
+  }
 }
 
 variable "memory" {
@@ -87,6 +103,21 @@ locals {
     "app.kubernetes.io/component"  = "ai-bot-challenge"
     "app.kubernetes.io/managed-by" = "terraform"
   }
+
+  # Effective replicas: caller-override > shared-store-aware default.
+  effective_replicas = coalesce(var.replicas, var.shared_store_url == null ? 1 : 2)
+
+  # Anubis store config. With backend=valkey, multiple Anubis pods can share
+  # in-flight PoW state and a challenge issued by pod A is verifiable by pod
+  # B. Default backend is in-process memory which only works at replicas=1.
+  store_yaml_block = var.shared_store_url == null ? "" : <<-EOT
+
+
+    store:
+      backend: valkey
+      parameters:
+        url: "${var.shared_store_url}"
+  EOT
 
   # Strict bot policy. Default Anubis policy only WEIGHs Mozilla|Opera UAs
   # and lets unmatched UAs (curl, wget, Python-requests, scrapy, headless
@@ -125,6 +156,12 @@ locals {
         path_regex: .*
         action: CHALLENGE
   EOT
+
+  # Final policy YAML: defaults (or caller override) plus an optional store
+  # block when shared_store_url is set. Store block is module-managed and
+  # appended universally — callers passing a custom policy_yaml shouldn't
+  # include their own `store:` block (they would collide).
+  rendered_policy_yaml = "${coalesce(var.policy_yaml, local.default_policy_yaml)}${local.store_yaml_block}"
 }
 
 # Bot policy ConfigMap. Mounted into the pod and referenced by POLICY_FNAME.
@@ -135,7 +172,7 @@ resource "kubernetes_config_map" "policy" {
     labels    = local.labels
   }
   data = {
-    "botPolicies.yaml" = coalesce(var.policy_yaml, local.default_policy_yaml)
+    "botPolicies.yaml" = local.rendered_policy_yaml
   }
 }
 
@@ -179,7 +216,7 @@ resource "kubernetes_deployment" "anubis" {
   }
 
   spec {
-    replicas = var.replicas
+    replicas = local.effective_replicas
 
     selector {
       match_labels = { app = local.full_name }
@@ -200,16 +237,22 @@ resource "kubernetes_deployment" "anubis" {
           # Roll the deployment whenever the policy YAML changes — Anubis
           # reads the policy at startup, so a ConfigMap update alone
           # doesn't take effect until pods restart.
-          "checksum/policy" = sha256(coalesce(var.policy_yaml, local.default_policy_yaml))
+          "checksum/policy" = sha256(local.rendered_policy_yaml)
         }
       }
 
       spec {
         # Spread replicas across nodes to survive a single node failure.
+        # DoNotSchedule (not ScheduleAnyway) so 2 replicas are forced onto
+        # different hosts — otherwise the scheduler may pile them on the
+        # same node and a single node reboot takes the whole Anubis instance
+        # down despite replicas=2. On a 5-node cluster the spread is always
+        # satisfiable; the worst case (4 nodes unavailable) leaves one
+        # replica Pending, but the other keeps serving.
         topology_spread_constraint {
           max_skew           = 1
           topology_key       = "kubernetes.io/hostname"
-          when_unsatisfiable = "ScheduleAnyway"
+          when_unsatisfiable = "DoNotSchedule"
           label_selector {
             match_labels = { app = local.full_name }
           }
@@ -405,7 +448,15 @@ resource "kubernetes_pod_disruption_budget_v1" "anubis" {
     namespace = var.namespace
   }
   spec {
-    min_available = "1"
+    # max_unavailable=1 means: at most one pod can be voluntarily disrupted
+    # at a time. With replicas=2 this allows clean rolling drains (one pod
+    # goes down → other serves traffic → first recreates elsewhere). With
+    # replicas=1 (no shared store) this is functionally equivalent to no
+    # PDB — drain proceeds, brief outage, new pod schedules elsewhere.
+    # Was min_available=1 before 2026-05-16 which deadlocked drains on
+    # single-replica instances (eviction API can never satisfy the
+    # constraint at replicas=1). See PM-2026-05-11.
+    max_unavailable = "1"
     selector {
       match_labels = { app = local.full_name }
     }

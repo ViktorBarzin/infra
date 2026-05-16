@@ -85,10 +85,11 @@ resource "kubernetes_service" "jsoncrack" {
 }
 
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "json"
-  namespace  = kubernetes_namespace.jsoncrack.metadata[0].name
-  target_url = "http://${kubernetes_service.jsoncrack.metadata[0].name}.${kubernetes_namespace.jsoncrack.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "json"
+  namespace        = kubernetes_namespace.jsoncrack.metadata[0].name
+  target_url       = "http://${kubernetes_service.jsoncrack.metadata[0].name}.${kubernetes_namespace.jsoncrack.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/7"
 }
 
 module "ingress" {
