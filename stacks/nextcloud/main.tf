@@ -578,3 +578,5 @@ resource "kubernetes_cron_job_v1" "nextcloud-backup" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
