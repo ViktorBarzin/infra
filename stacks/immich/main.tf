@@ -132,6 +132,7 @@ resource "kubernetes_namespace" "immich" {
       # so this stack can own the tier-quota with a higher memory cap.
       "resource-governance/custom-quota" = "true"
       tier                               = local.tiers.gpu
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -203,6 +204,10 @@ resource "kubernetes_deployment" "immich_server" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
 
@@ -431,6 +436,10 @@ resource "kubernetes_deployment" "immich-postgres" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
 
@@ -597,6 +606,10 @@ resource "kubernetes_deployment" "immich-machine-learning" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
 
