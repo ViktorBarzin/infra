@@ -10,6 +10,7 @@ resource "kubernetes_namespace" "k8s_portal" {
     name = "k8s-portal"
     labels = {
       tier = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
