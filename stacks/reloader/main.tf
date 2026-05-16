@@ -3,6 +3,7 @@ resource "kubernetes_namespace" "crowdsec" {
     name = "reloader"
     labels = {
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

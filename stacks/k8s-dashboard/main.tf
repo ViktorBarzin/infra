@@ -32,6 +32,7 @@ resource "kubernetes_namespace" "k8s-dashboard" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.cluster
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

@@ -30,6 +30,7 @@ resource "kubernetes_namespace" "nextcloud" {
       tier                                    = local.tiers.edge
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

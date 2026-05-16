@@ -49,6 +49,7 @@ resource "kubernetes_namespace" "servarr" {
     name = "servarr"
     labels = {
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
