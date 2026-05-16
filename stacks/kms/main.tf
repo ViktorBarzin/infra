@@ -104,10 +104,11 @@ resource "kubernetes_service" "kms-web-page" {
 }
 
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "kms"
-  namespace  = kubernetes_namespace.kms.metadata[0].name
-  target_url = "http://${kubernetes_service.kms-web-page.metadata[0].name}.${kubernetes_namespace.kms.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "kms"
+  namespace        = kubernetes_namespace.kms.metadata[0].name
+  target_url       = "http://${kubernetes_service.kms-web-page.metadata[0].name}.${kubernetes_namespace.kms.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/8"
 }
 
 module "ingress" {
