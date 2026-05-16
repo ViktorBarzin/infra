@@ -83,6 +83,10 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "recruiter-responder", property = "claude_agent_token" } },
         { secretKey = "TELEGRAM_BOT_TOKEN", remoteRef = { key = "recruiter-responder", property = "telegram_bot_token" } },
         { secretKey = "TELEGRAM_CHAT_ID", remoteRef = { key = "recruiter-responder", property = "telegram_chat_id" } },
+        # Gmail app password for the backtest CLI (read-only). Same
+        # credential as wealthfolio uses for broker statement ingestion.
+        { secretKey = "GMAIL_IMAP_USER", remoteRef = { key = "recruiter-responder", property = "gmail_imap_user" } },
+        { secretKey = "GMAIL_IMAP_PASS", remoteRef = { key = "recruiter-responder", property = "gmail_imap_pass" } },
       ]
     }
   }
