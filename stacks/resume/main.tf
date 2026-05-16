@@ -25,6 +25,7 @@ resource "kubernetes_namespace" "resume" {
     name = local.namespace
     labels = {
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -144,8 +145,12 @@ resource "kubernetes_deployment" "printer" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }
 
@@ -341,8 +346,12 @@ resource "kubernetes_deployment" "resume" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }
 

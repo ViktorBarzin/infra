@@ -32,6 +32,7 @@ resource "kubernetes_namespace" "woodpecker" {
     labels = {
       "resource-governance/custom-quota" = "true"
       tier                               = local.tiers.edge
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

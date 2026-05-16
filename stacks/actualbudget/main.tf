@@ -57,6 +57,7 @@ resource "kubernetes_namespace" "actualbudget" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.edge
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

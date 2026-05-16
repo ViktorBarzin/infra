@@ -11,6 +11,7 @@ resource "kubernetes_namespace" "vault" {
     name = "vault"
     labels = {
       tier = local.tiers.core
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

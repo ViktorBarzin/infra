@@ -12,6 +12,7 @@ resource "kubernetes_namespace" "broker_sync" {
     labels = {
       "istio-injection" = "disabled"
       tier              = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

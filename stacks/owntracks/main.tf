@@ -50,6 +50,7 @@ resource "kubernetes_namespace" "owntracks" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -194,8 +195,12 @@ resource "kubernetes_deployment" "owntracks" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }
 
