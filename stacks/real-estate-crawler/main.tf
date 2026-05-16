@@ -364,10 +364,11 @@ resource "kubernetes_service" "realestate-crawler-api" {
 # Anubis fronts the UI ingress only; the /api ingress (`module "ingress-api"`)
 # stays direct so XHRs from the UI bypass the challenge.
 module "anubis" {
-  source     = "../../modules/kubernetes/anubis_instance"
-  name       = "wrongmove"
-  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
-  target_url = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
+  source           = "../../modules/kubernetes/anubis_instance"
+  name             = "wrongmove"
+  namespace        = kubernetes_namespace.realestate-crawler.metadata[0].name
+  target_url       = "http://realestate-crawler-ui.${kubernetes_namespace.realestate-crawler.metadata[0].name}.svc.cluster.local"
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/12"
 }
 
 module "ingress" {
@@ -453,13 +454,15 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           image             = "viktorbarzin/realestatecrawler:latest"
           image_pull_policy = "Always"
           command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
+          # 512Mi OOMed during full London RENT 1-2 bed scrape (~76k existing IDs
+          # + 10k fetched into memory at concurrency=8 threads). Bumped to 1Gi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "512Mi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
           port {
