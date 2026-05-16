@@ -22,6 +22,7 @@ resource "kubernetes_namespace" "postiz" {
     name = var.namespace
     labels = {
       tier = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -409,7 +410,12 @@ resource "kubernetes_deployment" "temporal" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
   depends_on = [helm_release.postiz]
 }
@@ -580,7 +586,12 @@ resource "kubernetes_job" "temporal_search_attr_cleanup" {
   }
   wait_for_completion = false
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
   depends_on = [kubernetes_deployment.temporal]
 }
