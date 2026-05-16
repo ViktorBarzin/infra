@@ -24,6 +24,7 @@ resource "kubernetes_namespace" "chrome_service" {
       "istio-injection"                       = "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/server" = "true"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -114,6 +115,12 @@ resource "kubernetes_deployment" "chrome_service" {
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
     labels = merge(local.labels, {
       tier = local.tiers.aux
+      # Deliberate pin: chrome-service's playwright image MUST match
+      # the playwright Python version in f1-stream (see local.image
+      # comment above). Opt out of Keel auto-update via this label —
+      # the inject-keel-annotations ClusterPolicy excludes workloads
+      # selector-matching keel.sh/policy=never.
+      "keel.sh/policy" = "never"
     })
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -311,8 +318,12 @@ resource "kubernetes_deployment" "chrome_service" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }
 

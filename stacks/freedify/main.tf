@@ -55,6 +55,7 @@ resource "kubernetes_namespace" "freedify" {
     labels = {
       "istio-injection" : "disabled"
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

@@ -63,6 +63,7 @@ resource "kubernetes_namespace" "k8s_upgrade" {
     name = local.namespace
     labels = {
       tier = local.tiers.cluster
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

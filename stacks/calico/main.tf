@@ -22,6 +22,7 @@ resource "kubernetes_namespace" "calico_system" {
     name = "calico-system"
     labels = {
       name = "calico-system"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

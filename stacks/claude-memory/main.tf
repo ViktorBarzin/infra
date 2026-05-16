@@ -19,6 +19,7 @@ resource "kubernetes_namespace" "claude-memory" {
     name = "claude-memory"
     labels = {
       tier = local.tiers.aux
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -249,6 +250,9 @@ resource "kubernetes_deployment" "claude-memory" {
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
