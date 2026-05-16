@@ -72,6 +72,14 @@ resource "helm_release" "kured" {
       notifyUrl      = data.vault_kv_secret_v2.secrets.data["slack_kured_webhook"]
       concurrency    = 1
       rebootDelay    = "30s"
+      # Fail closed instead of looping forever. Default is 0 (unlimited) — if
+      # a future PDB or finalizer stalls drain, kured retries indefinitely and
+      # the node stays cordoned silently. 30m gives CNPG / shared-store
+      # Anubis / any other stateful workload plenty of time to settle, but
+      # caps the silent-failure window. After timeout kured logs the abort
+      # and waits for the next period; node stays Schedulable so the cluster
+      # doesn't lose capacity. Fixed 2026-05-16.
+      drainTimeout = "30m"
       # Halt rolling reboots when ANY firing Prometheus alert is not in the
       # ignore-list. The ignore-list excludes self-referential / always-firing
       # alerts that would otherwise deadlock kured. alertFilterMatchOnly stays
