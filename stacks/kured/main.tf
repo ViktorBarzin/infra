@@ -57,7 +57,13 @@ resource "helm_release" "kured" {
       timeZone       = "Europe/London"
       startTime      = "02:00"
       endTime        = "06:00"
-      rebootDays     = ["mo", "tu", "we", "th", "fr"]
+      # All 7 days — operator decision 2026-05-16. The Mon–Fri restriction
+      # was a 2026-03-16-era guardrail (overlapping with weekend on-call
+      # response). Today the rest of the safety net (halt-on-alert,
+      # sentinel-gate Check 4 = 24h soak, single-concurrency, the
+      # K8sUpgradeStalled alert) is strong enough to operate any day; the
+      # weekday-only schedule was just slowing the backlog down.
+      rebootDays     = ["mo", "tu", "we", "th", "fr", "sa", "su"]
       # IMPORTANT: must match where kured-sentinel-gate writes (below):
       # `touch /host/var-run/gated-reboot-required` → host
       # `/var/run/gated-reboot-required`. The kured chart derives the host
@@ -90,7 +96,7 @@ resource "helm_release" "kured" {
       alertFiringOnly      = true
       alertFilterMatchOnly = false
     }
-    reboot_days  = "mon,tue,wed,thu,fri"
+    reboot_days  = "mon,tue,wed,thu,fri,sat,sun"
     window_end   = "06:00"
     window_start = "22:00"
     service = {
