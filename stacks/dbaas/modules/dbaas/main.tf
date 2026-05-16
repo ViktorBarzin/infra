@@ -1050,7 +1050,7 @@ module "ingress" {
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
-    instances     = "2"
+    instances     = "3"
     image         = "ghcr.io/cloudnative-pg/postgis:16"
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
@@ -1067,7 +1067,13 @@ resource "null_resource" "pg_cluster" {
         name: pg-cluster
         namespace: dbaas
       spec:
-        instances: 2
+        # 3 instances (1 primary + 2 replicas) so a single-node drain (e.g.
+        # kured's weekly OS-reboot wave) still leaves a primary candidate
+        # immediately available for switchover. Previously 2; CNPG would
+        # still failover with 2 but only if the lone replica was caught up
+        # — during a long WAL backlog the failover would stall the drain.
+        # Bumped 2026-05-16 ahead of Monday's first post-fix kured cycle.
+        instances: 3
         imageName: ghcr.io/cloudnative-pg/postgis:16
         postgresql:
           parameters:
