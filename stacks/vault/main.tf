@@ -1078,3 +1078,5 @@ resource "vault_kubernetes_secret_backend_role" "user_deployer" {
   kubernetes_role_type          = "Role"
   kubernetes_role_name          = kubernetes_role.user_deployer[each.key].metadata[0].name
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

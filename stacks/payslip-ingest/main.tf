@@ -501,3 +501,5 @@ resource "kubernetes_config_map" "grafana_payslips_datasource" {
   }
   depends_on = [kubernetes_manifest.grafana_payslips_db_external_secret]
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
