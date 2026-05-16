@@ -154,6 +154,37 @@ lifecycle {
 
 **Audit**: `rg "KYVERNO_LIFECYCLE_V1" stacks/ | wc -l` — should grow (never shrink). Add the marker to every new pod-owning resource. The `_template/main.tf.example` stub shows the canonical form.
 
+### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
+
+When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects three annotations on every Deployment / StatefulSet / DaemonSet:
+
+```
+keel.sh/policy: force
+keel.sh/trigger: poll
+keel.sh/pollSchedule: "@every 1h"
+```
+
+To suppress the resulting Terraform drift, **enrolled workloads** must extend their `ignore_changes` block:
+
+```hcl
+lifecycle {
+  ignore_changes = [
+    spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+    metadata[0].annotations["keel.sh/policy"],
+    metadata[0].annotations["keel.sh/trigger"],
+    metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+  ]
+}
+```
+
+The V2 snippet is added **per workload** as namespaces are phase-enrolled — not as a mass sweep. Workloads in un-enrolled namespaces do not receive the annotation and don't need the V2 block.
+
+Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment metadata (not pod template); the policy's `exclude` clause respects it, no annotation gets injected, no `ignore_changes` needed.
+
+**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads.
+
+**Design context**: `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
+
 ## Tier System
 `0-core` | `1-cluster` | `2-gpu` | `3-edge` | `4-aux` — Kyverno auto-generates LimitRange + ResourceQuota per namespace based on tier label.
 - Containers without explicit `resources {}` get default limits (256Mi for edge/aux — causes OOMKill for heavy apps)
