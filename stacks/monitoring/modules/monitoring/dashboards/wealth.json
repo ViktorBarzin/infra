@@ -87,7 +87,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT SUM(total_value) AS net_worth FROM latest"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT SUM(total_value) AS net_worth FROM latest"
         }
       ]
     },
@@ -141,7 +141,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT SUM(net_contribution) AS contribution FROM latest"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT SUM(net_contribution) AS contribution FROM latest"
         }
       ]
     },
@@ -207,7 +207,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT (SUM(total_value) - SUM(net_contribution)) AS growth FROM latest"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT (SUM(total_value) - SUM(net_contribution)) AS growth FROM latest"
         }
       ]
     },
@@ -277,7 +277,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT (SUM(total_value - net_contribution) / NULLIF(SUM(net_contribution), 0) * 100) AS roi_pct FROM latest WHERE net_contribution > 0"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value, d.net_contribution, d.cash_balance, d.investment_market_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT (SUM(total_value - net_contribution) / NULLIF(SUM(net_contribution), 0) * 100) AS roi_pct FROM latest WHERE net_contribution > 0"
         }
       ]
     },
@@ -492,7 +492,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(net_contribution) AS net_contribution, SUM(total_value) AS market_value FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(net_contribution) AS net_contribution, SUM(total_value) AS market_value FROM dav_corrected WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
         }
       ]
     },
@@ -604,7 +604,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), series AS (SELECT valuation_date, (SUM(total_value) - SUM(net_contribution)) AS g FROM daily_account_valuation WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), labeled AS (SELECT valuation_date, g, LAG(g) OVER (ORDER BY valuation_date) AS prev_g, LEAD(g) OVER (ORDER BY valuation_date) AS next_g FROM series) SELECT valuation_date::timestamp AS \"time\", g AS growth, CASE WHEN (prev_g IS NOT NULL AND g < prev_g) OR (next_g IS NOT NULL AND next_g < g) THEN g END AS decline FROM labeled ORDER BY valuation_date"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), series AS (SELECT valuation_date, (SUM(total_value) - SUM(net_contribution)) AS g FROM dav_corrected WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), labeled AS (SELECT valuation_date, g, LAG(g) OVER (ORDER BY valuation_date) AS prev_g, LEAD(g) OVER (ORDER BY valuation_date) AS next_g FROM series) SELECT valuation_date::timestamp AS \"time\", g AS growth, CASE WHEN (prev_g IS NOT NULL AND g < prev_g) OR (next_g IS NOT NULL AND next_g < g) THEN g END AS decline FROM labeled ORDER BY valuation_date"
         }
       ]
     },
@@ -900,7 +900,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN daily_account_valuation d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT ROUND((((nw_now - nw_ago - (contrib_now - contrib_ago)) / NULLIF(nw_ago + 0.5 * (contrib_now - contrib_ago), 0)) * 100)::numeric, 2) AS pct_12mo FROM agg"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN dav_corrected d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT ROUND((((nw_now - nw_ago - (contrib_now - contrib_ago)) / NULLIF(nw_ago + 0.5 * (contrib_now - contrib_ago), 0)) * 100)::numeric, 2) AS pct_12mo FROM agg"
         }
       ]
     },
@@ -954,7 +954,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN daily_account_valuation d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT (contrib_now - contrib_ago) AS contrib_12mo FROM agg"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN dav_corrected d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT (contrib_now - contrib_ago) AS contrib_12mo FROM agg"
         }
       ]
     },
@@ -1020,7 +1020,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN daily_account_valuation d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT ((nw_now - nw_ago) - (contrib_now - contrib_ago)) AS gain_12mo FROM agg"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.valuation_date AS d_now, d.total_value AS nw_now, d.net_contribution AS contrib_now FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), ago AS (SELECT DISTINCT ON (l.account_id) l.account_id, d.total_value AS nw_ago, d.net_contribution AS contrib_ago FROM latest l JOIN dav_corrected d ON d.account_id = l.account_id AND d.valuation_date <= l.d_now - INTERVAL '12 months' ORDER BY l.account_id, d.valuation_date DESC), agg AS (SELECT (SELECT SUM(nw_now) FROM latest) AS nw_now, (SELECT SUM(contrib_now) FROM latest) AS contrib_now, (SELECT SUM(nw_ago) FROM ago) AS nw_ago, (SELECT SUM(contrib_ago) FROM ago) AS contrib_ago) SELECT ((nw_now - nw_ago) - (contrib_now - contrib_ago)) AS gain_12mo FROM agg"
         }
       ]
     },
@@ -1152,7 +1152,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '1 day' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '1 day' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
         }
       ]
     },
@@ -1284,7 +1284,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '7 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '7 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
         }
       ]
     },
@@ -1416,7 +1416,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '30 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '30 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
         }
       ]
     },
@@ -1548,7 +1548,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '90 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), now_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC), past_snap AS (SELECT DISTINCT ON (d.account_id) d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id WHERE d.valuation_date <= (SELECT d - INTERVAL '90 days' FROM max_complete) ORDER BY d.account_id, d.valuation_date DESC) SELECT ((SELECT SUM(total_value) FROM now_snap) - (SELECT SUM(total_value) FROM past_snap)) - ((SELECT SUM(net_contribution) FROM now_snap) - (SELECT SUM(net_contribution) FROM past_snap)) AS market_delta"
         }
       ]
     },
@@ -1642,7 +1642,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM daily_account_valuation WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((((nw_end - nw_start - (contrib_end - contrib_start)) / NULLIF(nw_start + 0.5 * (contrib_end - contrib_start), 0)) * 100)::numeric, 2) AS return_pct FROM endpoints WHERE (nw_start + 0.5 * (contrib_end - contrib_start)) > 0 ORDER BY yr"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((((nw_end - nw_start - (contrib_end - contrib_start)) / NULLIF(nw_start + 0.5 * (contrib_end - contrib_start), 0)) * 100)::numeric, 2) AS return_pct FROM endpoints WHERE (nw_start + 0.5 * (contrib_end - contrib_start)) > 0 ORDER BY yr"
         }
       ]
     },
@@ -1760,7 +1760,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM daily_account_valuation WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((contrib_end - contrib_start)::numeric, 0) AS contributions, ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain FROM endpoints ORDER BY yr"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::text AS year, ROUND((contrib_end - contrib_start)::numeric, 0) AS contributions, ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain FROM endpoints ORDER BY yr"
         }
       ]
     },
@@ -1865,7 +1865,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), monthly AS (SELECT date_trunc('month', valuation_date)::date AS month, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM daily_account_valuation WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT month, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM monthly GROUP BY month) SELECT month::timestamp AS time, ROUND((contrib_end - contrib_start)::numeric, 0) AS contributions, ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain FROM endpoints ORDER BY month"
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), monthly AS (SELECT date_trunc('month', valuation_date)::date AS month, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT month, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM monthly GROUP BY month) SELECT month::timestamp AS time, ROUND((contrib_end - contrib_start)::numeric, 0) AS contributions, ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain FROM endpoints ORDER BY month"
         }
       ]
     },
@@ -1945,7 +1945,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) a.name, d.total_value, d.net_contribution FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT name AS account, ROUND(((total_value - net_contribution) / NULLIF(net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM latest WHERE net_contribution > 0 ORDER BY roi_pct DESC"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) a.name, d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT name AS account, ROUND(((total_value - net_contribution) / NULLIF(net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM latest WHERE net_contribution > 0 ORDER BY roi_pct DESC"
         }
       ]
     },
