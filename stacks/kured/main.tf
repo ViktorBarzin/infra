@@ -58,7 +58,17 @@ resource "helm_release" "kured" {
       startTime      = "02:00"
       endTime        = "06:00"
       rebootDays     = ["mo", "tu", "we", "th", "fr"]
-      rebootSentinel = "/sentinel/gated-reboot-required"
+      # IMPORTANT: must match where kured-sentinel-gate writes (below):
+      # `touch /host/var-run/gated-reboot-required` → host
+      # `/var/run/gated-reboot-required`. The kured chart derives the host
+      # path from `dirname(rebootSentinel)`, so this single setting controls
+      # BOTH the in-pod mountPath AND the host hostPath. Previously
+      # `/sentinel/gated-reboot-required` — that pointed the chart's hostPath
+      # at `/sentinel/` (empty, auto-created by hostPath:Directory) while the
+      # gate kept writing to `/var/run/`. kured never saw the open gate so
+      # nodes stopped rebooting on 2026-05-10 when unattended-upgrades was
+      # re-enabled. Fixed 2026-05-16.
+      rebootSentinel = "/var/run/gated-reboot-required"
       notifyUrl      = data.vault_kv_secret_v2.secrets.data["slack_kured_webhook"]
       concurrency    = 1
       rebootDelay    = "30s"
