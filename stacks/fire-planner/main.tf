@@ -526,3 +526,5 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
     })
   }
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

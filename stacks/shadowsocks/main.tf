@@ -161,3 +161,5 @@ resource "kubernetes_service" "mailserver" { # rename me
     }
   }
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

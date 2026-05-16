@@ -276,3 +276,5 @@ module "ingress_api" {
   ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
   max_body_size   = "50m"
 }
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
