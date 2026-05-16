@@ -22,7 +22,9 @@ resource "kubernetes_namespace" "calico_system" {
     name = "calico-system"
     labels = {
       name = "calico-system"
-      "keel.sh/enrolled" = "true"
+# calico-system namespace is managed by tigera-operator — auto-update is
+      # incompatible (operator reverts DaemonSet image from its Installation CR).
+      # "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
