@@ -68,7 +68,30 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
             metadata = {
               annotations = {
                 # `+(...)` only adds if not present; per-workload overrides win.
-                "+(keel.sh/policy)"       = "force"
+                #
+                # DEFAULT IS `never` — Keel ignores the workload.
+                #
+                # Rationale (post 2026-05-16 incident): Keel's `force` policy
+                # is documented as "always update to the newest tag in the
+                # registry," not "watch current tag for digest changes." On
+                # services pinned to semver (e.g. calico/node:v3.26.1,
+                # affine:0.26.6), force triggers a tag REWRITE — Keel switched
+                # affine → :nightly-latest and calico → :master. Calico was
+                # auto-healed by tigera-operator; affine had to be rolled back.
+                #
+                # Safe enablement now requires per-WORKLOAD opt-in:
+                #   (a) ensure the Deployment's image is on a MUTABLE tag —
+                #       `:latest` (force works), `:<major>` like `:16`/`:7`,
+                #       or a vendor "stable" tag.
+                #   (b) override THIS default by setting the Deployment's
+                #       metadata.annotations["keel.sh/policy"] to `force`
+                #       (digest tracking on the mutable tag) or `patch`/`minor`
+                #       (semver bumps, requires `ignore_changes` on image).
+                #
+                # The namespace enrollment label + V2 lifecycle remain in
+                # place so opt-in is a one-line annotation per Deployment,
+                # without touching the namespace or refactoring lifecycle.
+                "+(keel.sh/policy)"       = "never"
                 "+(keel.sh/trigger)"      = "poll"
                 "+(keel.sh/pollSchedule)" = "@every 1h"
               }
