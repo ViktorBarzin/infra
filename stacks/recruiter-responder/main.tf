@@ -25,6 +25,8 @@ resource "kubernetes_namespace" "recruiter_responder" {
     labels = {
       tier              = local.tiers.aux
       "istio-injection" = "disabled"
+      # Opt into Keel auto-update (inject-keel-annotations ClusterPolicy).
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -286,7 +288,12 @@ resource "kubernetes_deployment" "recruiter_responder" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 
   depends_on = [
