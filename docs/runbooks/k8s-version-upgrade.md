@@ -14,9 +14,12 @@ detection CronJob → preflight Job → master Job → worker × 4 Jobs → post
 ```
 
 This is **independent** of the OS-side `unattended-upgrades + kured`
-pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts and
-their schedules don't overlap (kured runs Mon-Fri 02:00-06:00 London;
-detection here runs Sun 12:00 UTC).
+pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts.
+Schedules can overlap (kured runs daily 02:00-06:00 London; detection
+here runs Sun 12:00 UTC) — when a kured reboot lands within 24h of the
+Sunday detection, the `RecentNodeReboot` alert in the Upgrade Gates
+group blocks the version-upgrade preflight, so the chain self-defers
+to the next Sunday rather than rolling on top of a half-fresh node.
 
 ## Architecture
 
