@@ -378,6 +378,36 @@ resource "kubernetes_deployment" "wealthfolio" {
             total_cost_basis NUMERIC NOT NULL,
             currency TEXT
           );
+          -- Drop-in replacement for daily_account_valuation that subtracts
+          -- the cumulative pension gains-offset (DEPOSITs emitted by
+          -- broker-sync Fidelity provider to reconcile WF totals with the
+          -- PlanViewer reported pot). Wealthfolio's data model treats the
+          -- offset as a cash contribution, so without this correction
+          -- net_contribution is inflated by the gain and growth shows £0
+          -- for the entire pension. The view re-exports the corrected
+          -- value AS net_contribution so panels can use it as a drop-in
+          -- replacement for the base table.
+          CREATE OR REPLACE VIEW dav_corrected AS
+          WITH all_offsets AS (
+            SELECT account_id, activity_date::date AS effective_date, amount
+            FROM activities
+            WHERE notes LIKE 'fidelity-planviewer:unrealised-gains-offset%'
+          )
+          SELECT
+            d.id, d.account_id, d.valuation_date, d.account_currency,
+            d.base_currency, d.fx_rate_to_base, d.cash_balance,
+            d.investment_market_value, d.total_value, d.cost_basis,
+            d.net_contribution AS net_contribution_raw,
+            (d.net_contribution - COALESCE(SUM(o.amount), 0)) AS net_contribution,
+            COALESCE(SUM(o.amount), 0) AS pension_gains_offset
+          FROM daily_account_valuation d
+          LEFT JOIN all_offsets o
+            ON o.account_id = d.account_id
+            AND o.effective_date <= d.valuation_date
+          GROUP BY d.id, d.account_id, d.valuation_date, d.account_currency,
+            d.base_currency, d.fx_rate_to_base, d.cash_balance,
+            d.investment_market_value, d.total_value, d.cost_basis,
+            d.net_contribution;
           SQL
 
           # Snapshot SQLite (online backup — non-blocking).
