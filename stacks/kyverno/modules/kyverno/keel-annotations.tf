@@ -124,3 +124,23 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
   }
   depends_on = [helm_release.kyverno]
 }
+
+# Grant the Kyverno background-controller SA permission to mutate
+# Deployments / StatefulSets / DaemonSets — required for the policy
+# above (mutateExistingOnPolicyUpdate=true + mutate.targets). Kyverno's
+# `kyverno:background-controller` ClusterRole aggregates roles labeled
+# `rbac.kyverno.io/aggregate-to-background-controller: "true"`.
+resource "kubernetes_cluster_role" "keel_mutate_existing" {
+  metadata {
+    name = "kyverno:background-controller:keel-mutate-existing"
+    labels = {
+      "rbac.kyverno.io/aggregate-to-background-controller" = "true"
+    }
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets", "daemonsets"]
+    verbs      = ["get", "list", "watch", "update", "patch"]
+  }
+  depends_on = [helm_release.kyverno]
+}
