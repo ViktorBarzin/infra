@@ -31,7 +31,7 @@ kured-sentinel-gate checks:
   ▼ all pass
 touch /var/run/gated-reboot-required
   │
-  ▼ (kured polls every 1h within 02:00-06:00 London Mon-Fri window)
+  ▼ (kured polls every 1h within 02:00-06:00 London, any day of the week)
 kured checks Prometheus before draining:
   │ http://prometheus-server.monitoring.svc.cluster.local:80/api/v1/alerts
   │ ANY firing alert (except ignore-list) blocks the drain
@@ -57,7 +57,7 @@ kured uncordons + posts Slack notification (configuration.notifyUrl)
 ### kured (Helm release)
 - **Stack**: `infra/stacks/kured/main.tf`
 - **Helm chart**: `kured-5.11.0` (image `ghcr.io/kubereboot/kured:1.21.0`)
-- **Window**: Mon-Fri 02:00-06:00 Europe/London, period=1h, concurrency=1
+- **Window**: 02:00-06:00 Europe/London, every day of the week (was Mon-Fri until 2026-05-16), period=1h, concurrency=1
 - **Sentinel**: `/sentinel/gated-reboot-required` (created by sentinel-gate DaemonSet)
 - **Slack hook**: Vault `secret/kured` → `slack_kured_webhook`
 
