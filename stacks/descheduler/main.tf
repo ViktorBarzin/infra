@@ -98,3 +98,5 @@ resource "helm_release" "descheduler" { # rename me
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# CI retrigger v3 2026-05-16T14:06:39Z
