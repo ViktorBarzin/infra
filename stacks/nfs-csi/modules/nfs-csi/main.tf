@@ -6,6 +6,7 @@ resource "kubernetes_namespace" "nfs_csi" {
     name = "nfs-csi"
     labels = {
       tier = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
