@@ -28,6 +28,19 @@ driver:
   upgradePolicy:
     autoUpgrade: false
 
+  # 2026-05-17: bumped from the namespace LimitRange default of 128Mi.
+  # The driver-installer's `apt-get install linux-headers-<kernel>` step
+  # exceeded 128Mi and OOMKilled (exit 137) before producing any visible
+  # output beyond "Installing Linux kernel headers...". 2Gi limit gives
+  # the apt + module-compile phase enough headroom (peak observed ~1.4Gi
+  # while DKMS builds the kernel module).
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      memory: "2Gi"
+
   devicePlugin:
     config:
       name: time-slicing-config
