@@ -29,6 +29,7 @@ resource "kubernetes_namespace" "authentik" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

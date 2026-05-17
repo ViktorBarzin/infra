@@ -4,6 +4,7 @@ resource "kubernetes_namespace" "proxmox_csi" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

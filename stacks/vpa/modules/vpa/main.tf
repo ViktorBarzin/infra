@@ -9,6 +9,7 @@ resource "kubernetes_namespace" "vpa" {
     name = "vpa"
     labels = {
       tier = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
 }
