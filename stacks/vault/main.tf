@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "vault" {
   metadata {
     name = "vault"
     labels = {
-      tier = local.tiers.core
+      tier               = local.tiers.core
       "keel.sh/enrolled" = "true"
     }
   }

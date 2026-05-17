@@ -25,7 +25,8 @@ resource "kubernetes_namespace" "headscale" {
   metadata {
     name = "headscale"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

@@ -6,7 +6,8 @@ resource "kubernetes_namespace" "redis" {
   metadata {
     name = "redis"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
