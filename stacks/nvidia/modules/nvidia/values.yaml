@@ -10,7 +10,21 @@ driver:
   #
   # Delete the cluster policy before each change
   # version: "575.57.08" # CUDA 12.9
-  version: "570.195.03" # CUDA 12.8
+  #
+  # 2026-05-17: tried bumping to 580.x with kernelModuleType=open but
+  # NVIDIA has NOT published any nvcr.io/nvidia/driver:*-ubuntu26.04
+  # images yet (skopeo list-tags shows 0 ubuntu26.04 tags vs 779 for
+  # ubuntu22.04 and 206 for ubuntu24.04). Chart v26.3.1's operator
+  # auto-detects the host OS (k8s-node1 was upgraded to Ubuntu 26.04
+  # with kernel 7.0.0-15-generic) and picks `<version>-ubuntu26.04` —
+  # which then 404s on pull. Rolled back to chart v25.10.1 + this
+  # 570.195.03 pin, which uses the ubuntu24.04 image suffix. That
+  # image still can't compile against kernel 7.0.0 (apt sources are
+  # 24.04 noble, which doesn't ship linux-headers-7.0.0-15-generic),
+  # so the host kernel needs to be rolled back to 6.8.0-117-generic
+  # (still installed in /boot) before the driver can come up.
+  # See post-mortem 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
+  version: "570.195.03" # CUDA 12.8 — pinned until NVIDIA ships ubuntu26.04 images
   upgradePolicy:
     autoUpgrade: false
 
