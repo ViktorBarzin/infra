@@ -39,6 +39,14 @@ KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
 
+# Pod-side DNS: the cluster's CoreDNS has search domains
+# `<ns>.svc.cluster.local svc.cluster.local cluster.local` (plus ndots=2 via
+# Kyverno mutation). Unqualified `k8s-master` falls through all of these and
+# then queries the upstream DNS (Technitium) for bare `k8s-master`, which
+# returns NXDOMAIN. The FQDN `k8s-master.viktorbarzin.lan` is what Technitium
+# actually serves. Suffix every node SSH target with this domain.
+NODE_DOMAIN=".viktorbarzin.lan"
+
 # SSH key must be 0400 — refresh from secret mount (defaultMode does this but
 # bind-mount semantics can preserve loose perms; chmod is idempotent).
 install -m 0400 "$SSH_KEY" /tmp/ssh_key
@@ -189,7 +197,11 @@ spawn_next() {
   # TARGET_VERSION, KIND, IMAGE inherited from current env
 
   echo "Spawning next Job: $job_name (phase=$NEXT_PHASE target=${NEXT_TARGET_NODE:-} run_on=${NEXT_RUN_ON:-anywhere})"
-  envsubst <"$JOB_TEMPLATE" | $KUBECTL apply -f -
+  # python3 expandvars replaces $VAR / ${VAR} from env, same semantics as
+  # envsubst but available in the claude-agent-service image (which lacks
+  # gettext-base). Multi-line $SCHEDULING_BLOCK is preserved correctly.
+  python3 -c 'import os,sys;sys.stdout.write(os.path.expandvars(sys.stdin.read()))' \
+    <"$JOB_TEMPLATE" | $KUBECTL apply -f -
 }
 
 # ---------------------------------------------------------------------------
@@ -235,7 +247,7 @@ phase_preflight() {
 
   # 4. kubeadm upgrade plan matches target
   local plan_target
-  plan_target=$(ssh "${SSH_OPTS[@]}" wizard@k8s-master 'sudo kubeadm upgrade plan' \
+  plan_target=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'sudo kubeadm upgrade plan' \
     | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
   if [ "$plan_target" != "$TARGET_VERSION" ]; then
@@ -276,16 +288,16 @@ phase_preflight() {
 
   # 7. Containerd skew fix on master (if master < workers)
   local master_ctr worker_max=0.0.0
-  master_ctr=$(ssh "${SSH_OPTS[@]}" wizard@k8s-master "containerd --version | awk '{print \$3}' | tr -d v")
+  master_ctr=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" "containerd --version | awk '{print \$3}' | tr -d v")
   for n in k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
     local v
-    v=$(ssh "${SSH_OPTS[@]}" "wizard@$n" "containerd --version | awk '{print \$3}' | tr -d v")
+    v=$(ssh "${SSH_OPTS[@]}" "wizard@$n$NODE_DOMAIN" "containerd --version | awk '{print \$3}' | tr -d v")
     [ "$(printf '%s\n%s' "$v" "$worker_max" | sort -V | tail -1)" = "$v" ] && worker_max="$v"
   done
   if [ "$(printf '%s\n%s' "$master_ctr" "$worker_max" | sort -V | head -1)" = "$master_ctr" ] \
      && [ "$master_ctr" != "$worker_max" ]; then
     slack "Master containerd $master_ctr < workers $worker_max — bumping"
-    ssh "${SSH_OPTS[@]}" wizard@k8s-master \
+    ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" \
       "sudo apt-mark unhold containerd.io && sudo apt-get install -y containerd.io='$worker_max-1' \
        && sudo apt-mark hold containerd.io && sudo systemctl restart containerd"
     wait_for_node_ready k8s-master "$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' | tr -d v)" \
@@ -297,7 +309,7 @@ phase_preflight() {
   if [ "$KIND" = "minor" ]; then
     local target_minor="${TARGET_VERSION%.*}"
     for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
-      ssh "${SSH_OPTS[@]}" "wizard@$n" \
+      ssh "${SSH_OPTS[@]}" "wizard@$n$NODE_DOMAIN" \
         "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$target_minor/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list \
          && curl -fsSL 'https://pkgs.k8s.io/core:/stable:/v$target_minor/deb/Release.key' \
               | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --batch --yes \
@@ -320,7 +332,7 @@ phase_master() {
   drain_node k8s-master
 
   slack "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
-  ssh "${SSH_OPTS[@]}" wizard@k8s-master 'bash -s' \
+  ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role master --release "$TARGET_VERSION"
 
   $KUBECTL uncordon k8s-master
@@ -359,7 +371,7 @@ phase_worker() {
   drain_node "$TARGET_NODE"
 
   slack "Running update_k8s.sh on $TARGET_NODE (--role worker --release $TARGET_VERSION)"
-  ssh "${SSH_OPTS[@]}" "wizard@$TARGET_NODE" 'bash -s' \
+  ssh "${SSH_OPTS[@]}" "wizard@$TARGET_NODE$NODE_DOMAIN" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role worker --release "$TARGET_VERSION"
 
   $KUBECTL uncordon "$TARGET_NODE"
