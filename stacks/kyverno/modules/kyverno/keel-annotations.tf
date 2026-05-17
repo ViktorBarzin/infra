@@ -74,35 +74,49 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
                 # - cloudflared, headscale, wireguard, xray: VPN/tunnel critical
                 # - infra-maintenance: cluster utilities
                 #
-                # 2026-05-17 ENROLLMENT EXPANSION: removed 15 namespaces from
-                # the exclude list per explicit user decision — auto-updates
-                # are now allowed in monitoring, mailserver, vault,
-                # descheduler, metrics-server, traefik, technitium, crowdsec,
-                # redis, reverse-proxy, reloader, headscale, wireguard, xray,
-                # cloudflared. The `force + match-tag` pairing limits each to
-                # digest-only watches under the deployment's CURRENT tag
-                # string — no tag-switching, just rolls on upstream digest
-                # changes for the pinned tag. A few are on floating tags
-                # (sclevine/wg:latest, teddysun/xray, prompve/...:latest,
-                # nginx:1-alpine, redis:8-alpine, error-pages:3); those will
-                # roll whenever upstream pushes. Acceptable risk — the user
-                # has alerts in place to catch regressions.
+                # 2026-05-17 ENROLLMENT EXPANSION (final round): removed an
+                # additional 9 namespaces from the exclude list per explicit
+                # user decision (auto-updates now allowed in authentik,
+                # kyverno, metallb-system, external-secrets, proxmox-csi,
+                # nfs-csi, vpa, sealed-secrets, infra-maintenance), plus
+                # aiostreams + woodpecker which were unenrolled by namespace
+                # label only. The `force + match-tag` pairing limits each
+                # workload to digest-only watches under the deployment's
+                # CURRENT tag string — no tag-switching, just rolls on
+                # upstream digest changes for that pinned tag.
+                #
+                # Risks to monitor (worth catching regressions on):
+                # - kyverno: cluster admission engine. `forceFailurePolicyIgnore`
+                #   keeps the cluster admitting pods if Kyverno is down, and
+                #   the admission controller runs 2 replicas, so a bad-digest
+                #   roll can be recovered from by deleting the bad pod.
+                # - nfs-csi + proxmox-csi: CSI plugins. We pinned the helm
+                #   chart versions today (commit 128cfbbc for nfs-csi); Keel
+                #   tracks the image's digest under the CURRENT tag — if
+                #   upstream re-pushes a patch under the same tag, Keel rolls.
+                # - external-secrets + sealed-secrets: cluster bootstrappers.
+                #   Multi-replica + tightly-versioned upstream.
+                # - metallb-system: networking critical path. Speaker is a
+                #   DaemonSet, controller has 1 replica — a bad roll can
+                #   briefly flap LB IPs.
+                # - authentik: 2026-05-17 incident bit us when minor bump
+                #   2026.2.2 → 2026.2.3 broke pgbouncer connections. With
+                #   match-tag=true, digest changes under the same tag string
+                #   are rare (upstream stable patch repushes are uncommon).
+                #   If they happen we get rolled; restore via helm rollback.
+                #
+                # Remaining exclusions (7) are irreducible: keel itself,
+                # calico-system + tigera-operator (operator-managed),
+                # cnpg-system + dbaas (state-coupled), nvidia (pinned to
+                # 570.195.03 until NVIDIA ships ubuntu26.04 images per
+                # code-8vr0), kube-system (k8s built-ins).
                 namespaces = [
                   "keel",
                   "calico-system",
-                  "authentik",
                   "cnpg-system",
                   "dbaas",
-                  "kyverno",
-                  "metallb-system",
-                  "external-secrets",
-                  "proxmox-csi",
-                  "nfs-csi",
                   "nvidia",
                   "kube-system",
-                  "vpa",
-                  "sealed-secrets",
-                  "infra-maintenance",
                   "tigera-operator",
                 ]
               }

@@ -4,6 +4,7 @@ resource "kubernetes_namespace" "kyverno" {
     name = "kyverno"
     labels = {
       "istio-injection" : "disabled"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
