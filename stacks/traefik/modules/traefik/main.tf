@@ -29,6 +29,7 @@ resource "kubernetes_namespace" "traefik" {
       "app.kubernetes.io/name"     = "traefik"
       "app.kubernetes.io/instance" = "traefik"
       tier                         = var.tier
+      "keel.sh/enrolled"           = "true"
     }
   }
   lifecycle {

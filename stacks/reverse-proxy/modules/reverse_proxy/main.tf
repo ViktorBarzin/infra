@@ -11,6 +11,9 @@ variable "haos_homepage_token" {
 
 resource "kubernetes_namespace" "reverse-proxy" {
   metadata {
+    labels = {
+      "keel.sh/enrolled" = "true"
+    }
     name = "reverse-proxy"
   }
   lifecycle {

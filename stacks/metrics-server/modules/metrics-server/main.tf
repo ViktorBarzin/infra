@@ -5,7 +5,8 @@ resource "kubernetes_namespace" "metrics-server" {
   metadata {
     name = "metrics-server"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
