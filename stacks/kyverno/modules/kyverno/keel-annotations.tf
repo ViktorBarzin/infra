@@ -165,8 +165,13 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
                 #                                 to bypass this mutation)
                 # Per-namespace opt-out:
                 #   Remove the `keel.sh/enrolled=true` namespace label.
-                "keel.sh/policy"          = "force"
-                "keel.sh/match-tag"       = "true"
+                # `+(...)` anchor — only add if not present. This preserves
+                # per-workload overrides set out-of-band (e.g. `never` for
+                # phased rollout). Without the anchor, every policy update
+                # would overwrite existing annotations, breaking the phased
+                # rollout state.
+                "+(keel.sh/policy)"       = "force"
+                "+(keel.sh/match-tag)"    = "true"
                 "+(keel.sh/trigger)"      = "poll"
                 "+(keel.sh/pollSchedule)" = "@every 1h"
               }
