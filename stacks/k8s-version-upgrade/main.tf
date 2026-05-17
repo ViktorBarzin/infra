@@ -333,7 +333,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 echo "Running version: v$RUNNING (minor $RUNNING_MINOR)"
 
                 # 2. Latest patch within current minor (refresh master's apt cache)
-                LATEST_PATCH=$($SSH wizard@k8s-master \
+                LATEST_PATCH=$($SSH wizard@k8s-master.viktorbarzin.lan \
                   "sudo apt-get update -qq -o Dir::Etc::sourcelist='sources.list.d/kubernetes.list' -o Dir::Etc::sourceparts='-' -o APT::Get::List-Cleanup='0' >/dev/null 2>&1 ; \
                    apt-cache madison kubeadm 2>/dev/null \
                     | awk '{print \$3}' \
@@ -360,7 +360,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   TARGET="$LATEST_PATCH"
                   KIND="patch"
                 elif [ "$NEXT_MINOR_AVAILABLE" = "yes" ]; then
-                  NEXT_MINOR_PATCH=$($SSH wizard@k8s-master \
+                  NEXT_MINOR_PATCH=$($SSH wizard@k8s-master.viktorbarzin.lan \
                     "curl -sf 'https://pkgs.k8s.io/core:/stable:/v$NEXT_MINOR/deb/Packages' \
                       | grep -oE 'Version: [0-9.-]+' \
                       | awk '{print \$2}' | sed 's/-.*//' \
@@ -411,7 +411,8 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                        KIND="$KIND" IMAGE="$${IMAGE}" \
                        SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1'
 
-                envsubst < /template/job-template.yaml \
+                python3 -c 'import os,sys;sys.stdout.write(os.path.expandvars(sys.stdin.read()))' \
+                  < /template/job-template.yaml \
                   | /usr/local/bin/kubectl apply -f -
 
                 slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
