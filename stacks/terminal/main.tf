@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "terminal" {
     name = "terminal"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -323,6 +323,158 @@ resource "kubernetes_manifest" "tmux_api_strip_prefix" {
     spec = {
       stripPrefix = {
         prefixes = ["/api/sessions"]
+      }
+    }
+  }
+}
+
+# =============================================================================
+# Webterminal probe (added 2026-05-17 after a Traefik replica came up with a
+# partial routing table — only the IngressRoute CRDs registered; the
+# kubernetes_ingress for terminal.viktorbarzin.me was missing, so ~70% of
+# /token requests routed to that replica returned 404 with router="-". The
+# lobby's WebSocket retry loop kept the user stuck on "Failed to connect.
+# Retrying..." because Cloudflare → that replica → 404 broke /token and the
+# /ws upgrade intermittently.
+#
+# The probe exercises the full external path (Cloudflare → Traefik → ttyd
+# Service) every 5 minutes and pushes 4 gauges to Pushgateway:
+#   webterminal_probe_token_status        — HTTP status of GET /token (want 302)
+#   webterminal_probe_ws_status           — HTTP status of WS upgrade /ws (want 302)
+#   webterminal_probe_ttyd_status         — In-cluster ttyd /token (want 200)
+#   webterminal_probe_last_success_timestamp — Unix ts of last fully-OK run
+#
+# Alerts live in monitoring/prometheus_chart_values.tpl group "Webterminal".
+# =============================================================================
+
+resource "kubernetes_cron_job_v1" "webterminal_probe" {
+  metadata {
+    name      = "webterminal-probe"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "*/5 * * * *"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {
+            labels = {
+              app = "webterminal-probe"
+            }
+          }
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name              = "probe"
+              image             = "docker.io/library/alpine:3.20"
+              image_pull_policy = "IfNotPresent"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "96Mi"
+                }
+              }
+              env {
+                name  = "TARGET_HOST"
+                value = "terminal.viktorbarzin.me"
+              }
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/webterminal-probe"
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -u
+                apk add --no-cache curl python3 >/dev/null 2>&1
+
+                # Probe 1 — HTTP GET /token (Cloudflare → Traefik → ttyd).
+                # Without an Authentik cookie the response MUST be 302
+                # (forward-auth redirect). 404 means a Traefik router is
+                # missing on the replica that received the request.
+                TOKEN_STATUS=$(curl -sk -o /dev/null -w "%%{http_code}" \
+                    --max-time 10 \
+                    "https://$${TARGET_HOST}/token?arg=probe" || echo 0)
+
+                # Probe 2 — WebSocket upgrade to /ws. Same expectation: 302.
+                # 404 here is what produced "Failed to connect" in the lobby
+                # iframe. Use Python for a true Upgrade request — curl's
+                # synthetic upgrade headers don't always trigger the WS path
+                # through every Cloudflare POP.
+                WS_STATUS=$(python3 - <<'PYEOF' 2>/dev/null || echo 0
+                import ssl, socket, base64, os
+                try:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    ctx.set_alpn_protocols(["http/1.1"])
+                    sock = socket.create_connection((os.environ["TARGET_HOST"], 443), timeout=10)
+                    ssock = ctx.wrap_socket(sock, server_hostname=os.environ["TARGET_HOST"])
+                    key = base64.b64encode(os.urandom(16)).decode()
+                    req = (
+                        "GET /ws?arg=probe HTTP/1.1\r\n"
+                        f"Host: {os.environ['TARGET_HOST']}\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        f"Sec-WebSocket-Key: {key}\r\n"
+                        "Sec-WebSocket-Version: 13\r\n"
+                        "Sec-WebSocket-Protocol: tty\r\n"
+                        f"Origin: https://{os.environ['TARGET_HOST']}\r\n"
+                        "\r\n"
+                    )
+                    ssock.sendall(req.encode())
+                    ssock.settimeout(5)
+                    data = ssock.recv(2048)
+                    ssock.close()
+                    first = data.split(b"\r\n")[0].decode("ascii", "ignore")
+                    parts = first.split()
+                    print(parts[1] if len(parts) >= 2 and parts[1].isdigit() else 0)
+                except Exception:
+                    print(0)
+                PYEOF
+                )
+
+                # Probe 3 — ttyd Service ClusterIP. Bypasses Cloudflare /
+                # Traefik / Authentik so we can tell whether the failure mode
+                # is "ttyd down" vs "edge proxy misrouting".
+                TTYD_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" \
+                    --max-time 5 -H "X-authentik-username: probe" \
+                    "http://terminal.terminal.svc.cluster.local/token" || echo 0)
+
+                OK=0
+                if [ "$$TOKEN_STATUS" = "302" ] && [ "$$WS_STATUS" = "302" ] && [ "$$TTYD_STATUS" = "200" ]; then
+                  OK=1
+                fi
+                NOW=$(date +%s)
+
+                cat <<METRICS | curl -sf --max-time 10 --data-binary @- "$$PUSHGATEWAY" >/dev/null 2>&1 || true
+                # HELP webterminal_probe_token_status HTTP status from GET /token via Cloudflare.
+                # TYPE webterminal_probe_token_status gauge
+                webterminal_probe_token_status $${TOKEN_STATUS:-0}
+                # HELP webterminal_probe_ws_status HTTP status from WebSocket upgrade /ws via Cloudflare.
+                # TYPE webterminal_probe_ws_status gauge
+                webterminal_probe_ws_status $${WS_STATUS:-0}
+                # HELP webterminal_probe_ttyd_status HTTP status from in-cluster ttyd /token.
+                # TYPE webterminal_probe_ttyd_status gauge
+                webterminal_probe_ttyd_status $${TTYD_STATUS:-0}
+                # HELP webterminal_probe_last_success_timestamp Unix ts of last fully-OK probe.
+                # TYPE webterminal_probe_last_success_timestamp gauge
+                webterminal_probe_last_success_timestamp $$([ "$$OK" = "1" ] && echo "$$NOW" || echo 0)
+                METRICS
+
+                echo "probe: token=$${TOKEN_STATUS} ws=$${WS_STATUS} ttyd=$${TTYD_STATUS} ok=$${OK}"
+              EOT
+              ]
+            }
+          }
+        }
       }
     }
   }
