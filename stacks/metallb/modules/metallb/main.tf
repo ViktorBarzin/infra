@@ -4,7 +4,8 @@ resource "kubernetes_namespace" "metallb" {
   metadata {
     name = "metallb-system"
     labels = {
-      app = "metallb"
+      app                = "metallb"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

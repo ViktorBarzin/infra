@@ -8,6 +8,7 @@ resource "kubernetes_namespace" "aiostreams" {
     name = "aiostreams"
     labels = {
       "istio-injection" : "disabled"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
