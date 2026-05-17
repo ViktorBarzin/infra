@@ -110,8 +110,20 @@ resource "kubernetes_deployment" "wireguard" {
           image_pull_policy = "IfNotPresent"
           lifecycle {
             post_start {
+              # Switch the container's `iptables` symlink to iptables-nft
+              # before running wg-quick. The Debian-based sclevine/wg image
+              # defaults to iptables-legacy, which talks to the kernel's
+              # xt-tables interface. K8s nodes initialize their nat table
+              # via nftables (kernel `nf_tables`), so iptables-legacy in the
+              # container fails the wg0.conf PostUp MASQUERADE with:
+              #     can't initialize iptables table `nat': Table does not
+              #     exist (do you need to insmod?)
+              # Reproduced inside the live pod's namespaces 2026-05-17. The
+              # `update-alternatives` call points iptables/ip6tables at the
+              # `-nft` binaries so the same wg0.conf PostUp/PostDown writes
+              # to the nftables-backed nat table calico already set up.
               exec {
-                command = ["wg-quick", "up", "wg0"]
+                command = ["sh", "-c", "update-alternatives --set iptables /usr/sbin/iptables-nft >/dev/null && update-alternatives --set ip6tables /usr/sbin/ip6tables-nft >/dev/null && exec wg-quick up wg0"]
               }
             }
             pre_stop {
