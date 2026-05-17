@@ -668,8 +668,13 @@ resource "kubernetes_cron_job_v1" "fidelity" {
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 5
-    # Suspended until the broker-sync image ships with Playwright + Chromium.
-    suspend = true
+    # Unsuspended 2026-05-17 after the delta gains-offset emission landed
+    # (broker-sync @98c4729). Manual trigger:
+    #   kubectl -n broker-sync create job fid-now \
+    #     --from=cronjob/broker-sync-fidelity
+    # NB: storage_state expires every 30-90 days — see code-r9n for the
+    # chrome-service-driven re-seed runbook.
+    suspend = false
     job_template {
       metadata {}
       spec {
