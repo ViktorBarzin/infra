@@ -75,6 +75,23 @@ resource "kubernetes_config_map" "dolt_init" {
       CREATE USER IF NOT EXISTS 'beads'@'%' IDENTIFIED BY '';
       GRANT ALL PRIVILEGES ON *.* TO 'beads'@'%' WITH GRANT OPTION;
     EOT
+    "02-create-presence-table.sql" = <<-EOT
+      CREATE DATABASE IF NOT EXISTS beads;
+      USE beads;
+      CREATE TABLE IF NOT EXISTS presence_claims (
+        session_id      VARCHAR(128)  NOT NULL,
+        resource_label  VARCHAR(255)  NOT NULL,
+        purpose         TEXT          NOT NULL,
+        claimed_at      DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        expires_at      DATETIME(3)   NOT NULL,
+        host            VARCHAR(128)  NOT NULL,
+        user            VARCHAR(64)   NOT NULL,
+        agent_name      VARCHAR(64)   DEFAULT 'claude-code',
+        PRIMARY KEY (session_id, resource_label),
+        INDEX idx_resource (resource_label),
+        INDEX idx_expires  (expires_at)
+      );
+    EOT
   }
 }
 
@@ -106,7 +123,12 @@ resource "kubernetes_deployment" "dolt" {
       spec {
         container {
           name  = "dolt"
-          image = "dolthub/dolt-sql-server:latest"
+          # Pinned to 2.0.3 — :latest currently resolves to 0.50.10 on dolthub
+          # (different versioning stream) whose docker-entrypoint.sh references
+          # an undefined docker_process_sql function and crash-loops on every
+          # init script in /docker-entrypoint-initdb.d. Keel can upgrade this
+          # tag in-cluster; the lifecycle.ignore_changes below preserves that.
+          image = "dolthub/dolt-sql-server:2.0.3"
 
           port {
             name           = "mysql"
@@ -185,6 +207,50 @@ resource "kubernetes_deployment" "dolt" {
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
+}
+
+# One-shot Job to apply the presence_claims schema to the running Dolt server.
+# The dolt_init ConfigMap only fires on fresh PVCs; since Dolt already exists
+# with persistent state, this Job is the only path to update the live schema.
+# The job name is hashed off the SQL content so a new Job runs whenever the
+# schema changes; the SQL itself is idempotent (CREATE ... IF NOT EXISTS).
+resource "kubernetes_job" "presence_schema_migrate" {
+  metadata {
+    name      = "presence-schema-${substr(sha256(kubernetes_config_map.dolt_init.data["02-create-presence-table.sql"]), 0, 8)}"
+    namespace = kubernetes_namespace.beads.metadata[0].name
+  }
+  spec {
+    backoff_limit = 3
+    template {
+      metadata {}
+      spec {
+        restart_policy = "OnFailure"
+        container {
+          name    = "migrate"
+          image   = "mysql:8.4"
+          command = ["sh", "-c"]
+          args = [
+            "mysql -h dolt.beads-server.svc.cluster.local -P 3306 -u root < /sql/02-create-presence-table.sql"
+          ]
+          volume_mount {
+            name       = "sql"
+            mount_path = "/sql"
+          }
+        }
+        volume {
+          name = "sql"
+          config_map {
+            name = kubernetes_config_map.dolt_init.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  wait_for_completion = true
+  timeouts {
+    create = "5m"
+  }
+  depends_on = [kubernetes_deployment.dolt]
 }
 
 resource "kubernetes_service" "dolt" {
