@@ -56,12 +56,57 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
           any = [
             {
               resources = {
-                # Keel must not auto-update itself (decision #11).
-                # calico-system: managed by tigera-operator via Installation CR.
-                #   Keel rewriting the calico-node DaemonSet image causes an
-                #   hourly fight loop (Keel → v3.26.5, operator → v3.26.1).
-                #   Calico version is bumped manually via the Installation CR.
-                namespaces = ["keel", "calico-system"]
+                # Namespaces that must NEVER be auto-updated by Keel.
+                # Each has a domain-aware upgrade flow (operator, Helm chart
+                # version bump, schema migration, etc.) that Keel would fight.
+                #
+                # - keel: supervisor self-update (decision #11)
+                # - calico-system: tigera-operator owns Installation CR
+                # - authentik: 2026-05-17 incident — minor bump 2026.2.2→2026.2.3
+                #   broke pgbouncer connections; rolled back manually
+                # - vault, cnpg-system, dbaas: state-coupled with TF backend
+                # - monitoring: kube-prometheus-stack multi-component coordination
+                # - traefik, metallb-system, technitium: networking critical path
+                # - kyverno, external-secrets, sealed-secrets, reloader,
+                #   descheduler, vpa, kube-system: cluster-level operators
+                # - proxmox-csi, nfs-csi, nvidia, tigera-operator: hardware/CNI
+                #   coordination
+                # - cloudflared, headscale, wireguard, xray: VPN/tunnel critical
+                # - mailserver, crowdsec, redis, reverse-proxy: stateful critical
+                # - infra-maintenance, metrics-server: cluster utilities
+                namespaces = [
+                  "keel",
+                  "calico-system",
+                  "authentik",
+                  "vault",
+                  "cnpg-system",
+                  "dbaas",
+                  "monitoring",
+                  "traefik",
+                  "technitium",
+                  "mailserver",
+                  "kyverno",
+                  "metallb-system",
+                  "external-secrets",
+                  "proxmox-csi",
+                  "nfs-csi",
+                  "nvidia",
+                  "kube-system",
+                  "cloudflared",
+                  "crowdsec",
+                  "reverse-proxy",
+                  "reloader",
+                  "descheduler",
+                  "vpa",
+                  "redis",
+                  "sealed-secrets",
+                  "headscale",
+                  "wireguard",
+                  "xray",
+                  "infra-maintenance",
+                  "metrics-server",
+                  "tigera-operator",
+                ]
               }
             },
             {
