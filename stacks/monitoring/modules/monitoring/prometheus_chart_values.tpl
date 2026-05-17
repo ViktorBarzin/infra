@@ -1887,13 +1887,22 @@ serverFiles:
               severity: warning
             annotations:
               summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} stuck Pending for 10m+"
+          # RecentNodeReboot — kubelet just restarted, give the node some time
+          # to settle before any other reboot-driving thing (kured, K8s
+          # version-upgrade chain) acts. Threshold tightened from 86400 →
+          # 3600 on 2026-05-17 — post-reboot workloads (calico-node,
+          # kube-proxy, CSI sidecars, GPU drivers) typically reconverge
+          # within minutes; 1h is comfortable margin. The 24h-between-
+          # cluster-reboots protection lives separately in
+          # `kured-sentinel-gate` Check 4 (reads node Ready
+          # lastTransitionTime, independent of this alert).
           - alert: RecentNodeReboot
-            expr: (time() - process_start_time_seconds{job="kubernetes-nodes"}) < 86400
+            expr: (time() - process_start_time_seconds{job="kubernetes-nodes"}) < 3600
             for: 0m
             labels:
               severity: info
             annotations:
-              summary: "Node {{ $labels.node }} kubelet started {{ $value | humanizeDuration }} ago — 24h soak window halts further reboots"
+              summary: "Node {{ $labels.node }} kubelet started {{ $value | humanizeDuration }} ago — 1h settle window halts further reboots"
           - alert: MysqlStandaloneDown
             expr: kube_statefulset_status_replicas_ready{statefulset="mysql-standalone"} < 1
             for: 2m
