@@ -70,7 +70,10 @@ resource "helm_release" "traefik" {
           "mkdir -p \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\"; ",
           "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.4.2.zip\" ",
           "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.4.2.zip\"; ",
-          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\"}' ",
+          "mkdir -p \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware\"; ",
+          "wget -q -T 30 -O \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware/v0.1.4.zip\" ",
+          "\"https://github.com/Aetherinox/traefik-api-token-middleware/archive/refs/tags/v0.1.4.zip\"; ",
+          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\",\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
           "> \"$STORAGE/archives/state.json\"; ",
           "echo \"Plugins pre-downloaded successfully\"",
         ])]
@@ -175,6 +178,15 @@ resource "helm_release" "traefik" {
         crowdsec-bouncer = {
           moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
           version    = "v1.4.2"
+        }
+        # Static-token bearer/header auth middleware. Used by services that
+        # need gateway-level API-key/bearer enforcement without app-layer auth
+        # (e.g. paperless-mcp, which has no native auth). Plugin key
+        # `api-token-middleware` is the name to use as the inner key in
+        # `Middleware.spec.plugin.<key>` on consuming Middleware CRDs.
+        api-token-middleware = {
+          moduleName = "github.com/Aetherinox/traefik-api-token-middleware"
+          version    = "v0.1.4"
         }
       }
     }

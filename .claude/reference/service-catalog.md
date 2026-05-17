@@ -53,6 +53,7 @@
 | insta2spotify | Instagram reel song ID to Spotify playlist | insta2spotify |
 | trading-bot | Event-driven trading with sentiment analysis | trading-bot |
 | claude-memory | Persistent memory MCP server | claude-memory |
+| paperless-mcp | Paperless-ngx document search MCP (barryw/PaperlessMCP). Traefik bearer auth via Aetherinox api-token-middleware. `auth=none` at ingress; gateway-level bearer enforced by `paperless-mcp/bearer-auth` Middleware CRD. Tokens + paperless API token in Vault `secret/paperless-mcp`. | paperless-mcp |
 | council-complaints | Islington civic reporting pilot | council-complaints |
 
 ## Optional
