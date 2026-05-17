@@ -117,7 +117,13 @@ resource "helm_release" "nvidia-gpu-operator" {
   repository = "https://helm.ngc.nvidia.com/nvidia"
   chart      = "gpu-operator"
   atomic     = true
-  #   version    = "0.9.3"
+  # Pinned 2026-05-17. v26.3.1's operator auto-detects the host OS via NFD
+  # and constructs `driver:<version>-ubuntu26.04` image tags, but NVIDIA
+  # has not published any ubuntu26.04 driver images yet. v25.10.1 falls
+  # back to ubuntu24.04 (which exists), so we stay here until NVIDIA ships
+  # 26.04 builds (or until the host kernel is rolled back to a 24.04 line
+  # one). See post-mortem 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
+  version = "v25.10.1"
   timeout = 6000
 
   values     = [templatefile("${path.module}/values.yaml", {})]
