@@ -2696,6 +2696,84 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} stacks drifting — likely a systemic cause (new admission webhook, provider upgrade). Check the most recent drift-detection run in Woodpecker."
+      # Webterminal availability. Metrics pushed by the webterminal-probe
+      # CronJob in stacks/terminal/main.tf every 5 minutes. The probe targets
+      # terminal.viktorbarzin.me via Cloudflare so any failure in the chain
+      # (CDN → tunnel → Traefik → ttyd) lights up an alert.
+      #
+      # The 2026-05-17 incident that motivated these alerts: a Traefik replica
+      # came up missing the kubernetes_ingress-derived router for
+      # terminal.viktorbarzin.me, so ~70% of /token preflight requests routed
+      # to that replica returned 404 with router="-". The WS upgrade failed
+      # intermittently. Fix: `kubectl delete pod -n traefik <replica>`.
+      - name: Webterminal
+        rules:
+          - alert: WebterminalTokenDegraded
+            # /token via Cloudflare must redirect to Authentik (302). Any other
+            # status (especially 404) means a Traefik replica is missing the
+            # terminal Ingress route or ttyd is down.
+            expr: webterminal_probe_token_status{job="webterminal-probe"} != 302 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: webterminal
+            annotations:
+              summary: "Webterminal /token returning HTTP {{ $value }} via Cloudflare (expected 302). Likely a Traefik replica with a partial routing table — `kubectl get pods -n traefik` and delete the suspect replica."
+          - alert: WebterminalWebsocketDegraded
+            # WebSocket upgrade to /ws must also redirect (302). 404 here is
+            # the user-visible "Failed to connect. Retrying..." in the lobby
+            # iframe.
+            expr: webterminal_probe_ws_status{job="webterminal-probe"} != 302 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: critical
+              subsystem: webterminal
+            annotations:
+              summary: "Webterminal WebSocket /ws returning HTTP {{ $value }} via Cloudflare — users see 'Failed to connect' in the iframe. Check Traefik route parity across replicas."
+          - alert: WebterminalTtydUnreachable
+            # In-cluster probe to ttyd Service. Bypasses Cloudflare/Traefik/
+            # Authentik, so non-200 means ttyd itself is down on the DevVM.
+            expr: webterminal_probe_ttyd_status{job="webterminal-probe"} != 200 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: critical
+              subsystem: webterminal
+            annotations:
+              summary: "ttyd in-cluster probe got HTTP {{ $value }} (expected 200) — ttyd on the DevVM (10.0.10.10:7681) is down. `systemctl status ttyd` on devvm."
+          - alert: WebterminalProbeStale
+            # No probe push for >20m means the CronJob isn't running. Either
+            # the kubelet that owns the namespace can't schedule it or the
+            # job is failing before the push step.
+            expr: (time() - max(webterminal_probe_last_success_timestamp{job="webterminal-probe"})) > 1200
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: webterminal
+            annotations:
+              summary: "Webterminal probe hasn't reported a successful run in {{ $value | humanizeDuration }} — `kubectl get cronjob -n terminal webterminal-probe` and inspect recent Jobs."
+      # Traefik router parity — detects the root cause of the webterminal
+      # outage. When a Traefik replica's Kubernetes Ingress provider fails to
+      # sync, its router table will diverge from siblings. Catches the issue
+      # cluster-wide (not just terminal.viktorbarzin.me) since the same race
+      # can happen for any kubernetes_ingress-managed hostname.
+      - name: Traefik Router Parity
+        rules:
+          - alert: TraefikRouterCountSkew
+            # Each Traefik replica should report the same number of routers.
+            # If max-min across instances is >0 for 10m, one replica is stuck
+            # and should be restarted.
+            expr: |
+              (
+                max(count by (instance) (traefik_router_open_connections))
+                -
+                min(count by (instance) (traefik_router_open_connections))
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: traefik
+            annotations:
+              summary: "Traefik replicas have diverging router counts (skew={{ $value | printf \"%.0f\" }}). Restart the laggard pod: `kubectl get pods -n traefik` and delete the one with fewer routers."
 
 extraScrapeConfigs: |
   # The `mailserver-dovecot` scrape job was retired in code-1ik together
