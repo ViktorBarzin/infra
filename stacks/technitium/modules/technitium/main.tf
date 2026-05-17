@@ -13,7 +13,8 @@ resource "kubernetes_namespace" "technitium" {
   metadata {
     name = "technitium"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
     # stale cache error when trying to resolve
     # labels = {

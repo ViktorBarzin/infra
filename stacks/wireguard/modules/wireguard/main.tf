@@ -14,7 +14,8 @@ resource "kubernetes_namespace" "wireguard" {
   metadata {
     name = "wireguard"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
