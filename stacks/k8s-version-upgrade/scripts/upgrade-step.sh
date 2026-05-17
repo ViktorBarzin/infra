@@ -233,15 +233,20 @@ phase_preflight() {
     exit 1
   fi
 
-  # 3. 24h-quiet baseline
+  # 3. Quiet-baseline check — fail if any node had a Ready transition in the
+  # last hour. Threshold matches the RecentNodeReboot alert (3600s) — the
+  # 24h-between-cluster-reboots protection lives in kured-sentinel-gate
+  # Check 4, not here. Tightened from 86400 → 3600 on 2026-05-17; with the
+  # alert clearing in 1h, this duplicate gate was the actual blocker for
+  # the chain after a session of manual reboots.
   local recent=0
   while IFS= read -r ts; do
     [ -z "$ts" ] && continue
     local diff=$(( $(date +%s) - $(date -d "$ts" +%s) ))
-    if [ "$diff" -lt 86400 ]; then recent=1; break; fi
+    if [ "$diff" -lt 3600 ]; then recent=1; break; fi
   done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
   if [ "$recent" -eq 1 ]; then
-    slack "ABORT preflight — node transitioned Ready <24h ago (soak window)"
+    slack "ABORT preflight — node transitioned Ready <1h ago (settle window)"
     exit 1
   fi
 
