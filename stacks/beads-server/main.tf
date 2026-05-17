@@ -103,6 +103,16 @@ resource "kubernetes_deployment" "dolt" {
       app  = "dolt"
       tier = local.tiers.aux
     }
+    annotations = {
+      # Keel is namespace-enrolled (keel.sh/enrolled=true on the namespace),
+      # but this deployment opts OUT of auto-updates: dolthub/dolt-sql-server:latest
+      # currently resolves to a broken 0.50.10 build. Pinned image lives in the
+      # container spec below. Codified here so TF state matches live, no drift.
+      "keel.sh/policy"       = "never"
+      "keel.sh/match-tag"    = "true"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
+    }
   }
   spec {
     replicas = 1
@@ -201,10 +211,9 @@ resource "kubernetes_deployment" "dolt" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      # Keel annotations are codified in metadata.annotations above (policy=never
+      # opts this deployment out of auto-updates — see the comment there).
     ]
   }
 }
@@ -251,6 +260,11 @@ resource "kubernetes_job" "presence_schema_migrate" {
     create = "5m"
   }
   depends_on = [kubernetes_deployment.dolt]
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+    ]
+  }
 }
 
 resource "kubernetes_service" "dolt" {
