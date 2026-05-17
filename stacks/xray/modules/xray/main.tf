@@ -23,7 +23,8 @@ resource "kubernetes_namespace" "xray" {
   metadata {
     name = "xray"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

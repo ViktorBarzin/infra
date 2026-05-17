@@ -29,7 +29,8 @@ resource "kubernetes_namespace" "mailserver" {
   metadata {
     name = "mailserver"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
     # connecting via localhost does not seem to work?
     # labels = {

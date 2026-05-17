@@ -72,19 +72,27 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
                 # - proxmox-csi, nfs-csi, nvidia, tigera-operator: hardware/CNI
                 #   coordination
                 # - cloudflared, headscale, wireguard, xray: VPN/tunnel critical
-                # - mailserver, crowdsec, redis, reverse-proxy: stateful critical
-                # - infra-maintenance, metrics-server: cluster utilities
+                # - infra-maintenance: cluster utilities
+                #
+                # 2026-05-17 ENROLLMENT EXPANSION: removed 15 namespaces from
+                # the exclude list per explicit user decision — auto-updates
+                # are now allowed in monitoring, mailserver, vault,
+                # descheduler, metrics-server, traefik, technitium, crowdsec,
+                # redis, reverse-proxy, reloader, headscale, wireguard, xray,
+                # cloudflared. The `force + match-tag` pairing limits each to
+                # digest-only watches under the deployment's CURRENT tag
+                # string — no tag-switching, just rolls on upstream digest
+                # changes for the pinned tag. A few are on floating tags
+                # (sclevine/wg:latest, teddysun/xray, prompve/...:latest,
+                # nginx:1-alpine, redis:8-alpine, error-pages:3); those will
+                # roll whenever upstream pushes. Acceptable risk — the user
+                # has alerts in place to catch regressions.
                 namespaces = [
                   "keel",
                   "calico-system",
                   "authentik",
-                  "vault",
                   "cnpg-system",
                   "dbaas",
-                  "monitoring",
-                  "traefik",
-                  "technitium",
-                  "mailserver",
                   "kyverno",
                   "metallb-system",
                   "external-secrets",
@@ -92,19 +100,9 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
                   "nfs-csi",
                   "nvidia",
                   "kube-system",
-                  "cloudflared",
-                  "crowdsec",
-                  "reverse-proxy",
-                  "reloader",
-                  "descheduler",
                   "vpa",
-                  "redis",
                   "sealed-secrets",
-                  "headscale",
-                  "wireguard",
-                  "xray",
                   "infra-maintenance",
-                  "metrics-server",
                   "tigera-operator",
                 ]
               }

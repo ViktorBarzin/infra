@@ -6,7 +6,8 @@ resource "kubernetes_namespace" "cloudflared" {
   metadata {
     name = "cloudflared"
     labels = {
-      tier = var.tier
+      tier               = var.tier
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
