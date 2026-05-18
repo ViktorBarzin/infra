@@ -46,6 +46,16 @@ resource "helm_release" "keel" {
   atomic = true
 
   values = [yamlencode({
+    # Prometheus pod-annotation scrape — picks up Keel-specific metrics
+    # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
+    # on container port 9300 /metrics. The cluster's `kubernetes-pods`
+    # Prometheus job keys on these annotations. Used by
+    # infra/scripts/upgrade_state.sh (the /upgrade-state skill).
+    podAnnotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/port"   = "9300"
+      "prometheus.io/path"   = "/metrics"
+    }
     polling = {
       enabled = true
       # Default poll cadence for workloads that don't override per-Deployment
