@@ -13,8 +13,8 @@
 # `nc -z <host> <port>` in a loop until the dependency is reachable.
 # Existing init containers are preserved — Kyverno appends to the array.
 
-resource "kubernetes_manifest" "inject_dependency_init_containers" {
-  manifest = {
+resource "kubectl_manifest" "inject_dependency_init_containers" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -68,5 +68,5 @@ resource "kubernetes_manifest" "inject_dependency_init_containers" {
         }
       ]
     }
-  }
+  })
 }

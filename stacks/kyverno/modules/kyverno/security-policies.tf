@@ -29,8 +29,8 @@ locals {
   ]
 }
 
-resource "kubernetes_manifest" "policy_deny_privileged" {
-  manifest = {
+resource "kubectl_manifest" "policy_deny_privileged" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -80,13 +80,13 @@ resource "kubernetes_manifest" "policy_deny_privileged" {
         }
       }]
     }
-  }
+  })
 
   depends_on = [helm_release.kyverno]
 }
 
-resource "kubernetes_manifest" "policy_deny_host_namespaces" {
-  manifest = {
+resource "kubectl_manifest" "policy_deny_host_namespaces" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -129,13 +129,13 @@ resource "kubernetes_manifest" "policy_deny_host_namespaces" {
         }
       }]
     }
-  }
+  })
 
   depends_on = [helm_release.kyverno]
 }
 
-resource "kubernetes_manifest" "policy_restrict_capabilities" {
-  manifest = {
+resource "kubectl_manifest" "policy_restrict_capabilities" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -180,7 +180,7 @@ resource "kubernetes_manifest" "policy_restrict_capabilities" {
         }
       }]
     }
-  }
+  })
 
   depends_on = [helm_release.kyverno]
 }
@@ -193,8 +193,8 @@ resource "kubernetes_manifest" "policy_restrict_capabilities" {
 # when the pull-through cache at 10.0.20.10 has transient failures.
 # For :latest or untagged images, set to Always so stale images don't persist.
 
-resource "kubernetes_manifest" "policy_set_image_pull_policy" {
-  manifest = {
+resource "kubectl_manifest" "policy_set_image_pull_policy" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -271,13 +271,13 @@ resource "kubernetes_manifest" "policy_set_image_pull_policy" {
         }
       ]
     }
-  }
+  })
 
   depends_on = [helm_release.kyverno]
 }
 
-resource "kubernetes_manifest" "policy_require_trusted_registries" {
-  manifest = {
+resource "kubectl_manifest" "policy_require_trusted_registries" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -325,7 +325,7 @@ resource "kubernetes_manifest" "policy_require_trusted_registries" {
         }
       }]
     }
-  }
+  })
 
   depends_on = [helm_release.kyverno]
 }
