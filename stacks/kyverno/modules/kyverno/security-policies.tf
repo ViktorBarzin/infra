@@ -1,8 +1,33 @@
 # =============================================================================
-# Pod Security Policies (Audit Mode)
+# Pod Security Policies
 # =============================================================================
 # Kyverno validate policies for pod security standards.
-# All policies start in Audit mode - violations are logged but not blocked.
+# Wave 1 (locked 2026-05-18, beads code-8ywc): deny-privileged-containers,
+# deny-host-namespaces, restrict-sys-admin flipped from Audit → Enforce with
+# a shared 32-namespace exclude list. require-trusted-registries STAYS in
+# Audit until the allowlist pattern is tightened beyond `*/*` (separate work
+# item — current pattern allows everything with a slash, so Enforce would be
+# a no-op for supply-chain protection).
+# failurePolicy stays Ignore (chart-level) to prevent admission webhook
+# failures from cascading.
+
+# Shared namespace exclude list — 31 critical namespaces from the Keel rollout
+# (memory id=1970) + `frigate` (legitimately needs host access for camera RTSP).
+locals {
+  security_policy_exclude_namespaces = [
+    "keel", "calico-system", "authentik", "vault", "cnpg-system", "dbaas",
+    "monitoring", "traefik", "technitium", "mailserver", "kyverno",
+    "metallb-system", "external-secrets", "proxmox-csi", "nfs-csi", "nvidia",
+    "kube-system", "cloudflared", "crowdsec", "reverse-proxy", "reloader",
+    "descheduler", "vpa", "redis", "sealed-secrets", "headscale", "wireguard",
+    "xray", "infra-maintenance", "metrics-server", "tigera-operator", "frigate",
+    # Additions discovered during wave 1 enforce flip — these contain workloads
+    # that legitimately need privileged / hostNetwork / SYS_ADMIN:
+    "kured",          # kured DaemonSet is privileged (manages node reboots)
+    "default",        # etcd backup + defrag CronJobs use hostNetwork
+    "changedetection", # uses SYS_ADMIN for chromium sandbox
+  ]
+}
 
 resource "kubernetes_manifest" "policy_deny_privileged" {
   manifest = {
@@ -18,7 +43,7 @@ resource "kubernetes_manifest" "policy_deny_privileged" {
       }
     }
     spec = {
-      validationFailureAction = "Audit"
+      validationFailureAction = "Enforce"
       background              = true
       rules = [{
         name = "deny-privileged"
@@ -32,7 +57,7 @@ resource "kubernetes_manifest" "policy_deny_privileged" {
         exclude = {
           any = [{
             resources = {
-              namespaces = ["frigate", "nvidia", "monitoring"]
+              namespaces = local.security_policy_exclude_namespaces
             }
           }]
         }
@@ -74,7 +99,7 @@ resource "kubernetes_manifest" "policy_deny_host_namespaces" {
       }
     }
     spec = {
-      validationFailureAction = "Audit"
+      validationFailureAction = "Enforce"
       background              = true
       rules = [{
         name = "deny-host-namespaces"
@@ -88,7 +113,7 @@ resource "kubernetes_manifest" "policy_deny_host_namespaces" {
         exclude = {
           any = [{
             resources = {
-              namespaces = ["frigate", "monitoring"]
+              namespaces = local.security_policy_exclude_namespaces
             }
           }]
         }
@@ -123,7 +148,7 @@ resource "kubernetes_manifest" "policy_restrict_capabilities" {
       }
     }
     spec = {
-      validationFailureAction = "Audit"
+      validationFailureAction = "Enforce"
       background              = true
       rules = [{
         name = "restrict-sys-admin"
@@ -137,7 +162,7 @@ resource "kubernetes_manifest" "policy_restrict_capabilities" {
         exclude = {
           any = [{
             resources = {
-              namespaces = ["nvidia", "monitoring"]
+              namespaces = local.security_policy_exclude_namespaces
             }
           }]
         }
@@ -265,6 +290,11 @@ resource "kubernetes_manifest" "policy_require_trusted_registries" {
       }
     }
     spec = {
+      # NOTE: Stays in Audit mode pending allowlist tightening. The current
+      # pattern includes `*/*` which matches any image with a registry — flipping
+      # to Enforce would not actually restrict supply chain. Tightening the
+      # allowlist to a precise enumeration of in-use registries is tracked
+      # separately under beads code-8ywc (W1.5 follow-up).
       validationFailureAction = "Audit"
       background              = true
       rules = [{
@@ -273,6 +303,13 @@ resource "kubernetes_manifest" "policy_require_trusted_registries" {
           any = [{
             resources = {
               kinds = ["Pod"]
+            }
+          }]
+        }
+        exclude = {
+          any = [{
+            resources = {
+              namespaces = local.security_policy_exclude_namespaces
             }
           }]
         }
