@@ -142,31 +142,60 @@ resource "helm_release" "vault" {
         name = "vault-unseal-key"
       }]
 
-      # Auto-unseal sidecar — polls every 10s, unseals if sealed
-      extraContainers = [{
-        name    = "auto-unseal"
-        image   = "hashicorp/vault:1.18.1"
-        command = ["/bin/sh", "-c"]
-        args = [join("", [
-          "while true; do ",
-          "sealed=$(VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json 2>/dev/null | grep '\"sealed\"' | grep -o 'true\\|false'); ",
-          "if [ \"$sealed\" = \"true\" ]; then ",
-          "echo \"$(date): Vault is sealed, unsealing...\"; ",
-          "VAULT_ADDR=http://127.0.0.1:8200 vault operator unseal $(cat /vault/unseal-key/unseal-key); ",
-          "fi; ",
-          "sleep 10; ",
-          "done"
-        ])]
-        volumeMounts = [{
-          name      = "userconfig-vault-unseal-key" # Helm chart prefixes extraVolumes with "userconfig-"
-          mountPath = "/vault/unseal-key"
-          readOnly  = true
-        }]
-        resources = {
-          requests = { cpu = "10m", memory = "128Mi" }
-          limits   = { memory = "128Mi" }
+      # Sidecars:
+      #   1. auto-unseal — polls every 10s, unseals if sealed
+      #   2. audit-tail — tails /vault/audit/vault-audit.log to stdout so Alloy
+      #      (the DaemonSet log shipper) picks it up via kubelet log path and
+      #      forwards to Loki with job=vault-audit. Without this sidecar the
+      #      audit log sits on the audit PVC and never reaches Loki — meaning
+      #      V1-V7 alert rules can't fire. See docs/architecture/security.md
+      #      "Audit Logging & Anomaly Detection".
+      extraContainers = [
+        {
+          name    = "auto-unseal"
+          image   = "hashicorp/vault:1.18.1"
+          command = ["/bin/sh", "-c"]
+          args = [join("", [
+            "while true; do ",
+            "sealed=$(VAULT_ADDR=http://127.0.0.1:8200 vault status -format=json 2>/dev/null | grep '\"sealed\"' | grep -o 'true\\|false'); ",
+            "if [ \"$sealed\" = \"true\" ]; then ",
+            "echo \"$(date): Vault is sealed, unsealing...\"; ",
+            "VAULT_ADDR=http://127.0.0.1:8200 vault operator unseal $(cat /vault/unseal-key/unseal-key); ",
+            "fi; ",
+            "sleep 10; ",
+            "done"
+          ])]
+          volumeMounts = [{
+            name      = "userconfig-vault-unseal-key" # Helm chart prefixes extraVolumes with "userconfig-"
+            mountPath = "/vault/unseal-key"
+            readOnly  = true
+          }]
+          resources = {
+            requests = { cpu = "10m", memory = "128Mi" }
+            limits   = { memory = "128Mi" }
+          }
+        },
+        {
+          name    = "audit-tail"
+          image   = "busybox:1.37"
+          command = ["/bin/sh", "-c"]
+          # `tail -F` follows the file across rotations. Until the file exists
+          # (first audit write) we wait without spinning. Output flushed line
+          # by line so Alloy gets timely log lines.
+          args = [
+            "set -e; mkdir -p /vault/audit; while [ ! -f /vault/audit/vault-audit.log ]; do sleep 5; done; exec tail -F /vault/audit/vault-audit.log"
+          ]
+          volumeMounts = [{
+            name      = "audit"
+            mountPath = "/vault/audit"
+            readOnly  = true
+          }]
+          resources = {
+            requests = { cpu = "5m", memory = "16Mi" }
+            limits   = { memory = "32Mi" }
+          }
         }
-      }]
+      ]
     }
 
     ui       = { enabled = true }
