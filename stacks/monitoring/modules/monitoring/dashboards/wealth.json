@@ -2226,6 +2226,426 @@
         }
       ],
       "timeFrom": "6y"
+    },
+    {
+      "id": 28,
+      "title": "META vests — value at vest vs today",
+      "description": "One row per BUY (vest event). Vest-day price × shares is what each tranche was worth when it landed; 'value today' is what the same shares would be worth at META's current quote. The Hypo gain columns show the unrealized P&L if Viktor had held every vest.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 127
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest price"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest value"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "today price"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value today"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hypo gain"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hypo %"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "shares",
+            "vest value",
+            "value today",
+            "hypo gain"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH px AS (SELECT close AS today_price FROM quote_latest WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137') SELECT activity_date::date AS vest_date, quantity AS shares, unit_price AS \"vest price\", (quantity*unit_price) AS \"vest value\", (SELECT today_price FROM px) AS \"today price\", (quantity * (SELECT today_price FROM px)) AS \"value today\", (quantity * ((SELECT today_price FROM px) - unit_price)) AS \"hypo gain\", (((SELECT today_price FROM px) / unit_price - 1) * 100) AS \"hypo %\" FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY' ORDER BY activity_date"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "title": "META sells — realized PNL vs 'if held until today'",
+      "description": "One row per SELL, with vest-price matched FIFO against the original BUY lots. Realized P&L = (sell - matched vest) × shares. Missed-opportunity = (today's META price - sell price) × shares; positive means holding would have outperformed selling.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 139
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sell price"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest price (FIFO)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "realized PNL"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PNL if held"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "missed by"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "shares",
+            "realized PNL",
+            "PNL if held",
+            "missed by"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH px AS (SELECT close AS today_price FROM quote_latest WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137'), lots AS (SELECT activity_date::date AS vest_date, quantity, unit_price AS vest_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS lot_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS lot_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY'), sells AS (SELECT activity_date::date AS sell_date, quantity AS sell_qty, unit_price AS sell_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS sell_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS sell_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='SELL'), matched AS (SELECT s.sell_date, s.sell_price, l.vest_price, GREATEST(LEAST(l.lot_end, s.sell_end) - GREATEST(l.lot_start, s.sell_start), 0::numeric) AS qty FROM sells s CROSS JOIN lots l WHERE LEAST(l.lot_end, s.sell_end) > GREATEST(l.lot_start, s.sell_start)) SELECT sell_date, SUM(qty) AS shares, MIN(sell_price) AS \"sell price\", (SUM(qty*vest_price)/SUM(qty)) AS \"vest price (FIFO)\", SUM(qty*(sell_price-vest_price)) AS \"realized PNL\", (SUM(qty) * ((SELECT today_price FROM px) - SUM(qty*vest_price)/SUM(qty))) AS \"PNL if held\", (SUM(qty) * ((SELECT today_price FROM px) - MIN(sell_price))) AS \"missed by\" FROM matched GROUP BY sell_date ORDER BY sell_date"
+        }
+      ]
     }
   ],
   "refresh": "5m",
