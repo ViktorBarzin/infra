@@ -89,6 +89,15 @@ resource "helm_release" "vault" {
               tls_disable     = 1
               address         = "[::]:8200"
               cluster_address = "[::]:8201"
+
+              # Trust X-Forwarded-For from in-cluster sources only (Traefik runs in pod CIDR).
+              # Without this, every audit log entry shows Traefik's pod IP instead of the
+              # real client IP — V7 (Viktor identity from non-allowlist source IP) needs the
+              # real client IP to work. Pod CIDR = 10.10.0.0/16 per kubeadm-config.
+              # See docs/architecture/security.md "Audit Logging & Anomaly Detection".
+              x_forwarded_for_authorized_addrs      = "10.10.0.0/16"
+              x_forwarded_for_reject_not_authorized = false
+              x_forwarded_for_reject_not_present    = false
             }
 
             storage "raft" {
