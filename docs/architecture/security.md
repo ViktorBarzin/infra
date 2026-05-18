@@ -111,16 +111,20 @@ Namespaces are labeled with a tier (`tier: 0` through `tier: 4`). Kyverno auto-g
 
 This prevents resource exhaustion and enforces governance without manual quota management.
 
-#### Security Policies (ALL in Audit Mode)
+#### Security Policies
 
-**Why audit mode?** Gradual rollout without breaking existing workloads. Policies collect violations, then selectively enforced after cleanup.
+**Why audit mode first?** Gradual rollout without breaking existing workloads. Policies collect violations, then selectively enforced after cleanup.
 
-| Policy | Purpose | Enforcement |
-|--------|---------|-------------|
-| `deny-privileged-containers` | Block privileged pods | Audit |
-| `deny-host-namespaces` | Block hostNetwork/hostPID/hostIPC | Audit |
-| `restrict-sys-admin` | Block CAP_SYS_ADMIN | Audit |
-| `require-trusted-registries` | Only allow approved image registries | Audit |
+**Wave 1 plan (locked 2026-05-18, see beads `code-8ywc`):** all four below flip from Audit → Enforce with `failurePolicy: Ignore` preserved and an exclude list covering the 31 critical namespaces (keel, calico-system, authentik, vault, cnpg-system, dbaas, monitoring, traefik, technitium, mailserver, kyverno, metallb-system, external-secrets, proxmox-csi, nfs-csi, nvidia, kube-system, cloudflared, crowdsec, reverse-proxy, reloader, descheduler, vpa, redis, sealed-secrets, headscale, wireguard, xray, infra-maintenance, metrics-server, tigera-operator). Phased: one policy per day with PolicyReport observation.
+
+| Policy | Purpose | Current | Planned (wave 1) |
+|--------|---------|---------|------------------|
+| `deny-privileged-containers` | Block privileged pods | Audit | **Enforce** |
+| `deny-host-namespaces` | Block hostNetwork/hostPID/hostIPC | Audit | **Enforce** |
+| `restrict-sys-admin` | Block CAP_SYS_ADMIN | Audit | **Enforce** |
+| `require-trusted-registries` | Only allow approved image registries (forgejo.viktorbarzin.me, docker.io, ghcr.io, quay.io, registry.k8s.io, gcr.io, oci://ghcr.io/sergelogvinov) | Audit | **Enforce** |
+
+Cosign `verify-images` is **deferred** beyond wave 1 — needs image-signing infrastructure (Sigstore / cosign + KMS) before it can enforce meaningfully.
 
 #### Operational Policies
 
@@ -162,6 +166,98 @@ Removed April 2026. The rewrite-body Traefik plugin used to inject hidden trap l
 - Trap links are no longer injected into real pages, but bots that discover `poison.viktorbarzin.me` directly still get tarpitted and poisoned
 
 **Implementation**: See `stacks/poison-fountain/` and `stacks/platform/modules/traefik/middleware.tf`
+
+### Audit Logging & Anomaly Detection (Wave 1 — planned 2026-05-18)
+
+Beads epic: `code-8ywc`. **Status: planned, not yet implemented.** The block below documents the locked design so future sessions don't re-grill.
+
+Response model: **(I) Slack-only, daily skim.** All security alerts land in a new `#security` Slack channel via Alertmanager. No paging. Mean detection time accepted as ~12-24h; the design weight sits on prevention (Kyverno enforce, NetworkPolicy default-deny egress) rather than runtime detection.
+
+#### Detection sources
+
+| Source | Mechanism | Ships via | Loki job label |
+|---|---|---|---|
+| K8s API audit log | Custom audit policy on kube-apiserver: drop `get`/`list`/`watch` at `None` for most resources, log writes at `Metadata`, secret reads at `Metadata`, `exec`/`portforward` at `RequestResponse`, exclude kubelet+controller-manager noise. Codified in `stacks/infra` kubeadm config templating. | Alloy DaemonSet tails `/var/log/kubernetes/audit/*.log` | `job=kube-audit` |
+| Vault audit log | `file` audit device on existing Vault PVC. Vault listener config sets `x_forwarded_for_authorized_addrs` trusting Traefik pod CIDR so `remote_addr` is the real client IP, not Traefik's. | Alloy tails audit log file | `job=vault-audit` |
+| PVE sshd auth log | journald `_SYSTEMD_UNIT=ssh.service` | promtail systemd unit on Proxmox host (192.168.1.127) | `job=sshd-pve` |
+| Calico flow log | `flowLogsFileEnabled: true` in Calico Felix config | Alloy (cluster-wide) | `job=calico-flow` (W1.6 only) |
+
+#### Alert rules (16 total)
+
+Routed via **Loki ruler → Alertmanager → `#security` Slack receiver**. Same handling path as existing infra alerts — silenceable in Alertmanager UI, history queryable, severity labels (critical/warning/info) inside the single `#security` channel.
+
+**K8s API audit (K2-K9, 8 rules — K1 cluster-admin-grant intentionally skipped):**
+
+| # | Event | Severity |
+|---|---|---|
+| K2 | ServiceAccount token used from outside cluster (sourceIPs not in pod CIDR or trusted LAN) | critical |
+| K3 | Secret READ in `vault`, `sealed-secrets`, `external-secrets` namespaces by a non-allowlisted ServiceAccount | critical |
+| K4 | Exec into a pod in `vault`, `kube-system`, `dbaas`, `cnpg-system` (excluding `me@viktorbarzin.me` + 1 break-glass SA) | warning |
+| K5 | >5 deletes of `Pod`, `Secret`, or `ConfigMap` in 60s by any single actor | critical |
+| K6 | `audit-log-path` flag or audit policy modified on kube-apiserver | critical |
+| K7 | New ClusterRole created with `verbs: ["*"]` and `resources: ["*"]` | warning |
+| K8 | Anonymous binding granted (any RoleBinding/CRB referencing `system:anonymous` or `system:unauthenticated`) | critical |
+| K9 | Authenticated request where `user.username == "me@viktorbarzin.me"` AND `sourceIPs[0]` NOT in allowlist CIDRs | critical |
+
+**Vault audit (V1-V7):**
+
+| # | Event | Severity |
+|---|---|---|
+| V1 | Root token created | critical |
+| V2 | Audit device disabled or modified | critical |
+| V3 | Seal status changed (`sys/seal` write) | critical |
+| V4 | Policy written or modified (allowlist Terraform-driven writes by source IP / token role) | warning |
+| V5 | Authentication failure spike >10/min on any auth method | warning |
+| V6 | Token created with policies different from parent (privilege escalation) | critical |
+| V7 | Vault audit event where `auth.entity_id == <viktor-entity-id>` AND `remote_addr` NOT in allowlist CIDRs | critical |
+
+**Host (S1):**
+
+| # | Event | Severity |
+|---|---|---|
+| S1 | PVE sshd auth success from source IP NOT in allowlist | critical |
+
+#### Allowlist — "expected source IPs" for K2, K9, V7, S1
+
+| CIDR | Source |
+|---|---|
+| `10.0.20.0/22` | VLAN 20 (K8s cluster + main LAN) |
+| `192.168.1.0/24` | Proxmox host LAN + Sofia LAN (same RFC1918 block in both physical locations; cross-site traffic transits Headscale so the CIDR matches only on-LAN clients in either location) |
+| K8s pod CIDR (verify at implementation time) | In-cluster pods talking to apiserver |
+| K8s service CIDR | Service-to-apiserver traffic |
+| Headscale tailnet | VPN-connected devices |
+
+**Policy: no public-IP access ever.** Vault, kube-apiserver, PVE sshd must transit a trusted LAN or Headscale. Anything else fires an alert.
+
+#### Why no canary tokens
+
+Original plan included canary tokens (fake K8s Secret, Vault KV path, PVE file, sinkhole hostname). Rejected because Viktor routinely greps `secret/viktor` (135 keys) and lists `kubectl get secret -A` — any read-trigger canary self-fires. Use-based canaries (zero-RBAC SA tokens with audit alerts on use) were also considered but rejected in favor of cleaner source-IP anomaly detection (K9, V7) on REAL tokens — same threat model, no fake-token operational burden.
+
+#### Why no K1 (cluster-admin grant detection)
+
+Viktor opted out. Gap covered indirectly by K7 (new `*,*` ClusterRole created), K8 (anonymous binding), and K3 (secret read on Vault namespace) — most attacker progressions toward cluster-admin trigger one of these.
+
+#### IOPS / disk-wear
+
+Custom audit policy reduces volume ~80-90% vs default Metadata-everywhere. Loki tuned for fewer larger chunks: `chunk_target_size: 1.5MB`, `chunk_idle_period: 30m`, snappy compression. Retention 90d for security streams (matches Technitium DNS query log precedent). Net estimate: ~1-2 GB/day additional disk writes after tuning.
+
+### NetworkPolicy Default-Deny Egress (Wave 1 — observe-then-enforce, tier 3+4)
+
+Beads: `code-8ywc` W1.6 + W1.7. **Status: planned.**
+
+**Approach (γ): cluster-wide observe-then-enforce.**
+
+1. **Week 0:** Enable Calico flow logs cluster-wide. Apply a GlobalNetworkPolicy with selector `tier in {tier-3, tier-4}`, `action: Log` (no Deny). Ship flow logs to Loki.
+2. **Week 1:** Build per-namespace egress allowlist from observed traffic. Common allowlist module `tier3_egress_baseline` covers DNS, NTP, internal Vault/ESO/Authentik, Brevo SMTP, Cloudflare API, OAuth providers. Per-namespace add-ons for service-specific external destinations.
+3. **Week 2-3:** Apply default-deny + allowlist per-namespace, starting `recruiter-responder` (smallest egress footprint — local llama-cpp). Watch 24-48h per namespace, iterate. Roll out 3-5 namespaces/day.
+
+**Scope exclusions:** tier 0/1/2 namespaces (defer to wave 2), 31 critical infra namespaces (same exclude list as Kyverno).
+
+**DNS handling:** Calico GlobalNetworkPolicy supports domain-based rules via the `domains:` selector which queries CoreDNS internally. Static IPs reserved for fixed-IP services (Brevo SMTP relay).
+
+**Known risks:**
+- Rare-event misses: a Sunday-only CronJob's egress won't appear in 7 days of flow logs. Mitigation: extend observation to 2 weeks for namespaces with weekly CronJobs.
+- Mass-rollout cascade: the 26h March 2026 outage (memory id=390) was a mass-change cascade. Mitigation: phased per-namespace with health-check pauses, similar to the 2026-05-17 Keel phased rollout (memory id=1972).
 
 ### TLS & HTTP/3
 
