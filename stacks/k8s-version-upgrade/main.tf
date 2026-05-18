@@ -26,7 +26,12 @@
 
 variable "schedule" {
   type    = string
-  default = "0 12 * * 0" # Sunday 12:00 UTC — outside kured window
+  # Daily 12:00 UTC — outside kured window (kured runs 02:00-06:00
+  # London). Was weekly Sunday until 2026-05-18; daily picks up upstream
+  # patch releases the same day they land. Concurrency is bounded by the
+  # CronJob's Forbid policy + Job-name idempotency (the detection job
+  # skips spawning a preflight Job if one already exists).
+  default = "0 12 * * *"
 }
 
 variable "enabled" {
