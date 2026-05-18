@@ -384,7 +384,7 @@ collect_k8s() {
 
     if [[ "$last_run_int" -gt 0 ]]; then
         local age=$((NOW_EPOCH - last_run_int))
-        K8S_LAST_CHECK="$(human_age "$age") (Sun cron)"
+        K8S_LAST_CHECK="$(human_age "$age") (daily cron)"
         if [[ -n "$target_patch" ]]; then
             K8S_LAST_DETECT_LINE="last run $(human_age "$age"): available v$target_patch (patch)"
         elif [[ -n "$target_minor" ]]; then
@@ -415,7 +415,7 @@ collect_k8s() {
         fi
     fi
 
-    K8S_NEXT="$(next_sunday_noon_utc)"
+    K8S_NEXT="$(next_daily_noon_utc)"
 
     # Status logic.
     local stalled=0
@@ -453,20 +453,15 @@ collect_k8s() {
     fi
 }
 
-# Next Sun 12:00 UTC — pure bash date math, no croniter.
-next_sunday_noon_utc() {
-    local now_iso target_iso
-    now_iso=$(date -u +%FT%TZ)
-    # date %u: Mon=1..Sun=7. Sun=7.
-    local dow; dow=$(date -u +%u)
-    local days_until=$(( (7 - dow) % 7 ))
-    # If today is Sunday and it's before 12:00 UTC, "next" is today.
-    if [[ "$dow" == "7" ]]; then
-        local hr; hr=$(date -u +%H)
-        [[ "$hr" -lt 12 ]] && days_until=0 || days_until=7
-    fi
-    target_iso=$(date -u -d "+$days_until days" +"%Y-%m-%d 12:00 UTC")
-    echo "Sun $target_iso"
+# Next daily 12:00 UTC — pure bash date math, no croniter. Schedule was
+# weekly Sunday until 2026-05-18; now `0 12 * * *` in the
+# k8s-version-upgrade stack. If we're still before today's 12:00 UTC,
+# the next run is today; otherwise it's tomorrow.
+next_daily_noon_utc() {
+    local hr days_ahead
+    hr=$(date -u +%H)
+    if [[ "$hr" -lt 12 ]]; then days_ahead=0; else days_ahead=1; fi
+    date -u -d "+$days_ahead days" +"%a %Y-%m-%d 12:00 UTC"
 }
 
 # --- Renderers ---
