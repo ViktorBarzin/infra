@@ -18,8 +18,8 @@ resource "kubernetes_secret" "tls_secret" {
   }
 }
 
-resource "kubernetes_manifest" "sync_tls_secret" {
-  manifest = {
+resource "kubectl_manifest" "sync_tls_secret" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -61,7 +61,7 @@ resource "kubernetes_manifest" "sync_tls_secret" {
         }
       ]
     }
-  }
+  })
 
   depends_on = [
     helm_release.kyverno,

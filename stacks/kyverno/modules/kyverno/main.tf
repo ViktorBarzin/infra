@@ -136,8 +136,8 @@ resource "helm_release" "kyverno" {
 #
 # Uses namespaceSelector to match tiers — no API call needed.
 # One rule per tier so Kyverno resolves the tier value from its informer cache.
-resource "kubernetes_manifest" "mutate_tier_from_namespace" {
-  manifest = {
+resource "kubectl_manifest" "mutate_tier_from_namespace" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -180,10 +180,10 @@ resource "kubernetes_manifest" "mutate_tier_from_namespace" {
         }
       }]
     }
-  }
+  })
 }
 
-# resource "kubernetes_manifest" "enforce_pod_tier_label" {
+# resource "kubectl_manifest" "enforce_pod_tier_label" {
 #   manifest = {
 #     apiVersion = "kyverno.io/v1"
 #     kind       = "ClusterPolicy"
