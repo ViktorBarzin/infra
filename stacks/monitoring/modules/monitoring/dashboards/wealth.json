@@ -2764,6 +2764,229 @@
           "rawSql": "SELECT activity_date::date::timestamp AS \"time\", SUM(quantity*unit_price) AS \"vest value\", SUM(quantity) AS \"shares\" FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY' GROUP BY activity_date::date ORDER BY activity_date::date"
         }
       ]
+    },
+    {
+      "id": 31,
+      "title": "META vests — realized PNL (FIFO-matched against sells)",
+      "description": "One row per vest with realized P&L computed by FIFO-matching that vest's shares against subsequent sells. Each vest's shares may be spread across multiple sells; the matched sell-price column is the weighted average. 'Avg days held' is the average gap between this vest's date and the sell dates that consumed its shares. Compare against panel 28 to see realized vs hypo-if-held.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 162
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares sold"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest price"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest value"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg sell price"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sell value"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "realized PNL"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PNL %"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "days held (avg)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "unit",
+                "value": "d"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "shares sold",
+            "vest value",
+            "sell value",
+            "realized PNL"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH lots AS (SELECT id, activity_date::date AS vest_date, quantity, unit_price AS vest_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS lot_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS lot_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY'), sells AS (SELECT activity_date::date AS sell_date, quantity AS sell_qty, unit_price AS sell_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS sell_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS sell_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='SELL'), matched AS (SELECT l.vest_date, l.vest_price, s.sell_date, s.sell_price, GREATEST(LEAST(l.lot_end, s.sell_end) - GREATEST(l.lot_start, s.sell_start), 0::numeric) AS qty FROM lots l CROSS JOIN sells s WHERE LEAST(l.lot_end, s.sell_end) > GREATEST(l.lot_start, s.sell_start)) SELECT vest_date, SUM(qty) AS \"shares sold\", (SUM(qty*vest_price)/NULLIF(SUM(qty),0)) AS \"vest price\", SUM(qty*vest_price) AS \"vest value\", (SUM(qty*sell_price)/NULLIF(SUM(qty),0)) AS \"avg sell price\", SUM(qty*sell_price) AS \"sell value\", SUM(qty*(sell_price-vest_price)) AS \"realized PNL\", (SUM(qty*(sell_price-vest_price))/NULLIF(SUM(qty*vest_price),0)*100) AS \"PNL %\", AVG((sell_date-vest_date)) AS \"days held (avg)\" FROM matched GROUP BY vest_date ORDER BY vest_date"
+        }
+      ]
     }
   ],
   "refresh": "5m",
