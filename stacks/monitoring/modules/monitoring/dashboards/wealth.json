@@ -2646,6 +2646,124 @@
           "rawSql": "WITH px AS (SELECT close AS today_price FROM quote_latest WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137'), lots AS (SELECT activity_date::date AS vest_date, quantity, unit_price AS vest_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS lot_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS lot_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY'), sells AS (SELECT activity_date::date AS sell_date, quantity AS sell_qty, unit_price AS sell_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS sell_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS sell_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='SELL'), matched AS (SELECT s.sell_date, s.sell_price, l.vest_price, GREATEST(LEAST(l.lot_end, s.sell_end) - GREATEST(l.lot_start, s.sell_start), 0::numeric) AS qty FROM sells s CROSS JOIN lots l WHERE LEAST(l.lot_end, s.sell_end) > GREATEST(l.lot_start, s.sell_start)) SELECT sell_date, SUM(qty) AS shares, MIN(sell_price) AS \"sell price\", (SUM(qty*vest_price)/SUM(qty)) AS \"vest price (FIFO)\", SUM(qty*(sell_price-vest_price)) AS \"realized PNL\", (SUM(qty) * ((SELECT today_price FROM px) - SUM(qty*vest_price)/SUM(qty))) AS \"PNL if held\", (SUM(qty) * ((SELECT today_price FROM px) - MIN(sell_price))) AS \"missed by\" FROM matched GROUP BY sell_date ORDER BY sell_date"
         }
       ]
+    },
+    {
+      "id": 30,
+      "title": "META vest cadence — value vs share count (per vest event)",
+      "description": "Per-vest event timeline. Left axis (USD): vest value = shares × vest-day META price. Right axis: number of shares vested. Each point is one vest date (sometimes a single date has multiple BUY rows — aggregated here).",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 151
+      },
+      "timeFrom": "6y",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "pointSize": 7,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Vest value (USD)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Shares vested"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT activity_date::date::timestamp AS \"time\", SUM(quantity*unit_price) AS \"vest value\", SUM(quantity) AS \"shares\" FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY' GROUP BY activity_date::date ORDER BY activity_date::date"
+        }
+      ]
     }
   ],
   "refresh": "5m",
