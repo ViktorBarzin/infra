@@ -2224,7 +2224,8 @@
           "format": "time_series",
           "rawSql": "SELECT valuation_date::timestamp AS \"time\", total_value AS rsu_value FROM daily_account_valuation WHERE account_id = '72d34e09-c1a6-41aa-99ea-abe3305ecc4a' AND $__timeFilter(valuation_date) ORDER BY valuation_date"
         }
-      ]
+      ],
+      "timeFrom": "6y"
     }
   ],
   "refresh": "5m",
