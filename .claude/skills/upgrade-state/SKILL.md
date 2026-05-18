@@ -8,7 +8,7 @@ description: |
   (2) User asks "what's pending upgrade" or "what's the upgrade state",
   (3) User asks if Keel / kured / k8s-version-check is healthy,
   (4) User asks about kept-back / held packages or pending reboots,
-  (5) Before the Sunday `k8s-version-check` CronJob fires (weekly survey).
+  (5) Periodic survey before the next `k8s-version-check` daily run.
   Read-only — no `--fix`. Exits 0 healthy / 1 attention / 2 stalled.
 author: Claude Code
 version: 1.0.0
@@ -51,7 +51,7 @@ Exit codes: `0` healthy, `1` attention warranted, `2` stalled / broken.
 |---|---|---|---|
 | **Apps** | Keel polls every watched Deployment's container registry; rolls on new digest | hourly | Prom (`pending_approvals`, `registries_scanned_total`), Keel pod logs |
 | **OS** | `unattended-upgrades` in-release patching; `kured` reboots when `/var/run/reboot-required` is set | daily 02:00-06:00 London | SSH fan-out to all 5 nodes |
-| **K8s** | `k8s-version-check` CronJob detects new kubeadm patch/minor; spawns the Job-chain that drains+upgrades node-by-node | Sun 12:00 UTC | Pushgateway (`k8s_upgrade_*`), `kubectl get nodes` |
+| **K8s** | `k8s-version-check` CronJob detects new kubeadm patch/minor; spawns the Job-chain that drains+upgrades node-by-node | daily 12:00 UTC | Pushgateway (`k8s_upgrade_*`), `kubectl get nodes` |
 
 The K8s pipeline pushes a small set of gauges to the Prometheus
 Pushgateway (`prometheus-prometheus-pushgateway.monitoring:9091`):
@@ -138,8 +138,9 @@ kubectl -n kured get pods -l name=kured-sentinel-gate
 
 ### K8s `→` — patch/minor available
 
-Detection ran, target identified, chain NOT started. This is normal
-between Sun 12:00 UTC detection and the next Job chain.
+Detection ran, target identified, chain NOT started. The chain spawns
+on the same daily detection cycle — typically within ~24h of the
+target first being detected.
 
 ```bash
 # Inspect Pushgateway state
