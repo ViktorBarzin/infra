@@ -167,9 +167,23 @@ Removed April 2026. The rewrite-body Traefik plugin used to inject hidden trap l
 
 **Implementation**: See `stacks/poison-fountain/` and `stacks/platform/modules/traefik/middleware.tf`
 
-### Audit Logging & Anomaly Detection (Wave 1 — planned 2026-05-18)
+### Audit Logging & Anomaly Detection (Wave 1)
 
-Beads epic: `code-8ywc`. **Status: planned, not yet implemented.** The block below documents the locked design so future sessions don't re-grill.
+Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
+
+| Item | State |
+|---|---|
+| W1.2 Vault `file` audit device | **LIVE** — `vault_audit.file` in `stacks/vault/main.tf:287`, writing to `/vault/audit/vault-audit.log` on `proxmox-lvm-encrypted` PVC |
+| W1.2 Vault `x_forwarded_for_authorized_addrs = 10.10.0.0/16` | **LIVE** — applied via `tg apply -target=helm_release.vault` on 2026-05-18; all 3 vault pods restarted cleanly |
+| W1.2 Vault audit log shipping to Loki | **PARTIAL** — `audit-tail` sidecar live in vault pods (emits JSON audit lines to stdout, viewable via `kubectl logs -n vault vault-X -c audit-tail`). Actual shipping to Loki BLOCKED on `code-146x` (Loki not deployed in the cluster despite TF code existing). |
+| W1.1 K8s API audit policy | **PENDING** — needs `stacks/infra` kubeadm-config templating |
+| W1.3 Source-IP anomaly rules (K9, V7, S1) | **PENDING** — gated on `code-146x` (Loki + Alloy not deployed) and W1.1 audit-policy codification |
+| W1.4 Kyverno security policies → Enforce | **CODE READY, APPLY BLOCKED** by `code-e2dp` (terraform-provider-kubernetes v3.1.0 crash on `kubernetes_manifest` plan) |
+| W1.5 Kyverno trusted-registries enforce | **CODE PARTIAL** (exclude list added; allowlist tightening + enforce-flip deferred until `code-e2dp` resolved) |
+| W1.6 Calico flow logs + log-only GNP | **BLOCKED** on `code-3ad` (Calico stack adopts only namespaces today; `Installation` CR + Felix config not under TF) |
+| W1.7 NetworkPolicy phased enforce | **BLOCKED** on W1.6 observation window |
+
+The block below documents the locked design.
 
 Response model: **(I) Slack-only, daily skim.** All security alerts land in a new `#security` Slack channel via Alertmanager. No paging. Mean detection time accepted as ~12-24h; the design weight sits on prevention (Kyverno enforce, NetworkPolicy default-deny egress) rather than runtime detection.
 
