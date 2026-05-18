@@ -167,8 +167,14 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
         }
 
         container {
-          name  = "mysql"
-          image = "mysql:8.4"
+          name = "mysql"
+          # Pinned to 8.4.8 — 8.4.9 DD upgrade got stuck (no progress, no CPU)
+          # repeatedly across multiple attempts. 2026-05-18 recovery: wiping
+          # PVC + restoring from 2026-05-18 00:30 UTC mysqldump (taken while
+          # MySQL was healthy on 8.4.8). Image stays on 8.4.8 until we plan
+          # a proper upgrade window with maintenance + faster IO. Beads
+          # code-eme8 + code-k40p.
+          image = "mysql:8.4.8"
 
           port {
             container_port = 3306
