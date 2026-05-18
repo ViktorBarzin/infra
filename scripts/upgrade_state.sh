@@ -183,7 +183,17 @@ except Exception:
     [[ -z "$updates_24h" ]] && updates_24h=0
     APPS_UPDATES_LINE="$updates_24h in last 24h (tracked images: $tracked)"
 
-    errors=$(echo "$log_24h" | grep -iE '"level":"(error|fatal)"|level=error' | tail -3 || true)
+    # Known-benign Keel error patterns to suppress. Each is a real error
+    # line Keel emits, but the surrounding behaviour is fine, so flagging
+    # them in /upgrade-state is just noise.
+    #   - `bot.Run(): can not get configuration for bot [slack]` — Keel
+    #     1.2.0 registers a Slack socket-mode bot whenever SLACK_BOT_TOKEN
+    #     is set, then fails because we don't supply an `xapp-` app-level
+    #     token. We don't want the interactive bot (no approvals; opt-out
+    #     auto-update). The Slack NOTIFICATION sender works independently
+    #     of the bot, so rollout messages still post to #general.
+    local benign_re='bot\.Run\(\): can not get configuration for bot \[slack\]|SLACK_APP_TOKEN must have the (previf|prefix)'
+    errors=$(echo "$log_24h" | grep -iE '"level":"(error|fatal)"|level=error' | grep -vE "$benign_re" | tail -3 || true)
     if [[ -z "$errors" ]]; then
         APPS_ERROR_LINE="(none in last 24h)"
     else
