@@ -88,8 +88,8 @@ resource "kubernetes_priority_class" "tier_4_aux" {
 # Creates a LimitRange in each namespace based on its tier label.
 # Only affects containers WITHOUT explicit resource requests/limits.
 
-resource "kubernetes_manifest" "generate_limitrange_by_tier" {
-  manifest = {
+resource "kubectl_manifest" "generate_limitrange_by_tier" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -450,7 +450,7 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
         },
       ]
     }
-  }
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -463,10 +463,10 @@ resource "kubernetes_manifest" "generate_limitrange_by_tier" {
 # IMPORTANT: LimitRange (Layer 2) must exist before ResourceQuota takes effect,
 # because ResourceQuota requires all pods to have resource requests set.
 
-resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
-  depends_on = [kubernetes_manifest.generate_limitrange_by_tier]
+resource "kubectl_manifest" "generate_resourcequota_by_tier" {
+  depends_on = [kubectl_manifest.generate_limitrange_by_tier]
 
-  manifest = {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -721,7 +721,7 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
         },
       ]
     }
-  }
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -731,8 +731,8 @@ resource "kubernetes_manifest" "generate_resourcequota_by_tier" {
 # Skips pods that already have a priorityClassName set.
 # Uses namespaceSelector instead of API calls — no round-trip to the API server.
 
-resource "kubernetes_manifest" "mutate_priority_from_tier" {
-  manifest = {
+resource "kubectl_manifest" "mutate_priority_from_tier" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -797,7 +797,7 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
         }
       }]
     }
-  }
+  })
 }
 
 
@@ -806,8 +806,8 @@ resource "kubernetes_manifest" "mutate_priority_from_tier" {
 # external DNS lookup (search domain expansion). This policy injects ndots:2
 # on all pods to reduce NxDomain flood while still allowing short-name service
 # resolution (e.g. "redis.redis" has 1 dot, so it still expands).
-resource "kubernetes_manifest" "mutate_ndots" {
-  manifest = {
+resource "kubectl_manifest" "mutate_ndots" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -865,7 +865,7 @@ resource "kubernetes_manifest" "mutate_ndots" {
         }
       ]
     }
-  }
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -876,8 +876,8 @@ resource "kubernetes_manifest" "mutate_ndots" {
 # non-GPU pods on the GPU node, regardless of namespace tier.
 # Runs after Layer 4 (tier injection), so it overrides the tier-based priority.
 
-resource "kubernetes_manifest" "mutate_gpu_priority" {
-  manifest = {
+resource "kubectl_manifest" "mutate_gpu_priority" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -946,7 +946,7 @@ resource "kubernetes_manifest" "mutate_gpu_priority" {
         }
       ]
     }
-  }
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -991,8 +991,8 @@ resource "kubernetes_cluster_role_binding_v1" "kyverno_cleanup_pods" {
   }
 }
 
-resource "kubernetes_manifest" "cleanup_failed_pods" {
-  manifest = {
+resource "kubectl_manifest" "cleanup_failed_pods" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v2"
     kind       = "ClusterCleanupPolicy"
     metadata = {
@@ -1023,7 +1023,7 @@ resource "kubernetes_manifest" "cleanup_failed_pods" {
       }
       schedule = "15 * * * *"
     }
-  }
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -1042,8 +1042,8 @@ resource "kubernetes_manifest" "cleanup_failed_pods" {
 # JSON6902 remove op fails on missing paths — per-element precondition gates
 # the mutation so pods without CPU limits pass through untouched.
 
-resource "kubernetes_manifest" "mutate_strip_cpu_limits" {
-  manifest = {
+resource "kubectl_manifest" "mutate_strip_cpu_limits" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -1151,5 +1151,5 @@ resource "kubernetes_manifest" "mutate_strip_cpu_limits" {
         },
       ]
     }
-  }
+  })
 }
