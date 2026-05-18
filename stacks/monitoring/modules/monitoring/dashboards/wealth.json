@@ -2145,6 +2145,86 @@
           "rawSql": "SELECT a.symbol, a.name, p.quantity AS shares, p.average_cost AS \"avg cost\", q.close AS \"last\", (p.quantity * q.close) AS \"market value\", p.total_cost_basis AS cost, ((p.quantity * q.close) - p.total_cost_basis) AS gain, CASE WHEN p.total_cost_basis > 0 THEN ((p.quantity * q.close) / p.total_cost_basis - 1) * 100 END AS \"return %\", p.currency, q.day AS \"as of\" FROM positions_latest p LEFT JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY (p.quantity * q.close) DESC NULLS LAST"
         }
       ]
+    },
+    {
+      "id": 27,
+      "title": "META RSU vest value — Schwab account",
+      "description": "Daily total value of Viktor's META RSU holdings in the Schwab workplace account, in USD. Vest schedule: 1,119 shares vested 2020-11 → 2026-02, all sold 2023-04 → 2026-02 as they vested. The Schwab account is now effectively empty (~$64 residual). Yahoo quote for META powers WF's daily mark.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 118
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rsu_value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "META RSU value (USD)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT valuation_date::timestamp AS \"time\", total_value AS rsu_value FROM daily_account_valuation WHERE account_id = '72d34e09-c1a6-41aa-99ea-abe3305ecc4a' AND $__timeFilter(valuation_date) ORDER BY valuation_date"
+        }
+      ]
     }
   ],
   "refresh": "5m",
