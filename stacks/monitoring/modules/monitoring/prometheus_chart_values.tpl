@@ -54,6 +54,17 @@ alertmanager:
       repeat_interval: 4h
       receiver: slack-warning
       routes:
+        # Wave 1 security lane — matches alerts that set `lane = "security"`
+        # (K2-K9, V1-V7, S1 from Loki ruler). Routes to dedicated #security
+        # channel regardless of severity. Defined first + continue: false so
+        # security alerts never fall through to the generic #alerts channel.
+        - receiver: slack-security
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
+          matchers:
+            - lane = security
+          continue: false
         - receiver: slack-critical
           group_wait: 10s
           group_interval: 1m
@@ -176,6 +187,18 @@ alertmanager:
             fallback: 'INFO: {{ .GroupLabels.alertname }}'
             title: '[INFO] {{ .GroupLabels.alertname }}'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+      - name: slack-security
+        slack_configs:
+          - send_resolved: true
+            channel: "#security"
+            color: '{{ if eq .Status "firing" }}{{ if eq (index .Alerts 0).Labels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
+            fallback: '{{ if eq .Status "firing" }}[SECURITY-{{ (index .Alerts 0).Labels.severity | toUpper }}]{{ else }}[RESOLVED]{{ end }}: {{ .GroupLabels.alertname }}'
+            title: '{{ if eq .Status "firing" }}[SECURITY/{{ (index .Alerts 0).Labels.severity | toUpper }}]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
+            text: |-
+              {{ range .Alerts }}*{{ .Annotations.summary }}*
+              {{ if .Annotations.description }}{{ .Annotations.description }}
+              {{ end }}{{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}
+              {{ end }}{{ end }}
   # web.external-url seems to be hardcoded, edited deployment manually
   # extraArgs:
   #   web.external-url: "https://prometheus.viktorbarzin.me"

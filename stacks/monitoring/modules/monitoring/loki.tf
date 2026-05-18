@@ -1,9 +1,11 @@
 variable "nfs_server" { type = string }
 
-# LOKI DISABLED - Uncomment to re-enable centralized logging
-# Disabled due to operational overhead vs benefit analysis after node2 incident
-# All configuration preserved in loki.yaml for future re-enabling
-/*
+# Loki + Alloy — re-enabled 2026-05-18 for wave 1 security audit logging
+# (beads code-8ywc + code-146x). Original disable rationale was "operational
+# overhead vs benefit after node2 incident" — re-evaluated because the wave 1
+# detection layer (K8s audit, Vault audit, source-IP anomaly rules) needs Loki.
+# Resource budget: SingleBinary mode, 2-4Gi memory, 50Gi proxmox-lvm PVC,
+# 30-day retention, ruler enabled pointed at prometheus-alertmanager.
 resource "helm_release" "loki" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -17,12 +19,7 @@ resource "helm_release" "loki" {
 
   depends_on = [kubernetes_config_map.loki_alert_rules]
 }
-*/
 
-# ALLOY DISABLED - Log collection agents (depends on Loki)
-# https://grafana.com/docs/alloy/latest/configure/kubernetes/
-# Configuration preserved in alloy.yaml for future re-enabling
-/*
 resource "helm_release" "alloy" {
   namespace        = kubernetes_namespace.monitoring.metadata[0].name
   create_namespace = true
@@ -36,11 +33,8 @@ resource "helm_release" "alloy" {
 
   depends_on = [helm_release.loki]
 }
-*/
 
-# SYSCTL INOTIFY DISABLED - Was specifically for Loki file watching requirements
-# Can be re-enabled when Loki is restored
-/*
+# inotify limits raised for Alloy pod log tailing (one watch per container).
 resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
   metadata {
     name      = "sysctl-inotify"
@@ -105,7 +99,6 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
     ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
 }
-*/
 
 # resource "helm_release" "k8s-monitoring" {
 #  namespace = kubernetes_namespace.monitoring.metadata[0].name
@@ -119,10 +112,6 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
 #   atomic = true
 # }
 
-# LOKI ALERT RULES DISABLED - Depend on Loki log queries
-# These alert on kernel events from systemd journal logs via Loki
-# Can be re-enabled when Loki is restored
-/*
 resource "kubernetes_config_map" "loki_alert_rules" {
   metadata {
     name      = "loki-alert-rules"
@@ -190,16 +179,107 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
           ]
+        },
+        {
+          # Wave 1 security alerts (beads code-8ywc). Routed via Loki ruler →
+          # prometheus-alertmanager → #security Slack receiver. Allowlist CIDRs:
+          # 10.0.20.0/22, 192.168.1.0/24, K8s pod CIDR 10.10.0.0/16, K8s service
+          # CIDR 10.96.0.0/12. Identity allowlist: me@viktorbarzin.me only.
+          # NOTE: K1 (cluster-admin grant) intentionally skipped.
+          name = "Security Wave 1"
+          rules = [
+            # V1: Root token created (Vault audit, vault-tail sidecar stream)
+            {
+              alert = "VaultRootTokenCreated"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"auth/token/create\" |~ \"\\\"policies\\\":\\\\[\\\"root\\\"\\\\]\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary     = "Vault root token created"
+                description = "A token with policies=[root] was issued via auth/token/create. Verify this is a planned bootstrap or break-glass; otherwise treat as critical compromise."
+                runbook     = "docs/runbooks/security-incident.md#v1-root-token-created"
+              }
+            },
+            # V2: Audit device disabled/modified
+            {
+              alert = "VaultAuditDeviceModified"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/audit/.+\" | operation=~\"(create|delete|update)\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Vault audit device modified — attacker may be silencing visibility"
+                runbook = "docs/runbooks/security-incident.md#v2-audit-device-disabledmodified"
+              }
+            },
+            # V3: Seal status changed
+            {
+              alert = "VaultSealChanged"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"sys/seal\" | operation=\"update\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Vault seal status changed via API — confirm planned operation"
+                runbook = "docs/runbooks/security-incident.md#v3-seal-status-changed"
+              }
+            },
+            # V4: Policy modified
+            {
+              alert = "VaultPolicyModified"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/policies/acl/.+\" | operation=~\"(create|update|delete)\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary = "Vault policy modified — verify Terraform-driven change"
+                runbook = "docs/runbooks/security-incident.md#v4-policy-modified"
+              }
+            },
+            # V5: Auth failure spike
+            {
+              alert = "VaultAuthFailureSpike"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | type=\"response\" |~ \"\\\"error\\\":\\\"permission denied\\\"\" [1m])) > 10"
+              for   = "1m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary = "Vault permission-denied spike >10/min — possible brute force or CI rotation glitch"
+                runbook = "docs/runbooks/security-incident.md#v5-auth-failure-spike"
+              }
+            },
+            # V7: Viktor identity from non-allowlist source IP
+            # XFF trust enabled, so request.remote_address is the real client IP.
+            # Allowlist regex covers: 10.0.20.x, 192.168.1.x, pod CIDR 10.10.x.x,
+            # service CIDR 10.96-111.x.x, Headscale tailnet 100.64-127.x.x.
+            {
+              alert = "VaultViktorFromUnexpectedIP"
+              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | auth_metadata_username=\"me@viktorbarzin.me\" | request_remote_address!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Vault auth as me@viktorbarzin.me from non-allowlist source IP — possible stolen OIDC token"
+                runbook = "docs/runbooks/security-incident.md#v7-viktors-vault-identity-from-unexpected-source-ip"
+              }
+            },
+            # S1: PVE sshd auth success from non-allowlist IP.
+            # Conditional on the pve-sshd promtail unit being live on PVE host
+            # (deployed via stacks/infra/scripts — out of scope until W1.3 host
+            # piece lands). Rule is defined so it fires automatically once logs
+            # flow with job=sshd-pve.
+            {
+              alert = "PVEsshLoginFromUnexpectedIP"
+              expr  = "sum(count_over_time({job=\"sshd-pve\"} |~ \"Accepted (publickey|password|keyboard-interactive)\" | regexp \"Accepted (?P<method>\\\\S+) for (?P<user>\\\\S+) from (?P<ip>\\\\S+) port\" | ip!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "PVE sshd login from non-allowlist source IP — possible stolen SSH key"
+                runbook = "docs/runbooks/security-incident.md#s1-pve-sshd-auth-success-from-unexpected-ip"
+              }
+            },
+          ]
         }
       ]
     })
   }
 }
-*/
 
-# GRAFANA LOKI DATASOURCE DISABLED - Points to non-existent Loki service
-# Can be re-enabled when Loki is restored
-/*
 resource "kubernetes_config_map" "grafana_loki_datasource" {
   metadata {
     name      = "grafana-loki-datasource"
@@ -221,4 +301,3 @@ resource "kubernetes_config_map" "grafana_loki_datasource" {
     })
   }
 }
-*/
