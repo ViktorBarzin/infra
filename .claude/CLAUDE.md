@@ -147,6 +147,17 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - Key alerts: OOMKill, pod replica mismatch, 4xx/5xx error rates, UPS battery, CPU temp, SSD writes, NFS responsiveness, ClusterMemoryRequestsHigh (>85%), ContainerNearOOM (>85% limit), PodUnschedulable, ExternalAccessDivergence.
 - **E2E email monitoring**: CronJob `email-roundtrip-monitor` (every 20 min) sends test email via Brevo HTTP API to `smoke-test@viktorbarzin.me` (catch-all → `spam@`), verifies IMAP delivery, deletes test email, pushes metrics to Pushgateway + Uptime Kuma. Alerts: `EmailRoundtripFailing` (60m), `EmailRoundtripStale` (60m), `EmailRoundtripNeverRun` (60m). Outbound relay: Brevo EU (`smtp-relay.brevo.com:587`, 300/day free — migrated from Mailgun). Inbound external traffic enters via pfSense HAProxy on `10.0.20.1:{25,465,587,993}`, which forwards to k8s `mailserver-proxy` NodePort (30125-30128) with `send-proxy-v2`. Mailserver pod runs alt PROXY-speaking listeners (2525/4465/5587/10993) alongside stock PROXY-free ones (25/465/587/993) for intra-cluster clients. Real client IPs recovered from PROXY v2 header despite kube-proxy SNAT (replaces pre-2026-04-19 MetalLB `10.0.20.202` ETP:Local scheme; see bd code-yiu + `docs/runbooks/mailserver-pfsense-haproxy.md`). Vault: `brevo_api_key` in `secret/viktor` (probe + relay).
 
+## Security Posture (Wave 1 — locked 2026-05-18)
+
+Plan in `docs/architecture/security.md` + response playbook in `docs/runbooks/security-incident.md`. Beads epic: `code-8ywc`.
+
+- **Identity allowlist for security rules**: ONLY `me@viktorbarzin.me`. NOT `viktor@viktorbarzin.me`, NOT `emo@viktorbarzin.me` (those don't exist). emo's identity scheme is unknown — ask before assuming.
+- **Source-IP allowlist (K2, K9, V7, S1)**: `10.0.20.0/22`, `192.168.1.0/24` (Proxmox + Sofia LAN), K8s pod CIDR, K8s service CIDR, Headscale tailnet. **Policy: no public-IP access** — Vault, kube-apiserver, PVE sshd must transit LAN or Headscale.
+- **Response model**: (I) Slack-only daily skim. All security alerts via Loki ruler → Alertmanager → `#security` Slack receiver. Single channel with severity labels inside (critical/warning/info). No paging.
+- **Kyverno policies (wave 1)**: `deny-privileged-containers`, `deny-host-namespaces`, `restrict-sys-admin`, `require-trusted-registries` flip Audit→Enforce with the 31-namespace exclude list (memory id=1970). `failurePolicy: Ignore` preserved. Cosign `verify-images` deferred.
+- **NetworkPolicy default-deny egress (wave 1)**: observe-then-enforce (γ approach) — Calico flow logs cluster-wide + GlobalNetworkPolicy log-only on tier 3+4, build empirical allowlist after 1 week, phased per-namespace enforce starting `recruiter-responder`. Tier 0/1/2 deferred.
+- **What's NOT in scope**: canary tokens (rejected — self-trigger risk with Viktor's normal `vault kv list secret/viktor` and `kubectl get secret -A` workflows), Falco/Tetragon (too noisy for Slack-only daily check), Cloudflare/GitHub audit polling (deferred to wave 2).
+
 ## Storage & Backup Architecture
 
 ### Storage Class Decision Rule (for new services)

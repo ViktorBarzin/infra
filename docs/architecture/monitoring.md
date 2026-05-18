@@ -176,6 +176,35 @@ The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 
 
 Uptime Kuma monitors: TCP SMTP (port 25) on `176.12.22.76` (external), IMAP (port 993) on `10.0.20.202`, and Dovecot exporter metrics on port 9166.
 
+#### Security Alerts (Wave 1 — planned, beads `code-8ywc`)
+
+Routed via **Loki ruler → Alertmanager → `#security` Slack receiver**. Same handling path as infra alerts. Single channel with severity labels inside (critical/warning/info), not three separate channels. Detection sources: K8s API audit log (`job=kube-audit`), Vault audit log (`job=vault-audit`), PVE sshd journald (`job=sshd-pve`), Calico flow logs (`job=calico-flow`, W1.6 only).
+
+| # | Source | Event | Severity |
+|---|---|---|---|
+| K2 | kube-audit | SA token used from outside cluster | critical |
+| K3 | kube-audit | Secret read in vault/sealed-secrets/external-secrets by non-allowlisted SA | critical |
+| K4 | kube-audit | Exec into vault/kube-system/dbaas/cnpg-system pod by non-allowlisted user | warning |
+| K5 | kube-audit | Mass delete (>5 Pod/Secret/CM in 60s) | critical |
+| K6 | kube-audit | Audit policy itself modified | critical |
+| K7 | kube-audit | New `*,*` ClusterRole created | warning |
+| K8 | kube-audit | Anonymous binding granted | critical |
+| K9 | kube-audit | `me@viktorbarzin.me` request from non-allowlist sourceIP | critical |
+| V1 | vault-audit | Root token created | critical |
+| V2 | vault-audit | Audit device disabled/modified | critical |
+| V3 | vault-audit | Seal status changed | critical |
+| V4 | vault-audit | Policy written/modified (allowlist Terraform actor) | warning |
+| V5 | vault-audit | Auth failure spike >10/min | warning |
+| V6 | vault-audit | Token with policies different from parent created | critical |
+| V7 | vault-audit | Viktor's entity_id from non-allowlist remote_addr (requires `x_forwarded_for_authorized_addrs`) | critical |
+| S1 | sshd-pve | sshd auth success from non-allowlist IP | critical |
+
+K1 (cluster-admin grant) intentionally skipped — see security.md.
+
+Allowlist source-IP CIDRs (used by K2, K9, V7, S1): `10.0.20.0/22`, `192.168.1.0/24`, K8s pod CIDR, K8s service CIDR, Headscale tailnet. Policy: no public-IP access; all admin paths transit LAN or Headscale.
+
+IOPS impact estimated ~1-2 GB/day additional disk writes after custom audit-policy tuning. Retention: 90d for security streams.
+
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup
 - **MySQLBackupStale**: >36h since last backup
