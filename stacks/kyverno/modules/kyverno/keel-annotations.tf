@@ -16,8 +16,8 @@
 # (used by the rollback runbook). The keel namespace itself is always
 # excluded (design decision #11 — supervisor must not auto-update).
 
-resource "kubernetes_manifest" "policy_inject_keel_annotations" {
-  manifest = {
+resource "kubectl_manifest" "policy_inject_keel_annotations" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -192,7 +192,7 @@ resource "kubernetes_manifest" "policy_inject_keel_annotations" {
         }
       }]
     }
-  }
+  })
   depends_on = [helm_release.kyverno]
 }
 

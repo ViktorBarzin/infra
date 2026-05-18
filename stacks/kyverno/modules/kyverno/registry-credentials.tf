@@ -81,8 +81,8 @@ resource "kubernetes_cluster_role_binding" "kyverno_background_secret_manager" {
   }
 }
 
-resource "kubernetes_manifest" "sync_registry_credentials" {
-  manifest = {
+resource "kubectl_manifest" "sync_registry_credentials" {
+  yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
     metadata = {
@@ -124,7 +124,7 @@ resource "kubernetes_manifest" "sync_registry_credentials" {
         }
       ]
     }
-  }
+  })
 
   depends_on = [
     helm_release.kyverno,

@@ -66,6 +66,13 @@ terraform {
       source  = "goauthentik/authentik"
       version = "~> 2024.10"
     }
+    # kubectl (gavinbunney) — workaround for hashicorp/kubernetes
+    # `kubernetes_manifest` panics on Kyverno CRDs. See beads code-e2dp.
+    # Declared for all stacks but only used where opted-in.
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -87,6 +94,11 @@ provider "helm" {
 provider "vault" {
   address          = "https://vault.viktorbarzin.me"
   skip_child_token = true
+}
+
+provider "kubectl" {
+  config_path      = var.kube_config_path
+  load_config_file = true
 }
 EOF
 }
