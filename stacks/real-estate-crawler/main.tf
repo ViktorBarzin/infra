@@ -77,6 +77,48 @@ data "kubernetes_secret" "eso_secrets" {
   depends_on = [kubernetes_manifest.external_secret]
 }
 
+# DockerHub pull-secret — image is private on DockerHub
+# (viktorbarzin/realestatecrawler and viktorbarzin/immoweb) and Keel polls
+# the registry HEAD hourly for digest changes. Without auth, Keel hits 401
+# and the rollout never fires. Pods themselves were pulling fine only
+# because the image landed in the node's containerd cache months ago — a
+# fresh node would also fail. ESO renders the dockerconfigjson server-side
+# (Sprig `b64enc`) so the PAT never sits in K8s in cleartext.
+resource "kubernetes_manifest" "dockerhub_pull_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "dockerhub-pull-secret"
+      namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "dockerhub-pull-secret"
+        template = {
+          type = "kubernetes.io/dockerconfigjson"
+          data = {
+            ".dockerconfigjson" = "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"viktorbarzin\",\"password\":\"{{ .pat }}\",\"auth\":\"{{ printf \"viktorbarzin:%s\" .pat | b64enc }}\"}}}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "pat"
+        remoteRef = {
+          key      = "viktor"
+          property = "dockerhub_registry_password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.realestate-crawler]
+}
+
 locals {
   notification_settings = jsondecode(data.kubernetes_secret.eso_secrets.data["notification_settings"])
 
@@ -118,7 +160,7 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -172,6 +214,9 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "dockerhub-pull-secret"
+        }
         container {
           name  = "realestate-crawler-ui"
           image = "viktorbarzin/immoweb:latest"
@@ -190,7 +235,6 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
@@ -253,6 +297,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "dockerhub-pull-secret"
+        }
         container {
           name              = "realestate-crawler-api"
           image             = "viktorbarzin/realestatecrawler:latest"
@@ -337,7 +384,6 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
@@ -450,6 +496,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "dockerhub-pull-secret"
+        }
         container {
           name              = "celery-worker"
           image             = "viktorbarzin/realestatecrawler:latest"
@@ -585,6 +634,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "dockerhub-pull-secret"
+        }
         container {
           name    = "celery-beat"
           image   = "viktorbarzin/realestatecrawler:latest"
