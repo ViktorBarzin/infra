@@ -290,12 +290,13 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
       }
     }
     spec = {
-      # NOTE: Stays in Audit mode pending allowlist tightening. The current
-      # pattern includes `*/*` which matches any image with a registry — flipping
-      # to Enforce would not actually restrict supply chain. Tightening the
-      # allowlist to a precise enumeration of in-use registries is tracked
-      # separately under beads code-8ywc (W1.5 follow-up).
-      validationFailureAction = "Audit"
+      # Wave 1 W1.5: flipped Audit → Enforce 2026-05-19 with explicit allowlist.
+      # Allowlist enumerated from `kubectl get pods -A -o jsonpath='{..image}'`
+      # on 2026-05-18; covers all in-cluster image sources. Update on adding new
+      # workloads from a registry NOT in this list (and ask if the new registry
+      # is trusted before opening it). The `*/*` catch-all was deliberately
+      # removed so unknown registries fail closed at admission.
+      validationFailureAction = "Enforce"
       background              = true
       rules = [{
         name = "validate-registries"
@@ -314,11 +315,39 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
           }]
         }
         validate = {
-          message = "Images must be from trusted registries (docker.io, ghcr.io, quay.io, registry.k8s.io, or local cache)."
+          message = "Images must be from trusted registries. Allowlist defined in stacks/kyverno/modules/kyverno/security-policies.tf — add the new registry there if intentional, otherwise switch the workload to a trusted source."
           pattern = {
             spec = {
               containers = [{
-                image = "docker.io/* | ghcr.io/* | quay.io/* | registry.k8s.io/* | 10.0.20.10* | */*"
+                image = join(" | ", [
+                  # Explicit registries
+                  "docker.io/*", "ghcr.io/*", "quay.io/*", "registry.k8s.io/*",
+                  "gcr.io/*", "us-docker.pkg.dev/*", "lscr.io/*",
+                  "codeberg.org/*", "mcr.microsoft.com/*", "nvcr.io/*",
+                  "oci.external-secrets.io/*", "reg.kyverno.io/*",
+                  "docker.n8n.io/*", "registry.gitlab.com/*",
+                  # Private
+                  "forgejo.viktorbarzin.me/*", "10.0.20.10*",
+                  # DockerHub library (bare image names without slash)
+                  "alpine*", "busybox*", "kong*", "mysql*", "nginx*", "python*",
+                  # DockerHub user repos (no registry prefix, has slash) —
+                  # enumerated from current cluster state.
+                  "actualbudget/*", "afadil/*", "binwiederhier/*", "bitnami/*",
+                  "clickhouse/*", "cloudflare/*", "coturn/*", "crowdsecurity/*",
+                  "curlimages/*", "deluan/*", "dgtlmoon/*", "dolthub/*",
+                  "dpage/*", "dperson/*", "edoburu/*", "esanchezm/*",
+                  "freikin/*", "freshrss/*", "hackmdio/*", "hashicorp/*",
+                  "headscale/*", "jhonderson/*", "kebe/*", "library/*",
+                  "lissy93/*", "louislam/*", "matrixdotorg/*", "mendhak/*",
+                  "mghee/*", "mindflavor/*", "mpepping/*", "netsampler/*",
+                  "nvidia/*", "onlyoffice/*", "openresty/*", "owntracks/*",
+                  "phpipam/*", "phpmyadmin/*", "privatebin/*", "prom/*",
+                  "prompve/*", "rancher/*", "roundcube/*", "sclevine/*",
+                  "shadowsocks/*", "shlinkio/*", "stirlingtools/*",
+                  "technitium/*", "teddysun/*", "temporalio/*",
+                  "typhonragewind/*", "tzahi12345/*", "vabene1111/*",
+                  "vaultwarden/*", "viktorbarzin/*", "viren070/*", "zelest/*",
+                ])
               }]
             }
           }

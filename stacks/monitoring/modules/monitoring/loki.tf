@@ -258,6 +258,103 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 runbook = "docs/runbooks/security-incident.md#v7-viktors-vault-identity-from-unexpected-source-ip"
               }
             },
+            # K2: ServiceAccount token used from outside cluster.
+            # Allowlist = pod CIDR + LAN + Headscale tailnet. Anything else =
+            # likely stolen SA token used externally.
+            {
+              alert = "K8sSATokenFromUnexpectedIP"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "K8s ServiceAccount token used from non-allowlist source IP — possible stolen SA token"
+                runbook = "docs/runbooks/security-incident.md#k2-serviceaccount-token-used-from-outside-cluster"
+              }
+            },
+            # K3: Secret read in sensitive namespace by unexpected actor.
+            # Allowlisted readers: ESO controller, sealed-secrets controller,
+            # Vault SA, me@viktorbarzin.me. Anyone else = alert.
+            {
+              alert = "K8sSensitiveSecretReadByUnexpectedActor"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"get|list\" | objectRef_resource=\"secrets\" | objectRef_namespace=~\"vault|sealed-secrets|external-secrets\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:external-secrets:.+|system:serviceaccount:sealed-secrets:.+|system:serviceaccount:vault:.+)$\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Sensitive Secret read in vault/sealed-secrets/external-secrets by non-allowlisted actor"
+                runbook = "docs/runbooks/security-incident.md#k3-secret-read-in-sensitive-namespace-by-unexpected-actor"
+              }
+            },
+            # K4: Exec into pod in sensitive namespace.
+            {
+              alert = "K8sExecIntoSensitiveNamespace"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary = "kubectl exec into sensitive namespace (vault/kube-system/dbaas/cnpg-system) by non-Viktor actor"
+                runbook = "docs/runbooks/security-incident.md#k4-exec-into-sensitive-pod"
+              }
+            },
+            # K5: Mass delete of pods/secrets/configmaps in 60s by single actor.
+            {
+              alert = "K8sMassDelete"
+              expr  = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" [1m])) > 5"
+              for   = "1m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Mass delete (>5 Pod/Secret/ConfigMap in 60s) by {{ $labels.user_username }}"
+                runbook = "docs/runbooks/security-incident.md#k5-mass-delete"
+              }
+            },
+            # K6: Audit policy or audit-log path modified — attacker silencing
+            # visibility. The audit policy file is /etc/kubernetes/policies/audit-policy.yaml
+            # on master; changes go via kubeadm reconfig. Detect via API access
+            # to apiserver kubeadm-config ConfigMap.
+            {
+              alert = "K8sAuditPolicyModified"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"update|patch\" | objectRef_resource=\"configmaps\" | objectRef_name=\"kubeadm-config\" | objectRef_namespace=\"kube-system\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "kubeadm-config ConfigMap modified — could be audit policy change"
+                runbook = "docs/runbooks/security-incident.md#k6-audit-policy-modified"
+              }
+            },
+            # K7: New ClusterRole created with verbs=* and resources=*.
+            # Allowlist excludes calico-system, kyverno, nvidia, etc. which legitimately
+            # create such ClusterRoles via Helm.
+            {
+              alert = "K8sClusterRoleWildcardCreated"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"clusterroles\" |~ \"\\\"verbs\\\":\\\\[\\\"\\\\*\\\"\\\\]\" |~ \"\\\"resources\\\":\\\\[\\\"\\\\*\\\"\\\\]\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary = "New ClusterRole with verbs=[*]+resources=[*] created — privilege escalation primitive"
+                runbook = "docs/runbooks/security-incident.md#k7-new-clusterrole-with-full-wildcards"
+              }
+            },
+            # K8: Anonymous binding granted — catastrophic.
+            {
+              alert = "K8sAnonymousBindingGranted"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=~\"rolebindings|clusterrolebindings\" |~ \"system:(anonymous|unauthenticated)\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "Binding granted to system:anonymous or system:unauthenticated — full cluster compromise risk"
+                runbook = "docs/runbooks/security-incident.md#k8-anonymous-binding"
+              }
+            },
+            # K9: Viktor's identity from non-allowlist source IP. Same regex as V7.
+            {
+              alert = "K8sViktorFromUnexpectedIP"
+              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for   = "0m"
+              labels = { severity = "critical", lane = "security" }
+              annotations = {
+                summary = "K8s API request as me@viktorbarzin.me from non-allowlist source IP — possible stolen kubeconfig/OIDC token"
+                runbook = "docs/runbooks/security-incident.md#k9-viktors-identity-from-unexpected-source-ip"
+              }
+            },
             # S1: PVE sshd auth success from non-allowlist IP.
             # Conditional on the pve-sshd promtail unit being live on PVE host
             # (deployed via stacks/infra/scripts — out of scope until W1.3 host

@@ -69,6 +69,22 @@ resource "kubernetes_namespace" "tigera_operator" {
   }
 }
 
+# Wave 1 W1.6 (beads code-8ywc): Calico OSS does NOT support flow-log-to-file
+# export via FelixConfiguration — `flowLogsFileEnabled` and related fields are
+# Calico Enterprise / Tigera Cloud features and are rejected by the OSS API
+# (verified 2026-05-19: "strict decoding error: unknown field spec.flowLogsFileEnabled").
+#
+# Alternative observe-then-enforce paths for W1.6/W1.7:
+#   1. Calico GlobalNetworkPolicy with `action: Log` on tier 3+4 — Log action
+#      writes to iptables NFLOG which lands in node syslog. Alloy already
+#      scrapes journal, but the format needs parsing.
+#   2. Cilium replacement with Hubble flow observability (large migration).
+#   3. Tigera Operator + Calico Enterprise (commercial).
+#   4. eBPF-based flow capture (e.g. inspektor-gadget, retina) sidecar approach.
+#
+# Wave 1 stops at this fork. The observe phase requires further design choice
+# tracked under code-8ywc as a separate W1.6/W1.7 follow-up.
+
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
 
