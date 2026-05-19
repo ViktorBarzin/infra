@@ -131,6 +131,18 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
     }
+    # Explicit Keel opt-out. The dbaas namespace is already excluded
+    # from the `inject-keel-annotations` Kyverno ClusterPolicy, but the
+    # StatefulSet historically picked up Keel annotations anyway (from
+    # an earlier version of that policy that didn't have the exclusion
+    # list). `keel.sh/policy: never` makes Keel skip this resource even
+    # if those legacy annotations are still present, so we cannot be
+    # silently bumped to a new MySQL version again.
+    #
+    # Lifting this MUST go through docs/plans/2026-05-19-mysql-8.4.9-upgrade-*.
+    annotations = {
+      "keel.sh/policy" = "never"
+    }
   }
   spec {
     service_name = "mysql-standalone"
@@ -168,12 +180,26 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
 
         container {
           name = "mysql"
-          # Pinned to 8.4.8 — 8.4.9 DD upgrade got stuck (no progress, no CPU)
-          # repeatedly across multiple attempts. 2026-05-18 recovery: wiping
-          # PVC + restoring from 2026-05-18 00:30 UTC mysqldump (taken while
-          # MySQL was healthy on 8.4.8). Image stays on 8.4.8 until we plan
-          # a proper upgrade window with maintenance + faster IO. Beads
-          # code-eme8 + code-k40p.
+          # ─────────────────────────────────────────────────────────────
+          # ⚠️  DO NOT BUMP THIS IMAGE WITHOUT FOLLOWING THE PLAN  ⚠️
+          # ─────────────────────────────────────────────────────────────
+          # Pinned to mysql:8.4.8 EXACTLY. The in-server DD upgrade from
+          # 80408 → 80409 stalls reliably on this hardware (24s of writes
+          # then no progress, no CPU, never completes). The 2026-05-18
+          # recovery from the failed auto-bump took ~25 min of full
+          # MySQL downtime + Forgejo/registry/7 apps cascade.
+          #
+          # To go to 8.4.9 (or any later version), follow:
+          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-design.md
+          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-plan.md
+          #   Beads: code-963q
+          #
+          # The upgrade path is wipe + re-init (NOT in-place DD upgrade).
+          # Requires: maintenance window, fresh dump, Vault user reset.
+          #
+          # History: code-eme8 (initial outage), code-k40p (recovery).
+          # See also: docs/runbooks/restore-mysql.md.
+          # ─────────────────────────────────────────────────────────────
           image = "mysql:8.4.8"
 
           port {
