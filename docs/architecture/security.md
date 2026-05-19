@@ -180,8 +180,8 @@ Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
 | W1.3 Source-IP anomaly rules (K9, V7, S1) | **LIVE** (K9, V7); **S1 PENDING** — fires once promtail/Alloy on PVE host ships sshd journal with `job=sshd-pve`. |
 | W1.4 Kyverno security policies → Enforce | **LIVE** — 3 policies in Enforce mode with 35-namespace exclude list. |
 | W1.5 Kyverno trusted-registries → Enforce | **LIVE** — explicit allowlist (15 registries + 6 DockerHub library bare names + 56 DockerHub user repos). Verified by admission dry-run: `evilcorp.example/malware:v1` BLOCKED, `alpine:3.20` and `docker.io/library/alpine:3.20` ALLOWED. |
-| W1.6 Calico flow logs + log-only GNP | **BLOCKED** — Calico OSS doesn't support `FelixConfiguration.flowLogsFileEnabled` (Calico Enterprise/Tigera-only, rejected 2026-05-19 with "strict decoding error"). Alternative paths: Calico GlobalNetworkPolicy `action: Log` → iptables NFLOG → node journal, OR Cilium migration, OR Tigera Operator adoption. See stacks/calico/main.tf comment block. |
-| W1.7 NetworkPolicy phased enforce | **BLOCKED** on W1.6 observation-method decision |
+| W1.6 Calico observe-phase (pilot: recruiter-responder) | **LIVE** (2026-05-19) — GlobalNetworkPolicy `wave1-egress-observe-recruiter-responder` with rules `[action:Log, action:Allow]`. FelixConfiguration.flowLogsFileEnabled approach abandoned (Calico Enterprise-only field, rejected by OSS v3.26). Log action emits iptables LOG with prefix `calico-packet: ` → kernel → journald → Alloy → Loki. Verified: `{job="node-journal"} \|~ "calico-packet"` returns real packet metadata (SRC/DST/PROTO). Expand to more namespaces by adding to `namespaceSelector`. |
+| W1.7 NetworkPolicy phased enforce | **PENDING** — needs ~1 week of W1.6 observation, then build empirical allowlist from Loki queries, flip GNP rules from `[Log, Allow]` to `[Allow specific dests, Deny rest]`. |
 
 The block below documents the locked design.
 
