@@ -78,9 +78,14 @@ halt_on_alert_query() {
   [ -n "$extra_ignore" ] && regex="$regex|$extra_ignore"
   regex="$regex)$"
 
+  # `grep -vE` returns 1 when nothing matches, which under `set -o pipefail`
+  # bubbles up and (via the caller's `alerts=$(...)`) aborts the whole script.
+  # Trailing `|| true` keeps a no-alerts-firing cluster from looking like a
+  # script error. Discovered 2026-05-19 when the chain wouldn't fire on a
+  # genuinely-clean cluster (every alert was Watchdog/RebootRequired/etc.).
   curl -sf "$PROM/api/v1/alerts" \
     | jq -r '.data.alerts[] | select(.state == "firing") | .labels.alertname' \
-    | grep -vE "$regex" | sort -u
+    | { grep -vE "$regex" || true; } | sort -u
 }
 
 wait_for_node_ready() {
