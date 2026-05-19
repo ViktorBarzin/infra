@@ -192,7 +192,25 @@ except Exception:
     #     token. We don't want the interactive bot (no approvals; opt-out
     #     auto-update). The Slack NOTIFICATION sender works independently
     #     of the bot, so rollout messages still post to #general.
-    local benign_re='bot\.Run\(\): can not get configuration for bot \[slack\]|SLACK_APP_TOKEN must have the (previf|prefix)'
+    #   - `failed to check digest` with a transient network error —
+    #     Keel polls ~175 image manifests against public registries
+    #     hourly. Occasional `i/o timeout` / `connection refused` /
+    #     `TLS handshake timeout` / `no such host` / `EOF` /
+    #     `context deadline exceeded` are inherent to public-internet
+    #     polling at that scale and auto-recover on the next poll.
+    #     Actionable digest-check failures surface as HTTP 401/404
+    #     (auth, removed-tag) — those are NOT filtered.
+    #   - `failed to check digest` with HTTP 5xx — upstream registry
+    #     having a problem (DockerHub maintenance, Forgejo restart,
+    #     etc.). Same recovery pattern as network errors: next hourly
+    #     poll succeeds once upstream is back. Persistent 5xx for >24h
+    #     would indicate a real registry-side issue, but that surfaces
+    #     via the registry's own monitoring (e.g. forgejo-integrity-probe
+    #     + RegistryCatalogInaccessible), not via Keel logs.
+    local benign_re='bot\.Run\(\): can not get configuration for bot \[slack\]'
+    benign_re+='|SLACK_APP_TOKEN must have the (previf|prefix)'
+    benign_re+='|failed to check digest.*(i/o timeout|connection refused|connection reset|context deadline exceeded|TLS handshake timeout|no such host|: EOF)'
+    benign_re+='|failed to check digest.*non-successful response \(status=5[0-9][0-9]'
     errors=$(echo "$log_24h" | grep -iE '"level":"(error|fatal)"|level=error' | grep -vE "$benign_re" | tail -3 || true)
     if [[ -z "$errors" ]]; then
         APPS_ERROR_LINE="(none in last 24h)"
