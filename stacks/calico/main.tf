@@ -83,31 +83,37 @@ resource "kubernetes_namespace" "tigera_operator" {
 #   - After ~1 week of observation, build the empirical per-namespace egress
 #     allowlist; then flip the same GNP to [Allow specific dests, Deny rest]
 #
-# Starting with `recruiter-responder` as the W1.7 pilot per the locked plan
-# (smallest egress footprint, local llama-cpp). Expand by adding namespaces
-# to namespaceSelector.matchExpressions over time.
-resource "kubectl_manifest" "wave1_egress_observe_recruiter_responder" {
+# Started with `recruiter-responder` as the pilot on 2026-05-19; expanded
+# 2026-05-19 to all tier 3+4 namespaces (per locked plan — tier 3-edge has
+# 17 ns, tier 4-aux has 65 ns, all use Calico's WorkloadEndpoint policy
+# path). Tier 0/1/2 stay out of observation in wave 1 (cluster infra +
+# GPU workloads, deferred per the plan).
+#
+# `apply_only = true` on the kubectl_manifest means renaming the TF resource
+# does NOT destroy the old GNP via TF — we kubectl delete the legacy pilot
+# GNP after this applies to clean it up. (Tracked manually.)
+resource "kubectl_manifest" "wave1_egress_observe_tier34" {
   yaml_body = yamlencode({
     apiVersion = "projectcalico.org/v3"
     kind       = "GlobalNetworkPolicy"
     metadata = {
-      name = "wave1-egress-observe-recruiter-responder"
+      name = "wave1-egress-observe-tier34"
       annotations = {
         "security.viktorbarzin.me/wave"    = "1"
-        "security.viktorbarzin.me/purpose" = "observe-then-enforce egress; observation phase only"
+        "security.viktorbarzin.me/purpose" = "observe-then-enforce egress for tier 3-edge + 4-aux"
       }
     }
     spec = {
-      # Order high (numerically lower priority — Calico evaluates lowest order
-      # first, but here we just want to run before any default-deny gets added).
-      order = 2000
-      selector = "all()"
-      namespaceSelector = "kubernetes.io/metadata.name == 'recruiter-responder'"
-      types = ["Egress"]
+      order             = 2000
+      selector          = "all()"
+      namespaceSelector = "tier in {\"3-edge\", \"4-aux\"}"
+      types             = ["Egress"]
       egress = [
-        # Rule 1: log every egress packet (does not terminate; falls through)
+        # Rule 1: log every egress packet (LOG target writes to kernel/journal,
+        # alloy ships to Loki with job=node-journal,transport=kernel).
+        # LogQL: {job="node-journal"} |~ "calico-packet"
         { action = "Log" },
-        # Rule 2: allow everything (so observation does NOT break the namespace)
+        # Rule 2: allow everything (observation must NOT break workloads).
         { action = "Allow" },
       ]
     }
