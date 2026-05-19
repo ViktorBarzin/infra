@@ -195,6 +195,14 @@ controller:
           path: /etc/machine-id
           type: File
 
+  # Schedule on control-plane node too so we can tail /var/log/kubernetes/audit.log
+  # from kube-apiserver. Without this, K8s audit log shipping (wave 1 K2-K9 alert
+  # rules) has no source. control-plane has the standard NoSchedule taint.
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+
   # Resource limits for DaemonSet pods
   # Alloy tails logs from all containers on the node via K8s API and batches
   # them to Loki. Memory scales with number of active log streams (~30-50 per node).
