@@ -57,7 +57,7 @@ graph TB
 |-----------|---------|----------|---------|
 | Prometheus | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Metrics collection and storage, scrape configs for all services |
 | Grafana | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Visualization, 14+ dashboards (API server, CoreDNS, GPU, UPS, etc.) |
-| Loki | **NOT DEPLOYED as of 2026-05-18** — TF code exists in `stacks/monitoring/modules/monitoring/loki.tf` but `helm_release.loki` has a self-referencing `depends_on` that prevented apply. No `loki` Helm release in cluster, no Loki pods or Service. All "log aggregation" claims below are aspirational. Tracked under beads `code-146x`. | `stacks/monitoring/modules/monitoring/` | Log aggregation and querying (planned) |
+| Loki | **DEPLOYED 2026-05-18** (SingleBinary mode, 30d retention, 50Gi PVC on `proxmox-lvm`, ruler enabled → Alertmanager). Re-enabled from previous "operational overhead" disable. Ships logs via Alloy DaemonSet (now on all nodes including master after 2026-05-19 toleration add). | `stacks/monitoring/modules/monitoring/` | Log aggregation and querying |
 | Alertmanager | Latest (Diun monitored) | `stacks/monitoring/modules/monitoring/` | Alert routing with cascade inhibitions |
 | Uptime Kuma | Latest (Diun monitored) | `stacks/uptime-kuma/` | Internal + external HTTP monitors, status page |
 | External Monitor Sync | Python 3.12 | `stacks/uptime-kuma/` | CronJob (10min) syncs `[External]` monitors from `cloudflare_proxied_names` |
