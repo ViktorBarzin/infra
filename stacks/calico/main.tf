@@ -69,21 +69,51 @@ resource "kubernetes_namespace" "tigera_operator" {
   }
 }
 
-# Wave 1 W1.6 (beads code-8ywc): Calico OSS does NOT support flow-log-to-file
-# export via FelixConfiguration — `flowLogsFileEnabled` and related fields are
-# Calico Enterprise / Tigera Cloud features and are rejected by the OSS API
-# (verified 2026-05-19: "strict decoding error: unknown field spec.flowLogsFileEnabled").
+# Wave 1 W1.6 (beads code-8ywc): observation phase via Calico GlobalNetworkPolicy
+# `action: Log`. This is the supported primitive on Calico OSS v3.26 — the
+# Calico-Enterprise FelixConfiguration.flowLogsFileEnabled approach is NOT
+# accepted by the OSS CRD (verified 2026-05-19: "strict decoding error").
 #
-# Alternative observe-then-enforce paths for W1.6/W1.7:
-#   1. Calico GlobalNetworkPolicy with `action: Log` on tier 3+4 — Log action
-#      writes to iptables NFLOG which lands in node syslog. Alloy already
-#      scrapes journal, but the format needs parsing.
-#   2. Cilium replacement with Hubble flow observability (large migration).
-#   3. Tigera Operator + Calico Enterprise (commercial).
-#   4. eBPF-based flow capture (e.g. inspektor-gadget, retina) sidecar approach.
+# How it works:
+#   - GNP selects pods by namespaceSelector
+#   - egress rule action=Log writes an iptables NFLOG entry that lands in the
+#     kernel log / journald with prefix "calico-packet:" on each node
+#   - Alloy DaemonSet already ships node-journal to Loki (job=node-journal)
+#   - LogQL query: {job="node-journal"} |= "calico-packet" surfaces egress flows
+#   - After ~1 week of observation, build the empirical per-namespace egress
+#     allowlist; then flip the same GNP to [Allow specific dests, Deny rest]
 #
-# Wave 1 stops at this fork. The observe phase requires further design choice
-# tracked under code-8ywc as a separate W1.6/W1.7 follow-up.
+# Starting with `recruiter-responder` as the W1.7 pilot per the locked plan
+# (smallest egress footprint, local llama-cpp). Expand by adding namespaces
+# to namespaceSelector.matchExpressions over time.
+resource "kubectl_manifest" "wave1_egress_observe_recruiter_responder" {
+  yaml_body = yamlencode({
+    apiVersion = "projectcalico.org/v3"
+    kind       = "GlobalNetworkPolicy"
+    metadata = {
+      name = "wave1-egress-observe-recruiter-responder"
+      annotations = {
+        "security.viktorbarzin.me/wave"    = "1"
+        "security.viktorbarzin.me/purpose" = "observe-then-enforce egress; observation phase only"
+      }
+    }
+    spec = {
+      # Order high (numerically lower priority — Calico evaluates lowest order
+      # first, but here we just want to run before any default-deny gets added).
+      order = 2000
+      selector = "all()"
+      namespaceSelector = "kubernetes.io/metadata.name == 'recruiter-responder'"
+      types = ["Egress"]
+      egress = [
+        # Rule 1: log every egress packet (does not terminate; falls through)
+        { action = "Log" },
+        # Rule 2: allow everything (so observation does NOT break the namespace)
+        { action = "Allow" },
+      ]
+    }
+  })
+  apply_only = true
+}
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
