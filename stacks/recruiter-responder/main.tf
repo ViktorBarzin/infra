@@ -89,6 +89,10 @@ resource "kubernetes_manifest" "external_secret" {
         # credential as wealthfolio uses for broker statement ingestion.
         { secretKey = "GMAIL_IMAP_USER", remoteRef = { key = "recruiter-responder", property = "gmail_imap_user" } },
         { secretKey = "GMAIL_IMAP_PASS", remoteRef = { key = "recruiter-responder", property = "gmail_imap_pass" } },
+        # gpt-5.4-mini (NIM-served qwen3-coder-480b) for /api/draft generation.
+        { secretKey = "GPT_MINI_ENDPOINT", remoteRef = { key = "recruiter-responder", property = "gpt_mini_endpoint" } },
+        { secretKey = "GPT_MINI_API_KEY", remoteRef = { key = "recruiter-responder", property = "gpt_mini_api_key" } },
+        { secretKey = "GPT_MINI_MODEL", remoteRef = { key = "recruiter-responder", property = "gpt_mini_model" } },
       ]
     }
   }
