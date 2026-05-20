@@ -351,8 +351,10 @@ phase_master() {
     || { slack "ABORT — k8s-master not Ready or wrong version after upgrade"; exit 1; }
 
   local not_ready
+  # `grep -v Running` returns 1 when all pods are Running (happy path);
+  # under `set -o pipefail` that aborts the script. Wrap in `|| true`.
   not_ready=$($KUBECTL -n kube-system get pods -l 'tier=control-plane' --no-headers 2>/dev/null \
-    | grep -v Running | wc -l)
+    | { grep -v Running || true; } | wc -l)
   if [ "$not_ready" -gt 0 ]; then
     slack "ABORT — $not_ready control-plane pods not Running after master upgrade"
     exit 1
@@ -416,7 +418,10 @@ phase_postflight() {
   # All 5 nodes at target
   local versions wrong
   versions=$($KUBECTL get nodes -o jsonpath='{range .items[*]}{.metadata.name}:{.status.nodeInfo.kubeletVersion}{"\n"}{end}')
-  wrong=$(echo "$versions" | grep -v ":v${TARGET_VERSION}\$" | wc -l)
+  # `grep -v` returns 1 when all nodes are on target (the happy path —
+  # exactly when postflight SHOULD succeed); under `set -o pipefail` that
+  # would abort the script right at the moment of victory.
+  wrong=$(echo "$versions" | { grep -v ":v${TARGET_VERSION}\$" || true; } | wc -l)
   if [ "$wrong" -ne 0 ]; then
     slack "ABORT postflight — $wrong node(s) off target:\n$versions"
     exit 1
