@@ -612,6 +612,17 @@ resource "kubernetes_deployment" "openclaw" {
               }
             }
           }
+          # Telegram chat ID for the recruiter-api plugin's announcement loop.
+          env {
+            name = "VIKTOR_CHAT_ID"
+            value_from {
+              secret_key_ref {
+                name     = "openclaw-secrets"
+                key      = "viktor_chat_id"
+                optional = true
+              }
+            }
+          }
           # Python packages path for skills
           env {
             name  = "PYTHONPATH"
