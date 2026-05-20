@@ -183,7 +183,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = ["memory-core"]
+        allow = ["memory-core", "recruiter-api"]
         slots = { memory = "memory-core" }
         load = {
           # /app/extensions is the legacy bundled-plugins path; OpenClaw
@@ -516,6 +516,12 @@ resource "kubernetes_deployment" "openclaw" {
             node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
             node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
             node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
+            # doctor --fix overwrites plugins.allow with its bundled-plugins
+            # list. Re-add our third-party plugin to the allow list via
+            # `config patch`, then enable it. (Same pattern as mcp set above.)
+            echo '{"plugins":{"allow":["memory-core","recruiter-api","telegram","openrouter","brave","openai","codex"]}}' \
+              | node openclaw.mjs config patch --stdin 2>/dev/null || true
+            node openclaw.mjs plugins enable recruiter-api 2>/dev/null || true
             exec node openclaw.mjs gateway --allow-unconfigured --bind lan
           EOC
           ]
