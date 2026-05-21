@@ -617,6 +617,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-wealthfolio-sync", "pg-fire-planner",
     "pg-postiz", "pg-instagram-poster",
     "pg-recruiter-responder",
+    "pg-matrix", "pg-technitium",
   ]
 
   postgresql {
@@ -810,6 +811,22 @@ resource "vault_database_secret_backend_static_role" "pg_recruiter_responder" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-recruiter-responder"
   username        = "recruiter_responder"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_matrix" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-matrix"
+  username        = "matrix"
+  rotation_period = 86400
+}
+
+resource "vault_database_secret_backend_static_role" "pg_technitium" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-technitium"
+  username        = "technitium"
   rotation_period = 604800
 }
 
