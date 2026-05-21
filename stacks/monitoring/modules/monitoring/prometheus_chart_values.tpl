@@ -238,6 +238,13 @@ prometheus-pushgateway:
     limits:
       memory: 256Mi
 server:
+  # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
+  # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
+  # below keep critical metrics fresh; alert `for:` durations were audited and
+  # all 1m alerts were bumped to 3m to stay above the new scrape cadence.
+  global:
+    scrape_interval: 2m
+    evaluation_interval: 1m
   # Enable me to delete metrics
   extraFlags:
     - "web.enable-admin-api"
@@ -798,7 +805,7 @@ serverFiles:
         rules:
           - alert: HighGPUTemp
             expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
-            for: 1m
+            for: 3m  # bumped from 1m for global scrape_interval=2m
             labels:
               severity: warning
             annotations:
@@ -851,14 +858,14 @@ serverFiles:
               summary: "UPS on battery: {{ $value | printf \"%.0f\" }}s"
           - alert: LowUPSBattery
             expr: ups_upsEstimatedMinutesRemaining < 25 and on(instance) ups_upsInputVoltage < 150
-            for: 1m
+            for: 3m  # bumped from 1m for global scrape_interval=2m; snmp-ups job pinned to 30s
             labels:
               severity: critical
             annotations:
               summary: "UPS battery low: {{ $value | printf \"%.0f\" }} min remaining (threshold: 25 min)"
           - alert: PowerOutage
             expr: ups_upsInputVoltage < 150
-            for: 1m
+            for: 3m  # bumped from 1m for global scrape_interval=2m; snmp-ups job pinned to 30s
             labels:
               severity: critical
             annotations:
@@ -2930,6 +2937,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'openwrt_$${1}'
   - job_name: 'snmp-ups'
+    # Keep UPS fast: 30s overrides the 2m global so PowerOutage / LowUPSBattery
+    # detect within ~30s instead of 2m.
+    scrape_interval: 30s
     params:
       module: [huawei]
     static_configs:
