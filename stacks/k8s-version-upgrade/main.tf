@@ -168,6 +168,15 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
     resources  = ["poddisruptionbudgets"]
     verbs      = ["get", "list"]
   }
+  # Read DaemonSets/StatefulSets/ReplicaSets/Deployments so `kubectl drain
+  # --ignore-daemonsets` can classify each pod's owner. Without daemonsets
+  # GET permission, drain bails with "cannot delete daemonsets ... is
+  # forbidden" for every daemonset-managed pod on the node. (2026-05-20)
+  rule {
+    api_groups = ["apps"]
+    resources  = ["daemonsets", "statefulsets", "replicasets", "deployments"]
+    verbs      = ["get", "list"]
+  }
   # Chain dispatch — create the next Job; reconcile via apply on retry.
   # In `default` ns to also create the etcd-snapshot Job from cronjob/backup-etcd.
   rule {
