@@ -141,6 +141,16 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__packages__ENABLED"
             value = "true"
           }
+          # Disable source archive ZIP/TAR generation. Bots crawling
+          # /<owner>/<repo>/archive/<sha>.zip on dot_files (and similar
+          # vim-plugin trees) caused 9.9s 500s and chewed ~440m sustained
+          # CPU. Git clone / OCI registry / API are unaffected — only
+          # /archive/* URLs return 404 now. Toggle back to "false" if a
+          # legitimate consumer needs source ZIPs.
+          env {
+            name  = "FORGEJO__repository__DISABLE_DOWNLOAD_SOURCE_ARCHIVES"
+            value = "true"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
