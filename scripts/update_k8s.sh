@@ -83,7 +83,23 @@ sudo apt-get install -y "kubeadm=$RELEASE-*"
 if [[ "$ROLE" == "master" ]]; then
     echo "==> Master path: kubeadm upgrade plan + apply"
     sudo kubeadm upgrade plan
-    sudo kubeadm upgrade apply "v$RELEASE" -y
+    # The first apply may fail with "static Pod hash for component <X> did
+    # not change after 5m0s" — kubeadm's 5min wait for the kubelet to reload
+    # a static pod is too tight on our cluster (apiserver-to-kubelet status
+    # sync latency post-master-reboot can exceed it). The etcd image IS
+    # actually updated by then, so a 2nd attempt sees etcd already on
+    # target and skips it. Up to 3 attempts with a 30s delay between.
+    attempt=1
+    while ! sudo kubeadm upgrade apply "v$RELEASE" -y; do
+        if (( attempt >= 3 )); then
+            echo "ERROR: kubeadm upgrade apply failed after 3 attempts" >&2
+            exit 1
+        fi
+        echo "==> kubeadm apply attempt $attempt failed (likely static-pod-hash 5m timeout). Sleeping 30s then retrying — the previous attempt's manifest writes usually take hold on the 2nd try."
+        sleep 30
+        attempt=$(( attempt + 1 ))
+    done
+    echo "==> kubeadm upgrade apply succeeded on attempt $attempt"
 else
     echo "==> Worker path: kubeadm upgrade node"
     sudo kubeadm upgrade node
