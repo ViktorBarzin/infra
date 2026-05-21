@@ -216,6 +216,7 @@ resource "kubernetes_cluster_role_binding" "k8s_upgrade_job" {
 }
 
 # Namespaced: read the credentials Secret in k8s-upgrade (SSH key + Slack URL)
+# + read the kill-switch ConfigMap (one-touch emergency-stop for the chain).
 resource "kubernetes_role" "k8s_upgrade_job_ns" {
   metadata {
     name      = "k8s-upgrade-job-ns"
@@ -226,6 +227,14 @@ resource "kubernetes_role" "k8s_upgrade_job_ns" {
     resources      = ["secrets"]
     resource_names = ["k8s-upgrade-creds"]
     verbs          = ["get"]
+  }
+  # Kill-switch ConfigMap. Existence halts the chain (any phase) — see the
+  # "Kill-switch" block at the top of scripts/upgrade-step.sh.
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["k8s-upgrade-killswitch"]
+    verbs          = ["get", "list", "watch"]
   }
 }
 
@@ -339,6 +348,16 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                     --data "$(jq -nc --arg t "[k8s-version-check] $1" '{text: $t}')" \
                     "$SLACK" || true
                 }
+
+                # Kill-switch — see scripts/upgrade-step.sh for full docs.
+                # ConfigMap existence halts the chain (any phase).
+                if /usr/local/bin/kubectl -n k8s-upgrade get configmap k8s-upgrade-killswitch >/dev/null 2>&1; then
+                  reason=$(/usr/local/bin/kubectl -n k8s-upgrade get configmap k8s-upgrade-killswitch \
+                    -o jsonpath='{.data.reason}' 2>/dev/null || echo "(no reason set)")
+                  slack "version-check HALTED by kill-switch: $reason"
+                  echo "HALTED. Resume: kubectl -n k8s-upgrade delete cm k8s-upgrade-killswitch"
+                  exit 0
+                fi
 
                 # 1. Detect running version
                 RUNNING=$(/usr/local/bin/kubectl get nodes \

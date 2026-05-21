@@ -67,6 +67,26 @@ slack() {
     "$SLACK_URL" >/dev/null || echo "warn: slack post failed"
 }
 
+# Kill-switch — checked before every phase. If the ConfigMap
+# `k8s-upgrade-killswitch` exists in the `k8s-upgrade` namespace, the chain
+# halts immediately (exit 0, not 1 — this is an intentional pause, not a
+# failure). Restores via `kubectl -n k8s-upgrade delete cm k8s-upgrade-killswitch`.
+# Designed for "stop the storm" scenarios: emergency-press the brake from
+# any kubectl session in <5 seconds, no script changes needed.
+#
+# Create:  kubectl -n k8s-upgrade create configmap k8s-upgrade-killswitch \
+#               --from-literal=reason="why you stopped it"
+# Inspect: kubectl -n k8s-upgrade get cm k8s-upgrade-killswitch -o yaml
+# Resume:  kubectl -n k8s-upgrade delete cm k8s-upgrade-killswitch
+if $KUBECTL -n "$NS" get configmap k8s-upgrade-killswitch >/dev/null 2>&1; then
+  reason=$($KUBECTL -n "$NS" get configmap k8s-upgrade-killswitch \
+    -o jsonpath='{.data.reason}' 2>/dev/null || echo "(no reason set)")
+  slack "HALTED by kill-switch (phase=$PHASE target_node=${TARGET_NODE:-none}): $reason"
+  echo "HALTED by k8s-upgrade-killswitch ConfigMap. Reason: $reason"
+  echo "Resume: kubectl -n $NS delete cm k8s-upgrade-killswitch"
+  exit 0
+fi
+
 push() {
   printf '# TYPE %s gauge\n%s %s\n' "$1" "$1" "$2" \
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
@@ -230,28 +250,33 @@ phase_preflight() {
     exit 1
   fi
 
-  # 2. Halt-on-alert
+  # 2. Halt-on-alert. RecentNodeReboot is fully redundant with check 3
+  # (inline quiet-baseline) below — both surface "a node rebooted recently".
+  # Including it here meant the chain refused to start for 1h after EVERY
+  # kured reboot of any node (kured fires whenever /var/run/reboot-required
+  # is set, often daily). Now skipped — check 3 is the single source of truth
+  # for "is the cluster quiet enough to upgrade".
   local alerts
-  alerts=$(halt_on_alert_query)
+  alerts=$(halt_on_alert_query RecentNodeReboot)
   if [ -n "$alerts" ]; then
     slack "ABORT preflight — firing alerts:\n$alerts"
     exit 1
   fi
 
   # 3. Quiet-baseline check — fail if any node had a Ready transition in the
-  # last hour. Threshold matches the RecentNodeReboot alert (3600s) — the
-  # 24h-between-cluster-reboots protection lives in kured-sentinel-gate
-  # Check 4, not here. Tightened from 86400 → 3600 on 2026-05-17; with the
-  # alert clearing in 1h, this duplicate gate was the actual blocker for
-  # the chain after a session of manual reboots.
+  # last 10 min. Tightened from 3600s → 600s on 2026-05-21 after diagnosing
+  # that the previous 1h window meant the chain couldn't run after any
+  # reboot for an hour. 10min is sufficient for kubelet/control-plane to
+  # stabilise; the kured-sentinel-gate DaemonSet enforces the broader
+  # 24h-between-cluster-reboots invariant.
   local recent=0
   while IFS= read -r ts; do
     [ -z "$ts" ] && continue
     local diff=$(( $(date +%s) - $(date -d "$ts" +%s) ))
-    if [ "$diff" -lt 3600 ]; then recent=1; break; fi
+    if [ "$diff" -lt 600 ]; then recent=1; break; fi
   done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
   if [ "$recent" -eq 1 ]; then
-    slack "ABORT preflight — node transitioned Ready <1h ago (settle window)"
+    slack "ABORT preflight — node transitioned Ready <10min ago (settle window)"
     exit 1
   fi
 
@@ -334,9 +359,11 @@ phase_preflight() {
 phase_master() {
   slack "Draining k8s-master"
 
-  # Re-check halt-on-alert before drain
+  # Re-check halt-on-alert before drain. Always ignore RecentNodeReboot —
+  # the chain itself causes node reboots, so this alert firing is expected
+  # mid-chain (e.g. master was already upgraded+rebooted before this phase).
   local alerts
-  alerts=$(halt_on_alert_query)
+  alerts=$(halt_on_alert_query RecentNodeReboot)
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing pre-drain: $alerts"; exit 1; }
 
   drain_node k8s-master
@@ -370,10 +397,11 @@ phase_worker() {
   [ -z "$TARGET_NODE" ] && { echo "ERROR: worker phase requires TARGET_NODE"; exit 2; }
   slack "Draining $TARGET_NODE"
 
-  # Halt-on-alert wait (up to 30 min)
+  # Halt-on-alert wait (up to 30 min). Ignore RecentNodeReboot — the chain
+  # just rebooted a node, that's the cause and is expected.
   local attempt alerts
   for attempt in $(seq 1 30); do
-    alerts=$(halt_on_alert_query)
+    alerts=$(halt_on_alert_query RecentNodeReboot)
     [ -z "$alerts" ] && break
     echo "Waiting for alerts to clear (attempt $attempt/30): $alerts"
     sleep 60
@@ -427,9 +455,10 @@ phase_postflight() {
     exit 1
   fi
 
-  # No alerts firing
+  # No alerts firing. Ignore RecentNodeReboot — by definition we just
+  # rebooted every node; this alert clears naturally in <1h.
   local alerts
-  alerts=$(halt_on_alert_query)
+  alerts=$(halt_on_alert_query RecentNodeReboot)
   [ -n "$alerts" ] && slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"
 
   # Pod-ready ratio
