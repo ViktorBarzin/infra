@@ -78,7 +78,10 @@ global:
   addPrometheusAnnotations: true
 
 worker:
-  replicas: 3
+  # 2 replicas: workers handle background tasks (LDAP sync, email,
+  # certificate renewal) — no user-facing traffic, so 2-of-3 isn't
+  # needed for availability. Drop saves ~100m sustained CPU.
+  replicas: 2
   # Same unauthenticated_age cap as server — both the server (Django session
   # middleware) and worker (cleanup tasks) need to see the value.
   env:
