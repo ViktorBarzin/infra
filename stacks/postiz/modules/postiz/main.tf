@@ -157,6 +157,14 @@ resource "helm_release" "postiz" {
       NX_ADD_PLUGINS       = "false"
       # Postiz uses Temporal for cron/scheduling — bring our own; Helm chart doesn't.
       TEMPORAL_ADDRESS = "temporal:7233"
+      # Live audit (2026-05-21): only `instagram-standalone` is connected
+      # in the Integration table. Disable polling/workers for every other
+      # provider to stop unused queues idle-polling Temporal. Keep facebook
+      # + instagram providers loaded since their ESO secrets are still
+      # populated. Re-enable by removing this env entirely. NOTE: temporal
+      # deployment must have keel.sh/policy=never first (see memory id
+      # 2315-2319 for the Keel force-policy trap that fires here otherwise).
+      DISABLED_PROVIDERS = "x,linkedin,reddit,threads,youtube,tiktok,pinterest,dribbble,slack,discord,mastodon,bluesky,lemmy,warpcast,vk,beehiiv,telegram,wordpress,nostr,farcaster"
     }
 
     # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
