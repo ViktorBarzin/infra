@@ -81,8 +81,11 @@ alloy:
         }
       }
 
-      // loki.source.kubernetes tails logs from Kubernetes containers using the Kubernetes API.
-      loki.source.kubernetes "pod_logs" {
+      // loki.source.file tails pod logs from /var/log/pods/* on the host filesystem.
+      // Previously used loki.source.kubernetes (apiserver streaming) which drove
+      // kube-apiserver `CONNECT pods/log` to ~13 req/s + ~2200 sec/s of streams.
+      // discovery.relabel.pod_logs already sets __path__ to the kubelet log path.
+      loki.source.file "pod_logs" {
         targets    = discovery.relabel.pod_logs.output
         forward_to = [loki.process.pod_logs.receiver]
       }
