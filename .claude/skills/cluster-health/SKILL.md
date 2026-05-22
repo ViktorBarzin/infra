@@ -7,8 +7,9 @@ description: |
   (3) User asks to fix stuck pods, evicted pods, or CrashLoopBackOff,
   (4) User mentions "health check", "cluster status", "cluster health",
   (5) User asks "is everything running" or "any problems".
-  Runs 42 cluster-wide checks (nodes, workloads, monitoring, certs,
-  backups, external reachability) with safe auto-fix for evicted pods.
+  Runs 44 cluster-wide checks (nodes, workloads, monitoring, certs,
+  backups, external reachability, PVE host thermals + load) with safe
+  auto-fix for evicted pods.
 author: Claude Code
 version: 2.0.0
 date: 2026-04-19
@@ -66,7 +67,7 @@ bash infra/scripts/cluster_healthcheck.sh --no-fix --quiet --json
 bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 ```
 
-## What It Checks (42 checks)
+## What It Checks (44 checks)
 
 | # | Check | Notes |
 |---|-------|-------|
@@ -112,6 +113,8 @@ bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 | 40 | External — Cloudflared + Authentik Replicas | deployments fully ready |
 | 41 | External — ExternalAccessDivergence Alert | alert not firing |
 | 42 | External — Traefik 5xx Rate (15m) | top-10 services emitting 5xx |
+| 43 | PVE Host Thermals | package + per-core temps via `/sys/class/hwmon` (SSH). Baseline 55-65 °C. PASS <65 °C, WARN 65-82 °C (a VM is burning too much CPU), FAIL ≥83 °C (TjMax) |
+| 44 | PVE Host Load | `/proc/loadavg` via SSH. PASS 5m <30, WARN 30-37, FAIL ≥38 of 44 threads |
 
 ## Safe Auto-Fix Rules
 
@@ -256,9 +259,9 @@ kubectl logs -n external-secrets deploy/external-secrets --tail=100
 kubectl get pods -n cloudflared
 kubectl logs -n cloudflared -l app=cloudflared --tail=100
 
-# Authentik
-kubectl get pods -n authentik -l app=authentik-server
-kubectl logs -n authentik -l app=authentik-server --tail=100
+# Authentik (Helm chart names the deployment goauthentik-server)
+kubectl get deployment -n authentik goauthentik-server
+kubectl logs -n authentik deploy/goauthentik-server --tail=100
 
 # ExternalAccessDivergence alert
 kubectl exec -n monitoring deploy/prometheus-server -- \
@@ -294,6 +297,133 @@ kubectl exec -n monitoring deploy/prometheus-server -- \
    - Exit code 137 → OOM or probe killed
    - Exit code 143 → SIGTERM / graceful shutdown failed
 3. Cross-check dbaas + NFS + secrets are healthy.
+
+## Performance forensics — top consumers + optimization hints
+
+When the cluster is healthy (script returns 0) but the host is hot or load
+is elevated, switch from "what broke?" to "what's expensive?". Run these
+in order; stop as soon as the root cause is obvious.
+
+### Step 1 — Snapshot top consumers cluster-wide
+
+```bash
+# Top 15 pods by current CPU
+kubectl top pods --all-namespaces --sort-by=cpu --no-headers | head -15
+
+# Top 5 nodes by CPU + memory pressure
+kubectl top nodes
+
+# Top 15 by 5-min rolling rate (smoothed — kills noise from one-off spikes)
+kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
+  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(namespace,pod)%20(rate(container_cpu_usage_seconds_total%7Bcontainer!%3D''%7D%5B5m%5D)))" \
+  | python3 -m json.tool | head -80
+```
+
+### Step 2 — For each suspect pod, get the WHY
+
+For every pod in the top-N, gather these BEFORE proposing a fix:
+
+```bash
+NS=<namespace>; POD=<pod>; CONT=$(kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].name}')
+
+# What it does (image + command)
+kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].image}{"\n"}{.spec.containers[0].args}{"\n"}'
+
+# Resource limits + current usage
+kubectl -n $NS top pod $POD --containers
+kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].resources}'
+
+# Recent logs filtered for reconcile loops, watch storms, slow queries
+kubectl -n $NS logs $POD -c $CONT --tail=200 --since=5m 2>&1 \
+  | grep -iE 'reconcil|watch|scrape|index|loop|retry|slow|timeout' | tail -20
+
+# Restart count + recent OOM
+kubectl -n $NS describe pod $POD | grep -E 'Restart Count|Last State|Reason'
+
+# Self-exported metrics (for apps that publish on /metrics)
+kubectl -n $NS exec $POD -c $CONT -- wget -qO- localhost:<port>/metrics 2>/dev/null | head -50
+```
+
+### Step 3 — apiserver / etcd specific deep-dive (when control-plane is hot)
+
+```bash
+# Top request producers by verb+resource (last 30 min)
+kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
+  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(resource,verb)%20(rate(apiserver_request_total%5B30m%5D)))" \
+  | python3 -m json.tool
+
+# Top user agents (which clients are hammering)
+kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
+  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(user_agent)%20(rate(apiserver_request_total%5B30m%5D)))" \
+  | python3 -m json.tool
+
+# Long-running requests (WATCH / CONNECT — log streams, pod-watchers)
+kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
+  "http://localhost:9090/api/v1/query?query=apiserver_longrunning_requests" \
+  | python3 -m json.tool
+
+# etcd write rate + DB size
+kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
+  "http://localhost:9090/api/v1/query?query=rate(etcd_disk_wal_fsync_duration_seconds_count%5B5m%5D)" \
+  | python3 -m json.tool
+```
+
+### Step 4 — PVE host specific deep-dive (when temp / load is high)
+
+Checks 43 + 44 capture package temp + 5-min load avg with PASS/WARN/FAIL
+thresholds — that's the first stop. When those WARN or FAIL, the
+follow-up commands below trace which VM / process is the source:
+
+```bash
+# Per-core temps (broader than the package summary in check 43)
+ssh root@192.168.1.127 'for f in /sys/class/hwmon/hwmon0/temp*_input; do
+    base=${f%_input}; label=$(cat ${base}_label 2>/dev/null || echo "${base##*/}")
+    val=$(cat "$f"); echo "  $label: $((val/1000))°C"
+done'
+
+# Per-VM CPU (each VM = one kvm process)
+ssh root@192.168.1.127 'top -bn1 -o %CPU | grep kvm | head -10'
+
+# pvestatd anomaly check — bursts > 50% usually mean LV count > 1000
+ssh root@192.168.1.127 'lvs --noheadings 2>/dev/null | wc -l'
+
+# Stale snapshots (any '_pre-*' that survived past their rollback window)
+ssh root@192.168.1.127 'lvs --noheadings -o lv_name 2>/dev/null | awk "/_pre-/" | head -20'
+```
+
+### Step 5 — Optimization decision
+
+For each consumer in the top-N, fill in a row:
+
+| Pod / Process | CPU (m) | Why busy | Tunable | Est saving | Trade-off | Effort |
+|---|---|---|---|---|---|---|
+
+Then rank by ROI (saving / effort) and surface the top 3-5. **Hold back the ones where saving < 50m unless effort is also < 5 min.**
+
+### Common causes + tunables (catalogue)
+
+| Symptom | Likely cause | Tunable |
+|---|---|---|
+| **`kube-apiserver` > 1 core sustained** | `CONNECT pods/log` streams from `alloy`/`promtail` using apiserver-tail; OR Kyverno PolicyReport churn (background+enforce mode); OR VPA fanout (309 VPAs cause ~7 req/s) | Switch alloy/promtail to `loki.source.file`; raise Kyverno `backgroundScanInterval`; reduce VPA count |
+| **`pvestatd` 70-100% bursts** | LV metadata scan over > 1000 LVs (typically stale `_pre-*` snapshots from ad-hoc node ops) | Delete stale snapshots; `/usr/local/bin/lvm-pvc-snapshot prune` |
+| **Frigate > 2 cores** | Birdseye `mode: continuous` (16% on frigate.output); LPR debug; debug logging; too many active cameras × detect.fps | `birdseye.mode: motion`; `lpr.debug_save_plates: false`; remove debug loggers |
+| **`vault-0` looping ERRORs every ~10s** | DB static-role not in connection's `allowed_roles` list (drift between role and connection) | Add role to `vault_database_secret_backend_connection.*.allowed_roles` in TF |
+| **Alloy DS > 100m/pod** | `loki.source.kubernetes` (apiserver-tail) instead of `loki.source.file` | Switch to file-tail (~5× drop per pod) |
+| **Prometheus default 1m scrape** | Chart default; new sample every minute | Raise `server.global.scrape_interval` to 2m; pin critical jobs (snmp-ups) to 30s; bump `for: 1m` alerts to `for: 3m` |
+| **`kube-controller-manager` periodic ERROR loop** | Aggregated APIService discovery fails (calico/metrics-server unreachable, OR stuck Terminating pod still in endpoints) | Force-delete stuck pod; verify APIService Available; check pod runc bug on k8s-master |
+| **etcd write > 1 MB/s** | PolicyReport thrash, too-frequent secret rotation, or audit log mode = RequestResponse | Trim Kyverno reports config; raise rotation_period; downgrade audit policy to Metadata for noisy resources |
+
+### What NOT to touch
+
+- **calico-node, etcd write rate, kube-controller-manager core work, pg-cluster replication** — structural cost, touching them risks correctness.
+- **Pods doing legitimate request-serving work** (web servers, databases under load) — optimize the workload, not the runtime.
+- **Anything where Goldilocks VPA upperBound is already close to current request** — no headroom to cut.
+
+### Source-of-truth notes
+
+- **All infra mutations go via Terraform** (`scripts/tg plan/apply`). The recipes above are diagnostic; the FIX lives in `infra/stacks/<name>/main.tf` or chart values.
+- **Pod-internal config files** (e.g., Frigate's `/config/config.yml` on a PVC) are not TF-managed — edit in-pod and document in `infra/docs/runbooks/`.
+- **PVE host-level state** (LVM snapshots, pvestatd) — SSH + manual ops; record in memory if the pattern recurs.
 
 ## Notes on the canonical / hardlink setup
 
