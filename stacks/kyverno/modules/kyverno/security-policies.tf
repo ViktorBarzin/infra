@@ -328,21 +328,30 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "docker.n8n.io/*", "registry.gitlab.com/*",
                   # Private
                   "forgejo.viktorbarzin.me/*", "10.0.20.10*",
+                  # Legacy private registry (decommissioned 2026-05-07 per CLAUDE.md
+                  # but council-complaints still references — migrate to Forgejo).
+                  "registry.viktorbarzin.me/*",
                   # DockerHub library (bare image names without slash)
                   "alpine*", "busybox*", "kong*", "mysql*", "nginx*", "postgres*", "python*",
                   # DockerHub user repos (no registry prefix, has slash) —
-                  # enumerated from current cluster state.
-                  "actualbudget/*", "afadil/*", "binwiederhier/*", "bitnami/*",
+                  # enumerated from current cluster state. New entries added
+                  # 2026-05-22 after Enforce caught these as unallowlisted:
+                  # amruthpillai (resume), athomasson2 (ebook2audiobook),
+                  # netboxcommunity (netbox), nousresearch (hermes-agent),
+                  # opentripplanner (osm-routing), rhasspy (whisper/piper).
+                  "actualbudget/*", "afadil/*", "amruthpillai/*", "athomasson2/*",
+                  "binwiederhier/*", "bitnami/*",
                   "clickhouse/*", "cloudflare/*", "coturn/*", "crowdsecurity/*",
                   "curlimages/*", "deluan/*", "dgtlmoon/*", "dolthub/*",
                   "dpage/*", "dperson/*", "edoburu/*", "esanchezm/*",
                   "freikin/*", "freshrss/*", "hackmdio/*", "hashicorp/*",
                   "headscale/*", "jhonderson/*", "kebe/*", "library/*",
                   "lissy93/*", "louislam/*", "matrixdotorg/*", "mendhak/*",
-                  "mghee/*", "mindflavor/*", "mpepping/*", "netsampler/*",
-                  "nvidia/*", "onlyoffice/*", "openresty/*", "owntracks/*",
+                  "mghee/*", "mindflavor/*", "mpepping/*", "netboxcommunity/*",
+                  "netsampler/*", "nousresearch/*", "nvidia/*", "onlyoffice/*",
+                  "openresty/*", "opentripplanner/*", "owntracks/*",
                   "phpipam/*", "phpmyadmin/*", "privatebin/*", "prom/*",
-                  "prompve/*", "rancher/*", "roundcube/*", "sclevine/*",
+                  "prompve/*", "rancher/*", "rhasspy/*", "roundcube/*", "sclevine/*",
                   "shadowsocks/*", "shlinkio/*", "stirlingtools/*",
                   "technitium/*", "teddysun/*", "temporalio/*",
                   "typhonragewind/*", "tzahi12345/*", "vabene1111/*",
