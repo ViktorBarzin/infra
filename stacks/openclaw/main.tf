@@ -132,24 +132,29 @@ resource "kubernetes_config_map" "openclaw_config" {
             mode = "off"
           }
           model = {
-            # ChatGPT Plus OAuth via openai-codex plugin (account:
-            # ancaelena98@gmail.com). gpt-5.4-mini is the only mini
-            # variant the Codex backend accepts for Plus tier;
-            # gpt-5-mini / gpt-5.1-codex-mini return model_not_found
-            # / "not supported with ChatGPT account". Plus rate-card:
-            # 1,200–7,000 local msgs / 5h on gpt-5.4-mini.
-            #
-            # If you see "No API key found for provider openai-codex"
-            # / "OAuth refresh failed" in logs, the OAuth token has
-            # expired. Re-auth:
-            #   kubectl -n openclaw exec -it $(kubectl -n openclaw \
-            #     get pods -l app=openclaw -o jsonpath='{.items[0].metadata.name}') \
-            #     -c openclaw -- node /app/openclaw.mjs models auth login \
-            #     --provider openai-codex
-            # Follow the OAuth URL+code prompt. Tokens persist on the
-            # openclaw-home PVC so it sticks across pod restarts.
-            primary   = "openai-codex/gpt-5.4-mini"
-            fallbacks = ["openai-codex/gpt-5.5", "modelrelay/auto-fastest", "nim/qwen/qwen3-coder-480b-a35b-instruct"]
+            # 2026-05-22: switched primary to nim/meta/llama-3.1-70b-instruct.
+            # Verified end-to-end with tool calls (sub-second responses,
+            # proper tool_calls in API response). Auth audit on this date:
+            #   - openai-codex OAuth: EXPIRED (ancaelena98@gmail.com,
+            #     ChatGPT Plus). Re-auth requires interactive TTY:
+            #       kubectl -n openclaw exec -it $(kubectl -n openclaw \
+            #         get pods -l app=openclaw -o jsonpath='{.items[0].metadata.name}') \
+            #         -c openclaw -- node /app/openclaw.mjs models auth \
+            #         login --provider openai-codex
+            #   - secret/openclaw → openai_api_key (sk-svcacct…):
+            #     insufficient_quota (billing exhausted)
+            #   - openrouter_api_key: "Key limit exceeded"
+            #   - llama_api_key: region-blocked
+            #   - anthropic_api_key: sk-ant-oat-… (OAuth refresh token,
+            #     NOT a real x-api-key — won't auth)
+            #   - nvidia_api_key: WORKS. nim/meta/llama-3.1-70b-instruct
+            #     and nim/meta/llama-4-maverick-17b-128e-instruct both
+            #     tool-call reliably.
+            # Keep codex as a fallback so it auto-promotes once
+            # re-authed; modelrelay last because it routes to a
+            # small model that hallucinates instead of tool-calling.
+            primary   = "nim/meta/llama-3.1-70b-instruct"
+            fallbacks = ["nim/meta/llama-4-maverick-17b-128e-instruct", "openai-codex/gpt-5.4-mini", "modelrelay/auto-fastest"]
           }
           models = {
             "modelrelay/auto-fastest"                                = {}
@@ -159,6 +164,8 @@ resource "kubernetes_config_map" "openclaw_config" {
             "nim/qwen/qwen3-coder-480b-a35b-instruct"                = {}
             "nim/nvidia/llama-3.1-nemotron-ultra-253b-v1"            = {}
             "nim/z-ai/glm5"                                          = {}
+            "nim/meta/llama-3.1-70b-instruct"                        = {}
+            "nim/meta/llama-4-maverick-17b-128e-instruct"            = {}
             "llama-as-openai/Llama-4-Maverick-17B-128E-Instruct-FP8" = {}
             "llama-as-openai/Llama-4-Scout-17B-16E-Instruct-FP8"     = {}
             "openrouter/stepfun/step-3.5-flash:free"                 = {}
@@ -244,6 +251,8 @@ resource "kubernetes_config_map" "openclaw_config" {
               { id = "qwen/qwen3-coder-480b-a35b-instruct", name = "Qwen 3 Coder", reasoning = false, input = ["text"], contextWindow = 262000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
               { id = "nvidia/llama-3.1-nemotron-ultra-253b-v1", name = "Nemotron Ultra 253B", reasoning = true, input = ["text"], contextWindow = 128000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
               { id = "z-ai/glm5", name = "GLM-5", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "meta/llama-3.1-70b-instruct", name = "Llama 3.1 70B Instruct", reasoning = false, input = ["text"], contextWindow = 128000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
+              { id = "meta/llama-4-maverick-17b-128e-instruct", name = "Llama 4 Maverick (NIM)", reasoning = false, input = ["text"], contextWindow = 1000000, maxTokens = 16384, cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } },
             ]
           }
           openrouter = {
@@ -1110,7 +1119,7 @@ resource "kubernetes_deployment" "openclaw" {
             # at /home/node/.openclaw/.ssh (set up by init 5).
             ln -sfn /home/node/.openclaw/.ssh /home/node/.ssh
             node openclaw.mjs doctor --fix 2>/dev/null
-            node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null
+            node openclaw.mjs models set nim/meta/llama-3.1-70b-instruct 2>/dev/null
             node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
             node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
             node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
