@@ -3,7 +3,7 @@ variable "tier" { type = string }
 variable "mailserver_accounts" {}
 variable "postfix_account_aliases" {}
 variable "opendkim_key" {}
-variable "sasl_passwd" {} # For sendgrid i.e relayhost
+variable "sasl_passwd" {} # SMTP relay (Brevo) SASL credentials
 variable "nfs_server" { type = string }
 # Build the virtual-alias map, dropping aliases where BOTH the source and
 # target are real mailboxes in var.mailserver_accounts (and are different).
@@ -83,7 +83,6 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     POSTFIX_MESSAGE_SIZE_LIMIT             = 1024 * 1024 * 200 # 200 MB
     POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME = "1"
     # TLS_LEVEL                              = "intermediate"
-    # DEFAULT_RELAY_HOST = "[smtp.sendgrid.net]:587"
     DEFAULT_RELAY_HOST = "[smtp-relay.brevo.com]:587"
     SPOOF_PROTECTION   = "1"
     SSL_TYPE           = "manual"
