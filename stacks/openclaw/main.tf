@@ -132,12 +132,24 @@ resource "kubernetes_config_map" "openclaw_config" {
             mode = "off"
           }
           model = {
-            # ChatGPT Plus OAuth via openai-codex plugin (account: ancaelena98@gmail.com).
-            # gpt-5.4-mini is the only mini variant the Codex backend accepts for Plus tier;
-            # gpt-5-mini / gpt-5.1-codex-mini return model_not_found / "not supported with
-            # ChatGPT account". Plus rate-card: 1,200–7,000 local msgs / 5h on gpt-5.4-mini.
+            # ChatGPT Plus OAuth via openai-codex plugin (account:
+            # ancaelena98@gmail.com). gpt-5.4-mini is the only mini
+            # variant the Codex backend accepts for Plus tier;
+            # gpt-5-mini / gpt-5.1-codex-mini return model_not_found
+            # / "not supported with ChatGPT account". Plus rate-card:
+            # 1,200–7,000 local msgs / 5h on gpt-5.4-mini.
+            #
+            # If you see "No API key found for provider openai-codex"
+            # / "OAuth refresh failed" in logs, the OAuth token has
+            # expired. Re-auth:
+            #   kubectl -n openclaw exec -it $(kubectl -n openclaw \
+            #     get pods -l app=openclaw -o jsonpath='{.items[0].metadata.name}') \
+            #     -c openclaw -- node /app/openclaw.mjs models auth login \
+            #     --provider openai-codex
+            # Follow the OAuth URL+code prompt. Tokens persist on the
+            # openclaw-home PVC so it sticks across pod restarts.
             primary   = "openai-codex/gpt-5.4-mini"
-            fallbacks = ["openai-codex/gpt-5.5", "nim/qwen/qwen3-coder-480b-a35b-instruct", "modelrelay/auto-fastest"]
+            fallbacks = ["openai-codex/gpt-5.5", "modelrelay/auto-fastest", "nim/qwen/qwen3-coder-480b-a35b-instruct"]
           }
           models = {
             "modelrelay/auto-fastest"                                = {}
