@@ -2496,12 +2496,14 @@ check_pve_thermals() {
     max_core_temp=$(echo "$raw" | awk '/^Core/{if($NF>m){m=$NF; lbl=$1" "$2}} END{print m}')
     max_core_label=$(echo "$raw" | awk '/^Core/{if($NF>m){m=$NF; lbl=$1" "$2}} END{print lbl}')
 
-    # Xeon E5-2699v4: TjMax = 83°C reported max, 93°C critical (from earlier
-    # session: max=83, crit=93). Set WARN well below the manufacturer max so
-    # action can be taken before throttling onset.
-    #   PASS  < 75°C package
-    #   WARN  75-82°C package (approaching max)
-    #   FAIL  >= 83°C package (at/above max — throttling imminent)
+    # Healthy baseline for this R730 (verified Apr 20-May 8 2026 from
+    # Prometheus): peak 61-69°C, avg 51-55°C. Treat anything above 65°C
+    # as a signal that some VM/workload is using too much CPU and warrants
+    # investigation, even though the Xeon E5-2699v4 has TjMax=83°C /
+    # Tcrit=93°C. This catches load creep early, well before throttling.
+    #   PASS  < 65°C package    (within baseline 55-65 °C band)
+    #   WARN  65-82°C package   (elevated — investigate top CPU consumer)
+    #   FAIL  >= 83°C package   (at/above TjMax — throttling imminent)
     local detail="package=${pkg_temp}°C max_core=${max_core_temp}°C (${max_core_label})"
     if [[ -z "$pkg_temp" ]]; then
         [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
@@ -2512,12 +2514,12 @@ check_pve_thermals() {
         fail "PVE package temp ${pkg_temp}°C >= TjMax (83°C) — throttling imminent. $detail"
         json_add "pve_thermals" "FAIL" "$detail"
         status="FAIL"
-    elif [[ "$pkg_temp" -ge 75 ]]; then
+    elif [[ "$pkg_temp" -ge 65 ]]; then
         [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
-        warn "PVE package temp ${pkg_temp}°C in warn band (75-82°C). $detail"
+        warn "PVE package temp ${pkg_temp}°C above baseline (>65°C) — some VM is using too much CPU; check top kvm processes. $detail"
         json_add "pve_thermals" "WARN" "$detail"
     else
-        pass "PVE package ${pkg_temp}°C, hottest core ${max_core_temp}°C (${max_core_label})"
+        pass "PVE package ${pkg_temp}°C, hottest core ${max_core_temp}°C (${max_core_label}) — within 55-65°C baseline"
         json_add "pve_thermals" "PASS" "$detail"
     fi
 }
