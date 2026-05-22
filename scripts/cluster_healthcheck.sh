@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=42
+TOTAL_CHECKS=44
 
 # --- Helpers ---
 info()  { [[ "$JSON" == true ]] && return 0; echo -e "${BLUE}[INFO]${NC} $*"; }
@@ -2465,6 +2465,105 @@ except Exception as e:
 }
 
 # --- 42. External Reachability: Traefik 5xx Rate ---
+check_pve_thermals() {
+    section 43 "PVE Host Thermals — Xeon E5-2699v4 package + per-core temps"
+    local raw status="PASS"
+
+    # Read all hwmon temp inputs in one SSH round-trip. Output: one line per
+    # sensor, "<sensor_label> <celsius>". Falls back gracefully on missing
+    # labels (Xeon coretemp driver exposes both `Package id 0` and `Core N`).
+    raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 '
+        cd /sys/class/hwmon/hwmon0 2>/dev/null || exit 1
+        for tfile in temp*_input; do
+            [[ -e "$tfile" ]] || continue
+            base=${tfile%_input}
+            label=$(cat "${base}_label" 2>/dev/null || echo "$base")
+            val=$(cat "$tfile" 2>/dev/null)
+            [[ -n "$val" ]] && echo "$label $((val/1000))"
+        done
+        ' 2>/dev/null || true)
+
+    if [[ -z "$raw" ]]; then
+        [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
+        warn "Could not read hwmon temps from 192.168.1.127 (SSH BatchMode failed or path missing)"
+        json_add "pve_thermals" "WARN" "SSH failed or hwmon path missing"
+        return 0
+    fi
+
+    local pkg_temp max_core_temp max_core_label
+    pkg_temp=$(echo "$raw" | awk '/^Package id/{print $NF; exit}')
+    max_core_temp=$(echo "$raw" | awk '/^Core/{if($NF>m){m=$NF; lbl=$1" "$2}} END{print m}')
+    max_core_label=$(echo "$raw" | awk '/^Core/{if($NF>m){m=$NF; lbl=$1" "$2}} END{print lbl}')
+
+    # Xeon E5-2699v4: TjMax = 83°C reported max, 93°C critical (from earlier
+    # session: max=83, crit=93). Set WARN well below the manufacturer max so
+    # action can be taken before throttling onset.
+    #   PASS  < 75°C package
+    #   WARN  75-82°C package (approaching max)
+    #   FAIL  >= 83°C package (at/above max — throttling imminent)
+    local detail="package=${pkg_temp}°C max_core=${max_core_temp}°C (${max_core_label})"
+    if [[ -z "$pkg_temp" ]]; then
+        [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
+        warn "Package temp not found in hwmon output"
+        json_add "pve_thermals" "WARN" "$detail"
+    elif [[ "$pkg_temp" -ge 83 ]]; then
+        [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
+        fail "PVE package temp ${pkg_temp}°C >= TjMax (83°C) — throttling imminent. $detail"
+        json_add "pve_thermals" "FAIL" "$detail"
+        status="FAIL"
+    elif [[ "$pkg_temp" -ge 75 ]]; then
+        [[ "$QUIET" == true ]] && section_always 43 "PVE Host Thermals"
+        warn "PVE package temp ${pkg_temp}°C in warn band (75-82°C). $detail"
+        json_add "pve_thermals" "WARN" "$detail"
+    else
+        pass "PVE package ${pkg_temp}°C, hottest core ${max_core_temp}°C (${max_core_label})"
+        json_add "pve_thermals" "PASS" "$detail"
+    fi
+}
+
+check_pve_load() {
+    section 44 "PVE Host Load — load avg vs 44-thread capacity"
+    local raw load_1 load_5 load_15
+
+    raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 'cat /proc/loadavg' 2>/dev/null || true)
+
+    if [[ -z "$raw" ]]; then
+        [[ "$QUIET" == true ]] && section_always 44 "PVE Host Load"
+        warn "Could not read /proc/loadavg from 192.168.1.127"
+        json_add "pve_load" "WARN" "SSH failed"
+        return 0
+    fi
+
+    load_1=$(echo "$raw" | awk '{print $1}')
+    load_5=$(echo "$raw" | awk '{print $2}')
+    load_15=$(echo "$raw" | awk '{print $3}')
+    # Round load_5 down for integer comparison (avoid bc dep)
+    local load_5_int
+    load_5_int=$(printf '%.0f' "$load_5")
+
+    # R730: 44 hw threads (22c × HT). Healthy avg ~ 15-22 (~30-50% utilisation
+    # of thread count). Warn when sustained 5-min above 30 (~70% threads
+    # busy). Fail when 5-min above 38 (~85% — close to scheduler saturation).
+    #   PASS  load_5 < 30
+    #   WARN  30 <= load_5 < 38
+    #   FAIL  load_5 >= 38
+    local detail="1m=${load_1} 5m=${load_5} 15m=${load_15}"
+    if [[ "$load_5_int" -ge 38 ]]; then
+        [[ "$QUIET" == true ]] && section_always 44 "PVE Host Load"
+        fail "PVE 5-min load ${load_5} >= 38 of 44 threads — saturation. $detail"
+        json_add "pve_load" "FAIL" "$detail"
+    elif [[ "$load_5_int" -ge 30 ]]; then
+        [[ "$QUIET" == true ]] && section_always 44 "PVE Host Load"
+        warn "PVE 5-min load ${load_5} in warn band (30-37 of 44 threads). $detail"
+        json_add "pve_load" "WARN" "$detail"
+    else
+        pass "PVE load avg $detail (< 30/44 threads)"
+        json_add "pve_load" "PASS" "$detail"
+    fi
+}
+
 check_external_traefik_5xx() {
     section 42 "External — Traefik 5xx Rate (15m)"
     local query_result detail="" status="PASS"
@@ -2621,6 +2720,8 @@ main() {
     check_monitoring_css
     check_external_replicas
     check_external_divergence
+    check_pve_thermals
+    check_pve_load
     check_external_traefik_5xx
     print_summary
 
