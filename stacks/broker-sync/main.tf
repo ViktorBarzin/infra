@@ -271,10 +271,20 @@ resource "kubernetes_cron_job_v1" "imap" {
           }
           spec {
             restart_policy = "OnFailure"
+            # The broker image's user is uid=10001 gid=999, but the shared
+            # data PVC's /data root was created with gid=10001 (legacy from
+            # an earlier image build). Without fsGroup the pod can't write
+            # to the directory — sqlite3 can't create the journal next to
+            # sync.db, hits 'attempt to write a readonly database'.
+            # fsGroup=10001 adds the matching gid to the pod's supplemental
+            # groups so writes succeed.
+            security_context {
+              fs_group = 10001
+            }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
-              command = ["broker-sync", "imap"]
+              command = ["broker-sync", "imap-ingest"]
 
               env {
                 name  = "BROKER_SYNC_DATA_DIR"
