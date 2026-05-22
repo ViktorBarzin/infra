@@ -650,12 +650,18 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
-        # Init 6: seed the devvm-fallback memory note into
-        # /workspace/memory/projects/openclaw-runtime/. The note teaches
-        # openclaw the SSH+tmux pattern. The main container's startup
-        # runs `memory index --force` so it's searchable immediately;
-        # the daily memory-sync CronJob also keeps it indexed afterward.
-        # Always rewrites — the configmap-baked note is canonical.
+        # Init 6: seed devvm-fallback knowledge into THREE places so the
+        # OpenClaw agent surfaces it without prompting:
+        #
+        # 1. /workspace/TOOLS.md — read on every session per AGENTS.md.
+        #    This is where the agent learns "what's in this environment".
+        #    Idempotent insert via marker line; preserves any user edits.
+        # 2. /workspace/memory/projects/openclaw-runtime/devvm-fallback.md
+        #    — indexed by memory-core (`openclaw memory search devvm`
+        #    returns it at rank 1.0). Backup for memory_recall queries.
+        # 3. Both files are rewritten on every pod start so they stay
+        #    canonical, but TOOLS.md edits between the markers are
+        #    preserved (rest of file is left alone).
         init_container {
           name  = "seed-devvm-memory-note"
           image = "busybox:1.37"
@@ -701,6 +707,70 @@ resource "kubernetes_deployment" "openclaw" {
             NOTE_EOF
             chown -R 1000:1000 "$DIR"
             echo "memory note seeded at $DIR/devvm-fallback.md"
+
+            # Now patch /workspace/TOOLS.md. AGENTS.md tells the agent to
+            # read TOOLS.md for "environment-specific notes" — without a
+            # devvm entry there, the agent doesn't realise it can SSH out.
+            # Marker-delimited section so user edits outside the markers
+            # survive future pod restarts.
+            TOOLS=/workspace/TOOLS.md
+            START='<!-- BEGIN openclaw-devvm-section v1 -->'
+            END='<!-- END openclaw-devvm-section v1 -->'
+            mkdir -p /workspace
+            touch "$TOOLS"
+            # Strip any prior version of our section before re-inserting.
+            awk -v s="$START" -v e="$END" '
+              $0 == s { skip = 1; next }
+              $0 == e { skip = 0; next }
+              !skip { print }
+            ' "$TOOLS" > "$TOOLS.tmp"
+
+            cat >> "$TOOLS.tmp" <<'TOOLS_EOF'
+
+            <!-- BEGIN openclaw-devvm-section v1 -->
+            ## SSH hosts (auto-managed by openclaw stack init container — DO NOT EDIT)
+
+            ### devvm — wizard@10.0.10.10
+
+            You CAN SSH to devvm from inside this OpenClaw pod. The key is
+            pre-installed at `~/.ssh/id_rsa`, host is in known_hosts, and
+            `ssh devvm` works zero-config (no password, no host-trust
+            prompts).
+
+            Devvm runs as `wizard` with full home-lab access: Vault token,
+            kubectl with cluster-admin, git repos under /home/wizard/code,
+            git-crypt, Cloudflare CLI, and Claude Code v2.1.126 at
+            /usr/local/bin/claude.
+
+            Use it as your trusted fallback when an in-pod tool/permission
+            is missing — credentials, multi-step claude-code work, or
+            anything else you can't reach from the sandbox.
+
+            #### One-shot
+
+                ssh devvm 'vault kv get -field=KEY secret/PATH'
+                ssh devvm 'claude -p "your prompt"'
+
+            #### Long-running (async via tmux on devvm)
+
+            Sessions and logs survive THIS pod restarting. Use this for
+            anything that'll take more than ~2 minutes.
+
+                ssh devvm openclaw-task new <id> "<command>"
+                ssh devvm openclaw-task claude <id> "<prompt>"  # interactive claude session
+                ssh devvm openclaw-task send <id> "<text>" Enter
+                ssh devvm openclaw-task capture <id> [lines]
+                ssh devvm openclaw-task log <id>
+                ssh devvm openclaw-task list / status <id> / kill <id> / purge <id>
+
+            Full reference: `memory_recall "devvm fallback"` (file is at
+            /workspace/memory/projects/openclaw-runtime/devvm-fallback.md).
+
+            <!-- END openclaw-devvm-section v1 -->
+            TOOLS_EOF
+            mv "$TOOLS.tmp" "$TOOLS"
+            chown 1000:1000 "$TOOLS"
+            echo "TOOLS.md updated with devvm section"
           EOT
           ]
           volume_mount {
