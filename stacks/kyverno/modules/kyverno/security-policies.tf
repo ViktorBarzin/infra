@@ -329,7 +329,7 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   # Private
                   "forgejo.viktorbarzin.me/*", "10.0.20.10*",
                   # DockerHub library (bare image names without slash)
-                  "alpine*", "busybox*", "kong*", "mysql*", "nginx*", "python*",
+                  "alpine*", "busybox*", "kong*", "mysql*", "nginx*", "postgres*", "python*",
                   # DockerHub user repos (no registry prefix, has slash) —
                   # enumerated from current cluster state.
                   "actualbudget/*", "afadil/*", "binwiederhier/*", "bitnami/*",
