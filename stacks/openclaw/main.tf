@@ -496,6 +496,223 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
+        # Init 4: install host-tools bundle (ssh, vault, jq, ripgrep, tmux, …)
+        # into /tools/host-tools/ so the in-pod agent reaches CLI parity
+        # with the dev VM. Upstream OpenClaw image is minimal Debian
+        # bookworm running as uid 1000 — can't apt-install at runtime.
+        # Idempotent via marker file; bump suffix to force reinstall.
+        # See docs/plans/2026-05-22-openclaw-devvm-access-design.md.
+        init_container {
+          name  = "install-host-tools"
+          image = "debian:bookworm-slim"
+          command = ["bash", "-c", <<-EOT
+            set -euo pipefail
+            DEST=/tools/host-tools
+            MARKER="$DEST/.installed-v1"
+            if [ -f "$MARKER" ]; then
+              echo "host-tools v1 already installed (skipping)"
+              exit 0
+            fi
+            echo "installing host-tools v1 ..."
+            rm -rf "$DEST"
+            mkdir -p "$DEST/root" "$DEST/bin"
+
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            # debian:bookworm-slim doesn't ship wget/unzip; install
+            # transiently into this init container's filesystem so we
+            # can download the static binaries below.
+            apt-get install -y --no-install-recommends wget unzip ca-certificates
+
+            # NOTE: we deliberately do NOT pass --no-install-recommends to
+            # the download step. ssh links against libgssapi-krb5-2 which
+            # is a hard Depends but its transitive deps (libkrb5-3 etc.)
+            # need to come along too. The bundle is a self-contained
+            # /usr-like tree that the openclaw container can use via
+            # LD_LIBRARY_PATH, so missing deps = broken binaries.
+            APT_PKGS="openssh-client dnsutils iputils-ping wget gnupg jq ripgrep fd-find ncdu htop strace tcpdump tmux unzip ca-certificates"
+            apt-get install -y --download-only $APT_PKGS
+
+            for d in /var/cache/apt/archives/*.deb; do
+              dpkg-deb -x "$d" "$DEST/root/"
+            done
+
+            VAULT_VER=1.18.3
+            YQ_VER=v4.44.3
+            wget -qO /tmp/vault.zip \
+              "https://releases.hashicorp.com/vault/$${VAULT_VER}/vault_$${VAULT_VER}_linux_amd64.zip"
+            unzip -o /tmp/vault.zip vault -d "$DEST/bin/"
+            chmod +x "$DEST/bin/vault"
+            wget -qO "$DEST/bin/yq" \
+              "https://github.com/mikefarah/yq/releases/download/$${YQ_VER}/yq_linux_amd64"
+            chmod +x "$DEST/bin/yq"
+
+            # Smoke test — fail init if any bundled binary has unresolved
+            # shared-lib deps, so glibc / shared-lib drift surfaces at
+            # deploy time. We don't run --version because flag support
+            # varies (older scp returns non-zero, ping/nslookup use weird
+            # conventions). ldd is the reliable signal: if any "not
+            # found" appears, the binary won't load when called.
+            # LD_LIBRARY_PATH points ld.so at the bundled libs (the
+            # openclaw main container sets the same env).
+            export PATH="$DEST/root/usr/bin:$DEST/root/usr/sbin:$DEST/root/bin:$DEST/root/sbin:$DEST/bin:$PATH"
+            export LD_LIBRARY_PATH="$DEST/root/usr/lib/x86_64-linux-gnu:$DEST/root/lib/x86_64-linux-gnu"
+            for t in ssh scp ssh-keyscan dig host nslookup ping wget gpg jq rg fdfind tmux vault yq; do
+              bin=$(command -v "$t" 2>/dev/null) || { echo "FAIL: $t not on PATH"; exit 1; }
+              if ldd "$bin" 2>&1 | grep -q "not found"; then
+                echo "FAIL: $t has unresolved shared libs:"
+                ldd "$bin"
+                exit 1
+              fi
+              echo "OK: $t"
+            done
+
+            chown -R 1000:1000 "$DEST"
+            touch "$MARKER"
+            echo "host-tools v1 install complete ($(du -sh "$DEST" | cut -f1))"
+          EOT
+          ]
+          volume_mount {
+            name       = "tools"
+            mount_path = "/tools"
+          }
+          resources {
+            requests = { cpu = "100m", memory = "256Mi" }
+            limits   = { memory = "512Mi" }
+          }
+        }
+
+        # Init 5: write /home/node/.openclaw/.ssh/{id_rsa,config,known_hosts}
+        # so the agent can `ssh devvm` without device-trust prompts. The
+        # main container symlinks /home/node/.ssh → here at startup so
+        # the ssh client picks it up via $HOME/.ssh. Installs
+        # openssh-client transiently into this init container so
+        # ssh-keyscan works without LD_LIBRARY_PATH gymnastics.
+        init_container {
+          name  = "setup-ssh-config"
+          image = "debian:bookworm-slim"
+          command = ["bash", "-c", <<-EOT
+            set -euo pipefail
+            SSH=/home/node/.openclaw/.ssh
+            MARKER="$SSH/.configured-v1"
+            if [ -f "$MARKER" ]; then
+              echo "ssh-config v1 already set up (skipping)"
+              exit 0
+            fi
+            echo "installing openssh-client for ssh-keyscan ..."
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends openssh-client >/dev/null
+
+            echo "configuring ssh ..."
+            mkdir -p "$SSH"
+
+            # Copy the secret-mounted private key into ~/.ssh with 0600 —
+            # the secret's tmpfs mount has wider perms (1777 + symlinks)
+            # that openssh refuses.
+            cp /ssh/id_rsa "$SSH/id_rsa"
+            chmod 0600 "$SSH/id_rsa"
+
+            cat > "$SSH/config" <<'SSH_EOF'
+            Host devvm
+              HostName 10.0.10.10
+              User wizard
+              IdentityFile ~/.ssh/id_rsa
+              UserKnownHostsFile ~/.ssh/known_hosts
+              StrictHostKeyChecking yes
+            SSH_EOF
+            chmod 0600 "$SSH/config"
+
+            ssh-keyscan -H 10.0.10.10 > "$SSH/known_hosts" 2>/tmp/keyscan.err
+            if [ ! -s "$SSH/known_hosts" ]; then
+              echo "ssh-keyscan produced empty known_hosts; stderr:"
+              cat /tmp/keyscan.err
+              exit 1
+            fi
+            chmod 0644 "$SSH/known_hosts"
+
+            chown -R 1000:1000 "$SSH"
+            touch "$MARKER"
+            echo "ssh-config v1 set up"
+          EOT
+          ]
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
+          volume_mount {
+            name       = "ssh-key"
+            mount_path = "/ssh"
+          }
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "256Mi" }
+          }
+        }
+
+        # Init 6: seed the devvm-fallback memory note into
+        # /workspace/memory/projects/openclaw-runtime/. The note teaches
+        # openclaw the SSH+tmux pattern. The main container's startup
+        # runs `memory index --force` so it's searchable immediately;
+        # the daily memory-sync CronJob also keeps it indexed afterward.
+        # Always rewrites — the configmap-baked note is canonical.
+        init_container {
+          name  = "seed-devvm-memory-note"
+          image = "busybox:1.37"
+          command = ["sh", "-c", <<-EOT
+            set -eu
+            DIR=/workspace/memory/projects/openclaw-runtime
+            mkdir -p "$DIR"
+            cat > "$DIR/devvm-fallback.md" <<'NOTE_EOF'
+            # Using devvm as a fallback
+
+            When in-pod tools/permissions block you, SSH to devvm and use it.
+            Devvm runs as wizard with full home-lab access (Vault, kubectl,
+            git repos, Cloudflare, etc.) and Claude Code v2+ is installed.
+
+            ## One-shot lookup
+
+                ssh devvm 'vault kv get -field=brave_api_key secret/openclaw'
+                ssh devvm 'claude -p "investigate why frigate is restarting"'
+
+            ## Long-running async work — USE THIS for anything > ~2 min
+
+            Spawn in a tmux session on devvm. Sessions and logs survive
+            OpenClaw pod restarts (they live on devvm, not in this pod).
+
+                # spawn
+                ssh devvm openclaw-task new my-task "claude -p --dangerously-skip-permissions 'do the thing'"
+
+                # poll progress (last 1000 lines of pane)
+                ssh devvm openclaw-task capture my-task
+
+                # interactive claude (send follow-up prompts)
+                ssh devvm openclaw-task claude my-task "initial prompt"
+                ssh devvm openclaw-task send my-task "follow-up prompt" Enter
+
+                # housekeeping
+                ssh devvm openclaw-task list
+                ssh devvm openclaw-task status my-task
+                ssh devvm openclaw-task kill my-task
+
+            Logs persist at ~/openclaw-tasks/<id>.log on devvm even after a
+            session is killed. Use `ssh devvm openclaw-task log <id>` to
+            retrieve them.
+            NOTE_EOF
+            chown -R 1000:1000 "$DIR"
+            echo "memory note seeded at $DIR/devvm-fallback.md"
+          EOT
+          ]
+          volume_mount {
+            name       = "workspace"
+            mount_path = "/workspace"
+          }
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { memory = "32Mi" }
+          }
+        }
+
         # Main container: OpenClaw
         container {
           name  = "openclaw"
@@ -511,6 +728,11 @@ resource "kubernetes_deployment" "openclaw" {
           #                          others hard-coded.
           #   4. gateway          — exec into the gateway process
           command = ["sh", "-c", <<-EOC
+            # Symlink /home/node/.ssh → persistent .ssh so the ssh client
+            # finds id_rsa/config/known_hosts via $HOME/.ssh. HOME is
+            # /home/node (image overlay), .ssh files live on the PVC
+            # at /home/node/.openclaw/.ssh (set up by init 5).
+            ln -sfn /home/node/.openclaw/.ssh /home/node/.ssh
             node openclaw.mjs doctor --fix 2>/dev/null
             node openclaw.mjs models set openai-codex/gpt-5.4-mini 2>/dev/null
             node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
@@ -522,6 +744,10 @@ resource "kubernetes_deployment" "openclaw" {
             echo '{"plugins":{"allow":["memory-core","recruiter-api","telegram","openrouter","brave","openai","codex"]}}' \
               | node openclaw.mjs config patch --stdin 2>/dev/null || true
             node openclaw.mjs plugins enable recruiter-api 2>/dev/null || true
+            # Reindex memory-core so the seeded devvm-fallback note (and
+            # anything else dropped under /workspace/memory/) is searchable
+            # on first boot; daily memory-sync CronJob also keeps it indexed.
+            node openclaw.mjs memory index --force 2>/dev/null || true
             exec node openclaw.mjs gateway --allow-unconfigured --bind lan
           EOC
           ]
@@ -544,8 +770,21 @@ resource "kubernetes_deployment" "openclaw" {
             value = random_password.gateway_token.result
           }
           env {
-            name  = "PATH"
-            value = "/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            name = "PATH"
+            # Host-tools bundle (installed by init 4: install-host-tools)
+            # comes first so ssh/scp/dig/vault/jq/etc. resolve to the
+            # extracted Debian binaries + the static-binary downloads.
+            # /bin + /sbin are needed because iputils-ping installs ping
+            # under /bin (not /usr/bin) on Debian.
+            value = "/tools/host-tools/root/usr/bin:/tools/host-tools/root/usr/sbin:/tools/host-tools/root/bin:/tools/host-tools/root/sbin:/tools/host-tools/bin:/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          }
+          env {
+            # Point ld.so at the bundled libs so the host-tools binaries
+            # find their shared-lib deps (libgssapi_krb5, libkrb5, etc.).
+            # Both base images are bookworm so the libs match the
+            # openclaw image's libc/libssl — no ABI conflicts expected.
+            name  = "LD_LIBRARY_PATH"
+            value = "/tools/host-tools/root/usr/lib/x86_64-linux-gnu:/tools/host-tools/root/lib/x86_64-linux-gnu"
           }
           env {
             name  = "TF_VAR_prod"
