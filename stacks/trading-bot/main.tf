@@ -1,8 +1,3 @@
-/*
-# TRADING-BOT STACK COMMENTED OUT - 2026-04-06
-# Deployments scaled to 0, infrastructure disabled to prevent re-creation on apply
-# To re-enable: uncomment this entire block
-
 variable "tls_secret_name" {
   type      = string
   sensitive = true
@@ -12,21 +7,25 @@ variable "postgresql_host" { type = string }
 variable "redis_host" { type = string }
 locals {
   common_env = {
-    TRADING_REDIS_URL                    = "redis://${var.redis_host}:6379/4"
-    TRADING_LOG_LEVEL                    = "INFO"
-    TRADING_ALPACA_BASE_URL              = "https://paper-api.alpaca.markets"
-    TRADING_PAPER_TRADING                = "true"
-    TRADING_REDDIT_USER_AGENT            = "trading-bot/0.1"
-    TRADING_WATCHLIST                    = "[\"AAPL\",\"TSLA\",\"NVDA\",\"MSFT\",\"GOOGL\"]"
-    TRADING_BAR_TIMEFRAME                = "5Min"
-    TRADING_POLL_INTERVAL_SECONDS        = "60"
-    TRADING_HISTORICAL_BARS              = "100"
-    TRADING_SNAPSHOT_INTERVAL_SECONDS    = "60"
-    TRADING_FUNDAMENTALS_CACHE_TTL_HOURS = "24"
-    TRADING_RP_ID                        = "trading.viktorbarzin.me"
-    TRADING_RP_NAME                      = "Trading Bot"
-    TRADING_RP_ORIGIN                    = "https://trading.viktorbarzin.me"
-    TRADING_CORS_ORIGINS                 = "[\"https://trading.viktorbarzin.me\"]"
+    TRADING_REDIS_URL                        = "redis://${var.redis_host}:6379/4"
+    TRADING_LOG_LEVEL                        = "INFO"
+    TRADING_ALPACA_BASE_URL                  = "https://paper-api.alpaca.markets"
+    TRADING_PAPER_TRADING                    = "true"
+    TRADING_REDDIT_USER_AGENT                = "trading-bot/0.1"
+    TRADING_WATCHLIST                        = "[\"AAPL\",\"TSLA\",\"NVDA\",\"MSFT\",\"GOOGL\"]"
+    TRADING_BAR_TIMEFRAME                    = "5Min"
+    TRADING_POLL_INTERVAL_SECONDS            = "60"
+    TRADING_HISTORICAL_BARS                  = "100"
+    TRADING_SNAPSHOT_INTERVAL_SECONDS        = "60"
+    TRADING_FUNDAMENTALS_CACHE_TTL_HOURS     = "24"
+    TRADING_RP_ID                            = "trading.viktorbarzin.me"
+    TRADING_RP_NAME                          = "Trading Bot"
+    TRADING_RP_ORIGIN                        = "https://trading.viktorbarzin.me"
+    TRADING_CORS_ORIGINS                     = "[\"https://trading.viktorbarzin.me\"]"
+    TRADING_MEET_KEVIN_POLL_INTERVAL_SECONDS = "10800"
+    TRADING_MEET_KEVIN_DAILY_COST_CAP_USD    = "5"
+    TRADING_MEET_KEVIN_LLM_MODEL             = "anthropic/claude-sonnet-4.5"
+    TRADING_MEET_KEVIN_PROMPT_VERSION        = "v1"
   }
 }
 
@@ -34,7 +33,7 @@ resource "kubernetes_namespace" "trading-bot" {
   metadata {
     name = "trading-bot"
     labels = {
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -72,6 +71,8 @@ resource "kubernetes_manifest" "external_secret" {
             TRADING_ALPHA_VANTAGE_API_KEY = "{{ .alpha_vantage_api_key }}"
             TRADING_FMP_API_KEY           = "{{ .fmp_api_key }}"
             DBAAS_ROOT_PASSWORD           = "{{ .dbaas_root_password }}"
+            TRADING_OPENROUTER_API_KEY    = "{{ .openrouter_api_key }}"
+            TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
           }
         }
       }
@@ -84,6 +85,8 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "alpha_vantage_api_key", remoteRef = { key = "trading-bot", property = "alpha_vantage_api_key" } },
         { secretKey = "fmp_api_key", remoteRef = { key = "trading-bot", property = "fmp_api_key" } },
         { secretKey = "dbaas_root_password", remoteRef = { key = "trading-bot", property = "dbaas_root_password" } },
+        { secretKey = "openrouter_api_key", remoteRef = { key = "trading-bot", property = "openrouter_api_key" } },
+        { secretKey = "meet_kevin_channel_id", remoteRef = { key = "trading-bot", property = "meet_kevin_channel_id" } },
       ]
     }
   }
@@ -143,14 +146,16 @@ resource "kubernetes_job" "db_init" {
             "sh", "-c",
             <<-EOT
               set -e
+              # -d postgres: psql defaults database name to username; root user
+              # doesn't have a root-named database, so be explicit.
               # Create role if not exists
-              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
-                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "CREATE ROLE trading WITH LOGIN PASSWORD '$DB_PASSWORD'"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='trading'" | grep -q 1 || \
+                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE ROLE trading WITH LOGIN PASSWORD '$DB_PASSWORD'"
               # Create database if not exists
-              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
-                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "CREATE DATABASE trading OWNER trading"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='trading'" | grep -q 1 || \
+                PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE trading OWNER trading"
               # Grant privileges
-              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
+              PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE trading TO trading"
               # Try to enable timescaledb (allow failure)
               PGPASSWORD="$DBAAS_ROOT_PASSWORD" psql -h ${var.postgresql_host} -U root -d trading -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE" || true
               echo "Database init complete"
@@ -359,78 +364,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       }
       spec {
         container {
-          name              = "news-fetcher"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.news_fetcher.main"]
-          dynamic "env" {
-            for_each = local.common_env
-            content {
-              name  = env.key
-              value = env.value
-            }
-          }
-          env {
-            name  = "TRADING_OTEL_METRICS_PORT"
-            value = "9091"
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-secrets"
-            }
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-db-creds"
-            }
-          }
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "128Mi"
-            }
-            limits = {
-              memory = "256Mi"
-            }
-          }
-        }
-        container {
-          name              = "sentiment-analyzer"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.sentiment_analyzer.main"]
-          dynamic "env" {
-            for_each = local.common_env
-            content {
-              name  = env.key
-              value = env.value
-            }
-          }
-          env {
-            name  = "TRADING_OTEL_METRICS_PORT"
-            value = "9092"
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-secrets"
-            }
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-db-creds"
-            }
-          }
-          resources {
-            requests = {
-              cpu    = "100m"
-              memory = "512Mi"
-            }
-            limits = {
-              memory = "512Mi"
-            }
-          }
-        }
-        container {
           name              = "signal-generator"
           image             = "viktorbarzin/trading-bot-service:latest"
           image_pull_policy = "Always"
@@ -445,42 +378,6 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9093"
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-secrets"
-            }
-          }
-          env_from {
-            secret_ref {
-              name = "trading-bot-db-creds"
-            }
-          }
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "128Mi"
-            }
-            limits = {
-              memory = "256Mi"
-            }
-          }
-        }
-        container {
-          name              = "trade-executor"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.trade_executor.main"]
-          dynamic "env" {
-            for_each = local.common_env
-            content {
-              name  = env.key
-              value = env.value
-            }
-          }
-          env {
-            name  = "TRADING_OTEL_METRICS_PORT"
-            value = "9094"
           }
           env_from {
             secret_ref {
@@ -574,18 +471,52 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             }
           }
         }
+        container {
+          name              = "meet-kevin-watcher"
+          image             = "viktorbarzin/trading-bot-service:latest"
+          image_pull_policy = "Always"
+          command           = ["python", "-m", "services.meet_kevin_watcher.main"]
+          dynamic "env" {
+            for_each = local.common_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9097"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "128Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
       }
     }
   }
   lifecycle {
-    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 6 worker containers. Reviewed 2026-04-18.
+    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 4 worker containers. Reviewed 2026-05-22.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].spec[0].container[2].image,
       spec[0].template[0].spec[0].container[3].image,
-      spec[0].template[0].spec[0].container[4].image,
-      spec[0].template[0].spec[0].container[5].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
@@ -618,7 +549,7 @@ module "ingress" {
   name            = "trading"
   service_name    = "trading-bot-frontend"
   tls_secret_name = var.tls_secret_name
-  auth = "required"
+  auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Trading Bot"
@@ -628,6 +559,5 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
-*/
 
 # CI retrigger v6 2026-05-16T23:18:58Z
