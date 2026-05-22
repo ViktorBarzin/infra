@@ -650,31 +650,42 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
-        # Init 6: seed devvm-fallback knowledge into THREE places so the
-        # OpenClaw agent surfaces it without prompting:
+        # Init 6: seed devvm-fallback knowledge into FOUR places so the
+        # OpenClaw agent uses devvm as its default fallback AND learns
+        # from it (saving scripts/knowledge locally so it grows
+        # independent over time):
         #
         # 1. /workspace/TOOLS.md — read on every session per AGENTS.md.
-        #    This is where the agent learns "what's in this environment".
-        #    Idempotent insert via marker line; preserves any user edits.
+        #    Emphatic "TRY DEVVM BEFORE GIVING UP" + learning protocol.
         # 2. /workspace/memory/projects/openclaw-runtime/devvm-fallback.md
-        #    — indexed by memory-core (`openclaw memory search devvm`
-        #    returns it at rank 1.0). Backup for memory_recall queries.
-        # 3. Both files are rewritten on every pod start so they stay
-        #    canonical, but TOOLS.md edits between the markers are
-        #    preserved (rest of file is left alone).
+        #    — indexed by memory-core (memory_recall surfaces this).
+        # 3. /workspace/learned/ — durable cache of stuff the agent has
+        #    figured out via devvm, so it doesn't re-ask next time.
+        #    INDEX.md is the table of contents the agent checks FIRST.
+        # 4. /home/node/.openclaw/cc-skills/devvm-fallback/SKILL.md —
+        #    formal skill, so the agent has a named entry-point for
+        #    "I'm stuck, what now".
+        # All sections are marker-delimited (v2) so user edits outside
+        # the markers survive future pod restarts.
         init_container {
           name  = "seed-devvm-memory-note"
           image = "busybox:1.37"
           command = ["sh", "-c", <<-EOT
             set -eu
+
+            # ---- 1. Memory note (memory-core searchable) ----------------
             DIR=/workspace/memory/projects/openclaw-runtime
             mkdir -p "$DIR"
             cat > "$DIR/devvm-fallback.md" <<'NOTE_EOF'
-            # Using devvm as a fallback
+            # Using devvm as a fallback + learning loop
 
             When in-pod tools/permissions block you, SSH to devvm and use it.
             Devvm runs as wizard with full home-lab access (Vault, kubectl,
             git repos, Cloudflare, etc.) and Claude Code v2+ is installed.
+
+            After learning HOW to do something via devvm, save the recipe to
+            /workspace/learned/ so you don't need devvm next time. See the
+            `learn-from-tasks` skill for the full protocol.
 
             ## One-shot lookup
 
@@ -683,103 +694,238 @@ resource "kubernetes_deployment" "openclaw" {
 
             ## Long-running async work — USE THIS for anything > ~2 min
 
-            Spawn in a tmux session on devvm. Sessions and logs survive
-            OpenClaw pod restarts (they live on devvm, not in this pod).
-
-                # spawn
                 ssh devvm openclaw-task new my-task "claude -p --dangerously-skip-permissions 'do the thing'"
-
-                # poll progress (last 1000 lines of pane)
                 ssh devvm openclaw-task capture my-task
-
-                # interactive claude (send follow-up prompts)
-                ssh devvm openclaw-task claude my-task "initial prompt"
-                ssh devvm openclaw-task send my-task "follow-up prompt" Enter
-
-                # housekeeping
-                ssh devvm openclaw-task list
-                ssh devvm openclaw-task status my-task
-                ssh devvm openclaw-task kill my-task
+                ssh devvm openclaw-task list / status / log / kill / purge
 
             Logs persist at ~/openclaw-tasks/<id>.log on devvm even after a
-            session is killed. Use `ssh devvm openclaw-task log <id>` to
-            retrieve them.
+            session is killed.
             NOTE_EOF
             chown -R 1000:1000 "$DIR"
-            echo "memory note seeded at $DIR/devvm-fallback.md"
 
-            # Now patch /workspace/TOOLS.md. AGENTS.md tells the agent to
-            # read TOOLS.md for "environment-specific notes" — without a
-            # devvm entry there, the agent doesn't realise it can SSH out.
-            # Marker-delimited section so user edits outside the markers
-            # survive future pod restarts.
+            # ---- 2. TOOLS.md devvm + learning section -------------------
             TOOLS=/workspace/TOOLS.md
-            START='<!-- BEGIN openclaw-devvm-section v1 -->'
-            END='<!-- END openclaw-devvm-section v1 -->'
-            mkdir -p /workspace
             touch "$TOOLS"
-            # Strip any prior version of our section before re-inserting.
-            awk -v s="$START" -v e="$END" '
-              $0 == s { skip = 1; next }
-              $0 == e { skip = 0; next }
+            # Strip prior versions of our section (v1 + v2 markers) before
+            # re-inserting v2. User edits outside the markers survive.
+            awk '
+              $0 == "<!-- BEGIN openclaw-devvm-section v1 -->" { skip=1; next }
+              $0 == "<!-- END openclaw-devvm-section v1 -->"   { skip=0; next }
+              $0 == "<!-- BEGIN openclaw-devvm-section v2 -->" { skip=1; next }
+              $0 == "<!-- END openclaw-devvm-section v2 -->"   { skip=0; next }
               !skip { print }
             ' "$TOOLS" > "$TOOLS.tmp"
 
             cat >> "$TOOLS.tmp" <<'TOOLS_EOF'
 
-            <!-- BEGIN openclaw-devvm-section v1 -->
-            ## SSH hosts (auto-managed by openclaw stack init container — DO NOT EDIT)
+            <!-- BEGIN openclaw-devvm-section v2 -->
+            ## CRITICAL: devvm is your fallback teacher — TRY IT before giving up
 
-            ### devvm — wizard@10.0.10.10
+            When you can't complete a task in-pod (missing tool, missing
+            credential, missing knowledge, unsure how), the DEFAULT next
+            step is — in order:
 
-            You CAN SSH to devvm from inside this OpenClaw pod. The key is
-            pre-installed at `~/.ssh/id_rsa`, host is in known_hosts, and
-            `ssh devvm` works zero-config (no password, no host-trust
-            prompts).
+            1. **Check `/workspace/learned/INDEX.md`** — have you (or a
+               previous session of you) already figured this out? Use it.
+            2. **If not, SSH to devvm** and ask claude there:
+                   ssh devvm 'claude -p --dangerously-skip-permissions \
+                     "I need to do X. Give me concrete commands / a script /
+                      the credentials I need. Be specific."'
+            3. **Run what devvm-claude gives you.** If it works, you've
+               learned something.
+            4. **SAVE THE RECIPE** to /workspace/learned/ so you don't
+               need devvm next time. See the `learn-from-tasks` skill.
 
-            Devvm runs as `wizard` with full home-lab access: Vault token,
-            kubectl with cluster-admin, git repos under /home/wizard/code,
-            git-crypt, Cloudflare CLI, and Claude Code v2.1.126 at
+            Do NOT tell the user "I can't do that" until you've at least
+            tried steps 1–3. The default is to try; failing closed is the
+            exception.
+
+            ## ALSO CRITICAL: after every task, introspect → save a faster way
+
+            Especially early on, almost everything will be a teaching
+            moment. Whenever you finish a non-trivial task — whether you
+            learned via devvm or figured it out yourself — pause and ask:
+
+            - Is this task likely to recur? (User asks again, or a
+              similar task appears.)
+            - Did this take more than one round-trip / dig / detour?
+            - Did I learn a non-obvious command, path, credential source,
+              or workflow?
+
+            If yes to any → save it under /workspace/learned/ and add a
+            row to INDEX.md. The 2 minutes you spend now save 10 minutes
+            every recurrence. Aim to grow your local toolkit faster than
+            you depend on devvm.
+
+            ### devvm — wizard@10.0.10.10 (pre-wired, zero-config)
+
+            SSH key at ~/.ssh/id_rsa, host pre-trusted, `ssh devvm` Just
+            Works. Devvm has: Vault token, kubectl cluster-admin, git
+            repos under /home/wizard/code, git-crypt, claude 2.1.126 at
             /usr/local/bin/claude.
 
-            Use it as your trusted fallback when an in-pod tool/permission
-            is missing — credentials, multi-step claude-code work, or
-            anything else you can't reach from the sandbox.
+            ### Quick reference
 
-            #### One-shot
-
+            One-shot:
                 ssh devvm 'vault kv get -field=KEY secret/PATH'
                 ssh devvm 'claude -p "your prompt"'
 
-            #### Long-running (async via tmux on devvm)
-
-            Sessions and logs survive THIS pod restarting. Use this for
-            anything that'll take more than ~2 minutes.
-
+            Long-running (async tmux on devvm — sessions survive THIS
+            pod restarting):
                 ssh devvm openclaw-task new <id> "<command>"
-                ssh devvm openclaw-task claude <id> "<prompt>"  # interactive claude session
+                ssh devvm openclaw-task claude <id> "<prompt>"
                 ssh devvm openclaw-task send <id> "<text>" Enter
                 ssh devvm openclaw-task capture <id> [lines]
                 ssh devvm openclaw-task log <id>
                 ssh devvm openclaw-task list / status <id> / kill <id> / purge <id>
 
-            Full reference: `memory_recall "devvm fallback"` (file is at
-            /workspace/memory/projects/openclaw-runtime/devvm-fallback.md).
+            ### Learning protocol — where to save what
 
-            <!-- END openclaw-devvm-section v1 -->
+            - **Script** (something runnable) →
+                  /workspace/learned/scripts/<task>.sh (chmod +x)
+              File header documents WHAT it does, WHEN you learned it,
+              and WHO taught you (devvm-claude prompt, or self).
+            - **Knowledge** (decisions, paths, conventions, gotchas) →
+                  /workspace/learned/knowledge/<topic>.md
+            - **Credential** (when learning the value lets you skip
+              devvm on every call) →
+                  /workspace/learned/credentials/<name>.env (chmod 0600)
+              Format: `KEY=value` per line. Comment with SOURCE (vault
+              path or devvm command), so you can re-fetch on rotation.
+
+            Always add a row to /workspace/learned/INDEX.md. The agent
+            (you) checks INDEX.md before reaching for devvm, so an
+            unindexed file is invisible to future-you.
+
+            **Security caveat**: credentials saved here are plaintext on
+            NFS. Acceptable for home-lab personal scope — but don't
+            extend this pattern to secrets that are MORE sensitive than
+            what `ssh devvm` already gives you (i.e., wizard's access).
+            If in doubt, keep the credential on devvm and call out via
+            ssh for each use.
+
+            <!-- END openclaw-devvm-section v2 -->
             TOOLS_EOF
             mv "$TOOLS.tmp" "$TOOLS"
             chown 1000:1000 "$TOOLS"
-            echo "TOOLS.md updated with devvm section"
+
+            # ---- 3. /workspace/learned/ scaffold ------------------------
+            mkdir -p /workspace/learned/scripts \
+                     /workspace/learned/knowledge \
+                     /workspace/learned/credentials
+            chmod 0700 /workspace/learned/credentials
+            if [ ! -f /workspace/learned/INDEX.md ]; then
+              cat > /workspace/learned/INDEX.md <<'INDEX_EOF'
+            # Learned artifacts — index
+
+            What you've already figured out (via devvm-claude or
+            self-discovery). **Check here BEFORE asking devvm again.**
+            When you learn something new, add a row.
+
+            | Task | Type | Path | Source | Added |
+            |------|------|------|--------|-------|
+            | _example: post to slack_ | script | scripts/slack-post.sh | devvm-claude | 2026-05-22 |
+
+            ## Update protocol
+
+            When you save a new learned artifact:
+
+            1. Add a row above (Task, Type, Path, Source, Added).
+            2. In the artifact file's header, note WHEN and HOW you
+               learned it.
+            3. If it needs a credential, document the SOURCE so you can
+               re-fetch on rotation.
+
+            See `learn-from-tasks` skill for the full flow.
+            INDEX_EOF
+            fi
+            chown -R 1000:1000 /workspace/learned
+
+            # ---- 4. Skill at cc-skills/learn-from-tasks/ ----------------
+            SKILL_DIR=/home/node/.openclaw/cc-skills/learn-from-tasks
+            mkdir -p "$SKILL_DIR"
+            cat > "$SKILL_DIR/SKILL.md" <<'SKILL_EOF'
+            # learn-from-tasks
+
+            **The ultimate goal**: become independent. Devvm is the
+            teacher, you're the student. Every task should leave you
+            slightly less dependent on devvm than before.
+
+            ## When to fire this skill
+
+            Two triggers:
+
+            **A. You're STUCK** (can't do the task in-pod):
+            1. Check /workspace/learned/INDEX.md — already figured out?
+            2. If not, ssh devvm and ask claude:
+                   ssh devvm 'claude -p --dangerously-skip-permissions \
+                     "I need to do X. Give me concrete commands / script /
+                      credential. Be specific and runnable."'
+               For multi-step work, use the async pattern:
+                   ssh devvm openclaw-task new <id> "<command>"
+            3. Run what devvm gives you. Verify it works.
+            4. SAVE THE RECIPE (see "After-task save" below).
+
+            **B. You JUST FINISHED a non-trivial task** (whether via
+            devvm or self-figured). Introspect:
+            - Likely to recur? (User asks again, similar task appears.)
+            - Took >1 round-trip / detour / dig?
+            - Learned a non-obvious command, path, credential, workflow?
+            If yes → save it. The 2 minutes now save 10 minutes every
+            recurrence. Especially in early days, BIAS AGGRESSIVELY
+            toward saving — almost everything is a teaching moment.
+
+            ## After-task save (the recipe)
+
+            1. Pick the slot:
+                - Script (runnable) → /workspace/learned/scripts/<task>.sh
+                - Knowledge (notes/paths/conventions) →
+                    /workspace/learned/knowledge/<topic>.md
+                - Credential (only if storing locally is materially
+                    better than ssh-devvm-each-time) →
+                    /workspace/learned/credentials/<name>.env (chmod 0600)
+            2. Header in the artifact: WHAT, WHEN learned, HOW (devvm
+               prompt verbatim, or "self"), SOURCE (vault path if cred).
+            3. Add a row to /workspace/learned/INDEX.md (Task, Type,
+               Path, Source, Added).
+            4. Test that the saved recipe works END-TO-END before
+               considering yourself done with the task.
+
+            ## When NOT to save
+
+            - Trivial one-liners that don't save real time.
+            - Things that change every run (random tokens, ephemeral
+              pod names, timestamps).
+            - Credentials more sensitive than `ssh devvm` already gives
+              you — keep those on devvm.
+
+            ## Security
+
+            Credentials in /workspace/learned/credentials/ are plaintext
+            on NFS, readable by uid 1000 and root on cluster nodes.
+            Acceptable for the home-lab scope. Don't dump
+            higher-sensitivity tokens here.
+            SKILL_EOF
+            chown -R 1000:1000 "$SKILL_DIR"
+
+            echo "devvm-fallback + learning loop seeded:"
+            echo "  - memory note:  $DIR/devvm-fallback.md"
+            echo "  - TOOLS.md v2 (devvm + learning protocol)"
+            echo "  - learned/ scaffold + INDEX.md"
+            echo "  - skill:        $SKILL_DIR/SKILL.md"
           EOT
           ]
           volume_mount {
             name       = "workspace"
             mount_path = "/workspace"
           }
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
           resources {
             requests = { cpu = "10m", memory = "32Mi" }
-            limits   = { memory = "32Mi" }
+            limits   = { memory = "64Mi" }
           }
         }
 
