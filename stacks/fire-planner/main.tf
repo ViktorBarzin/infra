@@ -428,6 +428,77 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
   ]
 }
 
+# Weekly refresh of the COL cache: walks col_snapshot for rows
+# expiring within 7 days, re-scrapes Numbeo + Expatistan, upserts. With
+# the user-chosen 1-year TTL, a healthy cache has 0 stale rows on most
+# Sundays — the job is a no-op until rows age out. Schedule Sunday 04:00
+# UTC so Numbeo's contributor activity (mostly weekday) doesn't race
+# our reads.
+resource "kubernetes_cron_job_v1" "fire_planner_col_refresh" {
+  metadata {
+    name      = "fire-planner-col-refresh"
+    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 4 * * 0"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    starting_deadline_seconds     = 600
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name    = "col-refresh"
+              image   = local.image
+              command = ["python", "-m", "fire_planner", "col-refresh-stale", "--within-days", "7"]
+
+              env_from {
+                secret_ref {
+                  name = "fire-planner-db-creds"
+                }
+              }
+
+              resources {
+                requests = {
+                  cpu    = "100m"
+                  memory = "256Mi"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.db_external_secret,
+  ]
+}
+
 # Public ingress at fire-planner.viktorbarzin.me. Authentik-protected
 # (forward-auth at the Traefik layer); Cloudflare-proxied for CDN +
 # DDoS shielding. Backend FastAPI serves the SPA at / and the API

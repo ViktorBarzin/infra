@@ -139,6 +139,7 @@ locals {
     "wealth.json"             = "Finance (Personal)"
     "job-hunter.json"         = "Finance"
     "fire-planner.json"       = "Finance"
+    "cost-of-living.json"     = "Finance"
   }
 
   # Folders restricted to the Grafana admin user (anonymous Viewer + any future
