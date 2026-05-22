@@ -47,6 +47,16 @@ resource "helm_release" "cnpg" {
         memory = "256Mi"
       }
     }
+
+    # Tune webhook-cert renewal threshold. CNPG default is 7 days remaining,
+    # which leaves no buffer when the cluster-health check (#22) flags
+    # certs at <30d. Bump to 30 days so the operator rotates well before
+    # external monitoring notices. Cert lifetime stays at chart default 90d.
+    config = {
+      data = {
+        EXPIRING_CHECK_THRESHOLD = "30"
+      }
+    }
   })]
 }
 
