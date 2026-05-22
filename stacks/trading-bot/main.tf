@@ -24,7 +24,10 @@ locals {
     TRADING_CORS_ORIGINS                     = "[\"https://trading.viktorbarzin.me\"]"
     TRADING_MEET_KEVIN_POLL_INTERVAL_SECONDS = "10800"
     TRADING_MEET_KEVIN_DAILY_COST_CAP_USD    = "5"
-    TRADING_MEET_KEVIN_LLM_MODEL             = "anthropic/claude-sonnet-4.5"
+    # Haiku-4-5 used in v1 because sk-ant-oat01 OAuth quota on Enterprise
+    # trips a sticky multi-hour 429 on Sonnet after 5-10 burst calls.
+    # Switch to "claude-sonnet-4-5" if/when the Enterprise quota allows.
+    TRADING_MEET_KEVIN_LLM_MODEL             = "claude-haiku-4-5-20251001"
     TRADING_MEET_KEVIN_PROMPT_VERSION        = "v1"
   }
 }
@@ -71,7 +74,7 @@ resource "kubernetes_manifest" "external_secret" {
             TRADING_ALPHA_VANTAGE_API_KEY = "{{ .alpha_vantage_api_key }}"
             TRADING_FMP_API_KEY           = "{{ .fmp_api_key }}"
             DBAAS_ROOT_PASSWORD           = "{{ .dbaas_root_password }}"
-            TRADING_OPENROUTER_API_KEY    = "{{ .openrouter_api_key }}"
+            TRADING_ANTHROPIC_OAUTH_TOKEN = "{{ .anthropic_oauth_token }}"
             TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
           }
         }
@@ -85,7 +88,7 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "alpha_vantage_api_key", remoteRef = { key = "trading-bot", property = "alpha_vantage_api_key" } },
         { secretKey = "fmp_api_key", remoteRef = { key = "trading-bot", property = "fmp_api_key" } },
         { secretKey = "dbaas_root_password", remoteRef = { key = "trading-bot", property = "dbaas_root_password" } },
-        { secretKey = "openrouter_api_key", remoteRef = { key = "trading-bot", property = "openrouter_api_key" } },
+        { secretKey = "anthropic_oauth_token", remoteRef = { key = "trading-bot", property = "anthropic_oauth_token" } },
         { secretKey = "meet_kevin_channel_id", remoteRef = { key = "trading-bot", property = "meet_kevin_channel_id" } },
       ]
     }
