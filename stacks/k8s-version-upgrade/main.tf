@@ -172,10 +172,21 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
   # --ignore-daemonsets` can classify each pod's owner. Without daemonsets
   # GET permission, drain bails with "cannot delete daemonsets ... is
   # forbidden" for every daemonset-managed pod on the node. (2026-05-20)
+  #
+  # `patch` on deployments added 2026-05-23: phase_master scales tigera-operator
+  # to 0 before drain (operator crashloops during apiserver static-pod swaps,
+  # generates I/O storm that breaks kubeadm's 5-min watch) and back to 1
+  # after master is upgraded. Until HA control plane lands (beads code-n0ow),
+  # this is how we keep autonomous upgrades unblocked.
   rule {
     api_groups = ["apps"]
     resources  = ["daemonsets", "statefulsets", "replicasets", "deployments"]
     verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "deployments/scale"]
+    verbs      = ["patch", "update"]
   }
   # Chain dispatch — create the next Job; reconcile via apply on retry.
   # In `default` ns to also create the etcd-snapshot Job from cronjob/backup-etcd.
