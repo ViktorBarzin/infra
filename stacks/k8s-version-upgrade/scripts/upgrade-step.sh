@@ -94,7 +94,21 @@ push() {
 
 halt_on_alert_query() {
   local extra_ignore="${1:-}"
-  local regex='^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor'
+  # Always-ignored alerts — present in steady-state OR are themselves caused
+  # by what the chain does, so they should never halt a chain phase:
+  #   Watchdog              — Prometheus meta-alert, always firing
+  #   RebootRequired        — long-running info, not actionable mid-chain
+  #   KuredNodeWasNotDrained — kured info-level, doesn't block upgrade
+  #   InfoInhibitor         — used to inhibit other alerts, always present
+  #   IngressTTFBHigh       — Traefik latency. Symptoms-not-causes; upgrades
+  #                           routinely spike latency briefly. Halting on
+  #                           this would prevent the chain from running in
+  #                           any moderately busy cluster. (2026-05-23)
+  #   NodeHighIOWait        — chicken-and-egg with our own upgrade I/O. The
+  #                           inline quiet-baseline check (Ready transition
+  #                           <10min) is the real cluster-churn gate; iowait
+  #                           is too noisy to be a hard gate. (2026-05-23)
+  local regex='^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor|IngressTTFBHigh|NodeHighIOWait'
   [ -n "$extra_ignore" ] && regex="$regex|$extra_ignore"
   regex="$regex)$"
 
@@ -366,6 +380,25 @@ phase_master() {
   alerts=$(halt_on_alert_query RecentNodeReboot)
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing pre-drain: $alerts"; exit 1; }
 
+  # Quiesce noisy operators that crashloop when apiserver briefly disappears
+  # during the static-pod manifest swaps. The crashloop generates a disk-I/O
+  # storm (~500 MB/s observed from tigera-operator alone) that slows the
+  # apiserver↔kubelet status sync past kubeadm's hardcoded 5-min watch on
+  # `kubernetes.io/config.hash`, causing kubeadm to roll back the upgrade.
+  #
+  # The data plane (calico-node DaemonSet, calico-typha, calico-kube-controllers)
+  # keeps running unchanged — only the OPERATOR (a config reconciler) goes away
+  # briefly. Restored at the end of the phase below.
+  #
+  # If the chain dies between quiesce and restore (e.g. kubeadm fails),
+  # manually restore with:
+  #   kubectl -n tigera-operator scale deploy tigera-operator --replicas=1
+  #
+  # Long-term fix: HA control plane (3 masters) so apiserver never goes down
+  # — see docs/plans/2026-05-21-ha-control-plane-{design,plan}.md (beads code-n0ow).
+  echo "Quiescing tigera-operator before master upgrade (it crashes on apiserver outage)"
+  $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=0 2>&1 || true
+
   drain_node k8s-master
 
   slack "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
@@ -389,6 +422,10 @@ phase_master() {
 
   alerts=$(halt_on_alert_query RecentNodeReboot)
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
+
+  # Restore tigera-operator (quiesced before drain). It reconciles in seconds.
+  echo "Restoring tigera-operator"
+  $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 2>&1 || true
 
   slack "Master on v$TARGET_VERSION, control-plane Running. Dispatching worker chain."
 }

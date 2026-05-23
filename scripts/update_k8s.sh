@@ -89,17 +89,26 @@ if [[ "$ROLE" == "master" ]]; then
     # sync latency post-master-reboot can exceed it). The etcd image IS
     # actually updated by then, so a 2nd attempt sees etcd already on
     # target and skips it. Up to 3 attempts with a 30s delay between.
+    # First attempt: full kubeadm upgrade (incl. etcd). On the static-pod-
+    # hash 5min-timeout failure, retry with --etcd-upgrade=false. The
+    # timeout happens reliably for patch upgrades where etcd's image
+    # doesn't change (kubeadm writes identical manifest → hash doesn't
+    # change → kubeadm waits forever for a change that will never come).
+    # Skipping the etcd phase on retry is safe IF etcd is already on the
+    # right version (which is the only case where this timeout fires).
     attempt=1
-    while ! sudo kubeadm upgrade apply "v$RELEASE" -y; do
+    extra_flags=""
+    while ! sudo kubeadm upgrade apply "v$RELEASE" -y $extra_flags; do
         if (( attempt >= 3 )); then
             echo "ERROR: kubeadm upgrade apply failed after 3 attempts" >&2
             exit 1
         fi
-        echo "==> kubeadm apply attempt $attempt failed (likely static-pod-hash 5m timeout). Sleeping 30s then retrying — the previous attempt's manifest writes usually take hold on the 2nd try."
+        echo "==> kubeadm apply attempt $attempt failed. Retrying with --etcd-upgrade=false (etcd image is unchanged for patch upgrades; kubeadm's static-pod-hash watch is the only thing failing)."
+        extra_flags="--etcd-upgrade=false"
         sleep 30
         attempt=$(( attempt + 1 ))
     done
-    echo "==> kubeadm upgrade apply succeeded on attempt $attempt"
+    echo "==> kubeadm upgrade apply succeeded on attempt $attempt (flags: '$extra_flags')"
 else
     echo "==> Worker path: kubeadm upgrade node"
     sudo kubeadm upgrade node
