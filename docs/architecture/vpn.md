@@ -86,7 +86,7 @@ sequenceDiagram
 | Authentik | OIDC provider | K8s | SSO authentication for Headscale |
 | DERP Relay | Embedded in Headscale | K8s (region 999) | Relay for NAT traversal |
 | AdGuard DNS | Container | K8s | Global DNS resolver with ad-blocking |
-| Technitium DNS | Container | K8s (10.0.20.101) | Internal .lan domain resolver |
+| Technitium DNS | Container | K8s (10.0.20.201) | Internal .lan domain resolver |
 
 ## How It Works
 
@@ -224,7 +224,7 @@ dns_config:
 - Google: `8.8.8.8`, `8.8.4.4`
 
 **Conditional forwarding**:
-- `viktorbarzin.lan` → `10.0.20.101` (Technitium)
+- `viktorbarzin.lan` → `10.0.20.201` (Technitium)
 
 **Ad-blocking lists**:
 - AdGuard DNS filter
@@ -377,7 +377,7 @@ dns_config:
 **Steps**:
 1. Verify AdGuard is running: `kubectl get pod -n adguard`
 2. Check AdGuard conditional forwarding: Query AdGuard directly: `nslookup nextcloud.viktorbarzin.lan <adguard-ip>`
-3. Check Technitium: `nslookup nextcloud.viktorbarzin.lan 10.0.20.101`
+3. Check Technitium: `nslookup nextcloud.viktorbarzin.lan 10.0.20.201`
 
 **Common causes**:
 1. **AdGuard not forwarding .lan**: Conditional forwarding rule missing or misconfigured.

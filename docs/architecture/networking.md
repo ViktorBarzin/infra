@@ -416,7 +416,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 ### Ingress Returns 502 Bad Gateway
 
-**Symptoms**: Cloudflared tunnel is up, Traefik logs show `dial tcp: lookup <service> on 10.0.20.101:53: no such host`.
+**Symptoms**: Cloudflared tunnel is up, Traefik logs show `dial tcp: lookup <service> on 10.0.20.201:53: no such host`.
 
 **Diagnosis**: DNS resolution failed. Check:
 1. Is Technitium pod running? `kubectl get pod -n technitium`
