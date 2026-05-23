@@ -94,32 +94,41 @@ push() {
 
 halt_on_alert_query() {
   local extra_ignore="${1:-}"
-  # Always-ignored alerts — present in steady-state OR are themselves caused
-  # by what the chain does, so they should never halt a chain phase:
-  #   Watchdog              — Prometheus meta-alert, always firing
-  #   RebootRequired        — long-running info, not actionable mid-chain
-  #   KuredNodeWasNotDrained — kured info-level, doesn't block upgrade
-  #   InfoInhibitor         — used to inhibit other alerts, always present
-  #   IngressTTFBHigh       — Traefik latency. Symptoms-not-causes; upgrades
-  #                           routinely spike latency briefly. Halting on
-  #                           this would prevent the chain from running in
-  #                           any moderately busy cluster. (2026-05-23)
-  #   NodeHighIOWait        — chicken-and-egg with our own upgrade I/O. The
-  #                           inline quiet-baseline check (Ready transition
-  #                           <10min) is the real cluster-churn gate; iowait
-  #                           is too noisy to be a hard gate. (2026-05-23)
-  local regex='^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor|IngressTTFBHigh|NodeHighIOWait'
-  [ -n "$extra_ignore" ] && regex="$regex|$extra_ignore"
-  regex="$regex)$"
+  # ALLOWLIST design (refactored 2026-05-23 from a denylist): halt only on
+  # alerts with severity=critical. Any warning/info-level alert is treated
+  # as informational and doesn't block the chain.
+  #
+  # Why this is the right model:
+  #   - The cluster has long-running warning-level alerts that are NOT
+  #     blockers for a k8s patch (e.g. GPU operator crashloop on the GPU
+  #     node, ingress latency spikes, IO-wait warnings).
+  #   - Maintaining a denylist of every "noisy" alert is a losing battle.
+  #   - Critical alerts are the only ones that should actually stop us
+  #     mid-chain (apiserver down, etcd down, node not ready, etc.).
+  #
+  # `extra_ignore` is now mostly historical — kept for backwards compat with
+  # `halt_on_alert_query RecentNodeReboot`-style calls. With severity-based
+  # filtering, RecentNodeReboot (severity=info) is filtered automatically.
+  # We still build the regex for any critical alert the caller wants to
+  # explicitly ignore (e.g. a known-broken thing we're aware of).
+  local ignore_regex=""
+  [ -n "$extra_ignore" ] && ignore_regex="^($extra_ignore)\$"
 
-  # `grep -vE` returns 1 when nothing matches, which under `set -o pipefail`
-  # bubbles up and (via the caller's `alerts=$(...)`) aborts the whole script.
-  # Trailing `|| true` keeps a no-alerts-firing cluster from looking like a
-  # script error. Discovered 2026-05-19 when the chain wouldn't fire on a
-  # genuinely-clean cluster (every alert was Watchdog/RebootRequired/etc.).
-  curl -sf "$PROM/api/v1/alerts" \
-    | jq -r '.data.alerts[] | select(.state == "firing") | .labels.alertname' \
-    | { grep -vE "$regex" || true; } | sort -u
+  # `grep` returns 1 when nothing matches → under `set -o pipefail` that
+  # bubbles up and aborts the script via the caller's `alerts=$(...)`.
+  # Trailing `|| true` on each grep handles the no-matches case.
+  local critical_firing
+  critical_firing=$(curl -sf "$PROM/api/v1/alerts" \
+    | jq -r '.data.alerts[]
+              | select(.state == "firing" and .labels.severity == "critical")
+              | .labels.alertname' 2>/dev/null \
+    | sort -u || true)
+
+  if [ -n "$ignore_regex" ]; then
+    echo "$critical_firing" | { grep -vE "$ignore_regex" || true; }
+  else
+    echo "$critical_firing"
+  fi
 }
 
 wait_for_node_ready() {
