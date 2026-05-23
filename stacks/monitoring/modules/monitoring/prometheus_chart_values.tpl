@@ -1870,12 +1870,21 @@ serverFiles:
             annotations:
               summary: "Kubelet {{ $labels.operation_type }} p99: {{ $value | printf \"%.0f\" }}s on {{ $labels.instance }} (threshold: 30s)"
           - alert: KubeletRunningContainersDrop
-            expr: (kubelet_running_containers{container_state="running"} - kubelet_running_containers{container_state="running"} offset 10m) < -10
+            # Relative >50% drop vs. 10m ago, sustained for 5m.
+            # Absolute-count threshold removed 2026-05-18: routine drains
+            # routinely drop 10-30 containers and tripped the old `< -10`
+            # rule; only a >50% drop that persists 5m+ indicates a real
+            # node-level fault (kubelet hang, runtime crash, mass eviction).
+            expr: |
+              (
+                (kubelet_running_containers{container_state="running"} - kubelet_running_containers{container_state="running"} offset 10m)
+                / kubelet_running_containers{container_state="running"} offset 10m
+              ) < -0.5
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "Running containers on {{ $labels.instance }} dropped by {{ $value | printf \"%.0f\" }} in 10m"
+              summary: "Running containers on {{ $labels.instance }} dropped >50% in 10m ({{ $value | printf \"%.2f\" }} ratio)"
           - alert: CalicoNodeNotReady
             expr: kube_daemonset_status_number_ready{namespace="calico-system", daemonset="calico-node"} < kube_daemonset_status_desired_number_scheduled{namespace="calico-system", daemonset="calico-node"}
             for: 5m
@@ -1934,8 +1943,11 @@ serverFiles:
             annotations:
               summary: "Node {{ $labels.node }} kubelet started {{ $value | humanizeDuration }} ago — 1h settle window halts further reboots"
           - alert: MysqlStandaloneDown
+            # Single-replica StatefulSet: brief drain re-scheduling routinely
+            # takes 1-3 min during k8s upgrades. 3m suppresses those blips;
+            # real outages persist longer. Raised from 2m on 2026-05-18.
             expr: kube_statefulset_status_replicas_ready{statefulset="mysql-standalone"} < 1
-            for: 2m
+            for: 3m
             labels:
               severity: critical
             annotations:
@@ -2178,6 +2190,9 @@ serverFiles:
             annotations:
               summary: "Critically slow ingress on {{ $labels.service }}: avg latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
           - alert: IngressErrorRate5xxHigh
+            # Rolling upgrades / pod migrations cause brief 5xx spikes that
+            # clear within 1-2 min. Only persistent 5xx indicates a real
+            # problem. Raised from 5m to 10m on 2026-05-18.
             expr: |
               (
                 sum(rate(traefik_service_requests_total{code=~"5..", service!~".*nextcloud.*"}[5m])) by (service)
@@ -2186,11 +2201,11 @@ serverFiles:
               ) > 5
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*"}[5m])) by (service) > 0.1
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
-            for: 5m
+            for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 5% for 5m)"
+              summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 5% for 10m)"
           - alert: AnubisChallengeStoreErrors
             # Anubis exposes only Go-runtime metrics on :9090 (no anubis_* /
             # challenge_* counters), so we proxy via Traefik 5xx on services
@@ -2227,12 +2242,16 @@ serverFiles:
             annotations:
               summary: "Cloudflared: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: MetalLBSpeakerDown
+            # kubelet restart during k8s upgrade briefly takes the speaker
+            # pod down; typical recovery is 30-45s. 2m suppresses those
+            # transient blips while still catching genuine failures.
+            # Adjusted from 5m on 2026-05-18.
             expr: |
               (
                 kube_daemonset_status_desired_number_scheduled{namespace="metallb-system", daemonset="metallb-speaker"}
                 - on(namespace, daemonset) kube_daemonset_status_number_ready{namespace="metallb-system", daemonset="metallb-speaker"}
               ) > 0
-            for: 5m
+            for: 2m
             labels:
               severity: critical
             annotations:
