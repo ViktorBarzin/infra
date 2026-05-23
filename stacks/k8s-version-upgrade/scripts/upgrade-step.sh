@@ -380,6 +380,18 @@ phase_preflight() {
 }
 
 phase_master() {
+  # Idempotency: skip the whole phase if k8s-master is already on target.
+  # The chain can re-run after a partial failure (e.g. workers got cut
+  # short); without this short-circuit we re-drain and re-kubeadm an
+  # already-upgraded master for no reason. Added 2026-05-23.
+  local current_v
+  current_v=$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
+  if [ "$current_v" = "$TARGET_VERSION" ]; then
+    slack "k8s-master already on v$TARGET_VERSION (kubelet=$current_v) — skipping master phase"
+    echo "k8s-master already on v$TARGET_VERSION — skipping"
+    return 0
+  fi
+
   slack "Draining k8s-master"
 
   # Re-check halt-on-alert before drain. Always ignore RecentNodeReboot —
@@ -441,6 +453,18 @@ phase_master() {
 
 phase_worker() {
   [ -z "$TARGET_NODE" ] && { echo "ERROR: worker phase requires TARGET_NODE"; exit 2; }
+
+  # Idempotency: skip if target node is already on target version. Same
+  # rationale as phase_master — chains re-running after partial completion
+  # shouldn't re-drain an already-upgraded worker. Added 2026-05-23.
+  local current_v
+  current_v=$($KUBECTL get node "$TARGET_NODE" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
+  if [ "$current_v" = "$TARGET_VERSION" ]; then
+    slack "$TARGET_NODE already on v$TARGET_VERSION (kubelet=$current_v) — skipping worker phase"
+    echo "$TARGET_NODE already on v$TARGET_VERSION — skipping"
+    return 0
+  fi
+
   slack "Draining $TARGET_NODE"
 
   # Halt-on-alert wait (up to 30 min). Ignore RecentNodeReboot — the chain
