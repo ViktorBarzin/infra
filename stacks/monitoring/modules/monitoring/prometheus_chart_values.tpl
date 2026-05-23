@@ -2243,15 +2243,22 @@ serverFiles:
               summary: "Cloudflared: {{ $value | printf \"%.0f\" }} replica(s) unavailable"
           - alert: MetalLBSpeakerDown
             # kubelet restart during k8s upgrade briefly takes the speaker
-            # pod down; typical recovery is 30-45s. 2m suppresses those
-            # transient blips while still catching genuine failures.
-            # Adjusted from 5m on 2026-05-18.
+            # pod down; typical recovery is 30-45s. The full drain+kubeadm+
+            # apt+kubelet-restart+uncordon cycle in the chain's worker phase
+            # can take a single node out of MetalLB rotation for 5-7 min in
+            # the worst case (depending on PDB stickiness). 10m suppresses
+            # those upgrade-induced blips while still catching genuine
+            # speaker-down conditions.
+            # Reverted from 2m → 10m on 2026-05-23 after node4 upgrade
+            # tripped it mid-soak and aborted the chain. Previous value was
+            # 5m (set 2026-05-18) which was already correct; a brief patch
+            # had tightened it.
             expr: |
               (
                 kube_daemonset_status_desired_number_scheduled{namespace="metallb-system", daemonset="metallb-speaker"}
                 - on(namespace, daemonset) kube_daemonset_status_number_ready{namespace="metallb-system", daemonset="metallb-speaker"}
               ) > 0
-            for: 2m
+            for: 10m
             labels:
               severity: critical
             annotations:
