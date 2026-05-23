@@ -688,6 +688,14 @@ resource "kubernetes_config_map" "auth_proxy_config" {
       server {
           listen 9000;
 
+          # Browsers accumulate one authentik_proxy_<random> cookie per Authentik
+          # Proxy Provider on the parent domain. With 30+ services under
+          # viktorbarzin.me the combined Cookie header exceeds nginx's default
+          # 4 x 8k large_client_header_buffers and trips "Too big request header"
+          # (431). Bump to 8 x 64k so the auth check accepts the pile.
+          client_header_buffer_size 8k;
+          large_client_header_buffers 8 64k;
+
           location /outpost.goauthentik.io/auth/traefik {
               proxy_pass http://authentik;
               proxy_connect_timeout 3s;
