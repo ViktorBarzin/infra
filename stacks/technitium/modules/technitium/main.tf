@@ -696,3 +696,106 @@ resource "kubernetes_cron_job_v1" "technitium_dns_optimization" {
   }
 }
 
+# viktorbarzin.me apex DNS drift probe
+# Resolves `viktorbarzin.me A` against the Technitium LoadBalancer IP every
+# 5 min and pushes a Pushgateway gauge. Backstop for the entire
+# split-horizon zone: every internal `*.viktorbarzin.me` CNAME chains through
+# this apex, so if it drifts (ISP rollover, accidental edit), this is the
+# canary. Alerts: ViktorBarzinApexDrift, ApexProbeStale, ApexProbeNeverRun
+# in stacks/monitoring/.
+resource "kubernetes_cron_job_v1" "viktorbarzin_apex_probe" {
+  metadata {
+    name      = "viktorbarzin-apex-probe"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    schedule                      = "*/5 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "probe"
+              image = "docker.io/library/python:3.12-alpine"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "48Mi"
+                }
+                limits = {
+                  memory = "96Mi"
+                }
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                pip install --quiet --disable-pip-version-check dnspython requests && python3 -c '
+import dns.resolver, requests, time, sys
+
+EXPECTED = {"10.0.20.200"}
+NAMESERVER = "10.0.20.201"  # Technitium LB IP
+NAME = "viktorbarzin.me"
+PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/viktorbarzin-apex-probe"
+
+resolver = dns.resolver.Resolver(configure=False)
+resolver.nameservers = [NAMESERVER]
+resolver.timeout = 5
+resolver.lifetime = 8
+
+correct = 0
+observed = "unknown"
+try:
+    answer = resolver.resolve(NAME, "A")
+    ips = sorted(str(r) for r in answer)
+    observed = ",".join(ips)
+    correct = 1 if set(ips) <= EXPECTED and ips else 0
+    print(f"apex {NAME} -> {observed} (expected one of {EXPECTED}); correct={correct}")
+except Exception as e:
+    observed = f"error:{type(e).__name__}"
+    print(f"resolve error: {e}", file=sys.stderr)
+
+metric_lines = [
+    "# HELP viktorbarzin_apex_correct 1 if viktorbarzin.me apex resolves to expected IP, 0 otherwise",
+    "# TYPE viktorbarzin_apex_correct gauge",
+    f"viktorbarzin_apex_correct {correct}",
+]
+if correct:
+    metric_lines += [
+        "# HELP viktorbarzin_apex_last_correct_timestamp Unix time of last correct resolution",
+        "# TYPE viktorbarzin_apex_last_correct_timestamp gauge",
+        f"viktorbarzin_apex_last_correct_timestamp {int(time.time())}",
+    ]
+metrics = "\n".join(metric_lines) + "\n"
+try:
+    r = requests.post(PUSHGATEWAY, data=metrics, timeout=10)
+    print(f"pushgateway: {r.status_code}")
+except Exception as e:
+    print(f"pushgateway error: {e}", file=sys.stderr)
+sys.exit(0 if correct else 1)
+'
+              EOT
+              ]
+            }
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
