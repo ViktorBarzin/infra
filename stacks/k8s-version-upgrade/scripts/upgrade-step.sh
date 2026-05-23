@@ -107,7 +107,7 @@ halt_on_alert_query() {
   #     mid-chain (apiserver down, etcd down, node not ready, etc.).
   #
   # `extra_ignore` is now mostly historical — kept for backwards compat with
-  # `halt_on_alert_query RecentNodeReboot`-style calls. With severity-based
+  # `halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical"`-style calls. With severity-based
   # filtering, RecentNodeReboot (severity=info) is filtered automatically.
   # We still build the regex for any critical alert the caller wants to
   # explicitly ignore (e.g. a known-broken thing we're aware of).
@@ -280,7 +280,7 @@ phase_preflight() {
   # is set, often daily). Now skipped — check 3 is the single source of truth
   # for "is the cluster quiet enough to upgrade".
   local alerts
-  alerts=$(halt_on_alert_query RecentNodeReboot)
+  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   if [ -n "$alerts" ]; then
     slack "ABORT preflight — firing alerts:\n$alerts"
     exit 1
@@ -398,7 +398,7 @@ phase_master() {
   # the chain itself causes node reboots, so this alert firing is expected
   # mid-chain (e.g. master was already upgraded+rebooted before this phase).
   local alerts
-  alerts=$(halt_on_alert_query RecentNodeReboot)
+  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing pre-drain: $alerts"; exit 1; }
 
   # Quiesce noisy operators that crashloop when apiserver briefly disappears
@@ -441,7 +441,7 @@ phase_master() {
     exit 1
   fi
 
-  alerts=$(halt_on_alert_query RecentNodeReboot)
+  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
 
   # Restore tigera-operator (quiesced before drain). It reconciles in seconds.
@@ -471,7 +471,7 @@ phase_worker() {
   # just rebooted a node, that's the cause and is expected.
   local attempt alerts
   for attempt in $(seq 1 30); do
-    alerts=$(halt_on_alert_query RecentNodeReboot)
+    alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
     [ -z "$alerts" ] && break
     echo "Waiting for alerts to clear (attempt $attempt/30): $alerts"
     sleep 60
@@ -502,7 +502,7 @@ phase_worker() {
   # 10-min soak with halt-on-alert (RecentNodeReboot ignored — we know we restarted it)
   echo "Soaking $TARGET_NODE for 10 min..."
   for i in $(seq 1 10); do
-    alerts=$(halt_on_alert_query RecentNodeReboot)
+    alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
     [ -n "$alerts" ] && { slack "ABORT $TARGET_NODE mid-soak — alerts: $alerts"; exit 1; }
     sleep 60
   done
@@ -528,7 +528,7 @@ phase_postflight() {
   # No alerts firing. Ignore RecentNodeReboot — by definition we just
   # rebooted every node; this alert clears naturally in <1h.
   local alerts
-  alerts=$(halt_on_alert_query RecentNodeReboot)
+  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   [ -n "$alerts" ] && slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"
 
   # Pod-ready ratio
