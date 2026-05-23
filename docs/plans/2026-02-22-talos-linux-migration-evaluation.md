@@ -106,7 +106,7 @@ machine:
           - network: 0.0.0.0/0
             gateway: 10.0.20.1
     nameservers:
-      - 10.0.20.101  # Technitium
+      - 10.0.20.201  # Technitium
       - 1.1.1.1
   registries:
     mirrors:
