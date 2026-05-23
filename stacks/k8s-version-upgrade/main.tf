@@ -370,11 +370,17 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   exit 0
                 fi
 
-                # 1. Detect running version
+                # 1. Detect running version — use the OLDEST kubelet across
+                # all nodes so partial chains (e.g. master upgraded but
+                # workers still pending) don't trick the chain into
+                # thinking the upgrade is complete. Was `.items[0]` (master
+                # only) which made the chain skip when workers were behind.
+                # Fixed 2026-05-23 after node4-only chain failure.
                 RUNNING=$(/usr/local/bin/kubectl get nodes \
-                  -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' | tr -d v)
+                  -o jsonpath='{range .items[*]}{.status.nodeInfo.kubeletVersion}{"\n"}{end}' \
+                  | tr -d v | sort -V | head -1)
                 RUNNING_MINOR=$(echo "$RUNNING" | awk -F. '{print $1"."$2}')
-                echo "Running version: v$RUNNING (minor $RUNNING_MINOR)"
+                echo "Running version (oldest kubelet): v$RUNNING (minor $RUNNING_MINOR)"
 
                 # 2. Latest patch within current minor (refresh master's apt cache)
                 LATEST_PATCH=$($SSH wizard@k8s-master.viktorbarzin.lan \
