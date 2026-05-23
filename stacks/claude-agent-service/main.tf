@@ -454,10 +454,10 @@ resource "kubernetes_deployment" "claude_agent" {
           resources {
             requests = {
               cpu    = "500m"
-              memory = "2Gi"
+              memory = "1Gi"
             }
             limits = {
-              memory = "4Gi"
+              memory = "2Gi"
             }
           }
         }
