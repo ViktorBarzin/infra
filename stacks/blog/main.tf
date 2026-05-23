@@ -150,19 +150,6 @@ module "ingress" {
   }
 }
 
-module "ingress-www" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  namespace         = kubernetes_namespace.website.metadata[0].name
-  name              = "blog-www"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
-  extra_middlewares = ["traefik-x402@kubernetescrd"]
-  full_host         = "www.viktorbarzin.me"
-  tls_secret_name   = var.tls_secret_name
-  anti_ai_scraping  = false
-}
-
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
 
