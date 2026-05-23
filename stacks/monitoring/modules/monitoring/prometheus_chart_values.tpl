@@ -84,12 +84,12 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeStale|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -2337,6 +2337,30 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Email round-trip monitor never reported - check CronJob in mailserver namespace"
+          - alert: ViktorBarzinApexDrift
+            expr: viktorbarzin_apex_correct{job="viktorbarzin-apex-probe"} == 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "viktorbarzin.me apex A drifted from expected 10.0.20.200"
+              description: "Technitium serves the split-horizon apex for ~80 *.viktorbarzin.me CNAMEs. If this is wrong, every internal service (auth, vault, immich, ha-sofia, ...) breaks. Check Technitium primary zone records via API or web console."
+          - alert: ViktorBarzinApexProbeStale
+            expr: (time() - viktorbarzin_apex_last_correct_timestamp{job="viktorbarzin-apex-probe"}) > 900
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "viktorbarzin.me apex probe has not seen a correct result in >15 min"
+              description: "Probe may be failing intermittently or apex may be drifting. Check CronJob `viktorbarzin-apex-probe` in `technitium` namespace."
+          - alert: ViktorBarzinApexProbeNeverRun
+            expr: absent(viktorbarzin_apex_correct{job="viktorbarzin-apex-probe"})
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "viktorbarzin.me apex probe never reported"
+              description: "Check `kubectl -n technitium get cronjob viktorbarzin-apex-probe` and the most recent job pod logs."
           - alert: AIOStreamsStreamCountLow
             expr: aiostreams_stream_count{job="aiostreams-stream-probe"} < 50
             for: 30m
