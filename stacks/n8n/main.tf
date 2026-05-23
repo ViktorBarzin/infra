@@ -228,7 +228,7 @@ resource "kubernetes_deployment" "n8n" {
         service_account_name = kubernetes_service_account.n8n.metadata[0].name
         container {
           name  = "n8n"
-          image = "docker.n8n.io/n8nio/n8n:1.80.0"
+          image = "docker.n8n.io/n8nio/n8n:1.80.5"
           env {
             name  = "N8N_PORT"
             value = "5678"
@@ -352,10 +352,10 @@ resource "kubernetes_deployment" "n8n" {
           resources {
             requests = {
               cpu    = "25m"
-              memory = "1Gi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "512Mi"
             }
           }
         }
