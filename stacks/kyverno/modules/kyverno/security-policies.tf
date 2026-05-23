@@ -355,7 +355,8 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "shadowsocks/*", "shlinkio/*", "stirlingtools/*",
                   "technitium/*", "teddysun/*", "temporalio/*",
                   "typhonragewind/*", "tzahi12345/*", "vabene1111/*",
-                  "vaultwarden/*", "viktorbarzin/*", "viren070/*", "zelest/*",
+                  "vaultwarden/*", "viktorbarzin/*", "viren070/*",
+                  "woodpeckerci/*", "zelest/*",
                 ])
               }]
             }
