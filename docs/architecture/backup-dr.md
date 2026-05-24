@@ -333,6 +333,8 @@ Two-step offsite sync:
 **Change tracking**: `nfs-change-tracker.service` (systemd, inotifywait) on PVE host watches `/srv/nfs` and `/srv/nfs-ssd` continuously. Changed file paths are logged to `/mnt/backup/.nfs-changes.log`. The offsite sync reads this log and transfers only changed files. Incremental syncs complete in seconds instead of 30+ minutes.
 **Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` for cleanup (removes orphaned files on Synology).
 
+**Path exclusions**: `/srv/nfs/anca-elements/` (~770G) is excluded from both layers — it is itself a downstream replica of `Synology:/volume1/Backup/Anca/Elements` (synced in via `anca-elements-sync.sh`), so backing it up to Synology would be a self-duplicate. The exclusion lives in `nfs-change-tracker.service` (inotify `--exclude` regex) and `offsite-sync-backup` (rsync `--exclude` on full sync + `grep -v` on the incremental files-from list).
+
 **Destination**:
 - `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs`
 - `Synology/Backup/Viki/nfs-ssd/` — mirrors `/srv/nfs-ssd`
