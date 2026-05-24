@@ -1562,6 +1562,13 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Offsite backup sync is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: OffsiteBackupSyncFailing
+            expr: offsite_sync_last_status{job="offsite-backup-sync"} != 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Offsite backup sync last run reported errors (status={{ $value }})"
           - alert: NfsMirrorStale
             expr: (time() - nfs_mirror_last_run_timestamp{job="nfs-mirror"}) > 1382400
             for: 30m

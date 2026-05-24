@@ -1,18 +1,34 @@
 # Backup & Disaster Recovery Architecture
 
-Last updated: 2026-04-13
+Last updated: 2026-05-24
+
+> **2026-05-24 session — what changed today** (deeper structural review pending — see the open backup-pipeline simplification audit):
+> - **anca-elements archive direction inverted** — Synology `/Backup/Anca/Elements` (770G) deleted; PVE `/srv/nfs/anca-elements` is now source of truth. `anca-elements-sync.sh` retired.
+> - **`anca-elements-mirror.{sh,service,timer}` retired**, subsumed into the new **`nfs-mirror`** weekly job covering all critical NFS subtrees (anca-elements + ~80 services) → sda.
+> - **`offsite-sync-backup` Step 2 filter inverted**: NFS-direct-to-Synology now only carries the sda-bypass paths (immich + frigate + prometheus + `*-backup` + …). Two-leg invariant: `nfs-mirror.sh EXCLUDES` ≡ `offsite-sync-backup Step 2 INCLUDES`. Cross-referenced in both scripts.
+> - **Synology `/Backup/Viki/nfs/<svc>/` orphan cleanup** — 84 dirs renamed in-place (btrfs metadata-only) to `/Backup/Viki/pve-backup/<svc>/` so daily-incremental Step 1 sees them as pre-existing and only ships deltas. No re-transfer.
+> - **Synology snapshot retention 7d → 3d**, all 8 backlog snapshots deleted via `sudo synosharesnapshot delete Backup ...`. Reclaimed ~800G btrfs (98% → 83% used). DSM API was blocked by 2FA; `sudo` over the existing `Administrator` SSH key worked with the Vault-stored password.
+> - **Manifest mechanism extended**: `nfs-mirror` now appends its transferred file list to `/mnt/backup/.changed-files` so daily Step 1 incremental picks it up (was previously only fed by `daily-backup`).
 
 ## Overview
 
-The homelab uses a defense-in-depth 3-2-1 backup strategy: **3 copies** (live PVCs on sdc, weekly backups on sda, offsite on Synology), **2 media types** (SSD thin LVM, HDD), **1 offsite copy** (Synology NAS). This architecture provides <1s RPO for recent changes (via 7-day LVM snapshots), <7d RPO for file-level recovery, and <30min RTO for most services.
+The homelab runs a 3-2-1 strategy with a **two-leg** path to Synology so every NFS byte takes exactly one route to offsite (no duplication, no gaps):
+
+```
+sdc /srv/nfs/<svc>/   ──nfs-mirror weekly──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/      [leg 1]
+sdc /srv/nfs/<bypass>/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/<bypass>/                       [leg 2]
+sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,pfsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
+```
+
+The **bypass list** (paths that take leg 2 — too big for sda, transient, or already-a-backup): `immich`, `frigate`, `prometheus`, `loki`, `temp`, `alertmanager`, `ollama`, `audiblez`, `ebook2audiobook`, `*-backup`. Anything NOT in this list rides leg 1 via `nfs-mirror`.
 
 **3-2-1 Breakdown**:
-- **Copy 1** (live): All PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD)
-- **Copy 2** (local backup): Weekly file-level backup to sda `/mnt/backup` (1.1TB RAID1 SAS)
-- **Copy 3** (offsite): Synology NAS at 192.168.1.13:
-  - `Synology/Backup/Viki/pve-backup/` — PVC snapshots, pfSense, PVE config (rsync from sda weekly)
-  - `Synology/Backup/Viki/nfs/` — NFS HDD data (inotify change-tracked rsync from `/srv/nfs`)
-  - `Synology/Backup/Viki/nfs-ssd/` — NFS SSD data (inotify change-tracked rsync from `/srv/nfs-ssd`)
+- **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
+- **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — at **~90% used** post-2026-05-24 (was ~10% in April)
+- **Copy 3** (offsite): Synology NAS at 192.168.1.13 — at **~83% used / 934G free** post-2026-05-24 (was 98% / 121G before today's cleanup)
+  - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs)
+  - `Synology/Backup/Viki/nfs/` — bypass-list NFS (immich, frigate, etc.)
+  - `Synology/Backup/Viki/nfs-ssd/` — bypass-list SSD NFS (immich-ML, ollama, llamacpp)
 
 ## Architecture Diagram
 
@@ -366,6 +382,38 @@ Pushes `nfs_mirror_last_run_timestamp` + `nfs_mirror_last_status` + `nfs_mirror_
 
 > TrueNAS Cloud Sync was decommissioned along with TrueNAS (2026-04-13). The current offsite path is inotify-change-tracked rsync from the Proxmox host NFS (`/srv/nfs`, `/srv/nfs-ssd`) to Synology.
 
+### Synology snapshot management
+
+Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` share most importantly). Retention is configured per-share in DSM's Snapshot Replication app, and persists in `synosharesnapshot shareconf`.
+
+**Current settings** (`Backup` share, 2026-05-24): daily at 02:00, **`snap_auto_remove_keep_days=3`** (tightened from 7 to reduce the window where deleted data continues to consume space).
+
+Snapshots are CoW — deleting a file from the live filesystem does NOT free its blocks while any retained snapshot references them. Reclaim only happens after ALL referencing snapshots roll off.
+
+**DSM Web API is gated by 2FA (FIDO/OTP)** — programmatic snapshot management has to go via SSH + sudo instead:
+
+```bash
+# Password is in Vault: secret/viktor → synology_admin_password
+PASS=$(VAULT_ADDR=https://vault.viktorbarzin.me vault kv get -field=synology_admin_password secret/viktor)
+
+# List snapshots on the Backup share
+ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup"
+
+# Bulk delete ALL snapshots (reclaims everything once btrfs cleaner runs)
+ssh Administrator@192.168.1.13 "
+  SNAPS=\$(echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup 2>/dev/null \
+    | grep -oE 'GMT-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+  echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot delete Backup \$SNAPS
+"
+
+# Tighten retention
+ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot shareconf set Backup snap_auto_remove_keep_days=3"
+```
+
+The btrfs cleaner thread reclaims async — `df` may lag the snapshot-delete by minutes (typical reclaim rate observed 2026-05-24: ~300 MB/s sustained, with bursts of 800 GB in 2 minutes).
+
+> Memory: id=2673-2676 (Synology snapshot retention gotcha — deletion vs reclaim timing).
+
 ## Configuration
 
 ### Key Files
@@ -387,6 +435,8 @@ Pushes `nfs_mirror_last_run_timestamp` + `nfs_mirror_last_status` + `nfs_mirror_
 | `stacks/vault/` | Terraform: Vault backup CronJob |
 | `stacks/vaultwarden/` | Terraform: Vaultwarden backup + integrity CronJobs |
 | `stacks/monitoring/` | Terraform: Prometheus alerts |
+| `synology:Administrator@192.168.1.13` | Synology SSH; sudo password = Vault `secret/viktor` `synology_admin_password`; DSM API itself gated by 2FA |
+| `/usr/syno/sbin/synosharesnapshot` | Synology: btrfs snapshot CLI — must run as root via sudo |
 
 ### Vault Paths
 
