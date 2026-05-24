@@ -333,7 +333,9 @@ Two-step offsite sync:
 **Change tracking**: `nfs-change-tracker.service` (systemd, inotifywait) on PVE host watches `/srv/nfs` and `/srv/nfs-ssd` continuously. Changed file paths are logged to `/mnt/backup/.nfs-changes.log`. The offsite sync reads this log and transfers only changed files. Incremental syncs complete in seconds instead of 30+ minutes.
 **Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` for cleanup (removes orphaned files on Synology).
 
-**Path exclusions**: `/srv/nfs/anca-elements/` (~770G) is excluded from both layers — it is itself a downstream replica of `Synology:/volume1/Backup/Anca/Elements` (synced in via `anca-elements-sync.sh`), so backing it up to Synology would be a self-duplicate. The exclusion lives in `nfs-change-tracker.service` (inotify `--exclude` regex) and `offsite-sync-backup` (rsync `--exclude` on full sync + `grep -v` on the incremental files-from list).
+**Path exclusions**: `/srv/nfs/anca-elements/` (~770G) is excluded from both layers. From 2026-05-24 onward `/srv/nfs/anca-elements` is the source of truth for this archive — the Synology copy at `/volume1/Backup/Anca/Elements` was deleted (it had been the upstream source, but anca-elements-sync.sh's role inverted: PVE now writes, Synology no longer holds it). Single-disk-failure protection is provided by a SEPARATE local mirror on sda (`anca-elements-mirror.{service,timer}`, weekly Mon 04:00) — not by Synology. The Synology exclusion lives in `nfs-change-tracker.service` (inotify `--exclude` regex) and `offsite-sync-backup` (rsync `--exclude` on full sync + `grep -v` on the incremental files-from list).
+
+**Layer 3a: anca-elements local mirror (sda)**: `/usr/local/bin/anca-elements-mirror` rsyncs `/srv/nfs/anca-elements/` → `/mnt/backup/anca-elements/` weekly. `rsync -rlt --delete -H --no-perms --no-owner --no-group`. Idempotent; subsequent runs only transfer changes. Pushes `anca_elements_mirror_last_run_timestamp` + `anca_elements_mirror_last_status` to Pushgateway. No offsite copy — by design; the archive is single-disk-failure tolerant only.
 
 **Destination**:
 - `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs`
@@ -360,6 +362,8 @@ Two-step offsite sync:
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
 | `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
 | `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
+| `/usr/local/bin/anca-elements-mirror` | PVE host: weekly mirror of /srv/nfs/anca-elements → sda /mnt/backup/anca-elements |
+| `/etc/systemd/system/anca-elements-mirror.timer` | Weekly Mon 04:00 (anca-elements mirror) |
 | `stacks/dbaas/` | Terraform: PostgreSQL/MySQL backup CronJobs |
 | `stacks/vault/` | Terraform: Vault backup CronJob |
 | `stacks/vaultwarden/` | Terraform: Vaultwarden backup + integrity CronJobs |
