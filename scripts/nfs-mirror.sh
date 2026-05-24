@@ -34,6 +34,12 @@ SRC=/srv/nfs/
 DST=/mnt/backup/
 LOG=/var/log/nfs-mirror.log
 LOCKFILE=/run/nfs-mirror.lock
+# Manifest of files changed under /mnt/backup since the last offsite-sync.
+# offsite-sync-backup Step 1 reads this and rsyncs the listed files to Synology
+# pve-backup/ on its next daily run. Without populating it, nfs-mirror's writes
+# would only reach Synology via the monthly full sync (1st-7th of month), and
+# the monthly --delete pass would also wipe any pre-positioned data.
+MANIFEST=/mnt/backup/.changed-files
 PUSHGATEWAY="${NFS_MIRROR_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB=nfs-mirror
 
@@ -85,8 +91,10 @@ EOF
 }
 
 KILLED=""
+STAMP=""
 cleanup() {
     rm -f "$LOCKFILE"
+    [ -n "$STAMP" ] && rm -f "$STAMP"
     if [ -n "$KILLED" ]; then
         push_metrics 2 0  # status=2 = aborted
     fi
@@ -105,6 +113,10 @@ mountpoint -q /mnt/backup || { log "FATAL: /mnt/backup not mounted"; push_metric
 log "=== mirror starting: $SRC → $DST ==="
 log "skip: immich, frigate, prometheus, loki, ollama, audiblez, *-backup, temp"
 
+# Marker file used to identify files written by this rsync run, so we can append
+# their paths to the offsite-sync manifest. Touch BEFORE rsync; `find -newer` AFTER.
+STAMP=$(mktemp)
+
 RSYNC_RC=0
 rsync \
     -rlt --delete -H \
@@ -116,7 +128,16 @@ rsync \
 DST_BYTES=$(df -B1 --output=used /mnt/backup | tail -1)
 
 if [ "$RSYNC_RC" -eq 0 ]; then
-    log "=== mirror complete; /mnt/backup used: $(df -h --output=used /mnt/backup | tail -1 | tr -d ' ') ==="
+    # Capture files that rsync created/modified and feed them to the offsite-sync
+    # manifest so daily Step 1 incremental picks them up tomorrow morning.
+    NEW_COUNT=$(find /mnt/backup -newer "$STAMP" -type f \
+        ! -path '/mnt/backup/.changed-files' \
+        ! -path '/mnt/backup/.lv-pvc-mapping.json' \
+        ! -path '/mnt/backup/.nfs-changes.log' \
+        ! -path '/mnt/backup/.last-offsite-sync' \
+        -printf '%P\n' 2>/dev/null | tee -a "$MANIFEST" | wc -l)
+    log "=== mirror complete; ${NEW_COUNT} files added to offsite manifest ==="
+    log "/mnt/backup used: $(df -h --output=used /mnt/backup | tail -1 | tr -d ' ')"
     push_metrics 0 "$DST_BYTES"
 else
     log "=== mirror failed: rsync exited $RSYNC_RC ==="
