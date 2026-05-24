@@ -1,6 +1,15 @@
 # values from - https://github.com/crowdsecurity/helm-charts/blob/main/charts/crowdsec/values.yaml
 container_runtime: containerd
 
+# Pin the image tag to v1.7.8 — the chart 0.21.0 defaults appVersion to
+# v1.7.3 but Keel had auto-bumped the running pods to v1.7.8 on 2026-05-16
+# and they ran fine with CAPI working for ~8 days. The 2026-05-24 TF apply
+# re-rendered the deployment from chart defaults (v1.7.3) and CAPI auth
+# started returning 403 on every fresh replica. Pinning here makes the
+# image survive future TF applies independently of the chart's appVersion.
+image:
+  tag: "v1.7.8"
+
 agent:
   resources:
     requests:
@@ -98,35 +107,20 @@ lapi:
     data:
       enabled: false
   env:
-    # CAPI disabled 2026-05-24 — TEMPORARY MEASURE.
+    # CAPI re-enabled 2026-05-24 with image.tag pin to v1.7.8 (see top of
+    # file). The crashloop earlier today was triggered when TF apply
+    # reverted the running image v1.7.8 → v1.7.3 (chart 0.21.0 default
+    # appVersion); v1.7.3 has a CAPI watcher-auth bug against the
+    # current api.crowdsec.net behaviour. v1.7.8 ran cleanly for 8 days
+    # (May 16 → May 24) before the revert and authenticates fine.
     #
-    # Symptom: every fresh LAPI replica hit 403 Forbidden on CAPI watcher
-    # auth at api.crowdsec.net startup → fatal → CrashLoopBackOff.
-    # Tried `cscli capi register` to rotate creds (worked briefly: the
-    # newly-registered login `486abb15…` succeeded for ~1 hour from
-    # inside the cluster, then started returning 403 again). Live probe
-    # of the same login from devvm STILL works HTTP 200 — looks like
-    # api.crowdsec.net is throttling or IP-blocking the cluster's
-    # egress IP (Cloudflare tunnel / PVE NAT) for new sessions.
-    #
-    # DISABLE_ONLINE_API=true makes the chart entrypoint
-    # `conf_set 'del(.api.server.online_client)'` → no CAPI auth call
-    # at startup → no 403 → pod starts. Also short-circuits the
-    # `cscli console enroll` step that was the older crashloop trigger
-    # (per memory id=2606-2613 the enroll key is single-shot too).
-    #
-    # Trade-off: no community blocklists from CAPI feeds. Local
-    # scenarios + bouncers continue unchanged.
-    #
-    # Re-enable path (when CrowdSec central cooperates again):
-    #   1. Generate a fresh enroll key at app.crowdsec.net
-    #   2. Re-run `cscli capi register -f /tmp/c.yaml` from a pod and
-    #      update `crowdsec-capi-credentials` Secret
-    #   3. Verify the new login authenticates from INSIDE the cluster
-    #      for at least an hour (not just from devvm)
-    #   4. Remove DISABLE_ONLINE_API, restore ENROLL_KEY env block
-    - name: DISABLE_ONLINE_API
-      value: "true"
+    # ENROLL_KEY env intentionally not set — the existing key
+    # `cmey5e636…` was already consumed (single-shot per replica) and
+    # subsequent replicas hit 403 Forbidden on `cscli console enroll`.
+    # CAPI works WITHOUT console enroll — they're separate flows. To
+    # restore console reporting at app.crowdsec.net: generate a fresh
+    # enroll key there (Settings → Engines → Enroll), put it in
+    # var.enroll_key, restore the ENROLL_KEY/INSTANCE_NAME/TAGS env block.
     - name: DB_PASSWORD
       valueFrom:
         secretKeyRef:
