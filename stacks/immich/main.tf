@@ -124,6 +124,19 @@ module "nfs_ml_cache_host" {
   nfs_path   = "/srv/nfs-ssd/immich/machine-learning"
 }
 
+# Read-only source for one-shot bulk imports into individual users' accounts
+# (currently: Anca's WD Elements dump, mirrored to /srv/nfs/anca-elements from
+# her Synology). Consumed only by the import Job below — NOT mounted into the
+# immich-server Deployment. PVC stays after the Job is removed so videos can
+# follow in batch 2.
+module "nfs_anca_elements_host" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "immich-anca-elements-host"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.proxmox_host
+  nfs_path   = "/srv/nfs/anca-elements"
+}
+
 resource "kubernetes_namespace" "immich" {
   metadata {
     name = "immich"
@@ -863,6 +876,123 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
+}
+
+# One-shot bulk import of Anca's Synology Elements photo archive into her
+# Immich account. Reads /srv/nfs/anca-elements via the RO PVC above and posts
+# assets to immich-server in-cluster (bypasses ingress + CrowdSec entirely).
+#
+# Auth: Anca's personal Immich API key. Add to Vault `secret/immich` under key
+# `anca_api_key`, then force-refresh the existing `immich-secrets` ExternalSecret:
+#   kubectl annotate externalsecret immich-secrets -n immich \
+#     force-sync=$(date +%s) --overwrite
+#
+# After successful completion: REMOVE this resource block + apply again. The
+# PVC stays for a videos batch later. Filters target a photo-only subset of
+# the dump (videos / installers / docs / courses banned); EXIF is preserved
+# end-to-end since immich-go uploads originals byte-for-byte.
+resource "kubernetes_job_v1" "anca_elements_import" {
+  metadata {
+    name      = "anca-elements-import"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels = {
+      app  = "anca-elements-import"
+      tier = local.tiers.gpu
+    }
+  }
+
+  # Don't block `terragrunt apply` on the multi-hour upload — TF returns once
+  # the Job is created; monitor via `kubectl logs -n immich -f job/...`.
+  wait_for_completion = false
+
+  spec {
+    backoff_limit              = 2
+    ttl_seconds_after_finished = 604800
+    template {
+      metadata {
+        labels = {
+          app = "anca-elements-import"
+        }
+      }
+      spec {
+        restart_policy = "OnFailure"
+        container {
+          name  = "immich-go"
+          image = "alpine:3.20"
+          command = [
+            "/bin/sh",
+            "-c",
+            <<-EOT
+              set -eu
+              apk add --no-cache curl tar ca-certificates >/dev/null
+
+              IMMICH_GO_VERSION="v0.31.0"
+              cd /tmp
+              echo "Downloading immich-go $${IMMICH_GO_VERSION}…"
+              curl -sL "https://github.com/simulot/immich-go/releases/download/$${IMMICH_GO_VERSION}/immich-go_Linux_x86_64.tar.gz" \
+                | tar -xz
+              chmod +x ./immich-go
+
+              echo "Starting upload from /data → http://immich-server.immich.svc.cluster.local:2283 …"
+              exec ./immich-go upload from-folder /data \
+                --server http://immich-server.immich.svc.cluster.local:2283 \
+                --api-key "$${IMMICH_API_KEY}" \
+                --include-extensions .jpg,.jpeg,.png,.heic,.heif,.gif,.tif,.tiff,.webp,.nef,.cr2,.dng,.raw \
+                --into-album "Poze (Elements)" \
+                --ban-file "filme/" --ban-file "Music/" --ban-file "carti/" \
+                --ban-file "cursuri/" --ban-file "Adobe.*/" \
+                --ban-file "Fullstack Web Development*/" \
+                --ban-file "Contracte and CV/" --ban-file "Cv/" \
+                --ban-file "docum/" --ban-file "finance/" \
+                --ban-file "download/" --ban-file "kit/" \
+                --ban-file "csp/" --ban-file "KOREAN/" \
+                --ban-file "System Volume Information/" \
+                --pause-immich-jobs=false \
+                --concurrent-tasks 8 \
+                --client-timeout 1h \
+                --no-ui \
+                --on-errors continue
+            EOT
+          ]
+          env {
+            name = "IMMICH_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "immich-secrets"
+                key  = "anca_api_key"
+              }
+            }
+          }
+          volume_mount {
+            name       = "anca-elements"
+            mount_path = "/data"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "500m"
+              memory = "1Gi"
+            }
+            limits = {
+              memory = "1Gi"
+            }
+          }
+        }
+        volume {
+          name = "anca-elements"
+          persistent_volume_claim {
+            claim_name = module.nfs_anca_elements_host.claim_name
+            read_only  = true
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.external_secret]
 }
 
 # POWER TOOLS
