@@ -61,6 +61,12 @@ resource "kubernetes_deployment" "forgejo" {
       app  = "forgejo"
       tier = local.tiers.edge
     }
+    annotations = {
+      # Keel disabled here — its `force` policy rewrote the image tag
+      # from 11.0.14 → 1.18 on 2026-05-24 (same bug as memory id=1933).
+      # TF owns the tag now; bump it manually here when upgrading.
+      "keel.sh/policy" = "never"
+    }
   }
   spec {
     replicas = 1
@@ -89,7 +95,14 @@ resource "kubernetes_deployment" "forgejo" {
         }
         container {
           name  = "forgejo"
-          image = "codeberg.org/forgejo/forgejo:11"
+          # Pinned to 11.0.14 (latest 11.x as of 2026-05-12) — was on
+          # floating `:11`. On 2026-05-24T15:35:37Z Keel force-policy
+          # rewrote the tag from `11.0.14 → 1.18` (Gitea-era Forgejo
+          # v1.18), exact replay of the 2026-05-16 force-policy
+          # tag-rewriting incident (memory id=1933). The pod crashlooped
+          # because the DB had already been migrated to schema 305 by
+          # 11.0.14 and v1.18 only knows up to migration 231.
+          image = "codeberg.org/forgejo/forgejo:11.0.14"
           env {
             name  = "USER_UID"
             value = 1000
@@ -182,10 +195,16 @@ resource "kubernetes_deployment" "forgejo" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
+      # KEEL_IGNORE_IMAGE removed 2026-05-24 — Keel is disabled for this
+      # workload now (keel.sh/policy=never annotation above), so TF owns
+      # the image tag. Restore this ignore_changes line if you flip
+      # keel.sh/policy back to `force` later.
+      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
     ]
   }
 }
