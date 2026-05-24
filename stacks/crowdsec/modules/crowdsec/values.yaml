@@ -98,20 +98,40 @@ lapi:
     data:
       enabled: false
   env:
-    - name: ENROLL_KEY
-      value: "${ENROLL_KEY}"
-    - name: ENROLL_INSTANCE_NAME
-      value: "k8s-cluster"
-    - name: ENROLL_TAGS
-      value: "k8s linux"
+    # CAPI disabled 2026-05-24 — TEMPORARY MEASURE.
+    #
+    # Symptom: every fresh LAPI replica hit 403 Forbidden on CAPI watcher
+    # auth at api.crowdsec.net startup → fatal → CrashLoopBackOff.
+    # Tried `cscli capi register` to rotate creds (worked briefly: the
+    # newly-registered login `486abb15…` succeeded for ~1 hour from
+    # inside the cluster, then started returning 403 again). Live probe
+    # of the same login from devvm STILL works HTTP 200 — looks like
+    # api.crowdsec.net is throttling or IP-blocking the cluster's
+    # egress IP (Cloudflare tunnel / PVE NAT) for new sessions.
+    #
+    # DISABLE_ONLINE_API=true makes the chart entrypoint
+    # `conf_set 'del(.api.server.online_client)'` → no CAPI auth call
+    # at startup → no 403 → pod starts. Also short-circuits the
+    # `cscli console enroll` step that was the older crashloop trigger
+    # (per memory id=2606-2613 the enroll key is single-shot too).
+    #
+    # Trade-off: no community blocklists from CAPI feeds. Local
+    # scenarios + bouncers continue unchanged.
+    #
+    # Re-enable path (when CrowdSec central cooperates again):
+    #   1. Generate a fresh enroll key at app.crowdsec.net
+    #   2. Re-run `cscli capi register -f /tmp/c.yaml` from a pod and
+    #      update `crowdsec-capi-credentials` Secret
+    #   3. Verify the new login authenticates from INSIDE the cluster
+    #      for at least an hour (not just from devvm)
+    #   4. Remove DISABLE_ONLINE_API, restore ENROLL_KEY env block
+    - name: DISABLE_ONLINE_API
+      value: "true"
     - name: DB_PASSWORD
       valueFrom:
         secretKeyRef:
           name: crowdsec-lapi-secrets
           key: dbPassword
-    # As it's a test, we don't want to share signals with CrowdSec, so disable the Online API.
-    # - name: DISABLE_ONLINE_API
-    #   value: "true"
   dashboard:
     enabled: true
     env:
