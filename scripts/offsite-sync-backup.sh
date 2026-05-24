@@ -54,18 +54,28 @@ DAY_OF_MONTH=$(date +%d)
 # ============================================================
 log "--- Step 1: sda → Synology pve-backup/ ---"
 
-if [ "${DAY_OF_MONTH}" -le 7 ]; then
-    log "Monthly full sync (1st Sunday)..."
-    rsync -rltz --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r \
+# Trigger: monthly cleanup window OR daily-backup signalled the manifest grew
+# past its cap (Synology was unreachable too long for incremental to keep up).
+FORCE_FULL_FLAG="${BACKUP_ROOT}/.force-full-sync"
+FORCE_FULL=""
+[ -f "${FORCE_FULL_FLAG}" ] && FORCE_FULL=1
+if [ "${DAY_OF_MONTH}" -le 7 ] || [ -n "${FORCE_FULL}" ]; then
+    [ -n "${FORCE_FULL}" ] && log "Forced full sync (manifest size cap tripped)..." || log "Monthly full sync (1st Sunday)..."
+    # No -z on LAN: gigabit hop to 192.168.1.13 doesn't benefit from compression
+    # and burns CPU on the PVE host that's already busy with cluster IO.
+    rsync -rlt --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r \
         --exclude='.changed-files' \
+        --exclude='.changed-files.lock' \
         --exclude='.last-offsite-sync' \
         --exclude='.lv-pvc-mapping.json' \
         --exclude='.nfs-changes.log' \
+        --exclude='.force-full-sync' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
+    rm -f "${FORCE_FULL_FLAG}"
 elif [ -s "${MANIFEST}" ]; then
     MANIFEST_LINES=$(wc -l < "${MANIFEST}")
     log "Incremental sync (${MANIFEST_LINES} files from manifest)..."
-    rsync -rltz --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
+    rsync -rlt --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
 else
     log "No changed files in manifest, nothing to sync"
@@ -110,11 +120,11 @@ NFS_FULL_INCLUDES=(
 if [ "${DAY_OF_MONTH}" -le 7 ]; then
     # Monthly: full sync with --delete for cleanup, restricted to bypass-list.
     log "Monthly full NFS sync (sda-bypass paths only)..."
-    rsync -rltz --delete "${NFS_FULL_INCLUDES[@]}" /srv/nfs/ "${NFS_DEST}/" 2>&1 \
+    rsync -rlt --delete "${NFS_FULL_INCLUDES[@]}" /srv/nfs/ "${NFS_DEST}/" 2>&1 \
         && log "  OK: nfs/ full sync (bypass-list)" || { warn "nfs/ full sync failed"; STATUS=1; }
     # nfs-ssd: every dir under it (immich/ollama/llamacpp) is in the bypass list,
     # so a plain --delete still applies cleanly.
-    rsync -rltz --delete /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
+    rsync -rlt --delete /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
         && log "  OK: nfs-ssd/ full sync" || { warn "nfs-ssd/ full sync failed"; STATUS=1; }
     > "${NFS_CHANGE_LOG}"
 elif [ -s "${NFS_CHANGE_LOG}" ]; then
@@ -127,7 +137,7 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
         > /tmp/sync-nfs.list 2>/dev/null
     NFS_COUNT=$(wc -l < /tmp/sync-nfs.list 2>/dev/null || echo 0)
     if [ "${NFS_COUNT:-0}" -gt 0 ]; then
-        rsync -rltz --files-from=/tmp/sync-nfs.list /srv/nfs/ "${NFS_DEST}/" 2>&1 \
+        rsync -rlt --files-from=/tmp/sync-nfs.list /srv/nfs/ "${NFS_DEST}/" 2>&1 \
             && log "  OK: nfs/ (${NFS_COUNT} bypass files)" \
             || { warn "nfs/ incremental failed"; STATUS=1; }
     fi
@@ -138,7 +148,7 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
         > /tmp/sync-nfs-ssd.list 2>/dev/null || true
     SSD_COUNT=$(wc -l < /tmp/sync-nfs-ssd.list 2>/dev/null || echo 0)
     if [ "${SSD_COUNT:-0}" -gt 0 ]; then
-        rsync -rltz --files-from=/tmp/sync-nfs-ssd.list /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
+        rsync -rlt --files-from=/tmp/sync-nfs-ssd.list /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
             && log "  OK: nfs-ssd/ (${SSD_COUNT} files)" \
             || { warn "nfs-ssd/ incremental failed"; STATUS=1; }
     fi

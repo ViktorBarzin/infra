@@ -81,6 +81,17 @@ EXCLUDES=(
 log()  { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "$LOG"; }
 warn() { log "WARN: $*"; }
 
+# Locked manifest append (shared with daily-backup) — see daily-backup.sh
+# for the rationale. flock prevents interleaved appends when nfs-mirror
+# (Mon 04:11) overruns into daily-backup (Mon 05:00).
+MANIFEST_LOCK="${MANIFEST}.lock"
+manifest_append() {
+    (
+        flock -x 200
+        cat >> "${MANIFEST}"
+    ) 200>"${MANIFEST_LOCK}"
+}
+
 push_metrics() {
     local status="${1:-0}" bytes="${2:-0}"
     cat <<EOF | curl -s --connect-timeout 5 --max-time 10 --data-binary @- "${PUSHGATEWAY}/metrics/job/${PUSHGATEWAY_JOB}" 2>/dev/null || true
@@ -132,10 +143,12 @@ if [ "$RSYNC_RC" -eq 0 ]; then
     # manifest so daily Step 1 incremental picks them up tomorrow morning.
     NEW_COUNT=$(find /mnt/backup -newer "$STAMP" -type f \
         ! -path '/mnt/backup/.changed-files' \
+        ! -path '/mnt/backup/.changed-files.lock' \
         ! -path '/mnt/backup/.lv-pvc-mapping.json' \
         ! -path '/mnt/backup/.nfs-changes.log' \
         ! -path '/mnt/backup/.last-offsite-sync' \
-        -printf '%P\n' 2>/dev/null | tee -a "$MANIFEST" | wc -l)
+        ! -path '/mnt/backup/.force-full-sync' \
+        -printf '%P\n' 2>/dev/null | tee >(manifest_append) | wc -l)
     log "=== mirror complete; ${NEW_COUNT} files added to offsite manifest ==="
     log "/mnt/backup used: $(df -h --output=used /mnt/backup | tail -1 | tr -d ' ')"
     push_metrics 0 "$DST_BYTES"
