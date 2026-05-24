@@ -19,5 +19,5 @@ dependency "external-secrets" {
 
 inputs = {
   # Override per-deploy in CI / commit.
-  image_tag = "83ffd9fa"
+  image_tag = "2162e09d"
 }
