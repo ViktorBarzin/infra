@@ -510,16 +510,59 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             }
           }
         }
+        container {
+          name              = "kevin-signal-bridge"
+          image             = "viktorbarzin/trading-bot-service:latest"
+          image_pull_policy = "Always"
+          command           = ["python", "-m", "services.kevin_signal_bridge.main"]
+          dynamic "env" {
+            for_each = local.common_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9098"
+          }
+          # Kill-switch off in Phase 1 — bridge writes audit rows only,
+          # never publishes to signals:generated.
+          env {
+            name  = "TRADING_KEVIN_ENABLE_TRADING"
+            value = "false"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "128Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
       }
     }
   }
   lifecycle {
-    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 4 worker containers. Reviewed 2026-05-22.
+    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 5 worker containers. Reviewed 2026-05-24.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].spec[0].container[2].image,
       spec[0].template[0].spec[0].container[3].image,
+      spec[0].template[0].spec[0].container[4].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
