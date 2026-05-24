@@ -381,7 +381,15 @@ class PlaybackVerifier:
             return PlaybackVerdict(is_playable=False, error="playwright unavailable")
 
         is_m3u8 = stream_type == "m3u8"
-        if not is_m3u8:
+        if is_m3u8:
+            # Route m3u8 fetches through our own /proxy so the verifier gets a
+            # same-origin response with ACAO:* — matches what the frontend does
+            # (frontend `getProxyUrl` wraps every m3u8 via /proxy anyway). Without
+            # this, hosts like oe1.ossfeed.store that only return CORS headers
+            # for specific Origins (e.g. pushembdz.store) trigger an immediate
+            # `fatal_network_error` in hls.js and the stream is marked dead.
+            url = f"{PROXY_BASE}/proxy?url={_b64url(url)}"
+        else:
             url = f"{PROXY_BASE}/embed?url={_b64url(url)}"
 
         async with self._sem:
