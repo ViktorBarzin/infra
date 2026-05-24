@@ -73,12 +73,22 @@ nextcloud:
       configMap:
         name: nextcloud-db-password-sync
         defaultMode: 0755
+    - name: pve-nfs
+      persistentVolumeClaim:
+        claimName: nextcloud-pve-nfs-root
+    - name: pve-nfs-ssd
+      persistentVolumeClaim:
+        claimName: nextcloud-pve-nfs-ssd-root
   extraVolumeMounts:
     - name: apache-tuning
       mountPath: /etc/apache2/mods-available/mpm_prefork.conf
       subPath: mpm_prefork.conf
     - name: db-password-sync
       mountPath: /docker-entrypoint-hooks.d/before-starting
+    - name: pve-nfs
+      mountPath: /mnt/pve-nfs
+    - name: pve-nfs-ssd
+      mountPath: /mnt/pve-nfs-ssd
 
 internalDatabase:
   enabled: false
@@ -133,6 +143,15 @@ podAnnotations:
   diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
   dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis-master.redis:6379"
   secret.reloader.stakater.com/reload: "nextcloud-db-creds"
+
+# OnRootMismatch: kubelet only recursively chowns the volume to fsGroup if the
+# root dir's GID doesn't already match. Without this, every pod restart triggers
+# a ~30-min recursive chown of /srv/nfs and /srv/nfs-ssd (600k+ files) — the
+# default policy "Always" recurses every time. Locks fsGroup=33 explicitly so
+# this block fully replaces the chart's default {fsGroup: 33}.
+securityContext:
+  fsGroup: 33
+  fsGroupChangePolicy: OnRootMismatch
 
 collabora:
   enabled: false # Using onlyoffice instead
