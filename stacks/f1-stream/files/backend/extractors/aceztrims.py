@@ -1,13 +1,24 @@
-"""Aceztrims extractor - scrapes F1 streaming links from Aceztrims pages.
+"""Aceztrims extractor — scrapes embed URLs from acestrlms.pages.dev/f11/.
 
-Parses HTML for iframe button onclick handlers and extracts streams from:
-- /iframe1?s=<m3u8_url> → direct m3u8
-- https://pooembed.eu/embed/... → embed URL
+The page (Cloudflare Pages, no anti-bot) hosts an iframe + a strip of
+onclick channel-switcher buttons. Each button rewrites the iframe via
+`document.getElementById('iframe').src = '<embed_url>'`. The initial
+channel is hard-coded as `<iframe id='iframe' src='...'>`.
+
+We strip HTML comments first because the page keeps ~20 legacy channel
+buttons inside `<!-- ... -->` blocks for easy re-enablement; the previous
+loose regex picked them up as false positives.
+
+All channels are iframe embeds (no direct m3u8) — `stream_type='embed'`.
+
+Site naming note: the extractor key stays `aceztrims` (the previous
+domain) so registry/cache identifiers don't churn. The current domain
+is `acestrlms.pages.dev` and the F1 path is `/f11/` (two ones — `/f1/`
+is the cross-sport schedule page and has no stream buttons).
 """
 
 import logging
 import re
-from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -17,9 +28,8 @@ from backend.extractors.models import ExtractedStream
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://acestrlms.pages.dev"
-# Pages to scrape for streams
 F1_PAGES = [
-    ("/f1/", "Formula 1"),
+    ("/f11/", "Formula 1"),
 ]
 
 USER_AGENT = (
@@ -28,13 +38,21 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
+# `document.getElementById('iframe').src = '<URL>'` — current channel-switcher format.
+_ONCLICK_IFRAME_SRC = re.compile(
+    r"""document\.getElementById\(['"]iframe['"]\)\.src\s*=\s*['"]([^'"]+)['"]""",
+    re.IGNORECASE,
+)
+# `<iframe id='iframe' src='<URL>'>` — the default/initial channel.
+_DEFAULT_IFRAME = re.compile(
+    r"""<iframe[^>]*id\s*=\s*['"]iframe['"][^>]*src\s*=\s*['"]([^'"]+)['"]""",
+    re.IGNORECASE,
+)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
 
 class AceztrimsExtractor(BaseExtractor):
-    """Extracts streams from Aceztrims pages by parsing HTML for iframe URLs.
-
-    Looks for onclick handlers on buttons/links that open iframes, and
-    extracts the stream URLs from them.
-    """
+    """Pulls iframe embed URLs out of the acestrlms.pages.dev F1 page."""
 
     @property
     def site_key(self) -> str:
@@ -45,7 +63,6 @@ class AceztrimsExtractor(BaseExtractor):
         return "Aceztrims"
 
     async def extract(self) -> list[ExtractedStream]:
-        """Scrape all configured F1 pages for stream URLs."""
         streams: list[ExtractedStream] = []
 
         async with httpx.AsyncClient(
@@ -55,12 +72,9 @@ class AceztrimsExtractor(BaseExtractor):
         ) as client:
             for path, category in F1_PAGES:
                 try:
-                    page_streams = await self._scrape_page(client, path, category)
-                    streams.extend(page_streams)
+                    streams.extend(await self._scrape_page(client, path, category))
                 except Exception:
-                    logger.exception(
-                        "[aceztrims] Failed to scrape page %s", path
-                    )
+                    logger.exception("[aceztrims] Failed to scrape %s", path)
 
         logger.info("[aceztrims] Extracted %d stream(s)", len(streams))
         return streams
@@ -68,85 +82,39 @@ class AceztrimsExtractor(BaseExtractor):
     async def _scrape_page(
         self, client: httpx.AsyncClient, path: str, category: str
     ) -> list[ExtractedStream]:
-        """Scrape a single page for stream URLs."""
         url = f"{BASE_URL}{path}"
         resp = await client.get(url)
         if resp.status_code != 200:
             logger.warning(
-                "[aceztrims] Page %s returned HTTP %d", path, resp.status_code
+                "[aceztrims] %s returned HTTP %d", path, resp.status_code
             )
             return []
 
-        html = resp.text
+        # The page keeps a block of legacy channel buttons inside
+        # `<!-- ... -->` for quick re-enablement. Strip comments first so
+        # the regex only sees live buttons.
+        html = _HTML_COMMENT.sub("", resp.text)
+
+        seen: set[str] = set()
         streams: list[ExtractedStream] = []
-        seen_urls: set[str] = set()
 
-        # Pattern 1: /iframe1?s=<m3u8_url> — direct m3u8
-        iframe1_pattern = re.compile(
-            r"""['"]((?:https?://[^'"]*)?/iframe1\?s=([^'"&]+))['""]""",
-            re.IGNORECASE,
-        )
-        for match in iframe1_pattern.finditer(html):
-            m3u8_url = match.group(2)
-            if m3u8_url in seen_urls:
-                continue
-            seen_urls.add(m3u8_url)
-
-            streams.append(
-                ExtractedStream(
-                    url=m3u8_url,
-                    site_key=self.site_key,
-                    site_name=self.site_name,
-                    quality="",
-                    title=f"{category} Stream",
-                    stream_type="m3u8",
+        for pattern in (_DEFAULT_IFRAME, _ONCLICK_IFRAME_SRC):
+            for match in pattern.finditer(html):
+                embed_url = match.group(1).strip()
+                if not embed_url or embed_url in seen:
+                    continue
+                seen.add(embed_url)
+                streams.append(
+                    ExtractedStream(
+                        url=embed_url,
+                        site_key=self.site_key,
+                        site_name=self.site_name,
+                        quality="",
+                        title=f"{category} Stream",
+                        stream_type="embed",
+                        embed_url=embed_url,
+                    )
                 )
-            )
-
-        # Pattern 2: embed URLs (pooembed.eu or similar)
-        embed_pattern = re.compile(
-            r"""['"]((https?://(?:pooembed\.eu|[^'"]*embed)[^'"]*))['"]""",
-            re.IGNORECASE,
-        )
-        for match in embed_pattern.finditer(html):
-            embed_url = match.group(1)
-            if embed_url in seen_urls:
-                continue
-            seen_urls.add(embed_url)
-
-            streams.append(
-                ExtractedStream(
-                    url=embed_url,
-                    site_key=self.site_key,
-                    site_name=self.site_name,
-                    quality="",
-                    title=f"{category} Stream (Embed)",
-                    stream_type="embed",
-                    embed_url=embed_url,
-                )
-            )
-
-        # Pattern 3: Generic onclick handlers with URLs
-        onclick_pattern = re.compile(
-            r"""onclick\s*=\s*['"].*?['"]?(https?://[^'")\s]+\.m3u8[^'")\s]*)['"]?""",
-            re.IGNORECASE,
-        )
-        for match in onclick_pattern.finditer(html):
-            m3u8_url = match.group(1)
-            if m3u8_url in seen_urls:
-                continue
-            seen_urls.add(m3u8_url)
-
-            streams.append(
-                ExtractedStream(
-                    url=m3u8_url,
-                    site_key=self.site_key,
-                    site_name=self.site_name,
-                    quality="",
-                    title=f"{category} Stream",
-                    stream_type="m3u8",
-                )
-            )
 
         logger.info(
             "[aceztrims] Found %d stream(s) on %s", len(streams), path

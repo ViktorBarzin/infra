@@ -34,7 +34,7 @@ USER_AGENT = (
 # to also surface MotoGP and adjacent motorsports — keeps the f1-stream
 # UI useful between race weekends and during the off-season.
 MOTORSPORT_CATEGORIES = {
-    "formula 1", "formula 2", "formula 3",
+    "f1", "formula 1", "formula 2", "formula 3",
     "motogp", "moto gp", "moto2", "moto3", "motoe",
     "world rally championship", "wrc",
     "world endurance championship", "wec",
@@ -85,25 +85,59 @@ _is_f1_category = _is_motorsport_category
 _is_f1_event = _is_motorsport_event
 
 
-def _parse_live_events(html: str) -> list[_PitsportEvent]:
-    """Parse live events from the main page RSC payload.
+def _decode_rsc_payload(html: str) -> str:
+    """Concatenate and unescape all `self.__next_f.push([1, "..."])` chunks.
 
-    The main page contains event cards with props:
-        category, title, time, imageUrl
-    wrapped in <a href="/watch/{UUID}"> links.
+    Next.js RSC ships its tree as escape-encoded strings inside repeated
+    `self.__next_f.push` calls. Regex over the raw HTML misses everything
+    interesting; we have to decode unicode escapes first.
     """
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', html, re.DOTALL)
+    if not chunks:
+        return ""
+    payload = ""
+    for chunk in chunks:
+        try:
+            payload += chunk.encode().decode("unicode_escape")
+        except Exception:
+            payload += chunk
+    return payload
+
+
+def _parse_live_events(html: str) -> list[_PitsportEvent]:
+    """Parse live events from the main page (or `/live-now`) RSC payload.
+
+    The pages embed event cards inside the Next.js RSC payload; the raw
+    HTML keeps it escape-encoded so we decode first, then match.
+    Two shapes are common:
+      1) Older card props: "category":"...","title":"..." next to
+         "href":"/watch/UUID".
+      2) Newer `event` prop: an `event` object with `uri:"/watch/UUID"`
+         carrying `category` and `title`.
+    """
+    payload = _decode_rsc_payload(html) or html
+
     events: list[_PitsportEvent] = []
 
-    # Match event cards in the RSC payload - they appear as JSON-like structures
-    # Pattern: href="/watch/UUID" ... category":"...", "title":"..."
-    # In the RSC payload, the data is in the format:
-    #   ["$","$L2","/watch/UUID",{"href":"/watch/UUID","children":["$","$L10",null,
-    #     {"category":"...","title":"...","time":...,"imageUrl":"..."}]}]
-    pattern = re.compile(
+    href_pattern = re.compile(
         r'"href":"(/watch/([0-9a-f-]{36}))"[^}]*?"category":"([^"]+)","title":"([^"]+)"',
     )
-    for match in pattern.finditer(html):
+    for match in href_pattern.finditer(payload):
         _, uuid, category, title = match.groups()
+        events.append(_PitsportEvent(category=category, title=title, watch_uuid=uuid))
+
+    event_pattern = re.compile(
+        r'"event":\{[^{}]*?"title":"([^"]+)"[^{}]*?"uri":"/watch/([0-9a-f-]{36})"[^{}]*?"category":"([^"]+)"',
+    )
+    for match in event_pattern.finditer(payload):
+        title, uuid, category = match.groups()
+        events.append(_PitsportEvent(category=category, title=title, watch_uuid=uuid))
+
+    event_pattern_alt = re.compile(
+        r'"event":\{[^{}]*?"category":"([^"]+)"[^{}]*?"title":"([^"]+)"[^{}]*?"uri":"/watch/([0-9a-f-]{36})"',
+    )
+    for match in event_pattern_alt.finditer(payload):
+        category, title, uuid = match.groups()
         events.append(_PitsportEvent(category=category, title=title, watch_uuid=uuid))
 
     return events
@@ -301,13 +335,12 @@ def _is_m3u8_method(method: str) -> bool:
 
 
 def _extract_m3u8_url(link: str) -> str:
-    """Convert a serveplay.site player URL to an m3u8 playlist URL.
+    """Pass through the link from pushembdz's `api/stream/<slug>` response.
 
-    Input:  https://dash.serveplay.site/{channel}/index.html
-    Output: https://dash.serveplay.site/{channel}/index.html
-
-    The index.html IS the m3u8 playlist (served with proper content-type
-    when fetched with the correct Referer header).
+    The host has rotated over time (serveplay.site → oe1.ossfeed.store →
+    …); the response is always a master playlist URL we hand to the
+    player as-is. Content-Type may be `text/css` or `application/json` —
+    treat as HLS based on body sniffing (`#EXTM3U`), not MIME.
     """
     return link
 
@@ -387,6 +420,24 @@ class PitsportExtractor(BaseExtractor):
                 )
         except Exception:
             logger.exception("[pitsport] Failed to fetch main page")
+
+        # Fetch /live-now — canonical "currently live" list, added 2026.
+        try:
+            resp = await client.get(f"{PITSPORT_BASE}/live-now")
+            if resp.status_code == 200:
+                live_now_events = _parse_live_events(resp.text)
+                logger.info(
+                    "[pitsport] Live-now page: %d event(s)", len(live_now_events)
+                )
+                for ev in live_now_events:
+                    if _is_f1_event(ev.category, ev.title):
+                        all_events.append(ev)
+            else:
+                logger.warning(
+                    "[pitsport] Live-now page returned HTTP %d", resp.status_code
+                )
+        except Exception:
+            logger.exception("[pitsport] Failed to fetch live-now page")
 
         # Fetch schedule page for upcoming events
         try:

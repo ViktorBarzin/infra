@@ -153,21 +153,37 @@ class PPVExtractor(BaseExtractor):
                     if viewers and int(viewers) > 0:
                         title += f" ({viewers} viewers)"
 
-                    # Check for substreams (multiple quality/language options)
+                    # Always emit the parent stream — substreams are
+                    # additional language/source variants, not replacements.
+                    streams.append(
+                        ExtractedStream(
+                            url=embed_url,
+                            site_key=self.site_key,
+                            site_name=self.site_name,
+                            quality=quality,
+                            title=title,
+                            stream_type="embed",
+                            embed_url=embed_url,
+                        )
+                    )
+
                     substreams = stream_obj.get("substreams")
-                    if isinstance(substreams, list) and substreams:
+                    if isinstance(substreams, list):
                         for i, sub in enumerate(substreams):
                             sub_embed = sub.get("iframe", "") or sub.get("embed_url", "")
                             if not sub_embed:
-                                # Fall back to the parent embed URL
                                 sub_embed = embed_url
-                            sub_name = sub.get("name", "") or sub.get("label", "")
+                            sub_name = (
+                                sub.get("source_tag", "")
+                                or sub.get("name", "")
+                                or sub.get("label", "")
+                            )
                             sub_quality = sub.get("tag", "") or sub.get("quality", "") or quality
                             sub_title = f"{name}"
                             if sub_name:
                                 sub_title += f" - {sub_name}"
-                            elif i > 0:
-                                sub_title += f" #{i + 1}"
+                            else:
+                                sub_title += f" #{i + 2}"
 
                             streams.append(
                                 ExtractedStream(
@@ -180,19 +196,6 @@ class PPVExtractor(BaseExtractor):
                                     embed_url=sub_embed,
                                 )
                             )
-                    else:
-                        # Single stream, no substreams
-                        streams.append(
-                            ExtractedStream(
-                                url=embed_url,
-                                site_key=self.site_key,
-                                site_name=self.site_name,
-                                quality=quality,
-                                title=title,
-                                stream_type="embed",
-                                embed_url=embed_url,
-                            )
-                        )
 
         except Exception:
             logger.exception("[ppv] Failed to extract streams")
