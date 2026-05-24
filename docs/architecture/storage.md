@@ -289,11 +289,43 @@ nfsiostat 5
 1. Move hot data to SSD NFS: relocate from `/srv/nfs/<service>` to `/srv/nfs-ssd/<service>` and update PV path
 2. Tune NFS mount: add `rsize=1048576,wsize=1048576` to StorageClass `mountOptions`
 
+## Nextcloud as PVE-NFS browser
+
+Both NFS export roots are mounted into the Nextcloud server pod — `/srv/nfs` at `/mnt/pve-nfs` and `/srv/nfs-ssd` at `/mnt/pve-nfs-ssd` — via standard NFS PVs (`nfs_volume` module). No host-level Unix user/group setup; Nextcloud is the sole household-facing surface.
+
+**ACL model — two patterns:**
+
+- **Root browser mounts** (`PVE NFS Pool`, `PVE NFS-SSD Pool`): scoped to NC group `admin`. Used by Viktor for ad-hoc browsing of any cluster NFS state. Other users never see these mounts.
+- **Per-archive mounts** (e.g. `/anca-elements` → `/mnt/pve-nfs/anca-elements`): one NC External mount per archive, `applicable_users` set to the archive owners. Users see only the mounts assigned to them. Write/delete access is implicit at the OS level (NC pod writes via `no_root_squash`); deny semantics come from mount visibility — if the mount is not in your list, you cannot reach the path.
+
+**Why mount-level ACL, not Files Access Control**: NC 30/31's workflow engine check classes are `FileName` (basename), `FileMimeType`, `FileSize`, `FileSystemTags`, and `UserGroupMembership`. There is no `FilePath` and no `UserId` check class. Per-(directory, user) rules are not expressible via FAC. Mount-level ACL via `occ files_external:applicable` is the supported primitive and maps cleanly onto the model.
+
+**Manifest**: `kubernetes_config_map_v1.nextcloud_external_storage_manifest` in `stacks/nextcloud/external_storage.tf`. Mount entries reference NC usernames (`admin`, `anca`, `emo` — not display names; admin is Viktor). JSON shape:
+```json
+{
+  "rootMounts": [
+    { "mountPoint": "/PVE NFS Pool",     "dataDir": "/mnt/pve-nfs",     "applicableGroup": "admin", "enableSharing": true },
+    { "mountPoint": "/PVE NFS-SSD Pool", "dataDir": "/mnt/pve-nfs-ssd", "applicableGroup": "admin", "enableSharing": true }
+  ],
+  "archiveMounts": [
+    { "mountPoint": "/anca-elements", "dataDir": "/mnt/pve-nfs/anca-elements", "applicableUsers": ["anca", "admin"], "applicableGroups": [], "enableSharing": false }
+  ]
+}
+```
+A one-shot K8s bootstrap Job applies the manifest idempotently on every `tg apply` via `occ files_external:*`, `occ files_external:applicable`, and `occ files_external:option`. `enableSharing: true` lets admin re-share a subfolder of the mount with another NC user/group/public link; default is `false` (NC's local-backend default).
+
+**Adding a new archive**: drop the directory under `/srv/nfs/<name>/` on PVE, append an `archiveMounts` entry to the manifest, then `scripts/tg apply` the nextcloud stack. See `docs/runbooks/nextcloud-add-archive.md` for the full step-by-step.
+
+**Trade-off**: a compromised NC admin account has destructive reach over the cluster NFS roots (admin sees the root browser mounts). Accepted — Viktor's account is the single high-value target either way. No lateral movement to databases or block PVCs via this path (those are not NFS).
+
+**Backup**: Synology retains a frozen copy of each archive (3-2-1 coverage); the existing `offsite-sync-backup` pipeline provides nightly delta sync from `/srv/nfs/<archive>` → Synology `nfs/`.
+
 ## Related
 
 - **Runbooks**:
   - `docs/runbooks/restore-postgresql.md`
   - `docs/runbooks/restore-mysql.md`
   - `docs/runbooks/recover-nfs-mount.md`
+  - `docs/runbooks/nextcloud-add-archive.md`
 - **Architecture**: `docs/architecture/backup-dr.md` (backup strategy using LVM snapshots and Proxmox host scripts)
 - **Reference**: `.claude/reference/service-catalog.md` (which services use NFS vs proxmox-lvm)
