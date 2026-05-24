@@ -33,16 +33,23 @@ resource "kubernetes_config_map_v1" "nextcloud_external_storage_manifest" {
 
   data = {
     "manifest.json" = jsonencode({
+      # enableSharing: lets users right-click a folder inside the mount and
+      # share it with another NC user/group/public link. NC defaults to false
+      # for local-backend mounts; we opt-in per-mount. Currently true on the
+      # admin pool browsers (admin uses them as a "share-from picker"); false
+      # on /anca-elements (anca manages her own re-sharing inside her view).
       rootMounts = [
         {
           mountPoint      = "/PVE NFS Pool"
           dataDir         = "/mnt/pve-nfs"
           applicableGroup = "admin"
+          enableSharing   = true
         },
         {
           mountPoint      = "/PVE NFS-SSD Pool"
           dataDir         = "/mnt/pve-nfs-ssd"
           applicableGroup = "admin"
+          enableSharing   = true
         },
       ]
       archiveMounts = [
@@ -52,6 +59,7 @@ resource "kubernetes_config_map_v1" "nextcloud_external_storage_manifest" {
           # NC usernames (not display names): admin is Viktor, anca is Anca.
           applicableUsers  = ["anca", "admin"]
           applicableGroups = []
+          enableSharing    = false
         },
       ]
     })
@@ -243,14 +251,23 @@ resource "kubernetes_job_v1" "nextcloud_external_storage_bootstrap" {
                 '($c - $d)[]')
             }
 
+            # sync_option <mountId> <key> <value>
+            # Reconciles a single mount option. occ files_external:option is
+            # idempotent (no error on setting same value), so we always write.
+            sync_option() {
+              nc_occ files_external:option "$1" "$2" "$3" >/dev/null
+            }
+
             # ── 6. Process root mounts (admin group only) ───────────────────
             ROOT_COUNT=$(jq '.rootMounts | length' "$MANIFEST")
             for i in $(seq 0 $((ROOT_COUNT - 1))); do
               MP=$(jq -r ".rootMounts[$i].mountPoint" "$MANIFEST")
               DIR=$(jq -r ".rootMounts[$i].dataDir" "$MANIFEST")
               GROUP=$(jq -r ".rootMounts[$i].applicableGroup" "$MANIFEST")
+              ENABLE_SHARING=$(jq -r ".rootMounts[$i].enableSharing // false" "$MANIFEST")
               MID=$(ensure_mount "$MP" "$DIR")
               sync_applicable "$MID" '[]' "[\"$GROUP\"]"
+              sync_option "$MID" enable_sharing "$ENABLE_SHARING"
             done
 
             # ── 7. Process archive mounts (per-user / per-group) ───────────
@@ -260,8 +277,10 @@ resource "kubernetes_job_v1" "nextcloud_external_storage_bootstrap" {
               DIR=$(jq -r ".archiveMounts[$i].dataDir" "$MANIFEST")
               USERS_JSON=$(jq -c ".archiveMounts[$i].applicableUsers // []" "$MANIFEST")
               GROUPS_JSON=$(jq -c ".archiveMounts[$i].applicableGroups // []" "$MANIFEST")
+              ENABLE_SHARING=$(jq -r ".archiveMounts[$i].enableSharing // false" "$MANIFEST")
               MID=$(ensure_mount "$MP" "$DIR")
               sync_applicable "$MID" "$USERS_JSON" "$GROUPS_JSON"
+              sync_option "$MID" enable_sharing "$ENABLE_SHARING"
             done
 
             echo "[bootstrap] Bootstrap complete."
