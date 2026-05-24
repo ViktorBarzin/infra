@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly anca-elements mirror to /mnt/backup
+
+[Timer]
+OnCalendar=Mon *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
