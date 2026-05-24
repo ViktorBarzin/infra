@@ -83,11 +83,13 @@ resource "helm_release" "proxmox_csi" {
       }
     }
 
-    # LUKS2 Argon2id key derivation needs ~1GiB memory
+    # LUKS2 Argon2id key derivation needs ~1GiB memory (memory id=712).
+    # Request bumped from 64Mi → 1024Mi (2026-05-23) so the pod is reserved
+    # for the unlock burst instead of risking OOM under node pressure.
     node = {
       plugin = {
         resources = {
-          requests = { cpu = "10m", memory = "64Mi" }
+          requests = { cpu = "10m", memory = "1024Mi" }
           limits   = { memory = "1280Mi" }
         }
       }
