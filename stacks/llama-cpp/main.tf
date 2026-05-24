@@ -373,10 +373,22 @@ resource "kubernetes_deployment" "llama_swap" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
+      # update patches `keel.sh/update-time` on the pod template and
+      # `kubernetes.io/change-cause` + bumps the K8s rollout revision on
+      # the Deployment. Without these ignore_changes, every `tg apply`
+      # reverts those, forcing a rollout, which keel then re-patches on
+      # the next 1h poll → llama-swap was rolling several times a day
+      # (~10s model-load downtime each). Upstream :cuda nightly cadence
+      # still triggers a legitimate daily rollout.
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
     ]
   }
 
