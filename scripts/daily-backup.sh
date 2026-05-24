@@ -20,6 +20,34 @@ log()  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 warn() { log "WARN: $*" >&2; }
 die()  { log "FATAL: $*" >&2; push_metrics 1 0; exit 1; }
 
+# --- Manifest append helper ---
+# Both daily-backup and nfs-mirror append to /mnt/backup/.changed-files.
+# If their runs overlap (e.g. nfs-mirror Mon 04:11 still running when
+# daily-backup starts Mon 05:00) the appends can interleave mid-line.
+# `flock -x` on a sibling lock file makes appends atomic across processes.
+MANIFEST_LOCK="${MANIFEST}.lock"
+manifest_append() {
+    (
+        flock -x 200
+        cat >> "${MANIFEST}"
+    ) 200>"${MANIFEST_LOCK}"
+}
+
+# Cap manifest size to prevent unbounded growth (e.g. Synology unreachable
+# for many days, every daily-backup keeps appending). At >500k lines,
+# `--files-from=` rsync becomes pathological — fall back to a full Step 1
+# sync by signalling offsite-sync to ignore the manifest this round.
+MANIFEST_MAX_LINES=500000
+check_manifest_size() {
+    [ -f "${MANIFEST}" ] || return 0
+    local lines
+    lines=$(wc -l < "${MANIFEST}" 2>/dev/null || echo 0)
+    if [ "${lines:-0}" -gt "${MANIFEST_MAX_LINES}" ]; then
+        warn "manifest at ${lines} lines (>${MANIFEST_MAX_LINES}) — flagging next offsite-sync as full"
+        touch "${BACKUP_ROOT}/.force-full-sync"
+    fi
+}
+
 # --- Locking ---
 # Track whether we got SIGTERM/SIGINT so cleanup can push a non-success metric.
 # Without this, a systemd timeout-kill leaves WeeklyBackupFailing alerts blind:
@@ -283,10 +311,10 @@ else
     log "  PVC copy: ${PVC_COUNT} OK, ${PVC_FAIL} failed"
     [ "${PVC_FAIL}" -gt 0 ] && STATUS=1
 
-    # Add PVC files to manifest
+    # Add PVC files to manifest (locked append)
     if [ -d "${BACKUP_ROOT}/pvc-data/${WEEK}" ]; then
         find "${BACKUP_ROOT}/pvc-data/${WEEK}" -type f 2>/dev/null | \
-            sed "s|^${BACKUP_ROOT}/||" >> "${MANIFEST}"
+            sed "s|^${BACKUP_ROOT}/||" | manifest_append
     fi
 
     # Prune old weekly versions (keep 4)
@@ -310,7 +338,7 @@ if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/de
     # config.xml — primary restore artifact
     if scp -o ConnectTimeout=10 root@10.0.20.1:/cf/conf/config.xml "${PFSENSE_DEST}/config-${DATE}.xml" 2>/dev/null; then
         log "  OK: config.xml"
-        echo "pfsense/config-${DATE}.xml" >> "${MANIFEST}"
+        echo "pfsense/config-${DATE}.xml" | manifest_append
     else
         warn "Failed to copy pfsense config.xml"
         STATUS=1
@@ -327,7 +355,7 @@ if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/de
             "tar czf - --exclude=/dev --exclude=/proc --exclude=/tmp --exclude=/var/run /" \
             > "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" 2>/dev/null; then
             log "  OK: weekly full tar ($(du -sh "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" | cut -f1))"
-            echo "pfsense/pfsense-full-${DATE}.tar.gz" >> "${MANIFEST}"
+            echo "pfsense/pfsense-full-${DATE}.tar.gz" | manifest_append
         else
             warn "Failed to tar pfsense filesystem"
             STATUS=1
@@ -365,8 +393,10 @@ timeout 300 rsync -a --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&
 for script in /usr/local/bin/lvm-pvc-snapshot /usr/local/bin/daily-backup /usr/local/bin/offsite-sync-backup; do
     [ -f "${script}" ] && cp "${script}" "${BACKUP_ROOT}/pve-config/scripts/" 2>/dev/null || true
 done
-find "${BACKUP_ROOT}/pve-config" -type f 2>/dev/null | sed "s|^${BACKUP_ROOT}/||" >> "${MANIFEST}"
+find "${BACKUP_ROOT}/pve-config" -type f 2>/dev/null | sed "s|^${BACKUP_ROOT}/||" | manifest_append
 log "  OK: PVE config"
+
+check_manifest_size
 
 # ============================================================
 # STEP 5: Prune LVM snapshots older than 7 days
