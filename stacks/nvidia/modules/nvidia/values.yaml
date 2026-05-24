@@ -37,7 +37,7 @@ driver:
   resources:
     requests:
       cpu: "50m"
-      memory: "256Mi"
+      memory: "822Mi"
     limits:
       memory: "2Gi"
 
