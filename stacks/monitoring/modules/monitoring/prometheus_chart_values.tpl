@@ -1562,6 +1562,20 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Offsite backup sync is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: AncaElementsMirrorStale
+            expr: (time() - anca_elements_mirror_last_run_timestamp{job="anca-elements-mirror"}) > 1382400
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "anca-elements mirror is {{ $value | humanizeDuration }} old (threshold: 16d / 2 weekly cycles)"
+          - alert: AncaElementsMirrorFailing
+            expr: anca_elements_mirror_last_status{job="anca-elements-mirror"} != 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "anca-elements mirror last run failed (status={{ $value }})"
           - alert: BackupDiskFull
             expr: (1 - node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"} / node_filesystem_size_bytes{job="proxmox-host", mountpoint="/mnt/backup"}) > 0.85
             for: 15m
