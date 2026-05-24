@@ -123,7 +123,7 @@ check_nfs_exports() {
 }
 
 # --- Main ---
-log "=== Weekly backup starting ==="
+log "=== daily-backup starting ==="
 
 if ! mountpoint -q "${BACKUP_ROOT}"; then
     die "${BACKUP_ROOT} is not mounted"
@@ -138,16 +138,25 @@ check_nfs_exports || {
 STATUS=0
 TOTAL_BYTES=0
 
-# Clear manifest for this run
-> "${MANIFEST}"
+# DO NOT truncate the manifest here.
+#
+# Truncation lives in offsite-sync-backup (only on successful sync). If
+# offsite-sync failed yesterday — Synology unreachable, transient error —
+# the manifest holds yesterday's unconsumed file list. Truncating at the
+# start of today's daily-backup would silently lose those entries; they'd
+# only reach Synology on the next monthly full sync.
+#
+# Appending duplicates across multiple runs is harmless — rsync transfers
+# each file once. If the manifest grows pathologically (Synology down for
+# weeks), the OffsiteBackupSync{Stale,Failing} alerts catch it.
 
-# NFS data is synced directly to Synology via inotifywait + offsite-sync-backup.sh
-# No NFS mirror step on sda — saves 53GB and eliminates duplication.
+# NFS data is synced to Synology via two paths: nfs-mirror → sda → Step 1
+# for the curated subset, and inotify + Step 2 for the sda-bypass list.
 
 # ============================================================
 # STEP 1: PVC file-level copy from LVM thin snapshots
 # ============================================================
-log "--- Step 2: PVC file copy from snapshots ---"
+log "--- Step 1: PVC file copy from snapshots ---"
 WEEK=$(date +%Y-%W)
 PREV=$(ls -1d "${BACKUP_ROOT}/pvc-data"/????-?? 2>/dev/null | tail -1 || true)
 
@@ -215,7 +224,7 @@ else
             # (immich-postgres ~10 GiB, ~3 min on local ext4) and well
             # below the unit-level budget so we still have headroom to
             # finish the rest.
-            timeout 1800 rsync -az --delete \
+            timeout 1800 rsync -a --delete \
                 ${PREV:+--link-dest="${PREV}/${ns_pvc}/"} \
                 "${PVC_MOUNT}/" "${dst}/" 2>&1 || rsync_rc=$?
             if [ "$rsync_rc" -eq 0 ]; then
@@ -308,16 +317,24 @@ if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 root@10.0.20.1 true 2>/de
         PFSENSE_STATUS=1
     fi
 
-    # Full filesystem tar
-    if ssh -o ConnectTimeout=10 root@10.0.20.1 \
-        "tar czf - --exclude=/dev --exclude=/proc --exclude=/tmp --exclude=/var/run /" \
-        > "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" 2>/dev/null; then
-        log "  OK: full tar ($(du -sh "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" | cut -f1))"
-        echo "pfsense/pfsense-full-${DATE}.tar.gz" >> "${MANIFEST}"
+    # Full filesystem tar — Sundays only (weekly).
+    # config.xml is the primary restore artifact and runs daily above; the
+    # full filesystem tar is for forensic / package-state recovery only and
+    # rarely-needed. Re-tarring 100M+ daily writes ~3G/month to sda + Synology
+    # for unchanged content. Keep one fresh tarball per week instead.
+    if [ "$(date +%u)" = "7" ]; then
+        if ssh -o ConnectTimeout=10 root@10.0.20.1 \
+            "tar czf - --exclude=/dev --exclude=/proc --exclude=/tmp --exclude=/var/run /" \
+            > "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" 2>/dev/null; then
+            log "  OK: weekly full tar ($(du -sh "${PFSENSE_DEST}/pfsense-full-${DATE}.tar.gz" | cut -f1))"
+            echo "pfsense/pfsense-full-${DATE}.tar.gz" >> "${MANIFEST}"
+        else
+            warn "Failed to tar pfsense filesystem"
+            STATUS=1
+            PFSENSE_STATUS=1
+        fi
     else
-        warn "Failed to tar pfsense filesystem"
-        STATUS=1
-        PFSENSE_STATUS=1
+        log "  skip weekly full tar (only runs Sundays)"
     fi
 
     # Retention: keep 4 weekly copies
@@ -344,7 +361,7 @@ fi
 # ============================================================
 log "--- Step 4: PVE host config ---"
 mkdir -p "${BACKUP_ROOT}/pve-config/scripts"
-timeout 300 rsync -az --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&1 || { warn "Failed to sync /etc/pve"; STATUS=1; }
+timeout 300 rsync -a --delete /etc/pve/ "${BACKUP_ROOT}/pve-config/etc-pve/" 2>&1 || { warn "Failed to sync /etc/pve"; STATUS=1; }
 for script in /usr/local/bin/lvm-pvc-snapshot /usr/local/bin/daily-backup /usr/local/bin/offsite-sync-backup; do
     [ -f "${script}" ] && cp "${script}" "${BACKUP_ROOT}/pve-config/scripts/" 2>/dev/null || true
 done
@@ -361,6 +378,6 @@ log "--- Step 5: Snapshot pruning (7-day retention) ---"
 # Done
 # ============================================================
 MANIFEST_LINES=$(wc -l < "${MANIFEST}" 2>/dev/null || echo 0)
-log "=== Weekly backup complete (status=${STATUS}, ${TOTAL_BYTES} bytes, ${MANIFEST_LINES} files in manifest) ==="
+log "=== daily-backup complete (status=${STATUS}, ${TOTAL_BYTES} bytes, ${MANIFEST_LINES} files in manifest) ==="
 push_metrics "${STATUS}" "${TOTAL_BYTES}"
 exit "${STATUS}"
