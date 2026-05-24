@@ -7,7 +7,7 @@ Type=simple
 ExecStart=/usr/bin/inotifywait -m -r \
     --format '%%w%%f' \
     -e create -e modify -e moved_to -e delete \
-    --exclude '(/\..*swp$|/\.nfs|/\.Trash|\.db-shm$|\.db-wal$|\.db-journal$|/stats/.*\.stat$)' \
+    --exclude '(/\..*swp$|/\.nfs|/\.Trash|\.db-shm$|\.db-wal$|\.db-journal$|/stats/.*\.stat$|^/srv/nfs/anca-elements/)' \
     /srv/nfs \
     /srv/nfs-ssd
 StandardOutput=append:/mnt/backup/.nfs-changes.log
