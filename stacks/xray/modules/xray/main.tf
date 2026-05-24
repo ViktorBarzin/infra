@@ -92,10 +92,6 @@ resource "kubernetes_deployment" "xray" {
           name              = "xray"
           image_pull_policy = "IfNotPresent"
           port {
-            container_port = 6443 // vless
-            protocol       = "TCP"
-          }
-          port {
             container_port = 7443 // reality
             protocol       = "TCP"
           }
@@ -174,19 +170,16 @@ resource "kubernetes_service" "xray" {
       app = "xray"
     }
     port {
-      name     = "vless"
-      port     = 6443
-      protocol = "TCP"
+      name        = "websocket"
+      port        = 8443
+      target_port = 8443
+      protocol    = "TCP"
     }
     port {
-      name     = "websocket"
-      port     = 8443
-      protocol = "TCP"
-    }
-    port {
-      name     = "grpc"
-      port     = 9443
-      protocol = "TCP"
+      name        = "grpc"
+      port        = 9443
+      target_port = 9443
+      protocol    = "TCP"
     }
   }
 }
@@ -249,16 +242,3 @@ module "ingress_grpc" {
   }
 }
 
-module "ingress_vless" {
-  source = "../../../../modules/kubernetes/ingress_factory"
-  # VPN protocol (VLESS) — native xray clients, not browsers.
-  # auth = "none": VPN protocol (VLESS) — native xray clients, not browsers; forward-auth incompatible.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.xray.metadata[0].name
-  name            = "xray-vless"
-  service_name    = "xray"
-  host            = "xray-vless"
-  port            = 6443
-  tls_secret_name = var.tls_secret_name
-}
