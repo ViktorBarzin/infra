@@ -321,7 +321,12 @@ resource "kubernetes_deployment" "immich_server" {
             }
             period_seconds    = 10
             timeout_seconds   = 1
-            failure_threshold = 30
+            # Bumped 30 → 360 (5min → 1h): after a PG restart, immich-server
+            # reindexes the clip_index + face_index vector tables before binding
+            # the API port. Hundreds of thousands of rows take longer than 5min
+            # on a cold cache, so the old threshold trapped us in a startup
+            # crashloop after every PG restart (2026-05-24 incident).
+            failure_threshold = 360
             success_threshold = 1
           }
 
@@ -526,10 +531,10 @@ resource "kubernetes_deployment" "immich-postgres" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "3Gi"
+              memory = "5Gi"
             }
             limits = {
-              memory = "3Gi"
+              memory = "5Gi"
             }
           }
         }
@@ -906,7 +911,7 @@ resource "kubernetes_job_v1" "anca_elements_import" {
   wait_for_completion = false
 
   spec {
-    backoff_limit              = 2
+    backoff_limit              = 20
     ttl_seconds_after_finished = 604800
     template {
       metadata {
@@ -948,7 +953,7 @@ resource "kubernetes_job_v1" "anca_elements_import" {
                 --ban-file "csp/" --ban-file "KOREAN/" \
                 --ban-file "System Volume Information/" \
                 --pause-immich-jobs=false \
-                --concurrent-tasks 8 \
+                --concurrent-tasks 20 \
                 --client-timeout 1h \
                 --no-ui \
                 --on-errors continue
