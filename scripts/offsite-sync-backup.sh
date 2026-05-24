@@ -72,37 +72,67 @@ else
 fi
 
 # ============================================================
-# STEP 2: NFS → Synology nfs/ + nfs-ssd/ (inotify change-tracked)
+# STEP 2: NFS → Synology nfs/ + nfs-ssd/ (inotify change-tracked, FILTERED)
 # ============================================================
-log "--- Step 2: NFS → Synology (change-tracked) ---"
+#
+# DESIGN: Step 2 only carries paths that BYPASS the sda mirror. Paths that ARE
+# mirrored to sda by nfs-mirror reach Synology via Step 1 (sda → Synology
+# pve-backup/) and must NOT also flow through Step 2 — that would duplicate
+# every byte and double Synology consumption.
+#
+# The skip-list below MUST stay in sync with EXCLUDES in
+# /usr/local/bin/nfs-mirror (which defines what nfs-mirror does NOT copy to
+# sda). The two are complementary: nfs-mirror EXCLUDES = offsite-sync Step 2
+# INCLUDES. Failing to keep them aligned creates either gaps (data missing
+# from Synology) or duplication (data on Synology via both paths).
+log "--- Step 2: NFS → Synology (skip-list paths only — sda-bypass leg) ---"
+
+# Regex matching paths NOT on sda (must reach Synology directly).
+# Top-level dirs under /srv/nfs/ — anchored, no nesting allowed.
+NFS_SDA_BYPASS_RE='^/srv/nfs/(immich|frigate|prometheus|loki|temp|alertmanager|ollama|audiblez|ebook2audiobook|[^/]+-backup)/'
+
+# rsync include/exclude args for the monthly full sync (HDD).
+# Order matters: --include patterns first, --exclude '*' last.
+NFS_FULL_INCLUDES=(
+    --include='/immich/'        --include='/immich/***'
+    --include='/frigate/'       --include='/frigate/***'
+    --include='/prometheus/'    --include='/prometheus/***'
+    --include='/loki/'          --include='/loki/***'
+    --include='/temp/'          --include='/temp/***'
+    --include='/alertmanager/'  --include='/alertmanager/***'
+    --include='/ollama/'        --include='/ollama/***'
+    --include='/audiblez/'      --include='/audiblez/***'
+    --include='/ebook2audiobook/' --include='/ebook2audiobook/***'
+    --include='/*-backup/'      --include='/*-backup/***'
+    --exclude='*'
+)
 
 if [ "${DAY_OF_MONTH}" -le 7 ]; then
-    # Monthly: full sync with --delete for cleanup
-    # anca-elements/ is excluded — source of truth is Synology /volume1/Backup/Anca/Elements;
-    # the PVE copy is a downstream replica, syncing it back would just duplicate ~770G.
-    log "Monthly full NFS sync..."
-    rsync -rltz --delete --exclude='anca-elements/' /srv/nfs/ "${NFS_DEST}/" 2>&1 \
-        && log "  OK: nfs/ full sync" || { warn "nfs/ full sync failed"; STATUS=1; }
+    # Monthly: full sync with --delete for cleanup, restricted to bypass-list.
+    log "Monthly full NFS sync (sda-bypass paths only)..."
+    rsync -rltz --delete "${NFS_FULL_INCLUDES[@]}" /srv/nfs/ "${NFS_DEST}/" 2>&1 \
+        && log "  OK: nfs/ full sync (bypass-list)" || { warn "nfs/ full sync failed"; STATUS=1; }
+    # nfs-ssd: every dir under it (immich/ollama/llamacpp) is in the bypass list,
+    # so a plain --delete still applies cleanly.
     rsync -rltz --delete /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
         && log "  OK: nfs-ssd/ full sync" || { warn "nfs-ssd/ full sync failed"; STATUS=1; }
     > "${NFS_CHANGE_LOG}"
 elif [ -s "${NFS_CHANGE_LOG}" ]; then
-    # Incremental: only sync files logged by inotifywait
+    # Incremental: only sync changed files in bypass-list paths.
     sort -u "${NFS_CHANGE_LOG}" > /tmp/nfs-changes-deduped
 
-    # HDD NFS — drop anca-elements/* paths (excluded from offsite; see Monthly block)
-    grep '^/srv/nfs/' /tmp/nfs-changes-deduped | \
-        grep -v '^/srv/nfs/anca-elements/' | \
+    # HDD NFS — include only sda-bypass paths.
+    grep -E "${NFS_SDA_BYPASS_RE}" /tmp/nfs-changes-deduped | \
         while IFS= read -r f; do [ -f "$f" ] && echo "${f#/srv/nfs/}"; done \
         > /tmp/sync-nfs.list 2>/dev/null
     NFS_COUNT=$(wc -l < /tmp/sync-nfs.list 2>/dev/null || echo 0)
     if [ "${NFS_COUNT:-0}" -gt 0 ]; then
         rsync -rltz --files-from=/tmp/sync-nfs.list /srv/nfs/ "${NFS_DEST}/" 2>&1 \
-            && log "  OK: nfs/ (${NFS_COUNT} files)" \
+            && log "  OK: nfs/ (${NFS_COUNT} bypass files)" \
             || { warn "nfs/ incremental failed"; STATUS=1; }
     fi
 
-    # SSD NFS
+    # SSD NFS — every nfs-ssd path (immich/ollama/llamacpp) is in the bypass list.
     grep '^/srv/nfs-ssd/' /tmp/nfs-changes-deduped | \
         while IFS= read -r f; do [ -f "$f" ] && echo "${f#/srv/nfs-ssd/}"; done \
         > /tmp/sync-nfs-ssd.list 2>/dev/null || true
@@ -114,7 +144,7 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
     fi
 
     TOTAL=$(wc -l < /tmp/nfs-changes-deduped)
-    log "  Processed ${TOTAL} change events (${NFS_COUNT} nfs + ${SSD_COUNT} nfs-ssd files synced)"
+    log "  Processed ${TOTAL} change events (${NFS_COUNT} nfs + ${SSD_COUNT} nfs-ssd bypass-list files synced)"
     > "${NFS_CHANGE_LOG}"
     rm -f /tmp/nfs-changes-deduped /tmp/sync-nfs.list /tmp/sync-nfs-ssd.list
 else

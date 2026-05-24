@@ -1,0 +1,15 @@
+[Unit]
+Description=Mirror /srv/nfs (selective) to /mnt/backup (local 2nd copy of critical NFS)
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nfs-mirror
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nfs-mirror
+# Heavy sustained IO — don't compete with foreground services.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=18000
