@@ -207,10 +207,10 @@ resource "helm_release" "postiz" {
     resources = {
       requests = {
         cpu    = "100m"
-        memory = "512Mi"
+        memory = "2Gi"
       }
       limits = {
-        memory = "4Gi"
+        memory = "3Gi"
       }
     }
 
