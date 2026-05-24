@@ -57,6 +57,14 @@ EXCLUDES=(
     --exclude='/.lv-pvc-mapping.json'
     --exclude='/.nfs-changes.log'
 
+    # ---- anca-elements: photos are being ingested into Immich (2026-05-24),
+    # so /srv/nfs/immich/library/ becomes the canonical copy and the separate
+    # anca-elements tree is redundant. Excluded from nfs-mirror going forward.
+    # The historical 771G at /mnt/backup/anca-elements/ stays put until manual
+    # cleanup once Immich ingest completes; offsite-sync Step 1 also excludes
+    # it from the Synology pve-backup/ upload so we don't ship the redundant copy.
+    --exclude='/anca-elements/'
+
     # ---- NFS paths: too big / transient / re-fetchable ----
     --exclude='/immich/'
     --exclude='/frigate/'

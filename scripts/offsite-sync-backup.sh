@@ -70,12 +70,16 @@ if [ "${DAY_OF_MONTH}" -le 7 ] || [ -n "${FORCE_FULL}" ]; then
         --exclude='.lv-pvc-mapping.json' \
         --exclude='.nfs-changes.log' \
         --exclude='.force-full-sync' \
+        --exclude='/anca-elements/' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
     rm -f "${FORCE_FULL_FLAG}"
 elif [ -s "${MANIFEST}" ]; then
     MANIFEST_LINES=$(wc -l < "${MANIFEST}")
     log "Incremental sync (${MANIFEST_LINES} files from manifest)..."
+    # /anca-elements is being ingested into Immich (Immich becomes canonical) —
+    # skip the redundant copy in /mnt/backup/anca-elements/ until manual cleanup.
     rsync -rlt --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
+        --exclude='anca-elements/' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
 else
     log "No changed files in manifest, nothing to sync"
