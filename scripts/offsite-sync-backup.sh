@@ -78,8 +78,10 @@ log "--- Step 2: NFS → Synology (change-tracked) ---"
 
 if [ "${DAY_OF_MONTH}" -le 7 ]; then
     # Monthly: full sync with --delete for cleanup
+    # anca-elements/ is excluded — source of truth is Synology /volume1/Backup/Anca/Elements;
+    # the PVE copy is a downstream replica, syncing it back would just duplicate ~770G.
     log "Monthly full NFS sync..."
-    rsync -rltz --delete /srv/nfs/ "${NFS_DEST}/" 2>&1 \
+    rsync -rltz --delete --exclude='anca-elements/' /srv/nfs/ "${NFS_DEST}/" 2>&1 \
         && log "  OK: nfs/ full sync" || { warn "nfs/ full sync failed"; STATUS=1; }
     rsync -rltz --delete /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
         && log "  OK: nfs-ssd/ full sync" || { warn "nfs-ssd/ full sync failed"; STATUS=1; }
@@ -88,8 +90,9 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
     # Incremental: only sync files logged by inotifywait
     sort -u "${NFS_CHANGE_LOG}" > /tmp/nfs-changes-deduped
 
-    # HDD NFS
+    # HDD NFS — drop anca-elements/* paths (excluded from offsite; see Monthly block)
     grep '^/srv/nfs/' /tmp/nfs-changes-deduped | \
+        grep -v '^/srv/nfs/anca-elements/' | \
         while IFS= read -r f; do [ -f "$f" ] && echo "${f#/srv/nfs/}"; done \
         > /tmp/sync-nfs.list 2>/dev/null
     NFS_COUNT=$(wc -l < /tmp/sync-nfs.list 2>/dev/null || echo 0)
