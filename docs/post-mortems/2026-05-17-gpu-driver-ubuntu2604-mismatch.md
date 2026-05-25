@@ -130,8 +130,13 @@ to-working state pending an upstream fix or kernel rollback.
 
 - [x] Pin gpu-operator chart to v25.10.1 in TF
 - [x] Document situation in this post-mortem
-- [ ] Roll back k8s-node1 host kernel to 6.8.0-117-generic + apt-mark
-      hold (needs user authorization for node reboot)
+- [x] Roll back k8s-node1 host kernel to 6.8.0-117-generic (done by user;
+      kernel rollback succeeded and NFD now reports
+      `kernel-version.full=6.8.0-117-generic`, `os_release.VERSION_ID=24.04`)
+- [x] Extend driver daemonset startup probe `failureThreshold` from 120 to 300
+      (50 min) in TF `values.yaml` — 2026-05-25. On this hardware the
+      full install sequence (apt headers + gcc compilation + file copy) takes
+      ~21min which exactly exhausted the old 120×10s window.
 - [ ] Add Prometheus alert `GPUNodeNoGPUResource` — fires when a node
       labeled `nvidia.com/gpu.present=true` has `nvidia.com/gpu` capacity
       of 0 for >10m
@@ -142,6 +147,47 @@ to-working state pending an upstream fix or kernel rollback.
       memory of the March 2026 outage says we disabled
       `unattended-upgrades` — `do-release-upgrade` is a separate path
       that should be gated too
+
+## Follow-up Incident: Driver install hang (2026-05-25)
+
+**Date**: 2026-05-25  
+**Status**: Resolved  
+
+After the kernel rollback to 6.8.0-117-generic succeeded, the driver pod
+(`nvidia-driver-daemonset-529vg`) was still reported as "stuck at
+Installing Linux kernel headers..." with no progress for 15–20 min.
+
+**Actual root causes (two compounding issues)**:
+
+1. **Deadlock between k8s-driver-manager and operator-validator**: The
+   `k8s-driver-manager` init container waits for `nvidia-operator-validator`
+   to shut down before it can begin the install sequence. The validator's
+   `driver-validation` init container was in an infinite retry loop polling
+   `/run/nvidia/validations/.driver-ctr-ready` (which the driver creates when
+   ready). Since the driver never finished, the validator never exited. The
+   validator pod had `deletionTimestamp` set but kubelet on node1 couldn't GC
+   it — the container received SIGTERM but remained in "Terminating" state
+   indefinitely, blocking the new driver from starting.
+   **Fix**: Force-deleted the stuck validator pod
+   (`kubectl delete pod -n nvidia nvidia-operator-validator-sff98 --force --grace-period=0`).
+   This broke the deadlock immediately.
+
+2. **Startup probe timeout**: The full driver install sequence on this hardware
+   (6 vCPUs, 16Gi RAM) takes ~21 minutes:
+   - `apt-get install linux-headers-6.8.0-117-generic`: ~2 min
+   - `gcc/make -j16` kernel module build (nvidia, nvidia-uvm, nvidia-modeset,
+     nvidia-peermem): ~12 min  
+   - nvidia-installer file copy + archive integrity check: ~7 min
+   The default startup probe allows exactly `60 + (120 × 10) = 1260s = 21min`.
+   This caused a SIGKILL (exit 137) at 21 minutes even when the install was
+   progressing normally.
+   **Fix**: Patched `driver.startupProbe.failureThreshold` from 120 → 300
+   in `stacks/nvidia/modules/nvidia/values.yaml` (gives 51 min headroom).
+
+**Key observation**: "Installing Linux kernel headers..." is NOT a hang — the
+apt install just takes 2+ min and produces no log output during execution. The
+log line appears before apt runs, so it looks frozen. Check `ps auxf` inside
+the container to confirm apt/dpkg are actively running.
 
 ## Lessons
 
@@ -158,3 +204,9 @@ to-working state pending an upstream fix or kernel rollback.
   24.04 image on a 26.04 host), edit the NFD label — but only as a last
   resort; the chart upgrade made clear the operator will eventually
   reconcile this.
+- **A k8s-driver-manager deadlock on a stuck Terminating validator pod is
+  indistinguishable from an apt hang** — `ps auxf` inside the container is
+  the key diagnostic. Force-deleting a stuck Terminating pod with no
+  finalizers is safe and immediately resolves the deadlock.
+- **Driver startup probe must be sized for the full install wall-clock time**,
+  not just apt or just compilation. On slow hardware, 21 min is tight.

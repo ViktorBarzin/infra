@@ -41,6 +41,16 @@ driver:
     limits:
       memory: "2Gi"
 
+  # 2026-05-25: extended startup probe from 120 to 300 failures.
+  # On k8s-node1 (6 vCPUs, 16Gi RAM, Ubuntu 24.04 + 6.8.0-117-generic),
+  # the full driver install sequence — apt install linux-headers (~2min) +
+  # gcc make -j16 kernel module compilation (~12min) + nvidia-installer
+  # file copy (~7min) = ~21min total, which exactly exhausted the default
+  # 120×10s=20min window (exit 137 = SIGKILL from startup probe).
+  # 300×10s = 50min gives 2.5× headroom on this hardware.
+  startupProbe:
+    failureThreshold: 300
+
   devicePlugin:
     config:
       name: time-slicing-config
