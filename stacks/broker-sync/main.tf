@@ -10,8 +10,8 @@ resource "kubernetes_namespace" "broker_sync" {
   metadata {
     name = "broker-sync"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.aux
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -289,6 +289,14 @@ resource "kubernetes_cron_job_v1" "imap" {
               env {
                 name  = "BROKER_SYNC_DATA_DIR"
                 value = "/data"
+              }
+              # 2026-05-26: skip InvestEngine email parsing. IE has its own
+              # bearer-token API path (`broker-sync invest-engine`) — running
+              # both produces duplicate BUYs in Wealthfolio because the two
+              # generate different external_ids for the same fill.
+              env {
+                name  = "BROKER_SYNC_IMAP_EXCLUDE_PROVIDERS"
+                value = "invest-engine"
               }
               env {
                 name  = "WF_SESSION_PATH"
