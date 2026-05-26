@@ -528,7 +528,7 @@ serverFiles:
             action: drop
           # Whitelist: only keep essential kube-state-metrics, node-exporter, and coredns metrics
           - source_labels: [__name__]
-            regex: 'kube_cronjob_status_last_successful_time|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
+            regex: 'kube_cronjob_status_last_successful_time|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -2372,6 +2372,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Node {{ $labels.instance }}: NFS RPC retransmission rate {{ $value | printf \"%.1f\" }}/s — NFS server (192.168.1.127) may be degraded or unreachable"
+          # Proxmox CSI per-node LUN saturation. The plugin enforces
+          # csi.proxmox.sinextra.dev/max-volume-attachments=28 (set on every k8s-node*
+          # by stacks/proxmox-csi). QEMU's virtio-scsi-pci hard cap is 30 LUNs.
+          # When K8s-side VolumeAttachments approach the cap, new PVCs fail to
+          # attach with "no free lun found" — vaultwarden + 18 pods stuck 2026-05-26.
+          - alert: ProxmoxCSILunUsageHigh
+            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 24
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.node }}: {{ $value }}/28 CSI volumes attached (>= 85% of cap)"
+              description: "Approaching the proxmox-csi-plugin per-node cap of 28 attachments. Workloads scheduled to this node with new PVCs may fail to attach. Consider rebalancing or migrating PVCs to other nodes."
+          - alert: ProxmoxCSILunUsageCritical
+            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 27
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.node }}: {{ $value }}/28 CSI volumes attached — 1 slot left"
+              description: "Only 1 LUN slot remains before the proxmox-csi cap. Next PVC attach to this node will fail with 'no free lun found'."
+          - alert: ProxmoxCSILunCapReached
+            expr: count by (node) (kube_volumeattachment_info{node=~"k8s-node.*"}) >= 28
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.node }}: at proxmox-csi LUN cap (28/28) — attaches WILL fail"
+              description: "Pods needing new PVC attachments on {{ $labels.node }} will fail with 'no free lun found'. Detach unused volumes from this node's Proxmox VM config, or migrate PVCs to a less-loaded node."
       - name: "Application Health"
         rules:
           - alert: MailServerDown
