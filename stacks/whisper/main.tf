@@ -25,33 +25,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "whisper-data-proxmox"
-    namespace = kubernetes_namespace.whisper.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+module "nfs_data_host" {
+  source       = "../../modules/kubernetes/nfs_volume"
+  name         = "whisper-data-host"
+  namespace    = kubernetes_namespace.whisper.metadata[0].name
+  nfs_server   = var.nfs_server
+  nfs_path     = "/srv/nfs/whisper"
+  storage      = "1Gi"
+  access_modes = ["ReadWriteMany"]
 }
 
 resource "kubernetes_deployment" "whisper" {
@@ -118,7 +99,7 @@ resource "kubernetes_deployment" "whisper" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
       }
@@ -244,7 +225,7 @@ resource "kubernetes_deployment" "piper" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
       }
