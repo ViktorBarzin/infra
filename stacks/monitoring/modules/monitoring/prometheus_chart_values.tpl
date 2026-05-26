@@ -1290,6 +1290,42 @@ serverFiles:
             annotations:
               summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) cannot pull image"
               description: "Check the deployment's image reference — often a stale tag, a removed registry, or a credentials mismatch. `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` shows the pull error."
+          # N-1 capacity check: if any non-GPU worker (node2/3/4) died, would
+          # its memory requests fit on the remaining Ready workers (incl. node1
+          # GPU node — its taint is PreferNoSchedule, soft)? Fires when the
+          # most-loaded non-GPU worker holds more memory requests than the rest
+          # of the cluster has free.
+          - alert: ClusterCannotTolerateNonGpuNodeLoss
+            expr: |
+              max(
+                sum by (node) (
+                  kube_pod_container_resource_requests{resource="memory",unit="byte",node=~"k8s-node[234]"}
+                )
+              )
+              >
+              sum(
+                clamp_min(
+                  kube_node_status_allocatable{resource="memory",unit="byte",node=~"k8s-node[1234]"}
+                  - on(node) group_left() sum by (node) (
+                      kube_pod_container_resource_requests{resource="memory",unit="byte",node=~"k8s-node[1234]"}
+                    ),
+                  0
+                )
+                and on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
+              )
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster cannot tolerate losing any non-GPU worker — memory requests won't fit on the rest"
+              description: |
+                The most-loaded non-GPU worker (k8s-node2/3/4) has more memory
+                requests pinned to it than the rest of the workers (incl. node1
+                GPU node) currently have free. If that node went down, its
+                pods would not reschedule and stay Pending.
+                Remediation: right-size top reservers via Goldilocks (immich-server,
+                frigate, prometheus, pg-cluster, paperless) or bump VM RAM on
+                k8s-node2/k8s-node3 from 32GB → 48GB to match node1.
       - name: Infrastructure Health
         rules:
           - alert: HomeAssistantDown
