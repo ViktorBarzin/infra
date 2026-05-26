@@ -87,8 +87,9 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image = "vaultwarden/server:1.35.7"
-          name  = "vaultwarden"
+          image             = "vaultwarden/server:latest"
+          image_pull_policy = "Always"
+          name              = "vaultwarden"
 
           resources {
             requests = {
@@ -181,7 +182,9 @@ resource "kubernetes_deployment" "vaultwarden" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/pollSchedule"],         # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],             # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["kubernetes.io/change-cause"],    # Keel rewrites this on every rollout
     ]
   }
 }
