@@ -1088,6 +1088,7 @@ resource "null_resource" "pg_cluster" {
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
     pg_params     = "v3-shared1024-walcomp-workmem16-max200"
+    affinity      = "required-hostname-v1"
   }
 
   provisioner "local-exec" {
@@ -1106,6 +1107,15 @@ resource "null_resource" "pg_cluster" {
         # — during a long WAL backlog the failover would stall the drain.
         # Bumped 2026-05-16 ahead of Monday's first post-fix kured cycle.
         instances: 3
+        # Hard anti-affinity: force one PG instance per node. Default is
+        # `preferred` which let all 3 pods collapse onto k8s-node1 during
+        # the 2026-05-26 node4 outage — losing node1 would have killed the
+        # whole cluster (no quorum). With 3 instances + 4 worker nodes,
+        # `required` is safe under 1-node drain.
+        affinity:
+          enablePodAntiAffinity: true
+          podAntiAffinityType: required
+          topologyKey: kubernetes.io/hostname
         imageName: ghcr.io/cloudnative-pg/postgis:16
         postgresql:
           parameters:
