@@ -240,6 +240,139 @@ resource "kubernetes_cron_job_v1" "trading212" {
   }
 }
 
+# IBKR Flex Web Service daily sync. Phase 2c deliverable.
+# Pulls the Activity Flex Query (Trades + Cash + OpenPositions), maps to
+# broker-sync Activities, runs them through the shared pipeline, then
+# reconciles broker-reported OpenPositions against WF-computed quantities.
+resource "kubernetes_cron_job_v1" "ibkr" {
+  metadata {
+    name      = "broker-sync-ibkr"
+    namespace = kubernetes_namespace.broker_sync.metadata[0].name
+    labels    = { app = "broker-sync", component = "ibkr" }
+  }
+  spec {
+    schedule                      = "0 2 * * *" # 02:00 UK
+    concurrency_policy            = "Forbid"
+    starting_deadline_seconds     = 300
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = { app = "broker-sync", component = "ibkr" }
+          }
+          spec {
+            restart_policy = "OnFailure"
+            security_context {
+              fs_group = 10001
+            }
+            container {
+              name    = "broker-sync"
+              image   = local.broker_sync_image
+              command = ["broker-sync", "ibkr"]
+
+              env {
+                name  = "BROKER_SYNC_DATA_DIR"
+                value = "/data"
+              }
+              env {
+                name  = "WF_SESSION_PATH"
+                value = "/data/wealthfolio_session.json"
+              }
+              env {
+                name = "WF_BASE_URL"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_base_url"
+                  }
+                }
+              }
+              env {
+                name = "WF_USERNAME"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_username"
+                  }
+                }
+              }
+              env {
+                name = "WF_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "wf_password"
+                  }
+                }
+              }
+              env {
+                name = "IBKR_FLEX_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "ibkr_flex_token"
+                  }
+                }
+              }
+              env {
+                name = "IBKR_FLEX_QUERY_ID"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "ibkr_flex_query_id"
+                  }
+                }
+              }
+              env {
+                name = "IBKR_ACCOUNT_ID"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "ibkr_account_id"
+                  }
+                }
+              }
+              env {
+                name = "IBKR_ACCOUNT_ID_UPSTREAM"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "ibkr_account_id_upstream"
+                  }
+                }
+              }
+
+              volume_mount {
+                name       = "data"
+                mount_path = "/data"
+              }
+              resources {
+                requests = { cpu = "20m", memory = "128Mi" }
+                limits   = { memory = "256Mi" }
+              }
+            }
+            volume {
+              name = "data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # IMAP ingest — InvestEngine + Schwab email parsers, one combined pod.
 # Phase 2 deliverable. Defined ahead of implementation so the rollout is
 # one `tf apply` once the image supports the CLI subcommand.
