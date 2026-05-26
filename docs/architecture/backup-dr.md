@@ -1,11 +1,28 @@
 # Backup & Disaster Recovery Architecture
 
-Last updated: 2026-05-24
+Last updated: 2026-05-26
 
-> **2026-05-24 session — what changed today** (deeper structural review pending — see the open backup-pipeline simplification audit):
+> **2026-05-26 — bypass list pruned to a single path** (follow-up to the
+> 2026-05-24 changes below):
+> - `nfs-mirror` now copies ollama, audiblez, ebook2audiobook, and every
+>   `*-backup` CronJob output onto sda. Previously these went sdc → Synology
+>   DIRECT via Step 2; now they ride leg 1 like everything else.
+> - **Bypass list (leg 2)** is now just `/srv/nfs/immich/` — too big for sda
+>   (1.5 T), no other choice.
+> - **frigate and temp**: dropped from BOTH legs — intentionally not backed up.
+>   frigate is a 14-day camera ring, temp is scratch space. User explicit ask
+>   2026-05-26.
+> - **prometheus, loki, alertmanager**: live-orphan dirs that no longer
+>   exist on `/srv/nfs`. Dropped from the exclude/include lists as no-ops.
+> - `/mnt/backup/anca-elements` (423 G) deleted — canonical copy lives in
+>   Immich since the 2026-05-24 ingest.
+> - Aftermath: sda 87% → 46% used; Synology `/Viki/nfs/` shrinks to
+>   immich-only on next monthly `--delete` pass (or manual cleanup —
+>   see runbook).
+>
+> **2026-05-24 session — what changed**:
 > - **anca-elements archive direction inverted** — Synology `/Backup/Anca/Elements` (770G) deleted; PVE `/srv/nfs/anca-elements` is now source of truth. `anca-elements-sync.sh` retired.
 > - **`anca-elements-mirror.{sh,service,timer}` retired**, subsumed into the new **`nfs-mirror`** weekly job covering all critical NFS subtrees (anca-elements + ~80 services) → sda.
-> - **`offsite-sync-backup` Step 2 filter inverted**: NFS-direct-to-Synology now only carries the sda-bypass paths (immich + frigate + prometheus + `*-backup` + …). Two-leg invariant: `nfs-mirror.sh EXCLUDES` ≡ `offsite-sync-backup Step 2 INCLUDES`. Cross-referenced in both scripts.
 > - **Synology `/Backup/Viki/nfs/<svc>/` orphan cleanup** — 84 dirs renamed in-place (btrfs metadata-only) to `/Backup/Viki/pve-backup/<svc>/` so daily-incremental Step 1 sees them as pre-existing and only ships deltas. No re-transfer.
 > - **Synology snapshot retention 7d → 3d**, all 8 backlog snapshots deleted via `sudo synosharesnapshot delete Backup ...`. Reclaimed ~800G btrfs (98% → 83% used). DSM API was blocked by 2FA; `sudo` over the existing `Administrator` SSH key worked with the Vault-stored password.
 > - **Manifest mechanism extended**: `nfs-mirror` now appends its transferred file list to `/mnt/backup/.changed-files` so daily Step 1 incremental picks it up (was previously only fed by `daily-backup`).
@@ -16,19 +33,19 @@ The homelab runs a 3-2-1 strategy with a **two-leg** path to Synology so every N
 
 ```
 sdc /srv/nfs/<svc>/   ──nfs-mirror weekly──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/      [leg 1]
-sdc /srv/nfs/<bypass>/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/<bypass>/                       [leg 2]
+sdc /srv/nfs/immich/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/immich/                          [leg 2]
 sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,pfsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
 ```
 
-The **bypass list** (paths that take leg 2 — too big for sda, transient, or already-a-backup): `immich`, `frigate`, `prometheus`, `loki`, `temp`, `alertmanager`, `ollama`, `audiblez`, `ebook2audiobook`, `*-backup`. Anything NOT in this list rides leg 1 via `nfs-mirror`.
+The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 T). **Not backed up at all**: `/srv/nfs/frigate/` (camera ring buffer), `/srv/nfs/temp/` (scratch). Everything else rides leg 1 via `nfs-mirror`.
 
 **3-2-1 Breakdown**:
 - **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
-- **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — at **~90% used** post-2026-05-24 (was ~10% in April)
-- **Copy 3** (offsite): Synology NAS at 192.168.1.13 — at **~83% used / 934G free** post-2026-05-24 (was 98% / 121G before today's cleanup)
-  - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs)
-  - `Synology/Backup/Viki/nfs/` — bypass-list NFS (immich, frigate, etc.)
-  - `Synology/Backup/Viki/nfs-ssd/` — bypass-list SSD NFS (immich-ML, ollama, llamacpp)
+- **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — **46% used** post-2026-05-26 (was 87% before anca-elements cleanup; bypass-list pruning added ~260 G of *-backup + ollama + audiblez + ebook2audiobook)
+- **Copy 3** (offsite): Synology NAS at 192.168.1.13
+  - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs, now also includes ollama/audiblez/ebook2audiobook/*-backup)
+  - `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
+  - `Synology/Backup/Viki/nfs-ssd/` — full SSD NFS (immich-ML, ollama, llamacpp); SSD has no sda-mirror leg, so all three go direct
 
 ## Architecture Diagram
 
@@ -346,35 +363,33 @@ Two-step offsite sync:
 
 #### Step 2: sda-bypass NFS to Synology nfs/ + nfs-ssd/ (inotify change-tracked, FILTERED)
 
-**Role**: Only carries paths that **bypass sda** — i.e., paths the nfs-mirror script explicitly skips (immich, frigate, prometheus, *-backup, …). Paths that ARE on sda reach Synology via Step 1 and are explicitly excluded from Step 2 to prevent double-syncing. The Step 2 INCLUDE list MUST stay in sync with nfs-mirror's `EXCLUDES` — they are complementary.
+**Role**: Carries the single path that bypasses sda — `/srv/nfs/immich/` (1.5 T, doesn't fit on sda). Plus the full `/srv/nfs-ssd/` (immich-ML + ollama + llamacpp; the SSD has no sda-mirror leg). Everything else under `/srv/nfs/` rides leg 1.
 
-**Method**: `rsync --files-from /mnt/backup/.nfs-changes.log` with regex filter `^/srv/nfs/(immich|frigate|prometheus|loki|temp|alertmanager|ollama|audiblez|ebook2audiobook|[^/]+-backup)/`. The monthly full sync uses `--include='/<bypass-path>/***' … --exclude='*'` to limit to the same set. `nfs-ssd/` (all of immich-ML / ollama / llamacpp) is entirely bypass-list, so a plain `--delete` still applies.
+**Method**: `rsync --files-from /mnt/backup/.nfs-changes.log` with regex filter `^/srv/nfs/immich/`. The monthly full sync uses `--include='/immich/***' --exclude='*'` for the HDD leg, and a plain `--delete` for the SSD leg.
 
 **Change tracking**: `nfs-change-tracker.service` (systemd, inotifywait) on PVE host watches `/srv/nfs` and `/srv/nfs-ssd` continuously. Changed file paths are logged to `/mnt/backup/.nfs-changes.log`. Step 2 reads this log and transfers only changed files matching the bypass regex. Incremental syncs complete in seconds.
 
-**Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` with the bypass-only include list for cleanup.
+**Monthly full sync**: On 1st Sunday of month, runs `rsync --delete` with the immich-only include list. The `--delete` pass also reaps any stale Synology `/Viki/nfs/<dir>/` from the broader pre-2026-05-26 bypass list (ollama, audiblez, ebook2audiobook, *-backup, frigate, prometheus, loki, temp, alertmanager).
 
 **`/srv/nfs/anca-elements/` history**: had its own dedicated Synology exclusion line earlier in 2026-05-24 because the original Synology source (`/volume1/Backup/Anca/Elements`) was being preserved while we moved canonical to PVE. After the original was deleted (same day), anca-elements joined the broader "NOT bypassing sda" category and is covered by Step 1 via `nfs-mirror`.
 
-**Layer 3a: NFS local mirror on sda (3-2-1 second copy)**: `/usr/local/bin/nfs-mirror` rsyncs the *critical* subset of `/srv/nfs/` → `/mnt/backup/<service>/` weekly (Mon 04:00). Single rsync invocation, single destination. The skip-list (in `nfs-mirror.sh` `EXCLUDES`) drops paths that don't justify a second local copy:
+**Layer 3a: NFS local mirror on sda (3-2-1 second copy)**: `/usr/local/bin/nfs-mirror` rsyncs `/srv/nfs/` → `/mnt/backup/<service>/` weekly (Mon 04:00). Single rsync invocation, single destination. As of 2026-05-26 the skip-list (in `nfs-mirror.sh` `EXCLUDES`) is intentionally minimal:
 
-- **immich** (1.2T) — too big for sda; Synology offsite is the only 2nd copy by design
-- **frigate** (camera recordings, 14d auto-rotate)
-- **prometheus**, **loki** (TSDB + logs — rebuildable / policy-driven retention)
-- **ollama**, **llamacpp**, **audiblez**, **ebook2audiobook** (re-downloadable / regenerable)
-- **temp**, **alertmanager** (transient state)
-- **`*-backup`** (CronJob outputs — these ARE backups; backing up the backup is meta)
-- **/srv/nfs-ssd** entirely (after the SSD skips above, residual is ~0)
+- **immich** (1.5 T) — too big for sda; ships sdc → Synology direct (leg 2)
+- **frigate** (camera ring buffer) — intentionally NOT backed up
+- **temp** (scratch) — intentionally NOT backed up
+- **anca-elements** (legacy) — now in Immich; `/mnt/backup/anca-elements` deleted 2026-05-26
+- **/srv/nfs-ssd** entirely — its three dirs (immich-ML, ollama, llamacpp) all ship direct to Synology nfs-ssd/
 
-Everything else under `/srv/nfs/` (anca-elements + ~30 critical service NFS subtrees: mysql, postgresql, nextcloud, health, real-estate-crawler, audiobookshelf, servarr, technitium, openclaw, ...) lands at `/mnt/backup/<svc>/`. Total mirror size ≈ 900 GB (mostly anca-elements at 770G).
+Everything else under `/srv/nfs/` — mysql, postgresql, nextcloud, health, real-estate-crawler, audiobookshelf, servarr, technitium, openclaw, ollama (HDD), audiblez, ebook2audiobook, every `*-backup` CronJob output, … — lands at `/mnt/backup/<svc>/`. Mirror size ≈ 400 GB post-2026-05-26 (was ~900 GB with anca-elements).
 
 Pushes `nfs_mirror_last_run_timestamp` + `nfs_mirror_last_status` + `nfs_mirror_bytes` to Pushgateway. Alerts: `NfsMirrorStale` (>16d), `NfsMirrorFailing` (status != 0). `rsync -rlt --delete -H --no-perms --no-owner --no-group`; idempotent. Nice=10, IOSchedulingClass=idle (won't compete with foreground IO).
 
 > History: `anca-elements-mirror.{sh,service,timer}` was a precursor (2026-05-24 morning) dedicated to /srv/nfs/anca-elements only. Subsumed by `nfs-mirror` later the same day to consolidate ad-hoc copy scripts into one.
 
 **Destination**:
-- `Synology/Backup/Viki/nfs/` — mirrors `/srv/nfs`
-- `Synology/Backup/Viki/nfs-ssd/` — mirrors `/srv/nfs-ssd`
+- `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
+- `Synology/Backup/Viki/nfs-ssd/` — mirrors `/srv/nfs-ssd` (immich-ML, ollama, llamacpp)
 
 **Monitoring**: Pushes `offsite_backup_sync_last_success_timestamp` to Pushgateway. Alerts: `OffsiteBackupSyncStale` (>8d), `OffsiteBackupSyncFailing`.
 

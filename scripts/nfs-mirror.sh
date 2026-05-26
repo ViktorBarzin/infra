@@ -13,20 +13,21 @@
 # destination layout (anca-elements lives at /mnt/backup/anca-elements/),
 # but now covers every other critical NFS subtree in one pass.
 #
-# SKIP-LIST rationale (paths NOT mirrored — Synology offsite still covers them):
-#   immich       — 1.2T, doesn't fit on sda; Synology only by design
-#   frigate      — 14d camera ring, auto-rotates
-#   prometheus   — TSDB, rebuildable from cluster state
-#   loki         — log retention is a policy choice, not durable data
-#   temp         — scratch
-#   alertmanager — transient state
-#   ollama       — LLM model weights, re-downloadable
-#   audiblez     — re-fetchable from Audible
-#   ebook2audiobook — regenerable from book sources
-#   *-backup     — CronJob output (these ARE backups; backing them up is meta)
+# SKIP-LIST rationale (2026-05-26 simplification — see commit notes):
+#   immich  — 1.5T, doesn't fit on sda; offsite-sync ships it direct to Synology
+#   frigate — camera ring buffer; intentionally NOT backed up anywhere
+#   temp    — scratch; intentionally NOT backed up
 #
-# Note: /srv/nfs-ssd is intentionally NOT mirrored — after skipping immich
-# (47G), ollama (59G), and llamacpp (26G) there's effectively zero residual.
+# Everything else (ollama, audiblez, ebook2audiobook, *-backup, …) now
+# flows sdc → sda (this script) → Synology pve-backup/ via offsite-sync
+# Step 1. Previously they went sdc → Synology DIRECT via Step 2; the
+# bypass list got pruned to just `immich` so we have a single canonical
+# mirror at sda. Prometheus/loki/alertmanager were live-orphan entries
+# that no longer exist on /srv/nfs (cleaned 2026-05-26) — dropped from
+# the exclude list as a no-op.
+#
+# Note: /srv/nfs-ssd is intentionally NOT mirrored — its three dirs
+# (immich, ollama, llamacpp) all go direct to Synology nfs-ssd/.
 
 set -euo pipefail
 
@@ -57,27 +58,15 @@ EXCLUDES=(
     --exclude='/.lv-pvc-mapping.json'
     --exclude='/.nfs-changes.log'
 
-    # ---- anca-elements: photos are being ingested into Immich (2026-05-24),
-    # so /srv/nfs/immich/library/ becomes the canonical copy and the separate
-    # anca-elements tree is redundant. Excluded from nfs-mirror going forward.
-    # The historical 771G at /mnt/backup/anca-elements/ stays put until manual
-    # cleanup once Immich ingest completes; offsite-sync Step 1 also excludes
-    # it from the Synology pve-backup/ upload so we don't ship the redundant copy.
+    # ---- anca-elements: now in Immich (canonical), /mnt/backup copy deleted
+    # 2026-05-26. Kept in excludes so nfs-mirror doesn't re-populate from sdc
+    # if /srv/nfs/anca-elements is ever re-attached.
     --exclude='/anca-elements/'
 
-    # ---- NFS paths: too big / transient / re-fetchable ----
-    --exclude='/immich/'
-    --exclude='/frigate/'
-    --exclude='/prometheus/'
-    --exclude='/loki/'
-    --exclude='/temp/'
-    --exclude='/alertmanager/'
-    --exclude='/ollama/'
-    --exclude='/audiblez/'
-    --exclude='/ebook2audiobook/'
-
-    # ---- *-backup CronJob outputs (don't back up backups) ----
-    --exclude='/*-backup/'
+    # ---- NFS paths intentionally NOT backed up ----
+    --exclude='/immich/'   # 1.5T — ships sdc → Synology direct (Step 2)
+    --exclude='/frigate/'  # ring buffer — no backup anywhere
+    --exclude='/temp/'     # scratch — no backup anywhere
 
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
@@ -130,7 +119,7 @@ mountpoint -q /mnt/backup || { log "FATAL: /mnt/backup not mounted"; push_metric
 [ -d "$SRC" ]              || { log "FATAL: source $SRC missing"; push_metrics 1 0; exit 1; }
 
 log "=== mirror starting: $SRC → $DST ==="
-log "skip: immich, frigate, prometheus, loki, ollama, audiblez, *-backup, temp"
+log "skip: immich (Synology direct), frigate (no backup), temp (no backup), anca-elements"
 
 # Marker file used to identify files written by this rsync run, so we can append
 # their paths to the offsite-sync manifest. Touch BEFORE rsync; `find -newer` AFTER.
@@ -149,7 +138,13 @@ DST_BYTES=$(df -B1 --output=used /mnt/backup | tail -1)
 if [ "$RSYNC_RC" -eq 0 ]; then
     # Capture files that rsync created/modified and feed them to the offsite-sync
     # manifest so daily Step 1 incremental picks them up tomorrow morning.
-    NEW_COUNT=$(find /mnt/backup -newer "$STAMP" -type f \
+    # Use -cnewer (ctime), not -newer (mtime): rsync -t preserves SOURCE mtime
+    # on the dest, so freshly-written files with old source mtime look "older"
+    # than $STAMP and -newer misses them. ctime is set when the inode is written,
+    # regardless of -t, so it correctly identifies what this run created.
+    # (Bug hit 2026-05-26 full bypass-list mirror: 800k files copied, manifest
+    # captured only 2 entries → forced a .force-full-sync to recover.)
+    NEW_COUNT=$(find /mnt/backup -cnewer "$STAMP" -type f \
         ! -path '/mnt/backup/.changed-files' \
         ! -path '/mnt/backup/.changed-files.lock' \
         ! -path '/mnt/backup/.lv-pvc-mapping.json' \
