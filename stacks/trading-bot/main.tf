@@ -76,6 +76,7 @@ resource "kubernetes_manifest" "external_secret" {
             DBAAS_ROOT_PASSWORD           = "{{ .dbaas_root_password }}"
             TRADING_ANTHROPIC_OAUTH_TOKEN = "{{ .anthropic_oauth_token }}"
             TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
+            TRADING_SLACK_WEBHOOK_URL     = "{{ .slack_webhook_url }}"
           }
         }
       }
@@ -90,6 +91,7 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "dbaas_root_password", remoteRef = { key = "trading-bot", property = "dbaas_root_password" } },
         { secretKey = "anthropic_oauth_token", remoteRef = { key = "trading-bot", property = "anthropic_oauth_token" } },
         { secretKey = "meet_kevin_channel_id", remoteRef = { key = "trading-bot", property = "meet_kevin_channel_id" } },
+        { secretKey = "slack_webhook_url", remoteRef = { key = "trading-bot", property = "slack_webhook_url" } },
       ]
     }
   }
