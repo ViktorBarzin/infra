@@ -268,6 +268,12 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       auto-aof-rewrite-min-size 128mb
       aof-load-truncated yes
       aof-use-rdb-preamble yes
+      # Allow loading an AOF with up to 1KB of garbage at the tail (post-2026-05-26
+      # node2 unclean reboot corrupted redis-v2-2's incremental AOF at offset
+      # 84799139; without this, redis-v2-2 crashlooped). Redis truncates the
+      # corrupted tail and continues. Default is 0 (refuse to load any corruption).
+      aof-load-corrupt-tail-max-size 1024
+
 
       replica-read-only yes
       replica-serve-stale-data yes
