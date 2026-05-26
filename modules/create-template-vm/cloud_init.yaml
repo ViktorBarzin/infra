@@ -1,5 +1,8 @@
-#cloud-config 
-hostname: terraform-vm
+#cloud-config
+# Hostname intentionally NOT set here — cloud-init reads it from
+# Proxmox's auto-generated meta-data (which uses `qm set --name <X>`),
+# so a single shared snippet works for every node.
+manage_etc_hosts: true
 users:
   - name: wizard
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -46,7 +49,7 @@ apt:
   sources:
   %{if is_k8s_template}
     kubernetes:
-      source: "deb https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
+      source: "deb https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /"
       keyid: "DE15B14486CD377B9E876E1A234654DA9A296436"
       filename: kubernetes.list
   %{endif}
@@ -56,23 +59,23 @@ apt:
       filename: docker.list
 
 %{if is_k8s_template}
-# write_files delivers the multi-line containerd/kubelet setup script to a
-# file BEFORE runcmd executes. This pattern avoids the YAML interpolation bug
-# where multi-line $${containerd_config_update_command} (from
-# stacks/infra/main.tf — has mixed-indent inner shell heredocs) inserted into
-# a single `runcmd: - $${var}` item produces invalid YAML and silently fails
-# cloud-init parsing (observed 2026-05-26 during node4 rebuild). With write_files,
-# the multi-line content lives in a YAML literal block where ANY indent >= the
-# block's content indent is valid — so col-0 heredoc lines like
-# `[plugins."io.containerd.gc.v1.scheduler"]` survive cleanly.
+# Setup script is base64-encoded by the module so YAML whitespace
+# handling never touches the heredoc bodies inside it. Replaces an
+# earlier `indent(6, …)` approach that put `[plugins.*]` TOML
+# sections at col 6 inside `cat >> /etc/containerd/config.toml`
+# heredocs — containerd refused to parse the result and the node5 v1
+# boot failed there (2026-05-26). Source: modules/create-template-vm/k8s-node-containerd-setup.sh
 write_files:
   - path: /usr/local/bin/k8s-node-containerd-setup.sh
     permissions: '0755'
     owner: root:root
-    content: |
-      #!/usr/bin/env bash
-      set -euo pipefail
-      ${indent(6, containerd_config_update_command)}
+    encoding: b64
+    content: ${k8s_node_setup_script_b64}
+  - path: /usr/local/bin/k8s-node-post-join-tune.sh
+    permissions: '0755'
+    owner: root:root
+    encoding: b64
+    content: ${k8s_node_post_join_script_b64}
 %{endif}
 
 runcmd:
@@ -87,6 +90,20 @@ runcmd:
   - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
   - systemctl restart systemd-journald
   %{if is_k8s_template}
+  # systemd-resolved global DNS fallback. Without this, only the
+  # link-level DNS from Proxmox's `qm set --nameserver` (Technitium,
+  # 10.0.20.201) is consulted — and Technitium returns NXDOMAIN for
+  # forgejo.viktorbarzin.me, so kubelet image pulls from the Forgejo
+  # registry break. Public DNS upstream + Technitium fallback matches
+  # the pre-existing manual setup on k8s-node1..4.
+  - mkdir -p /etc/systemd/resolved.conf.d
+  - |
+    cat > /etc/systemd/resolved.conf.d/global-dns.conf <<'EOF'
+    [Resolve]
+    DNS=8.8.8.8 1.1.1.1
+    FallbackDNS=10.0.20.201
+    EOF
+  - systemctl restart systemd-resolved
   # Re-enabled 2026-05-10: unattended-upgrades is back on, but with a tight
   # Allowed-Origins list, a Package-Blacklist for k8s/containerd/runc/calico,
   # and Automatic-Reboot disabled (kured + sentinel-gate handles reboots in a
@@ -149,17 +166,19 @@ runcmd:
   - systemctl restart iscsid
   # Create /sentinel directory for kured reboot gating (sentinel gate DaemonSet)
   - mkdir -p /sentinel
-  # Create 4Gi swap file for worker node memory pressure relief (NOT for master — etcd is latency-critical)
-  - fallocate -l 4G /swapfile
-  - chmod 600 /swapfile
-  - mkswap /swapfile
-  - swapon /swapfile
-  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  - sysctl -w vm.swappiness=10
-  - echo 'vm.swappiness=10' >> /etc/sysctl.d/99-swap.conf
+  # Disable swap — kubelet defaults to failSwapOn=true and won't start otherwise.
+  # (Previously this snippet created a 4G swapfile for "memory pressure relief"
+  # but never set failSwapOn=false / memorySwap.swapBehavior together, so the
+  # join consistently bricked kubelet — observed on node6 boot v3 2026-05-26.)
+  - swapoff -a
+  - sed -i '/ swap / s/^/#/' /etc/fstab
   - ${k8s_join_command}
   - systemctl enable kubelet
   - systemctl start kubelet
+  # Kubelet tuning runs AFTER kubeadm join — that's when
+  # /var/lib/kubelet/config.yaml gets written. Restarts kubelet at the
+  # end to pick up the patched config.
+  - bash /usr/local/bin/k8s-node-post-join-tune.sh
   %{ endif }
   %{ for provision_cmd in provision_cmds ~}
   - ${provision_cmd}

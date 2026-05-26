@@ -107,6 +107,8 @@ locals {
     "k8s-node2"  = { vmid = 202, proxmox_node = "pve" }
     "k8s-node3"  = { vmid = 203, proxmox_node = "pve" }
     "k8s-node4"  = { vmid = 204, proxmox_node = "pve" }
+    "k8s-node5"  = { vmid = 205, proxmox_node = "pve" }
+    "k8s-node6"  = { vmid = 206, proxmox_node = "pve" }
   }
 }
 

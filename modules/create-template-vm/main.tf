@@ -16,7 +16,7 @@ variable "k8s_join_command" {
 variable "containerd_config_update_command" {
   type        = string
   default     = ""
-  description = "Command to execute to update containerd config.toml; e.g add mirror"
+  description = "DEPRECATED: was inlined into write_files via indent(); the heredoc-TOML interaction broke containerd config parsing on node5 v1 boot 2026-05-26. The k8s setup script is now bundled inside the module at k8s-node-containerd-setup.sh — pass nothing here. Kept to avoid breaking stacks that still reference it; ignored when is_k8s_template=true."
 }
 variable "is_k8s_template" { type = bool }
 variable "ssh_private_key" {
@@ -79,23 +79,26 @@ resource "null_resource" "upload_cloud_init" {
   provisioner "file" {
     destination = "/var/lib/vz/snippets/${var.snippet_name}"
     content = templatefile("${path.module}/cloud_init.yaml", {
-      is_k8s_template                  = var.is_k8s_template,
-      authorized_ssh_key               = var.ssh_public_key,
-      passwd                           = var.user_passwd,
-      provision_cmds                   = var.provision_cmds,
-      k8s_join_command                 = var.k8s_join_command,
-      containerd_config_update_command = var.containerd_config_update_command
+      is_k8s_template                = var.is_k8s_template,
+      authorized_ssh_key             = var.ssh_public_key,
+      passwd                         = var.user_passwd,
+      provision_cmds                 = var.provision_cmds,
+      k8s_join_command               = var.k8s_join_command,
+      k8s_node_setup_script_b64      = var.is_k8s_template ? base64encode(file("${path.module}/k8s-node-containerd-setup.sh")) : ""
+      k8s_node_post_join_script_b64  = var.is_k8s_template ? base64encode(file("${path.module}/k8s-node-post-join-tune.sh")) : ""
       }
     )
   }
 
   # Force recreate when the below changes
   triggers = {
-    file_hash                        = filesha256("${path.module}/cloud_init.yaml")
-    provision_cmds                   = join(", ", var.provision_cmds)
-    is_k8s_template                  = var.is_k8s_template,
-    passwd                           = var.user_passwd,
-    k8s_join_command                 = var.k8s_join_command,
-    containerd_config_update_command = var.containerd_config_update_command
+    file_hash                   = filesha256("${path.module}/cloud_init.yaml")
+    setup_script_hash           = var.is_k8s_template ? filesha256("${path.module}/k8s-node-containerd-setup.sh") : ""
+    post_join_script_hash       = var.is_k8s_template ? filesha256("${path.module}/k8s-node-post-join-tune.sh") : ""
+    provision_cmds              = join(", ", var.provision_cmds)
+    is_k8s_template             = var.is_k8s_template,
+    passwd                      = var.user_passwd,
+    k8s_join_command            = var.k8s_join_command,
+    ssh_public_key              = var.ssh_public_key,
   }
 }

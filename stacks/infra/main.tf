@@ -10,8 +10,9 @@
 variable "proxmox_host" { type = string }
 
 variable "ssh_public_key" {
-  type    = string
-  default = ""
+  type        = string
+  default     = ""
+  description = "DEPRECATED: was a tfvars input. Now read from Vault secret/viktor.ssh_public_key directly (see locals.k8s_ssh_public_key) so no apply-time argument can leave the snippet's authorized_keys empty."
 }
 
 variable "k8s_join_command" { type = string }
@@ -40,6 +41,12 @@ locals {
   non_k8s_cloud_init_image_path   = "/var/lib/vz/template/iso/noble-server-cloudimg-amd64-non-k8s.img"
 
   cloud_init_image_url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+
+  # Source of truth for the wizard user's SSH key on every cloud-init
+  # generated VM. Lives in Vault so we never apply with an empty value
+  # (which silently locked the wizard account on the node5 v1 boot —
+  # 2026-05-26). Falls back to var.ssh_public_key for backward compat.
+  k8s_ssh_public_key = try(data.vault_kv_secret_v2.viktor.data["ssh_public_key"], var.ssh_public_key)
 }
 
 # ---------------------------------------------------------------------------
@@ -52,7 +59,7 @@ module "k8s-node-template" {
   proxmox_user = "root" # SSH user on Proxmox host
 
   ssh_private_key = data.vault_kv_secret_v2.secrets.data["ssh_private_key"]
-  ssh_public_key  = var.ssh_public_key
+  ssh_public_key  = local.k8s_ssh_public_key
 
   cloud_image_url = local.cloud_init_image_url
   image_path      = local.k8s_cloud_init_image_path
@@ -62,167 +69,10 @@ module "k8s-node-template" {
 
   is_k8s_template = true # provision cloud init file with k8s deps
   snippet_name    = local.k8s_cloud_init_snippet_name
-  # Add mirror registry
-  containerd_config_update_command = <<-EOF
-  # Set up config_path for per-registry mirror configuration.
-  # NOTE: containerd v2 writes `config_path = ''` (single quotes) on
-  # `config default`; v1 writes `config_path = ""`. Match both forms so this
-  # is idempotent across versions. Without the v2 match, hosts.toml mirror
-  # config is silently ignored — observed 2026-05-26 on node4 (containerd v2.2.4).
-  sed -i 's|config_path = .*|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
-
-  # Create hosts.toml for docker.io (Docker Hub) — high traffic, rate-limited
-  mkdir -p /etc/containerd/certs.d/docker.io
-  printf 'server = "https://registry-1.docker.io"\n\n[host."http://10.0.20.10:5000"]\n  capabilities = ["pull", "resolve"]\n\n[host."https://registry-1.docker.io"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/docker.io/hosts.toml
-
-  # Create hosts.toml for ghcr.io — medium traffic
-  mkdir -p /etc/containerd/certs.d/ghcr.io
-  printf 'server = "https://ghcr.io"\n\n[host."http://10.0.20.10:5010"]\n  capabilities = ["pull", "resolve"]\n\n[host."https://ghcr.io"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/ghcr.io/hosts.toml
-
-  # Forgejo OCI registry: redirect to in-cluster Traefik LB (10.0.20.200) so
-  # pulls don't hairpin out through the WAN gateway. Traefik serves the
-  # *.viktorbarzin.me wildcard so SNI verification still passes.
-  # registry.viktorbarzin.me / 10.0.20.10:5050 entries removed in Phase 4 of
-  # the forgejo-registry-consolidation 2026-05-07 — registry-private is gone.
-  mkdir -p /etc/containerd/certs.d/forgejo.viktorbarzin.me
-  printf 'server = "https://forgejo.viktorbarzin.me"\n\n[host."https://10.0.20.200"]\n  capabilities = ["pull", "resolve"]\n' > /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml
-
-  # Low-traffic registries (registry.k8s.io, quay.io, reg.kyverno.io) pull directly.
-  # Pull-through cache removed: caused corrupted images (truncated downloads)
-  # breaking VPA certgen and Kyverno image pulls.
-
-  sed -i 's/.*max_concurrent_downloads = 3/max_concurrent_downloads = 20/g' /etc/containerd/config.toml # Enable multiple concurrent downloads
-  
-  # Configure aggressive garbage collection to prevent disk space exhaustion (node2 incident prevention)
-  # Set up containerd GC for unused images and containers
-  cat >> /etc/containerd/config.toml << 'CONTAINERD_GC'
-
-[plugins."io.containerd.gc.v1.scheduler"]
-  # Run GC every 30 minutes instead of default 1 hour
-  pause_threshold = 0.02
-  deletion_threshold = 0
-  mutation_threshold = 100
-  schedule_delay = "1800s"  # 30 minutes
-
-[plugins."io.containerd.runtime.v2.task"]
-  # More aggressive container cleanup
-  exit_timeout = "5m"
-
-[plugins."io.containerd.metadata.v1.bolt"]
-  # Compact database more frequently 
-  compact_threshold = 5242880  # 5MB instead of default 100MB
-CONTAINERD_GC
-  sudo sed -i '/serializeImagePulls:/d' /var/lib/kubelet/config.yaml && \
-  sudo sed -i '/maxParallelImagePulls:/d' /var/lib/kubelet/config.yaml && \
-  echo -e 'serializeImagePulls: false\nmaxParallelImagePulls: 50' | sudo tee -a /var/lib/kubelet/config.yaml
-
-  # Memory and disk reservation and eviction — prevent node OOM/disk full
-  # Aggressive disk eviction settings added after node2 containerd corruption incident (2026-03-13)
-  # These settings prevent disk space exhaustion that can corrupt containerd image store
-  sudo sed -i '/systemReserved:/d; /kubeReserved:/d; /evictionHard:/,/^[^ ]/{ /evictionHard:/d; /^  /d }; /evictionSoft:/,/^[^ ]/{ /evictionSoft:/d; /^  /d }; /evictionSoftGracePeriod:/,/^[^ ]/{ /evictionSoftGracePeriod:/d; /^  /d }' /var/lib/kubelet/config.yaml
-  cat <<'KUBELET_PATCH' | sudo tee -a /var/lib/kubelet/config.yaml
-systemReserved:
-  memory: "512Mi"
-  cpu: "200m"
-kubeReserved:
-  memory: "512Mi"
-  cpu: "200m"
-evictionHard:
-  memory.available: "500Mi"
-  nodefs.available: "15%"  # More aggressive: evict at 15% free (was 10%) 
-  imagefs.available: "20%"  # Much more aggressive: evict at 20% free to prevent containerd corruption
-evictionSoft:
-  memory.available: "1Gi"
-  nodefs.available: "20%"  # Start warnings at 20% free
-  imagefs.available: "25%"  # Start warnings at 25% free for containerd safety
-evictionSoftGracePeriod:
-  memory.available: "30s"
-  nodefs.available: "60s"  # Grace period for disk space warnings
-  imagefs.available: "30s"  # Shorter grace for critical containerd space
-memorySwap:
-  swapBehavior: "LimitedSwap"
-KUBELET_PATCH
-
-  # Remove old 2-bucket shutdown config if present (replaced by priority-based)
-  sudo sed -i '/^shutdownGracePeriod:/d; /^shutdownGracePeriodCriticalPods:/d' /var/lib/kubelet/config.yaml
-  # Remove old shutdownGracePeriodByPodPriority block if present (idempotent re-apply)
-  sudo python3 -c "
-import yaml, sys
-with open('/var/lib/kubelet/config.yaml') as f:
-    cfg = yaml.safe_load(f)
-cfg.pop('shutdownGracePeriod', None)
-cfg.pop('shutdownGracePeriodCriticalPods', None)
-cfg.pop('shutdownGracePeriodByPodPriority', None)
-# Container log rotation limits — reduces root disk writes (~20-30 GB/day savings)
-cfg['containerLogMaxSize'] = '10Mi'
-cfg['containerLogMaxFiles'] = 3
-cfg['shutdownGracePeriodByPodPriority'] = [
-    {'priority': 0,          'shutdownGracePeriodSeconds': 20},
-    {'priority': 200000,     'shutdownGracePeriodSeconds': 20},
-    {'priority': 400000,     'shutdownGracePeriodSeconds': 30},
-    {'priority': 600000,     'shutdownGracePeriodSeconds': 30},
-    {'priority': 800000,     'shutdownGracePeriodSeconds': 90},
-    {'priority': 1000000,    'shutdownGracePeriodSeconds': 30},
-    {'priority': 1200000,    'shutdownGracePeriodSeconds': 30},
-    {'priority': 2000000000, 'shutdownGracePeriodSeconds': 30},
-    {'priority': 2000001000, 'shutdownGracePeriodSeconds': 30},
-]
-with open('/var/lib/kubelet/config.yaml', 'w') as f:
-    yaml.dump(cfg, f, default_flow_style=False)
-"
-
-  # Systemd: increase InhibitDelayMaxSec so logind doesn't force-kill before kubelet finishes graceful shutdown
-  # Total kubelet shutdown time: 310s. InhibitDelay must exceed this.
-  mkdir -p /etc/systemd/logind.conf.d
-  cat <<'LOGIND_CONF' | sudo tee /etc/systemd/logind.conf.d/kubelet-shutdown.conf
-[Login]
-InhibitDelayMaxSec=480
-LOGIND_CONF
-  sudo systemctl restart systemd-logind
-
-  # Systemd: increase kubelet stop timeout to match total shutdown grace period (310s + buffer)
-  mkdir -p /etc/systemd/system/kubelet.service.d
-  cat <<'KUBELET_SHUTDOWN' | sudo tee /etc/systemd/system/kubelet.service.d/20-shutdown.conf
-[Service]
-TimeoutStopSec=420s
-KUBELET_SHUTDOWN
-  sudo systemctl daemon-reload
-
-  # Tune controller-manager + apiserver for faster volume detach on node failure
-  # Only on master node (has static pod manifests)
-  if [ -f /etc/kubernetes/manifests/kube-controller-manager.yaml ]; then
-    sudo python3 -c "
-import yaml
-# Controller-manager: faster attach-detach reconciliation (15s vs 1m default)
-with open('/etc/kubernetes/manifests/kube-controller-manager.yaml') as f:
-    m = yaml.safe_load(f)
-args = m['spec']['containers'][0]['command']
-for flag in ['--attach-detach-reconcile-sync-period=15s']:
-    key = flag.split('=')[0]
-    args = [a for a in args if not a.startswith(key)]
-    args.append(flag)
-m['spec']['containers'][0]['command'] = args
-with open('/etc/kubernetes/manifests/kube-controller-manager.yaml', 'w') as f:
-    yaml.dump(m, f, default_flow_style=False)
-print('controller-manager: attach-detach-reconcile-sync-period=15s')
-"
-    sudo python3 -c "
-import yaml
-# API server: faster pod eviction from unreachable nodes (60s vs 300s default)
-with open('/etc/kubernetes/manifests/kube-apiserver.yaml') as f:
-    m = yaml.safe_load(f)
-args = m['spec']['containers'][0]['command']
-for flag in ['--default-unreachable-toleration-seconds=60', '--default-not-ready-toleration-seconds=60']:
-    key = flag.split('=')[0]
-    args = [a for a in args if not a.startswith(key)]
-    args.append(flag)
-m['spec']['containers'][0]['command'] = args
-with open('/etc/kubernetes/manifests/kube-apiserver.yaml', 'w') as f:
-    yaml.dump(m, f, default_flow_style=False)
-print('apiserver: unreachable+not-ready toleration=60s')
-"
-  fi
-  EOF
+  # containerd setup script now bundled in the module
+  # (k8s-node-containerd-setup.sh); the deprecated variable is
+  # ignored when is_k8s_template=true.
+  containerd_config_update_command = ""
   k8s_join_command                 = var.k8s_join_command
 }
 
