@@ -312,10 +312,10 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "128Mi"
+              memory = "384Mi"
             }
           }
         }
@@ -526,11 +526,67 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9098"
           }
-          # Kill-switch off in Phase 1 — bridge writes audit rows only,
-          # never publishes to signals:generated.
+          # Phase 2: kill-switch ON — bridge publishes to signals:generated.
           env {
             name  = "TRADING_KEVIN_ENABLE_TRADING"
-            value = "false"
+            value = "true"
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "trading-bot-db-creds"
+            }
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "128Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
+        container {
+          name              = "trade-executor"
+          image             = "viktorbarzin/trading-bot-service:latest"
+          image_pull_policy = "Always"
+          command           = ["python", "-m", "services.trade_executor.main"]
+          dynamic "env" {
+            for_each = local.common_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+          env {
+            name  = "TRADING_OTEL_METRICS_PORT"
+            value = "9099"
+          }
+          env {
+            name  = "TRADING_PAPER_TRADING"
+            value = "true"
+          }
+          # Kevin v2 risk caps (per services/trade_executor/config.py)
+          env {
+            name  = "TRADING_KEVIN_DAILY_TRADE_CAP"
+            value = "10"
+          }
+          env {
+            name  = "TRADING_KEVIN_DAILY_ALLOC_CAP_USD"
+            value = "20000"
+          }
+          env {
+            name  = "TRADING_KEVIN_EQUITY_DRAWDOWN_HALT_PCT"
+            value = "0.20"
+          }
+          env {
+            name  = "TRADING_KEVIN_DAILY_LOSS_CIRCUIT_PCT"
+            value = "0.05"
           }
           env_from {
             secret_ref {
@@ -556,13 +612,14 @@ resource "kubernetes_deployment" "trading-bot-workers" {
     }
   }
   lifecycle {
-    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 5 worker containers. Reviewed 2026-05-24.
+    # DRIFT_WORKAROUND: CI pipeline owns image tags for all 6 worker containers. Reviewed 2026-05-26.
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].spec[0].container[2].image,
       spec[0].template[0].spec[0].container[3].image,
       spec[0].template[0].spec[0].container[4].image,
+      spec[0].template[0].spec[0].container[5].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ]
   }
