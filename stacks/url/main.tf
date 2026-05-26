@@ -377,13 +377,16 @@ resource "kubernetes_deployment" "shlink-web" {
               memory = "64Mi"
             }
           }
+          # shlinkio/shlink-web-client >=0.1.0 listens on port 80 (nginx default);
+          # prior :latest builds listened on 8080. Keep both probes + service
+          # target_port aligned with the image.
           port {
-            container_port = 8080
+            container_port = 80
           }
           liveness_probe {
             http_get {
               path = "/"
-              port = 8080
+              port = 80
             }
             initial_delay_seconds = 15
             period_seconds        = 30
@@ -393,7 +396,7 @@ resource "kubernetes_deployment" "shlink-web" {
           readiness_probe {
             http_get {
               path = "/"
-              port = 8080
+              port = 80
             }
             initial_delay_seconds = 5
             period_seconds        = 30
@@ -436,7 +439,7 @@ resource "kubernetes_service" "shlink-web" {
     port {
       name        = "http"
       port        = 80
-      target_port = 8080
+      target_port = 80
     }
   }
 }
