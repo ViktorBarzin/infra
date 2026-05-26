@@ -280,7 +280,10 @@ resource "kubernetes_deployment" "llama_swap" {
   # for it to be reachable".
   wait_for_rollout = false
   spec {
-    replicas = 1
+    # TEMP-SCALEDOWN-2026-05-25-IO-STORM: scaled to 0 during cluster recovery.
+    # Restore to 1 when cluster is fully stable. See post-mortem
+    # docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md.
+    replicas = 0
     strategy { type = "Recreate" }
 
     selector {
