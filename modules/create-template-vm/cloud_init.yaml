@@ -107,7 +107,12 @@ runcmd:
   - apt-mark hold containerd containerd.io runc 2>/dev/null || true
   - systemctl stop kubelet
   - containerd config default | sudo tee /etc/containerd/config.toml
-  - ${containerd_config_update_command}
+  # Multi-line containerd config update — wrapped in `- |` literal block so the
+  # heredoc content survives YAML rendering. Without this, the multi-line var
+  # gets inserted as bare top-level lines and breaks the cloud-config parser
+  # (silent fallback to default — observed 2026-05-26 during node4 rebuild).
+  - |
+    ${indent(4, containerd_config_update_command)}
   - systemctl restart containerd
   - systemctl enable --now iscsid
   # Harden iSCSI: increase recovery timeout (300s vs 120s default) and enable
