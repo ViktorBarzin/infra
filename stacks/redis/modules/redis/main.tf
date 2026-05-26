@@ -428,6 +428,16 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis-v2"
+      # 2026-05-26: Keel patch-bumped :8-alpine → :8.0.6-alpine, which
+      # rejected the `aof-load-corrupt-tail-max-size` config and crashed
+      # redis-v2-2. The bump is also semantically a downgrade (8-alpine is
+      # 8.6.2, 8.0.6 is older). Both LABEL + ANNOTATION are required for
+      # full opt-out: label drives Kyverno's selector exclude, annotation
+      # drives Keel's own gate.
+      "keel.sh/policy" = "never"
+    }
+    annotations = {
+      "keel.sh/policy" = "never"
     }
   }
   spec {
