@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply per-VM I/O caps via qm set (idempotent)
+Documentation=https://github.com/ViktorBarzin/infra/blob/master/scripts/apply-mbps-caps.sh
+After=pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/apply-mbps-caps.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=apply-mbps-caps
