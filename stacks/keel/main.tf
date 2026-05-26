@@ -46,6 +46,16 @@ resource "helm_release" "keel" {
   atomic = true
 
   values = [yamlencode({
+    # EMERGENCY STOP — scaled to 0 on 2026-05-26 16:42 UTC. Keel was actively
+    # rewriting tag strings (not just digests) despite the
+    # `keel.sh/match-tag=true` annotation injected by Kyverno that's supposed
+    # to constrain it to digest-only watches. Known casualties this round:
+    # uptime-kuma (2 → 1, 4h CrashLoopBackOff), n8n (1.80.5 → 0.1.2, silent
+    # degradation), beads-server/dolt-workbench (0.3.73 → 0.1.0), and ~10
+    # other deployments with downgrade-flavored change-cause annotations.
+    # Re-enable only after root-causing why match-tag isn't being enforced,
+    # OR after migrating each app to a content-addressed (SHA) tag pin.
+    replicaCount = 0
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`

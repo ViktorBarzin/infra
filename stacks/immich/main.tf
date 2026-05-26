@@ -157,7 +157,8 @@ resource "kubernetes_namespace" "immich" {
 # Override the kyverno-generated tier-2-gpu quota (12Gi requests.memory).
 # Immich-server needs 8Gi to absorb face-detection burst spikes (OOM 2026-04-26)
 # without OOM. Plus immich-machine-learning (3.5Gi) + immich-postgresql (3Gi) +
-# backup CronJobs ≈ 15.5Gi. 20Gi gives ~4.5Gi headroom.
+# backup CronJobs ≈ 15.5Gi. 24Gi gives ~8Gi headroom (raised 2026-05-26 — was at
+# 88% with VPA bumps creeping up on immich-server burst behaviour).
 resource "kubernetes_resource_quota" "immich" {
   metadata {
     name      = "tier-quota"
@@ -166,8 +167,8 @@ resource "kubernetes_resource_quota" "immich" {
   spec {
     hard = {
       "requests.cpu"    = "8"
-      "requests.memory" = "20Gi"
-      "limits.memory"   = "32Gi"
+      "requests.memory" = "24Gi"
+      "limits.memory"   = "40Gi"
       pods              = "40"
     }
   }

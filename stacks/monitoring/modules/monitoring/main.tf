@@ -568,6 +568,9 @@ resource "kubernetes_manifest" "yotovski_ingress_route" {
 
 # Custom ResourceQuota for monitoring — larger than the default 1-cluster tier quota
 # because monitoring runs 29+ pods (Prometheus, Grafana, Loki, Alloy, exporters, etc.)
+# Headroom: cluster grew from 5 → 7 workers (k8s-node5/6 added 2026-05-26); per-pod
+# DaemonSets (alloy 562Mi, node-exporter 100Mi, loki-canary 128Mi, sysctl-inotify 4Mi)
+# now consume ~+2Gi vs. pre-expansion. 20Gi gives ~3-4Gi safe headroom.
 resource "kubernetes_resource_quota" "monitoring" {
   metadata {
     name      = "monitoring-quota"
@@ -576,7 +579,7 @@ resource "kubernetes_resource_quota" "monitoring" {
   spec {
     hard = {
       "requests.cpu"    = "16"
-      "requests.memory" = "16Gi"
+      "requests.memory" = "20Gi"
       "limits.memory"   = "64Gi"
       pods              = "100"
     }

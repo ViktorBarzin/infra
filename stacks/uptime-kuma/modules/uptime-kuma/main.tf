@@ -81,9 +81,23 @@ resource "kubernetes_deployment" "uptime-kuma" {
     labels = {
       app  = "uptime-kuma"
       tier = var.tier
+      # Opt out of Kyverno's inject-keel-annotations ClusterPolicy. The Kyverno
+      # rule excludes any workload with this LABEL (see
+      # stacks/kyverno/modules/kyverno/keel-annotations.tf, exclude.any
+      # matchLabels keel.sh/policy=never). Without the label, Kyverno would
+      # silently re-add `keel.sh/policy=force` after every reconcile, undoing
+      # the annotation below.
+      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # Stop Keel polling for this workload. Even with match-tag=true,
+      # Keel auto-downgraded :2 → :1 on 2026-05-26 12:14, which v1 booted
+      # into SQLite mode and couldn't read the existing MariaDB store
+      # (db-config.json) → 4h CrashLoopBackOff. Pinning the image string
+      # alone isn't enough because Keel kept fighting the apply. Combined
+      # with the matching LABEL above, this fully bypasses Keel.
+      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -108,7 +122,14 @@ resource "kubernetes_deployment" "uptime-kuma" {
       }
       spec {
         container {
-          image = "louislam/uptime-kuma:2"
+          # Pinned to 2.3.2 because Keel auto-downgraded :2 → :1 on 2026-05-26
+          # 12:14 UTC despite the Kyverno-injected `keel.sh/match-tag=true` +
+          # `keel.sh/policy=force` annotation pair (which is supposed to gate
+          # digest changes only). The v1 image opens kuma.db (SQLite) at boot
+          # and can't read the v2 db-config.json → 4h CrashLoopBackOff while
+          # the MariaDB store sat intact. Until the keel-match-tag regression
+          # is root-caused, pin minor versions explicitly.
+          image = "louislam/uptime-kuma:2.3.2"
           name  = "uptime-kuma"
 
           resources {
@@ -167,9 +188,12 @@ resource "kubernetes_deployment" "uptime-kuma" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # `keel.sh/policy` is intentionally NOT ignored — we want TF to own it
+      # as `never` so a Kyverno reconcile (or manual kubectl) can't flip it
+      # back to `force` and re-enable auto-updates.
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/pollSchedule"],   # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],      # injected by Kyverno
     ]
   }
 }

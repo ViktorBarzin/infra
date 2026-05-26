@@ -336,7 +336,11 @@ resource "kubernetes_deployment" "workbench" {
       spec {
         init_container {
           name  = "seed-config"
-          image = "dolthub/dolt-workbench:latest"
+          # Pinned 2026-05-26: Keel rolled :latest → :0.1.0 on 2026-05-17,
+          # which speaks an old GraphQL schema (missing `type` arg on
+          # addDatabaseConnection) → seed-config fails, UI can't add the
+          # connection. :0.3.73 was the last Keel-resolved good tag.
+          image = "dolthub/dolt-workbench:0.3.73"
           command = ["sh", "-c", <<-EOT
             # Seed connection store
             cp /config/store.json /store/store.json
@@ -365,7 +369,11 @@ resource "kubernetes_deployment" "workbench" {
 
         container {
           name  = "workbench"
-          image = "dolthub/dolt-workbench:latest"
+          # Pinned 2026-05-26: Keel rolled :latest → :0.1.0 on 2026-05-17,
+          # which speaks an old GraphQL schema (missing `type` arg on
+          # addDatabaseConnection) → seed-config fails, UI can't add the
+          # connection. :0.3.73 was the last Keel-resolved good tag.
+          image = "dolthub/dolt-workbench:0.3.73"
           command = ["sh", "-c", <<-EOT
             # Patch GraphQL server to listen on 0.0.0.0 (IPv4) — Node 18+ defaults to IPv6
             sed -i 's|app.listen(9002)|app.listen(9002,"0.0.0.0")|g' /app/graphql-server/dist/main.js
