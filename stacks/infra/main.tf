@@ -399,112 +399,53 @@ UNIT
 }
 
 # ---------------------------------------------------------------------------
-# Docker registry VM
+# Docker registry VM (220) — INTENTIONALLY NOT MANAGED BY TERRAFORM.
+#
+# Same telmate/proxmox provider defect as the K8s VMs below: the
+# provider doesn't refresh `mbps_*_concurrent` fields back from live
+# state, so state perma-shows 0 even when live has 40. Every plan
+# then proposes to "fix" mbps from 0 → 40, and the apply errors with
+# "the QEMU guest needs to be rebooted" — even though the proxmox API
+# call ends up being a no-op (live values already match). Pulling
+# docker-registry out of TF for the same reason as the K8s VMs:
+# bootstrap is reproducible via the docker-registry-template above
+# + the cisnippet; VM lifecycle stays in the Proxmox UI.
+#
+# Pull-through cache port map (for reference; lives on the VM):
+#   5000 -> nginx -> registry-dockerhub (docker.io proxy)
+#   5001 -> registry-dockerhub direct (Prometheus metrics)
+#   5010 -> nginx -> registry-ghcr (ghcr.io proxy)
+#   5020 -> registry-quay (quay.io) — DISABLED (low traffic, corrupt images)
+#   5030 -> registry-k8s (registry.k8s.io) — DISABLED (broke VPA certgen)
+#   5040 -> registry-kyverno (reg.kyverno.io) — DISABLED
+#   5050 -> nginx -> registry-private (R/W cache) — decom 2026-05-07
+#   8080 -> registry-ui (joxit/docker-registry-ui)
 # ---------------------------------------------------------------------------
 
-module "docker-registry-vm" {
-  source = "../../modules/create-vm"
-  vmid   = 220
-
-  vm_cpus      = 4
-  vm_mem_mb    = 4196
-  vm_disk_size = "64G"
-
-  template_name  = "docker-registry-template"
-  vm_name        = "docker-registry"
-  cisnippet_name = "docker-registry.yaml"
-  agent          = 1
-
-  # Boot order: after TrueNAS (order=2), before k8s nodes (order=4)
-  startup_order    = 3
-  startup_delay    = 60
-  shutdown_timeout = 120
-
-  vm_mac_address = "DE:AD:BE:EF:22:22" # mapped to 10.0.20.10 in dhcp
-  bridge         = "vmbr1"
-  vlan_tag       = "20"
-  ipconfig0      = "ip=10.0.20.10/24,gw=10.0.20.1"
-  # Active pull-through caches (docker.io + ghcr.io only):
-  # 5000 -> nginx -> registry-dockerhub (docker.io proxy)
-  # 5001 -> registry-dockerhub direct (Prometheus metrics)
-  # 5010 -> nginx -> registry-ghcr (ghcr.io proxy)
-  # Disabled caches (low-traffic, caused corrupted images):
-  # 5020 -> registry-quay (quay.io) — DISABLED
-  # 5030 -> registry-k8s (registry.k8s.io) — DISABLED, broke VPA certgen
-  # 5040 -> registry-kyverno (reg.kyverno.io) — DISABLED
-  # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
-  # 8080 -> registry-ui (joxit/docker-registry-ui)
-
-  # I/O cap (MB/s) — observed peak <6 MB/s; 40 is generous headroom.
-  # Live state already has this via qm set (beads code-9v2j); HCL value
-  # matches so applies are no-ops.
-  mbps_rd = 40
-  mbps_wr = 40
-}
-
 # ---------------------------------------------------------------------------
-# K8s node VMs — IMPORT ATTEMPT 2026-05-26 ABORTED, see beads code-anh3.
+# K8s node VMs — INTENTIONALLY NOT MANAGED BY TERRAFORM.
 #
-# The telmate/proxmox v3.0.2-rc07 provider mangled proxmox-csi PVC disk
-# references on k8s-node2 + k8s-node3 during the import-apply: all
-# previously-attached `vm-9999-pvc-*` slots got rewritten to point at the
-# boot disk (vm-<vmid>-disk-0). VMs were saved by restoring /etc/pve/
-# qemu-server/<vmid>.conf from the 2026-05-24 nightly PVE config backup;
-# no reboots, no data loss, K8s CSI reconciled the attachment list.
+# The telmate/proxmox v3.0.2-rc07 provider's `disks{}` block cannot
+# represent dynamically-attached disks: on every update it rewrites
+# the entire disk list, and `lifecycle.ignore_changes` does NOT stop
+# it. We hit this twice: id=539 (iSCSI, 2026-04-02) and the 2026-05-26
+# import attempt where every `vm-9999-pvc-*` slot on k8s-node2 +
+# k8s-node3 got rewritten to point at the boot disk. Recovered via the
+# /mnt/backup/pve-config/etc-pve/nodes/pve/qemu-server/<vmid>.conf
+# nightly backup — no reboots, no data loss, K8s CSI reconciled.
 #
-# The same lesson as memory id=539: telmate trips on dynamically-attached
-# disks (was iSCSI then; now proxmox-csi — the underlying defect is the
-# same — the provider's disks{} block cannot represent slots it didn't
-# create). lifecycle.ignore_changes does NOT prevent it from re-writing
-# the disk strings on update.
+# Decision (2026-05-26): k8s-master (200) and k8s-node1-4 (201-204)
+# stay out of TF indefinitely. Their cloud-init bootstrap IS in TF
+# (via k8s-node-template + non-k8s-node-template above), so a fresh
+# node still clones the template and runs the same bootstrap. The VM
+# lifecycle itself (create / shutdown / config tweak) stays in the
+# Proxmox UI. devvm (102), home-assistant (103), pfSense (101), and
+# Windows10 (300) are also hand-managed for the same reason / out of
+# scope (BSD, Windows).
 #
-# The 8 Linux VMs (101 pfsense + 300 Windows excluded) still have their
-# I/O caps applied live via qm set — see code-9v2j and the script at
-# /tmp/apply-mbps-caps.sh on devvm. Adoption into TF needs either:
-#   (a) switch to the bpg/proxmox provider (which models CSI-managed
-#       disks correctly), or
-#   (b) keep telmate but pre-detach all CSI disks before any update.
+# I/O caps for all 8 Linux VMs live in /tmp/apply-mbps-caps.sh on the
+# PVE host (idempotent qm-set script — beads code-9v2j). The bpg/
+# proxmox provider migration (beads code-75ds) would unblock full TF
+# adoption, but it's a multi-hour project and the cloud-init coverage
+# above already captures the bootstrap-reproducibility goal.
 # ---------------------------------------------------------------------------
-
-module "k8s-master" {
-  source = "../../modules/create-vm"
-  vmid   = 200
-
-  vm_name        = "k8s-master"
-  vm_cpus        = 8
-  vm_mem_mb      = 32768
-  vm_disk_size   = "64G"
-  balloon        = 0
-  qemu_os        = "other"
-  use_cloud_init = false
-  boot           = "order=scsi0"
-  vm_mac_address = "00:50:56:b0:a1:39"
-  bridge         = "vmbr1"
-  vlan_tag       = "20"
-
-  startup_order    = 4
-  startup_delay    = 45
-  shutdown_timeout = 420
-}
-
-module "k8s-node2" {
-  source = "../../modules/create-vm"
-  vmid   = 202
-
-  vm_name        = "k8s-node2"
-  vm_cpus        = 8
-  vm_mem_mb      = 32768
-  vm_disk_size   = "256G"
-  balloon        = 0
-  qemu_os        = "other"
-  use_cloud_init = false
-  boot           = "c"
-  boot_disk      = "scsi0"
-  vm_mac_address = "00:50:56:b0:a1:36"
-  bridge         = "vmbr1"
-  vlan_tag       = "20"
-
-  startup_order    = 5
-  startup_delay    = 45
-  shutdown_timeout = 420
-}
