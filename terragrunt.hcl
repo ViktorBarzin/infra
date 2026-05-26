@@ -46,8 +46,14 @@ terraform {
   }
 }
 
-# Generate kubernetes + helm + cloudflare providers for all stacks.
-# The infra stack overrides this to add the proxmox provider.
+# Generate kubernetes + helm + cloudflare + proxmox providers for all stacks.
+# (Stacks that don't use proxmox simply omit any `provider "proxmox" {}` block;
+# the required_providers entry is harmless. The pre-2026-05-26 trick of the
+# infra stack overriding this block to add proxmox stopped working under
+# Terragrunt v0.77 — same-name generate blocks are now forbidden — so proxmox
+# is declared globally instead. The `provider "proxmox" {}` config lives in
+# stacks/infra/terragrunt.hcl, generated under a different filename so it
+# doesn't collide with this providers.tf.)
 generate "k8s_providers" {
   path      = "providers.tf"
   if_exists = "overwrite_terragrunt"
@@ -72,6 +78,10 @@ terraform {
     kubectl = {
       source  = "gavinbunney/kubectl"
       version = "~> 1.14"
+    }
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "3.0.2-rc07"
     }
   }
 }

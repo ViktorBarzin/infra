@@ -136,6 +136,22 @@ variable "hostpci0" {
 }
 
 # ---------------------------------------------------------------------------
+# Variables — Disk I/O throttling (bytes/sec; 0 = uncapped)
+# ---------------------------------------------------------------------------
+# Caps any single VM's share of the underlying disk so a runaway workload
+# (e.g. the 2026-05-23/26 alloy IO storm — memory id=2726) cannot wedge the
+# whole Proxmox host's sdc thin pool. Values inferred from PVE RRD p99/max
+# observed in /nodes/pve/qemu/<vmid>/rrddata.
+variable "mbps_rd" {
+  type    = number
+  default = 0
+}
+variable "mbps_wr" {
+  type    = number
+  default = 0
+}
+
+# ---------------------------------------------------------------------------
 # Resource
 # ---------------------------------------------------------------------------
 
@@ -192,9 +208,11 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
         for_each = var.disk_slot == "scsi0" ? [1] : []
         content {
           disk {
-            storage = "local-lvm"
-            size    = var.vm_disk_size
-            discard = true # Enable TRIM passthrough to LVM thin pool — reduces CoW overhead
+            storage            = "local-lvm"
+            size               = var.vm_disk_size
+            discard            = true # Enable TRIM passthrough to LVM thin pool — reduces CoW overhead
+            mbps_r_concurrent  = var.mbps_rd
+            mbps_wr_concurrent = var.mbps_wr
           }
         }
       }
@@ -202,9 +220,11 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
         for_each = var.disk_slot == "scsi1" ? [1] : []
         content {
           disk {
-            storage = "local-lvm"
-            size    = var.vm_disk_size
-            discard = true
+            storage            = "local-lvm"
+            size               = var.vm_disk_size
+            discard            = true
+            mbps_r_concurrent  = var.mbps_rd
+            mbps_wr_concurrent = var.mbps_wr
           }
         }
       }
@@ -234,12 +254,39 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
   lifecycle {
     prevent_destroy = true
     ignore_changes = [
-      # democratic-csi dynamically attaches/detaches iSCSI disks
+      # proxmox-csi dynamically attaches/detaches PVC disks. K8s workers
+      # have up to ~30 slots in use simultaneously (k8s-node1: scsi1-29 +
+      # unused0-29). The k8s-master only uses scsi0 (boot) so most of
+      # these are no-ops for that VM but harmless.
       disks[0].scsi[0].scsi1,
       disks[0].scsi[0].scsi2,
       disks[0].scsi[0].scsi3,
       disks[0].scsi[0].scsi4,
       disks[0].scsi[0].scsi5,
+      disks[0].scsi[0].scsi6,
+      disks[0].scsi[0].scsi7,
+      disks[0].scsi[0].scsi8,
+      disks[0].scsi[0].scsi9,
+      disks[0].scsi[0].scsi10,
+      disks[0].scsi[0].scsi11,
+      disks[0].scsi[0].scsi12,
+      disks[0].scsi[0].scsi13,
+      disks[0].scsi[0].scsi14,
+      disks[0].scsi[0].scsi15,
+      disks[0].scsi[0].scsi16,
+      disks[0].scsi[0].scsi17,
+      disks[0].scsi[0].scsi18,
+      disks[0].scsi[0].scsi19,
+      disks[0].scsi[0].scsi20,
+      disks[0].scsi[0].scsi21,
+      disks[0].scsi[0].scsi22,
+      disks[0].scsi[0].scsi23,
+      disks[0].scsi[0].scsi24,
+      disks[0].scsi[0].scsi25,
+      disks[0].scsi[0].scsi26,
+      disks[0].scsi[0].scsi27,
+      disks[0].scsi[0].scsi28,
+      disks[0].scsi[0].scsi29,
       # cloud-init config may drift after first boot
       cicustom,
       ciupgrade,
@@ -254,6 +301,13 @@ resource "proxmox_vm_qemu" "cloudinit-vm" {
       # Provider defaults that differ from imported state
       define_connection_info,
       full_clone,
+      # scsihw varies per VM (virtio-scsi-pci / virtio-scsi-single / lsi)
+      # and changing it on a running VM is risky — leave whatever's live.
+      scsihw,
+      # qemu_os is a hint to qemu about the guest OS; some live VMs have
+      # "other" (unset originally) and the module's "l26" default would
+      # otherwise force an unnecessary write on apply.
+      qemu_os,
     ]
   }
 }

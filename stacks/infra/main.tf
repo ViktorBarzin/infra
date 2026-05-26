@@ -430,19 +430,36 @@ module "docker-registry-vm" {
   # 5040 -> registry-kyverno (reg.kyverno.io) — DISABLED
   # 5050 -> nginx -> registry-private (R/W registry for CI build cache)
   # 8080 -> registry-ui (joxit/docker-registry-ui)
+
+  # I/O cap (MB/s) — observed peak <6 MB/s; 40 is generous headroom.
+  # Live state already has this via qm set (beads code-9v2j); HCL value
+  # matches so applies are no-ops.
+  mbps_rd = 40
+  mbps_wr = 40
 }
 
 # ---------------------------------------------------------------------------
-# K8s node VMs (imported from existing Proxmox VMs)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# K8s node VMs — imported from existing Proxmox VMs
+# K8s node VMs — IMPORT ATTEMPT 2026-05-26 ABORTED, see beads code-anh3.
 #
-# NOTE: Nodes with iSCSI PVC disks (201, 203, 204) cannot be imported yet
-# due to telmate/proxmox provider bug: it constructs wrong volume references
-# for shared iSCSI disks on update, causing API 500 errors. These nodes will
-# be importable after migrating to the bpg/proxmox provider.
+# The telmate/proxmox v3.0.2-rc07 provider mangled proxmox-csi PVC disk
+# references on k8s-node2 + k8s-node3 during the import-apply: all
+# previously-attached `vm-9999-pvc-*` slots got rewritten to point at the
+# boot disk (vm-<vmid>-disk-0). VMs were saved by restoring /etc/pve/
+# qemu-server/<vmid>.conf from the 2026-05-24 nightly PVE config backup;
+# no reboots, no data loss, K8s CSI reconciled the attachment list.
+#
+# The same lesson as memory id=539: telmate trips on dynamically-attached
+# disks (was iSCSI then; now proxmox-csi — the underlying defect is the
+# same — the provider's disks{} block cannot represent slots it didn't
+# create). lifecycle.ignore_changes does NOT prevent it from re-writing
+# the disk strings on update.
+#
+# The 8 Linux VMs (101 pfsense + 300 Windows excluded) still have their
+# I/O caps applied live via qm set — see code-9v2j and the script at
+# /tmp/apply-mbps-caps.sh on devvm. Adoption into TF needs either:
+#   (a) switch to the bpg/proxmox provider (which models CSI-managed
+#       disks correctly), or
+#   (b) keep telmate but pre-detach all CSI disks before any update.
 # ---------------------------------------------------------------------------
 
 module "k8s-master" {
