@@ -925,19 +925,24 @@ resource "kubectl_manifest" "mutate_gpu_priority" {
             ]
           }
           mutate = {
+            # `op=add` (not replace) — incoming pods often lack the
+            # `/spec/priorityClassName` key entirely; replace fails with
+            # "doc is missing key" and aborts the mutation chain BEFORE
+            # Layer 4 (tier injection) can fall back. add works whether
+            # the path exists or not. Verified 2026-05-26 on frigate.
             patchesJson6902 = yamlencode([
               {
-                op    = "replace"
+                op    = "add"
                 path  = "/spec/priorityClassName"
                 value = "gpu-workload"
               },
               {
-                op    = "replace"
+                op    = "add"
                 path  = "/spec/priority"
                 value = 1200000
               },
               {
-                op    = "replace"
+                op    = "add"
                 path  = "/spec/preemptionPolicy"
                 value = "PreemptLowerPriority"
               }
