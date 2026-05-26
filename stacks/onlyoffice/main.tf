@@ -116,10 +116,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
     }
   }
   spec {
-    # TEMP-SCALEDOWN-2026-05-25-IO-STORM: scaled to 0 during cluster recovery.
-    # Restore to 1 when cluster is fully stable. See post-mortem
-    # docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md.
-    replicas = 0
+    replicas = 1
     strategy {
       type = "Recreate"
     }
