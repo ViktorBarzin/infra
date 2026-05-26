@@ -28,8 +28,9 @@ resource "helm_release" "alloy" {
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
 
-  values = [file("${path.module}/alloy.yaml")]
-  atomic = true
+  values  = [file("${path.module}/alloy.yaml")]
+  atomic  = true
+  timeout = 900 # 5-pod DS rolling update + occasional runc-stuck-Terminating on k8s-master needs >300s default
 
   depends_on = [helm_release.loki]
 }
