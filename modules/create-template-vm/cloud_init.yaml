@@ -107,12 +107,16 @@ runcmd:
   - apt-mark hold containerd containerd.io runc 2>/dev/null || true
   - systemctl stop kubelet
   - containerd config default | sudo tee /etc/containerd/config.toml
-  # Multi-line containerd config update — wrapped in `- |` literal block so the
-  # heredoc content survives YAML rendering. Without this, the multi-line var
-  # gets inserted as bare top-level lines and breaks the cloud-config parser
-  # (silent fallback to default — observed 2026-05-26 during node4 rebuild).
-  - |
-    ${indent(4, containerd_config_update_command)}
+  # KNOWN BUG (2026-05-26): the `${containerd_config_update_command}` heredoc in
+  # stacks/infra/main.tf has lines at mixed indent (most at col 2, inner shell
+  # heredocs CONTAINERD_GC/KUBELET_PATCH bodies at col 0). When interpolated
+  # into a YAML runcmd item, the rendered output is invalid YAML and cloud-init
+  # silently falls back to the default minimal config (skips kubeadm join,
+  # containerd config, kubelet tuning, iSCSI, swap). Properly fixing requires
+  # refactoring the inner heredocs to write_files or normalising to uniform
+  # indent. Until then, new k8s nodes must be backfilled manually after first
+  # boot (see infra/docs/runbooks/k8s-node-bootstrap-backfill.md TODO).
+  - ${containerd_config_update_command}
   - systemctl restart containerd
   - systemctl enable --now iscsid
   # Harden iSCSI: increase recovery timeout (300s vs 120s default) and enable
