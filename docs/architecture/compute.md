@@ -79,13 +79,33 @@ graph TB
 
 **Total Cluster Resources**: 48 vCPUs, ~176GB RAM (k8s-node1 48GB + 4 nodes x 32GB)
 
-> **node1 RAM (2026-05-10)**: bumped from 32 → 48 GiB out-of-band via
-> `qm set 201 --memory 49152` because VMID 201 is intentionally not
-> managed by Terraform yet (telmate/proxmox provider bug with iSCSI
-> PVCs — see `infra/stacks/infra/main.tf` line 442). Driver: GPU
-> multi-tenancy (frigate + ytdlp + llama-swap + immich-ml) was
-> hitting 94% memory-request saturation on the old size. Adopt this
-> VM into TF (`module "k8s-node1"`) once we've migrated to bpg/proxmox.
+> **All Linux VMs are hand-managed in Proxmox, NOT in Terraform**
+> (decided 2026-05-26, commit 44c3770a). The telmate/proxmox v3.0.2
+> provider rewrites every disk slot on update — even ones covered by
+> `lifecycle.ignore_changes` — and it doesn't refresh per-disk
+> `mbps_*_concurrent` fields back from live state. We hit both bugs
+> in production (id=539 iSCSI mangling 2026-04-02, and the 2026-05-26
+> import attempt that corrupted k8s-node2 + k8s-node3 .conf files;
+> recovered via `/mnt/backup/pve-config/etc-pve/nodes/pve/qemu-server/`
+> nightly backups). What stays in TF: the cloud-init templates
+> (`k8s-node-template`, `non-k8s-node-template`,
+> `docker-registry-template` in `stacks/infra/main.tf`) — a fresh VM
+> still clones the right template and runs the same bootstrap.
+>
+> Per-VM I/O caps (defense against sdc saturation by a single noisy
+> guest) are applied by `apply-mbps-caps.{sh,service,timer}` on the
+> PVE host (sources in `infra/scripts/`, install pattern per
+> `architecture/backup-dr.md`). Timer fires `OnBootSec=5min` +
+> `OnCalendar=hourly`, so any drift (config restore, manual `qm
+> set`, fresh clone) self-heals within the hour. Current caps:
+> 102 devvm 60/60, 103 home-assistant 40/40, 200 k8s-master 100/60,
+> 201 k8s-node1 150/120, 202 k8s-node2 150/120, 203 k8s-node3 150/120,
+> 204 k8s-node4 150/120, 220 docker-registry 40/40.
+>
+> Re-adoption into TF (via the `bpg/proxmox` provider, which models
+> dynamic disks correctly) is possible but not scheduled — the
+> cloud-init template above already captures the bootstrap-
+> reproducibility goal.
 
 ### GPU Passthrough
 
