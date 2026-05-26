@@ -130,6 +130,14 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/name"      = "mysql"
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
+      # 2026-05-26: defense-in-depth on top of the annotation below. The
+      # Kyverno `inject-keel-annotations` ClusterPolicy reads this LABEL
+      # via its `exclude.any[].resources.selector.matchLabels` rule, so
+      # even if the dbaas namespace exclude were lost the label still
+      # bypasses the mutation. Without the label, a Kyverno reconcile
+      # had silently overwritten our annotation=never → patch this turn
+      # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
+      "keel.sh/policy" = "never"
     }
     # Explicit Keel opt-out. The dbaas namespace is already excluded
     # from the `inject-keel-annotations` Kyverno ClusterPolicy, but the

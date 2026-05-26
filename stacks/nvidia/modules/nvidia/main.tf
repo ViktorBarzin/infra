@@ -137,6 +137,14 @@ resource "kubernetes_deployment" "nvidia-exporter" {
     labels = {
       app  = "nvidia-exporter"
       tier = var.tier
+      # 2026-05-26: Keel tag-rewrote :latest → :4.5.2-4.8.1-ubuntu22.04
+      # and the new image OOMs at 192Mi. Adding both LABEL + ANNOTATION
+      # to opt out of Keel cluster-wide auto-update — bump nvidia images
+      # in a separate planned change once we've sized the memory limit.
+      "keel.sh/policy" = "never"
+    }
+    annotations = {
+      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -176,10 +184,13 @@ resource "kubernetes_deployment" "nvidia-exporter" {
           }
           resources {
             requests = {
-              memory = "192Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory           = "192Mi"
+              # Bumped 192Mi → 512Mi (2026-05-26): dcgm-exporter
+              # 4.5.2-4.8.1-ubuntu22.04 OOMKills at 192Mi. Older versions
+              # ran comfortably under 192Mi but post-bump we need headroom.
+              memory           = "512Mi"
               "nvidia.com/gpu" = "1"
             }
           }
