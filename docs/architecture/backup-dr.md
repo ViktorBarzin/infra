@@ -54,6 +54,46 @@ The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 
 
 ## Architecture Diagram
 
+### Data Routing — where each path goes (post-2026-05-26)
+
+```mermaid
+flowchart LR
+    classDef live fill:#e1f5ff,stroke:#01579b
+    classDef sda fill:#fff9c4,stroke:#f57f17
+    classDef syn fill:#c8e6c9,stroke:#1b5e20
+    classDef none fill:#ffcdd2,stroke:#b71c1c
+
+    subgraph sdc["sdc /srv/nfs/ — Tier 1 live"]
+        IMM["immich/ 1.5T"]:::live
+        FRI["frigate/ 131G"]:::live
+        TMP["temp/ 12G"]:::live
+        ANE["anca-elements/ 771G<br/>legacy"]:::live
+        APP["everything else<br/>(mysql, postgresql, nextcloud,<br/>mailserver, servarr, audiobookshelf,<br/>ollama, audiblez, ebook2audiobook,<br/>*-backup CronJob outputs, …)"]:::live
+    end
+
+    subgraph sdcssd["sdc /srv/nfs-ssd/"]
+        IMM_ML["immich/ 62G"]:::live
+        OLL_S["ollama/ 59G"]:::live
+        LLA["llamacpp/ 26G"]:::live
+    end
+
+    SDA[("sda /mnt/backup/<br/>Tier 2 local")]:::sda
+    SYN_PVE[("Synology<br/>/Viki/pve-backup/")]:::syn
+    SYN_NFS[("Synology<br/>/Viki/nfs/")]:::syn
+    SYN_SSD[("Synology<br/>/Viki/nfs-ssd/")]:::syn
+    NOPE([NOT BACKED UP]):::none
+
+    APP -- "nfs-mirror daily 02:00" --> SDA
+    SDA -- "offsite-sync Step 1<br/>daily 06:00" --> SYN_PVE
+    IMM -- "Step 2 inotify direct<br/>daily 06:00" --> SYN_NFS
+    IMM_ML --> SYN_SSD
+    OLL_S --> SYN_SSD
+    LLA --> SYN_SSD
+    FRI --- NOPE
+    TMP --- NOPE
+    ANE --- NOPE
+```
+
 ### Overall Backup Flow
 
 ```mermaid
@@ -63,18 +103,24 @@ graph TB
         sda["sda: 1.1TB RAID1 SAS<br/>VG backup, LV data (ext4)<br/>/mnt/backup"]
 
         subgraph Layer1["Layer 1: LVM Thin Snapshots"]
-            Snap["Daily 03:00<br/>7-day retention<br/>62 PVCs (excludes dbaas+monitoring)"]
+            Snap["Twice daily 00:00, 12:00<br/>7-day retention<br/>62 PVCs (excludes dbaas+monitoring)"]
         end
 
-        subgraph Layer2["Layer 2: Weekly File Backup"]
-            PVCBackup["PVC File Copy<br/>Daily 05:00<br/>4 weekly versions<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
+        subgraph Layer2a["Layer 2a: Daily NFS Mirror (nfs-mirror)"]
+            NFSMirror["Daily 02:00<br/>/srv/nfs/* → /mnt/backup/<svc>/<br/>excludes: immich, frigate, temp, anca-elements"]
+        end
+
+        subgraph Layer2b["Layer 2b: Daily PVC File Backup (daily-backup)"]
+            PVCBackup["PVC File Copy<br/>Daily 05:00<br/>4 weekly versions via --link-dest<br/>/mnt/backup/pvc-data/<YYYY-WW>/"]
             SQLiteBackup["Auto SQLite Backup<br/>magic number check + ?mode=ro<br/>from PVC snapshots"]
             PfsenseBackup["pfSense Backup<br/>config.xml + full tar<br/>4 weekly versions"]
             PVEConfig["PVE Config<br/>/etc/pve + scripts"]
         end
 
         sdc --> Snap
+        sdc --> NFSMirror
         sdc --> PVCBackup
+        NFSMirror --> sda
         PVCBackup --> sda
         SQLiteBackup --> sda
         PfsenseBackup --> sda
@@ -82,63 +128,72 @@ graph TB
     end
 
     subgraph NFS_Storage["Proxmox NFS (/srv/nfs)"]
-        NFS_Backup["NFS dirs<br/>/srv/nfs/*-backup/"]
+        NFS_Backup["NFS *-backup dirs<br/>(populated by in-cluster CronJobs)"]
 
         subgraph AppBackups["App-Level Backup CronJobs"]
             CronDaily["Daily 00:00-00:30<br/>PostgreSQL, MySQL<br/>14d retention"]
-            CronWeekly["Weekly Sunday<br/>etcd, Vault, Redis<br/>Vaultwarden<br/>30d retention"]
+            CronWeekly["Weekly Sunday<br/>etcd, Vault, Redis<br/>Vaultwarden 6h<br/>30d retention"]
         end
 
         CronDaily --> NFS_Backup
         CronWeekly --> NFS_Backup
+        NFS_Backup --> NFSMirror
     end
 
-    subgraph Layer3["Layer 3: Offsite Sync"]
-        PVEOffsite["Step 1: sda → Synology<br/>Daily 06:00<br/>pve-backup/ only"]
-        NFSOffsite["Step 2: NFS → Synology<br/>inotify change-tracked<br/>rsync --files-from<br/>nfs/ + nfs-ssd/"]
+    subgraph Layer3["Layer 3: Offsite Sync (offsite-sync-backup, daily 06:00)"]
+        PVEOffsite["Step 1: sda → Synology<br/>/Viki/pve-backup/<br/>incremental via manifest"]
+        NFSOffsite["Step 2: sdc/immich + nfs-ssd → Synology<br/>/Viki/nfs/ + /Viki/nfs-ssd/<br/>inotify change-tracked"]
     end
 
     sda --> PVEOffsite
-    NFS_Storage --> NFSOffsite
+    NFS_Storage -. "/srv/nfs/immich only" .-> NFSOffsite
 
-    Synology["Synology NAS<br/>192.168.1.13<br/>Offsite protection"]
+    Synology["Synology NAS<br/>192.168.1.13<br/>520 GB free / 5.3 TB total"]
 
     PVEOffsite --> Synology
     NFSOffsite --> Synology
 
-    NFS_Backup -.->|app-level dumps| NFS_Storage
-
     subgraph Monitoring["Monitoring & Alerting"]
-        Prometheus["Prometheus Alerts<br/>PostgreSQLBackupStale, MySQLBackupStale<br/>WeeklyBackupStale, OffsiteBackupSyncStale<br/>LVMSnapshotStale, BackupDiskFull<br/>VaultwardenIntegrityFail"]
+        Prometheus["Prometheus Alerts<br/>PostgreSQLBackupStale, MySQLBackupStale<br/>NfsMirrorStale, OffsiteBackupSyncStale<br/>LVMSnapshotStale, BackupDiskFull<br/>VaultwardenIntegrityFail"]
         Pushgateway["Pushgateway<br/>backup script metrics<br/>vaultwarden integrity"]
     end
 
     PVCBackup -.->|push metrics| Pushgateway
+    NFSMirror -.->|push metrics| Pushgateway
+    PVEOffsite -.->|push metrics| Pushgateway
     Snap -.->|push metrics| Pushgateway
     Pushgateway --> Prometheus
 
     style Layer1 fill:#c8e6c9
-    style Layer2 fill:#ffe0b2
+    style Layer2a fill:#ffe0b2
+    style Layer2b fill:#ffe0b2
     style Layer3 fill:#e1f5ff
     style Monitoring fill:#f3e5f5
 ```
 
-### Weekly Backup Timeline
+### Daily Backup Timeline (EEST)
 
 ```mermaid
 graph LR
-    subgraph Sunday["Sunday Timeline"]
-        S01["01:00 etcd backup<br/>(CronJob)"]
-        S02["02:00 Vault backup<br/>(CronJob)"]
-        S03a["03:00 Redis backup<br/>(CronJob)"]
-        S03b["03:00 LVM snapshots<br/>(lvm-pvc-snapshot timer)"]
-        S05["05:00 Daily backup<br/>(daily-backup timer)<br/>1. PVC file copy (auto-discovered BACKUP_DIRS)<br/>2. Auto SQLite backup (magic number + ?mode=ro)<br/>3. pfSense backup<br/>4. PVE config<br/>5. Prune snapshots"]
-        S08["08:00 Offsite sync<br/>(offsite-sync-backup timer)<br/>Step 1: sda → Synology pve-backup/<br/>Step 2: NFS → Synology nfs/ + nfs-ssd/<br/>(inotify change-tracked)"]
+    subgraph Continuous["Continuous"]
+        INO["nfs-change-tracker<br/>inotify on /srv/nfs[-ssd]<br/>writes /mnt/backup/.nfs-changes.log"]
     end
 
-    S01 --> S02 --> S03a --> S03b --> S05 --> S08
+    subgraph Nightly["Nightly Timeline"]
+        T0000["00:00 LVM thin snapshots<br/>(lvm-pvc-snapshot)<br/>sdc PVCs CoW"]
+        T0015["00:15 PostgreSQL per-DB dumps<br/>(CronJob)"]
+        T0045["00:45 MySQL per-DB dumps<br/>(CronJob)"]
+        T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
+        T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + pfsense + pve-config"]
+        T0600["06:00 offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
+        T1200["12:00 LVM thin snapshots (midday)<br/>second daily snapshot"]
+    end
 
-    style Sunday fill:#ffe0b2
+    T0000 --> T0015 --> T0045 --> T0200 --> T0500 --> T0600 --> T1200
+    INO -.->|change events feed Step 2| T0600
+
+    style Nightly fill:#ffe0b2
+    style Continuous fill:#e1f5ff
 ```
 
 ### Physical Disk Layout
@@ -146,24 +201,27 @@ graph LR
 ```mermaid
 graph TB
     subgraph PVE["Proxmox Host (192.168.1.127)"]
-        subgraph sda["sda: 1.1TB RAID1 SAS"]
+        subgraph sda["sda: 1.1TB RAID1 SAS — 70% used (315 GB free)"]
             sda_vg["VG: backup<br/>LV: data (ext4)<br/>/mnt/backup"]
-            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/<br/>pfsense/<YYYY-WW>/<br/>pve-config/"]
+            sda_content["pvc-data/<YYYY-WW>/<ns>/<pvc>/<br/>sqlite-backup/, pfsense/<YYYY-WW>/, pve-config/<br/>+ daily mirror of /srv/nfs/<svc>/ via nfs-mirror"]
         end
 
         subgraph sdb["sdb: 931GB SSD"]
             sdb_vg["VG: pve<br/>LV: root (ext4)<br/>PVE host OS"]
         end
 
-        subgraph sdc["sdc: 10.7TB RAID1 HDD"]
-            sdc_vg["VG: pve<br/>LV: data (thin pool)<br/>65 proxmox-lvm PVCs<br/>+ VM disks"]
+        subgraph sdc["sdc: 10.7TB RAID1 HDD — 2.8 TB used"]
+            sdc_vg["VG: pve<br/>LV: data (thin pool)<br/>/srv/nfs/* (live NFS)<br/>65 proxmox-lvm PVCs<br/>+ VM disks"]
         end
 
         sda_vg --> sda_content
     end
 
-    sdc -.->|weekly backup<br/>mount snapshot ro| sda
-    sda -.->|offsite sync<br/>rsync| Synology["Synology NAS<br/>192.168.1.13<br/>/Backup/Viki/{pve-backup,nfs,nfs-ssd}/"]
+    sdc -. "daily snapshot ro + nfs-mirror" .-> sda
+    sdc -. "immich only<br/>(inotify, daily 06:00)" .-> Synology
+    sda -. "daily 06:00<br/>incremental rsync" .-> Synology
+
+    Synology["Synology NAS 192.168.1.13<br/>91% used / 520 GB free<br/>/Backup/Viki/{pve-backup, nfs (immich), nfs-ssd}"]
 
     style sda fill:#fff9c4
     style sdb fill:#c8e6c9
@@ -174,29 +232,30 @@ graph TB
 
 ```mermaid
 graph TB
-    Start["Data loss detected"]
+    Start["Data loss detected"]:::start
     Age{"How old is<br/>the lost data?"}
     Type{"What type<br/>of data?"}
 
     Start --> Age
 
-    Age -->|"< 7 days"| LVM["Use LVM snapshot<br/>lvm-pvc-snapshot restore<br/>RTO: <5 min"]
-    Age -->|"> 7 days,<br/>< 4 weeks"| FileBackup["Use sda file backup<br/>/mnt/backup/pvc-data/<week>/<br/>RTO: <15 min"]
-    Age -->|"> 4 weeks or<br/>site disaster"| Offsite["Use Synology backup<br/>Synology/pve-backup/<br/>RTO: <4 hours"]
+    Age -->|"< 12 h"| LVM["LVM thin snapshot on sdc<br/>lvm-pvc-snapshot restore <lv> <snap><br/>RTO: <5 min<br/>(7-day retention, 2x daily)"]:::fast
+    Age -->|"12 h - 4 weeks"| FileBackup["sda file backup<br/>/mnt/backup/pvc-data/<YYYY-WW>/ (PVCs)<br/>/mnt/backup/<svc>/ (NFS dirs)<br/>RTO: <15 min"]:::med
+    Age -->|"> 4 weeks or<br/>site disaster"| Offsite["Synology /Viki/pve-backup/<br/>(or /Viki/nfs/immich for photos)<br/>RTO: <4 hours"]:::slow
 
     LVM --> Type
     FileBackup --> Type
     Offsite --> Type
 
-    Type -->|"Database"| AppBackup["Use app-level dump<br/>/srv/nfs/<service>-backup/<br/>OR Synology/nfs/<service>-backup/<br/>RTO: <10 min"]
-    Type -->|"PVC files"| Proceed["Proceed with<br/>selected restore method"]
-    Type -->|"Media (NFS)"| OffsiteMedia["Use Synology backup<br/>Synology/nfs/ or nfs-ssd/<br/>RTO: varies by size"]
+    Type -->|"Database (logical)"| AppBackup["App-level dump<br/>/srv/nfs/<service>-backup/<br/>OR Synology /Viki/pve-backup/<service>-backup/<br/>RTO: <10 min (single-DB or full)"]:::db
+    Type -->|"PVC binary state"| Proceed["Proceed with<br/>selected restore method"]
+    Type -->|"NFS files (nextcloud,<br/>audiobookshelf, …)"| NFSRestore["sda /mnt/backup/<svc>/<br/>OR Synology /Viki/pve-backup/<svc>/<br/>RTO: varies by size"]:::med
+    Type -->|"Immich photos"| ImmichRestore["Synology /Viki/nfs/immich<br/>(only offsite copy)<br/>RTO: varies by size"]:::slow
 
-    style Start fill:#ffcdd2
-    style LVM fill:#c8e6c9
-    style FileBackup fill:#fff9c4
-    style Offsite fill:#e1f5ff
-    style AppBackup fill:#e1bee7
+    classDef start fill:#ffcdd2,stroke:#b71c1c
+    classDef fast fill:#c8e6c9,stroke:#1b5e20
+    classDef med fill:#fff9c4,stroke:#f57f17
+    classDef slow fill:#e1f5ff,stroke:#01579b
+    classDef db fill:#e1bee7,stroke:#4a148c
 ```
 
 ### Vaultwarden Enhanced Protection
