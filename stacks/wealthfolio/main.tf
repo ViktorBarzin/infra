@@ -381,32 +381,59 @@ resource "kubernetes_deployment" "wealthfolio" {
             total_cost_basis NUMERIC NOT NULL,
             currency TEXT
           );
-          -- Drop-in replacement for daily_account_valuation that subtracts
-          -- the cumulative pension gains-offset (DEPOSITs emitted by
-          -- broker-sync Fidelity provider to reconcile WF totals with the
-          -- PlanViewer reported pot). Wealthfolio's data model treats the
-          -- offset as a cash contribution, so without this correction
-          -- net_contribution is inflated by the gain and growth shows £0
-          -- for the entire pension. The view re-exports the corrected
-          -- value AS net_contribution so panels can use it as a drop-in
-          -- replacement for the base table.
+          -- Drop-in replacement for daily_account_valuation. Net contribution
+          -- is corrected for two classes of "synthetic" flows that broker-sync
+          -- emits to make Wealthfolio's bookkeeping balance, but which do NOT
+          -- represent real user contributions/withdrawals:
+          --
+          --   1. Fidelity pension `unrealised-gains-offset` DEPOSITs — emitted
+          --      to reconcile WF totals with PlanViewer. Otherwise WF treats
+          --      the gain as a contribution, growth shows £0.
+          --
+          --   2. Schwab RSU `cash-flow-match` DEPOSITs and WITHDRAWALs —
+          --      emitted to pair each vest BUY with a cash DEPOSIT and each
+          --      sell-to-cover SELL with a cash WITHDRAWAL. The user never
+          --      transfers cash to Schwab (RSUs are compensation) and the
+          --      sell proceeds leave the account to bank (counted elsewhere
+          --      when redeposited to IE/T212). Without correction, Schwab
+          --      shows huge negative net_contribution because sell proceeds
+          --      exceed vest cost basis cumulatively.
+          --
+          -- Scope: the cash-flow-match filter targets ONLY the Schwab account
+          -- (account_id below). For InvestEngine / Trading212 the same note
+          -- pattern marks REAL user deposits, so they must be preserved.
           CREATE OR REPLACE VIEW dav_corrected AS
-          WITH all_offsets AS (
-            SELECT account_id, activity_date::date AS effective_date, amount
+          WITH synthetic_flows AS (
+            -- Fidelity pension unrealised-gains-offsets (always DEPOSIT).
+            SELECT account_id,
+                   activity_date::date AS effective_date,
+                   COALESCE(amount, 0) AS synthetic_net
             FROM activities
             WHERE notes LIKE 'fidelity-planviewer:unrealised-gains-offset%'
+            UNION ALL
+            -- Schwab RSU cash-flow-match (DEPOSIT positive, WITHDRAWAL negative).
+            SELECT account_id,
+                   activity_date::date AS effective_date,
+                   CASE
+                     WHEN activity_type='DEPOSIT' THEN COALESCE(amount, 0)
+                     WHEN activity_type='WITHDRAWAL' THEN -COALESCE(amount, 0)
+                     ELSE 0
+                   END AS synthetic_net
+            FROM activities
+            WHERE notes LIKE 'cash-flow-match:%'
+              AND account_id = '72d34e09-c1a6-41aa-99ea-abe3305ecc4a' -- Schwab
           )
           SELECT
             d.id, d.account_id, d.valuation_date, d.account_currency,
             d.base_currency, d.fx_rate_to_base, d.cash_balance,
             d.investment_market_value, d.total_value, d.cost_basis,
             d.net_contribution AS net_contribution_raw,
-            (d.net_contribution - COALESCE(SUM(o.amount), 0)) AS net_contribution,
-            COALESCE(SUM(o.amount), 0) AS pension_gains_offset
+            (d.net_contribution - COALESCE(SUM(s.synthetic_net), 0)) AS net_contribution,
+            COALESCE(SUM(s.synthetic_net), 0) AS synthetic_adjustment
           FROM daily_account_valuation d
-          LEFT JOIN all_offsets o
-            ON o.account_id = d.account_id
-            AND o.effective_date <= d.valuation_date
+          LEFT JOIN synthetic_flows s
+            ON s.account_id = d.account_id
+            AND s.effective_date <= d.valuation_date
           GROUP BY d.id, d.account_id, d.valuation_date, d.account_currency,
             d.base_currency, d.fx_rate_to_base, d.cash_balance,
             d.investment_market_value, d.total_value, d.cost_basis,
