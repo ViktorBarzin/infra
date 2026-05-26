@@ -46,16 +46,17 @@ resource "helm_release" "keel" {
   atomic = true
 
   values = [yamlencode({
-    # EMERGENCY STOP — scaled to 0 on 2026-05-26 16:42 UTC. Keel was actively
-    # rewriting tag strings (not just digests) despite the
-    # `keel.sh/match-tag=true` annotation injected by Kyverno that's supposed
-    # to constrain it to digest-only watches. Known casualties this round:
-    # uptime-kuma (2 → 1, 4h CrashLoopBackOff), n8n (1.80.5 → 0.1.2, silent
-    # degradation), beads-server/dolt-workbench (0.3.73 → 0.1.0), and ~10
-    # other deployments with downgrade-flavored change-cause annotations.
-    # Re-enable only after root-causing why match-tag isn't being enforced,
-    # OR after migrating each app to a content-addressed (SHA) tag pin.
-    replicaCount = 0
+    # 2026-05-26 17:30: re-enabled after switching the Kyverno-injected
+    # default from `force + match-tag=true` (proven unreliable — see
+    # stacks/kyverno/modules/kyverno/keel-annotations.tf) to `patch` which
+    # is semver-parser-bounded. Under `patch`:
+    #   - Semver-tagged workloads get patch bumps only (1.2.3 → 1.2.4).
+    #   - Float / SHA / non-semver tags are IGNORED — no tag rewriting.
+    # The 2026-05-26 emergency-stop scope (replicaCount=0) is reverted now
+    # that the default is safe. Workloads pinned out-of-band (uptime-kuma
+    # via keel.sh/policy=never LABEL) stay opted-out via the Kyverno
+    # exclude rule, not via Keel's own annotation.
+    replicaCount = 1
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`

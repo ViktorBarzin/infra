@@ -26,6 +26,7 @@ locals {
     "kured",          # kured DaemonSet is privileged (manages node reboots)
     "default",        # etcd backup + defrag CronJobs use hostNetwork
     "changedetection", # uses SYS_ADMIN for chromium sandbox
+    "woodpecker",     # CI pipeline pods (wp-*) run privileged docker builds
   ]
 }
 

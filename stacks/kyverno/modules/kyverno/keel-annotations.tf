@@ -177,13 +177,42 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                 #                                 to bypass this mutation)
                 # Per-namespace opt-out:
                 #   Remove the `keel.sh/enrolled=true` namespace label.
-                # `+(...)` anchor — only add if not present. This preserves
-                # per-workload overrides set out-of-band (e.g. `never` for
-                # phased rollout). Without the anchor, every policy update
-                # would overwrite existing annotations, breaking the phased
-                # rollout state.
-                "+(keel.sh/policy)"       = "force"
-                "+(keel.sh/match-tag)"    = "true"
+                # 2026-05-26: switched default from `force + match-tag=true`
+                # to `patch` after the 2026-05-26 incident proved match-tag
+                # does NOT reliably constrain Keel — tag strings got rewritten
+                # (uptime-kuma :2→:1, n8n :1.80.5→:0.1.2, dolt-workbench
+                # :0.3.73→:0.1.0, wealthfolio :3.2.1→:2.0→:3.2 truncated).
+                #
+                # `patch` is semver-parser-bounded:
+                #   - Only patch bumps within current major.minor
+                #     (e.g. 1.2.3 → 1.2.4; never 1.3.x or 2.x).
+                #   - Non-semver tags (`:latest`, `:v4`, `:2`, SHA, `:nightly`)
+                #     are IGNORED entirely — Keel does nothing for them.
+                #   - No more string-comparison surprises.
+                #
+                # `match-tag` annotation dropped — it was only meaningful as
+                # the (failed) safety net under `force`. Irrelevant under
+                # semver-bounded policies.
+                #
+                # `+(...)` anchor = "add only if missing". With the anchor,
+                # this policy ONLY sets defaults on new workloads — existing
+                # per-workload overrides (set via TF or kubectl annotate)
+                # are preserved across policy updates. This was DROPPED for
+                # one apply on 2026-05-26 to migrate the 151 stale `force`
+                # annotations to `patch`, then re-added in the same session
+                # after observing that the label-based exclude rule below
+                # doesn't reliably filter mutateExistingOnPolicyUpdate scans
+                # (22 workloads with LABEL keel.sh/policy=never still got
+                # their ANNOTATION rewritten and had to be repatched). Keep
+                # the anchor unless you genuinely want a cluster-wide flip.
+                #
+                # To override per workload, set the ANNOTATION directly:
+                #   - keel.sh/policy=never  (Keel won't touch)
+                #   - keel.sh/policy=minor  (wider semver bumps, still bounded)
+                #   - keel.sh/policy=major  (any semver bump)
+                # The corresponding LABEL keel.sh/policy=never is for the
+                # exclude rule below (defense-in-depth against future mutations).
+                "+(keel.sh/policy)"       = "patch"
                 "+(keel.sh/trigger)"      = "poll"
                 "+(keel.sh/pollSchedule)" = "@every 1h"
               }
