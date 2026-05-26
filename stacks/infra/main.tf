@@ -64,8 +64,12 @@ module "k8s-node-template" {
   snippet_name    = local.k8s_cloud_init_snippet_name
   # Add mirror registry
   containerd_config_update_command = <<-EOF
-  # Set up config_path for per-registry mirror configuration
-  sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
+  # Set up config_path for per-registry mirror configuration.
+  # NOTE: containerd v2 writes `config_path = ''` (single quotes) on
+  # `config default`; v1 writes `config_path = ""`. Match both forms so this
+  # is idempotent across versions. Without the v2 match, hosts.toml mirror
+  # config is silently ignored — observed 2026-05-26 on node4 (containerd v2.2.4).
+  sed -i 's|config_path = .*|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
 
   # Create hosts.toml for docker.io (Docker Hub) — high traffic, rate-limited
   mkdir -p /etc/containerd/certs.d/docker.io
