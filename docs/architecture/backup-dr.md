@@ -16,6 +16,11 @@ Last updated: 2026-05-26
 >   exist on `/srv/nfs`. Dropped from the exclude/include lists as no-ops.
 > - `/mnt/backup/anca-elements` (423 G) deleted — canonical copy lives in
 >   Immich since the 2026-05-24 ingest.
+> - **`nfs-mirror.timer`: weekly Mon 04:00 → daily 02:00.** Steady-state
+>   delta is 10-20 min of mostly-metadata rsync, so the IO cost is
+>   negligible. RPO for non-CronJob app data (nextcloud shared files,
+>   audiobookshelf library, mailserver Maildir, real-estate-crawler scraped
+>   data, etc.) drops from 7 days to ~24h.
 > - Aftermath: sda 87% → 46% used; Synology `/Viki/nfs/` shrinks to
 >   immich-only on next monthly `--delete` pass (or manual cleanup —
 >   see runbook).
@@ -32,7 +37,7 @@ Last updated: 2026-05-26
 The homelab runs a 3-2-1 strategy with a **two-leg** path to Synology so every NFS byte takes exactly one route to offsite (no duplication, no gaps):
 
 ```
-sdc /srv/nfs/<svc>/   ──nfs-mirror weekly──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/      [leg 1]
+sdc /srv/nfs/<svc>/   ──nfs-mirror daily 02:00──→  sda /mnt/backup/<svc>/   ──offsite-sync Step 1──→  Synology /Backup/Viki/pve-backup/<svc>/  [leg 1]
 sdc /srv/nfs/immich/  ──inotify (nfs-change-tracker)──→  offsite-sync Step 2  ──→  Synology /Backup/Viki/nfs/immich/                          [leg 2]
 sdc PVCs (LVM thin)   ──daily-backup~snapshot~rsync──→  sda /mnt/backup/{pvc-data,sqlite-backup,pfsense,pve-config}/  ──Step 1──→  Synology /Backup/Viki/pve-backup/
 ```
@@ -373,7 +378,7 @@ Two-step offsite sync:
 
 **`/srv/nfs/anca-elements/` history**: had its own dedicated Synology exclusion line earlier in 2026-05-24 because the original Synology source (`/volume1/Backup/Anca/Elements`) was being preserved while we moved canonical to PVE. After the original was deleted (same day), anca-elements joined the broader "NOT bypassing sda" category and is covered by Step 1 via `nfs-mirror`.
 
-**Layer 3a: NFS local mirror on sda (3-2-1 second copy)**: `/usr/local/bin/nfs-mirror` rsyncs `/srv/nfs/` → `/mnt/backup/<service>/` weekly (Mon 04:00). Single rsync invocation, single destination. As of 2026-05-26 the skip-list (in `nfs-mirror.sh` `EXCLUDES`) is intentionally minimal:
+**Layer 3a: NFS local mirror on sda (3-2-1 second copy)**: `/usr/local/bin/nfs-mirror` rsyncs `/srv/nfs/` → `/mnt/backup/<service>/` daily at 02:00 (switched from weekly Mon 04:00 on 2026-05-26 — steady-state delta is 10-20 min of mostly-metadata rsync, cuts non-CronJob app-data RPO from 7d to ~24h). Single rsync invocation, single destination. As of 2026-05-26 the skip-list (in `nfs-mirror.sh` `EXCLUDES`) is intentionally minimal:
 
 - **immich** (1.5 T) — too big for sda; ships sdc → Synology direct (leg 2)
 - **frigate** (camera ring buffer) — intentionally NOT backed up
@@ -444,8 +449,8 @@ The btrfs cleaner thread reclaims async — `df` may lag the snapshot-delete by 
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
 | `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
 | `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
-| `/usr/local/bin/nfs-mirror` | PVE host: weekly selective mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
-| `/etc/systemd/system/nfs-mirror.timer` | Weekly Mon 04:00 (NFS local mirror to sda) |
+| `/usr/local/bin/nfs-mirror` | PVE host: daily 02:00 mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
+| `/etc/systemd/system/nfs-mirror.timer` | Daily 02:00 (NFS local mirror to sda) |
 | `stacks/dbaas/` | Terraform: PostgreSQL/MySQL backup CronJobs |
 | `stacks/vault/` | Terraform: Vault backup CronJob |
 | `stacks/vaultwarden/` | Terraform: Vaultwarden backup + integrity CronJobs |
