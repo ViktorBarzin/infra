@@ -158,6 +158,43 @@ SQLite uses `fsync()` to guarantee durability. NFS's soft mount + async semantic
 
 > Democratic-csi has been removed along with TrueNAS decommissioning (2026-04). This section is kept for historical reference only.
 
+### Per-VM SCSI-LUN cap (29 block PVCs per K8s node)
+
+**The proxmox-csi-plugin hardcodes a per-VM LUN ceiling at 29.** The plugin
+scans `scsi1..scsi29` for a free slot when attaching a PVC
+(`pkg/csi/utils.go:394`: `for lun = 1; lun < 30; lun++`); when the loop exits
+without a hit, ControllerPublishVolume returns
+`Internal desc = no free lun found`. `CSINode.allocatable.count` is advertised
+as `28` for every worker — derived from this plugin limit, NOT from Proxmox or
+QEMU constraints.
+
+What this means in practice:
+- Each K8s node VM can hold at most 29 block PVCs simultaneously (scsi0 is the
+  OS disk).
+- Switching `scsihw` from `virtio-scsi-pci` to `virtio-scsi-single` gains
+  per-disk iothread isolation but **zero additional capacity** — the cap lives
+  in the CSI plugin, not the QEMU device topology. Proxmox itself allows
+  `scsi0..scsi30` (31 slots, `$MAX_SCSI_DISKS = 31` in
+  `/usr/share/perl5/PVE/QemuServer/Drive.pm`).
+- NFS PVCs (`nfs.csi.k8s.io`) are kernel NFS mounts and do not count against
+  the SCSI cap. Moving non-DB workloads (config-only, static content,
+  regenerable cache, pure upload buckets) to NFS is the simplest relief.
+- Symptom when the cap is hit: pods stuck `ContainerCreating` with
+  `FailedAttachVolume … no free lun found` event, and the proxmox-csi
+  controller hot-loops `ControllerPublishVolume` against the saturated VM.
+
+Levers (in order of leverage-per-effort):
+1. **Migrate non-DB workloads off block** to NFS. Pre-flight every candidate
+   for embedded DBs (SQLite/LevelDB/RocksDB/H2/BoltDB) — they corrupt on NFS
+   due to lock semantics. Wave 1 (2026-05-26) moved 5 services
+   (excalidraw, resume, whisper, onlyoffice, f1-stream) and pre-flighted
+   two more out of scope (plotting-book → SQLite + WAL, stirling-pdf → H2).
+2. **Add another K8s worker VM** — each new worker brings up to 29 fresh
+   slots; the most durable answer if PVC count keeps growing.
+3. **Patch+fork `sergelogvinov/proxmox-csi-plugin`** to bump the loop bound
+   from `< 30` to `< 31` (matches Proxmox `MAX_SCSI_DISKS`). +1 slot per VM.
+   File upstream PR. Self-maintained image until merged.
+
 ## Configuration
 
 ### Key Files
