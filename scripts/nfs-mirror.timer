@@ -1,8 +1,14 @@
 [Unit]
-Description=Weekly local NFS mirror to /mnt/backup
+Description=Daily local NFS mirror to /mnt/backup
 
 [Timer]
-OnCalendar=Mon *-*-* 04:00:00
+# Daily 02:00 — runs 3h before daily-backup (05:00) so the .changed-files
+# manifest is populated and offsite-sync (06:00) ships both legs' deltas.
+# Switched from weekly Mon 04:00 → daily 2026-05-26: steady-state delta is
+# 10-20 min of mostly-metadata rsync, so the IO cost is negligible and it
+# cuts non-CronJob app-data RPO from 7d to ~24h (matters for nextcloud
+# shared files, audiobookshelf library, mailserver Maildir, etc.).
+OnCalendar=*-*-* 02:00:00
 Persistent=true
 RandomizedDelaySec=15min
 
