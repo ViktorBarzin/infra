@@ -93,33 +93,14 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "onlyoffice-data-proxmox"
-    namespace = kubernetes_namespace.onlyoffice.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+module "nfs_data_host" {
+  source       = "../../modules/kubernetes/nfs_volume"
+  name         = "onlyoffice-data-host"
+  namespace    = kubernetes_namespace.onlyoffice.metadata[0].name
+  nfs_server   = var.nfs_server
+  nfs_path     = "/srv/nfs/onlyoffice"
+  storage      = "1Gi"
+  access_modes = ["ReadWriteOnce"]
 }
 
 resource "kubernetes_deployment" "onlyoffice-document-server" {
@@ -135,7 +116,10 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
     }
   }
   spec {
-    replicas = 1
+    # TEMP-SCALEDOWN-2026-05-25-IO-STORM: scaled to 0 during cluster recovery.
+    # Restore to 1 when cluster is fully stable. See post-mortem
+    # docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md.
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -226,7 +210,7 @@ resource "kubernetes_deployment" "onlyoffice-document-server" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data_host.claim_name
           }
         }
       }
