@@ -113,19 +113,27 @@ locals {
 resource "null_resource" "node_labels" {
   for_each = local.k8s_nodes
 
+  # max-volume-attachments: capped at 28 (4 below plugin's hard ceiling of 30,
+  # see VolumesPerNodeHardLimit in sergelogvinov/proxmox-csi-plugin pkg/csi/node.go).
+  # Default is 24; bumping to 28 gives ~4-PVC headroom per node while keeping
+  # 2 slots for recovery (boot disk + transient attach during reschedule).
+  # Without this label the plugin reports 24 and node1 cascades through that
+  # ceiling during evictions — see post-mortem 2026-05-25.
   provisioner "local-exec" {
     command = <<-EOT
       kubectl --kubeconfig=${var.kube_config_path} label node ${each.key} \
         topology.kubernetes.io/region=${var.proxmox_cluster_name} \
         topology.kubernetes.io/zone=${each.value.proxmox_node} \
         node.csi.proxmox.sinextra.dev/name=${each.key} \
+        csi.proxmox.sinextra.dev/max-volume-attachments=28 \
         --overwrite
     EOT
   }
 
   triggers = {
-    region = var.proxmox_cluster_name
-    zone   = each.value.proxmox_node
+    region      = var.proxmox_cluster_name
+    zone        = each.value.proxmox_node
+    max_volumes = "28"
   }
 }
 
