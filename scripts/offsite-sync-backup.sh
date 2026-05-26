@@ -132,9 +132,14 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
     sort -u "${NFS_CHANGE_LOG}" > /tmp/nfs-changes-deduped
 
     # HDD NFS — include only /srv/nfs/immich/ paths.
+    # `|| true` is REQUIRED: if the last iteration's `[ -f "$f" ]` is false
+    # (file was deleted between inotify capture and now — e.g., immich
+    # encoded-video temp file that got cleaned up), the while loop returns
+    # 1, pipefail propagates, and `set -e` kills the script silently before
+    # reaching the rsync. Matches the SSD section's pattern below.
     grep -E "${NFS_SDA_BYPASS_RE}" /tmp/nfs-changes-deduped | \
         while IFS= read -r f; do [ -f "$f" ] && echo "${f#/srv/nfs/}"; done \
-        > /tmp/sync-nfs.list 2>/dev/null
+        > /tmp/sync-nfs.list 2>/dev/null || true
     NFS_COUNT=$(wc -l < /tmp/sync-nfs.list 2>/dev/null || echo 0)
     if [ "${NFS_COUNT:-0}" -gt 0 ]; then
         rsync -rlt --files-from=/tmp/sync-nfs.list /srv/nfs/ "${NFS_DEST}/" 2>&1 \
