@@ -421,14 +421,15 @@ resource "kubernetes_cron_job_v1" "imap" {
                 name  = "BROKER_SYNC_DATA_DIR"
                 value = "/data"
               }
-              # 2026-05-26: skip InvestEngine email parsing. IE has its own
-              # bearer-token API path (`broker-sync invest-engine`) — running
-              # both produces duplicate BUYs in Wealthfolio because the two
-              # generate different external_ids for the same fill.
-              env {
-                name  = "BROKER_SYNC_IMAP_EXCLUDE_PROVIDERS"
-                value = "invest-engine"
-              }
+              # IE email parsing IS enabled (2026-05-27). The bearer-token CLI
+              # path (`broker-sync invest-engine`) is not wired as a CronJob
+              # — token expires ~monthly, MFA blocks scripted refresh, and
+              # the `/api/v0.3X/` version probe drifts every 4-6 weeks. Email
+              # confirmations land on every fill anyway, so we standardise on
+              # IMAP as the single canonical path for IE (parity with Schwab).
+              # If the bearer CLI is ever run manually, dedup is at WF level
+              # (external_id) so a re-run is safe; just expect the IMAP store
+              # not to know about those rows.
               env {
                 name  = "WF_SESSION_PATH"
                 value = "/data/wealthfolio_session.json"
