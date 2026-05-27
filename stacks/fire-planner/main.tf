@@ -348,9 +348,14 @@ resource "kubernetes_service" "fire_planner" {
   }
 }
 
-# Monthly recompute on the 2nd at 09:00 UTC. Wealthfolio-sync runs on
-# the 1st at 08:00, so account_snapshot is fresh by the time the
-# planner picks up.
+# Monthly recompute on the 2nd at 09:00 UTC.
+#
+# This runs `recompute-all` (the Monte Carlo Cartesian sweep), NOT
+# `ingest`. The /networth path no longer depends on an ingest CronJob —
+# as of 2026-05-27 the account_snapshot cache is refreshed lazily on
+# every /networth, /networth/history, /progress request when older than
+# NETWORTH_CACHE_TTL_DAYS (default 1). See
+# fire_planner/ingest/wealthfolio.py :: refresh_account_snapshots_if_stale.
 resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
   metadata {
     name      = "fire-planner-recompute"
