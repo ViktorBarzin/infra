@@ -396,7 +396,7 @@ resource "kubernetes_cron_job_v1" "imap" {
     # the only thing we lose; it can be unsuspended once the IE re-dup root
     # cause is fixed (researcher subagent investigating; beads task pending).
     # Also see code-9ko8 (pre-existing reliability issues).
-    suspend = true
+    suspend = false
     job_template {
       metadata {}
       spec {
