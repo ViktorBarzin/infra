@@ -100,7 +100,13 @@ resource "kubernetes_service" "proxmox-exporter" {
       "app" = "proxmox-exporter"
     }
     annotations = {
-      "prometheus.io/scrape"        = "true"
+      # Use scrape_slow (5m interval, 30s timeout in prometheus values) because
+      # the PVE API endpoint regularly takes ~11s with ~1000 k8s-csi LVs on the
+      # host, blowing past the default 10s scrape_timeout and flapping the
+      # ProxmoxMetricsMissing + ScrapeTargetDown alerts. The slow job is gated
+      # by the `prometheus_io_scrape_slow=true` annotation in
+      # prometheus_chart_values.tpl and also excludes us from the fast job.
+      "prometheus.io/scrape_slow"   = "true"
       "prometheus.io/port"          = 9221
       "prometheus.io/path"          = "/pve"
       "prometheus.io/param_target"  = "192.168.1.127"
