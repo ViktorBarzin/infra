@@ -29,6 +29,15 @@ KUBECTL=""
 JSON_RESULTS=()
 TOTAL_CHECKS=44
 
+# Parallel execution settings. Each check function is self-contained — it
+# only reads cluster state and mutates the in-memory counters / JSON_RESULTS
+# array. That makes it safe to run them in parallel subshells and stitch the
+# results back together in original order. Auto-fix mode forces serial
+# execution to keep mutations deterministic.
+PARALLEL=true
+PARALLEL_JOBS="${HEALTHCHECK_PARALLEL_JOBS:-12}"
+TMP_DIR=""
+
 # --- Helpers ---
 info()  { [[ "$JSON" == true ]] && return 0; echo -e "${BLUE}[INFO]${NC} $*"; }
 pass()  { PASS_COUNT=$((PASS_COUNT + 1)); [[ "$JSON" == true ]] && return 0; [[ "$QUIET" == true ]] && return 0; echo -e "  ${GREEN}[PASS]${NC} $*"; }
@@ -67,6 +76,100 @@ count_lines() {
     fi
 }
 
+# --- Parallel runner ---
+#
+# Pattern: each check function is invoked in an isolated subshell, with its
+# stdout redirected to a per-check temp file. The subshell maintains its
+# own copy of PASS/WARN/FAIL counters and JSON_RESULTS; after the check
+# returns, the subshell appends marker lines (###PASS:N, ###WARN:N,
+# ###FAIL:N, ###JSON:<entry>) so the parent can re-aggregate state.
+#
+# Marker prefix is chosen to be unlikely to occur in real check output;
+# stray matches in stdout would be invisible to the user (the parent strips
+# them on replay) but would inflate counters. If a future check needs to
+# print literal "###PASS:" etc., change the prefix here.
+PARALLEL_MARKER='###HCK###'
+
+run_check_in_subshell() {
+    # $1 = numeric index (zero-padded), $2 = check function name
+    local idx="$1" fn="$2"
+    local outfile="$TMP_DIR/${idx}_${fn}.out"
+    (
+        # Reset counters/json so we capture only this check's delta.
+        PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0
+        JSON_RESULTS=()
+        # Redirect stdout+stderr into the per-check file.
+        exec >"$outfile" 2>&1
+        # Run the check. The function inherits all globals (KUBECTL, JSON,
+        # QUIET, FIX, HA_CACHE_DIR, ...).
+        "$fn"
+        # Append state delta as marker lines.
+        echo "${PARALLEL_MARKER}PASS:${PASS_COUNT}"
+        echo "${PARALLEL_MARKER}WARN:${WARN_COUNT}"
+        echo "${PARALLEL_MARKER}FAIL:${FAIL_COUNT}"
+        local entry
+        for entry in "${JSON_RESULTS[@]}"; do
+            # Encode newlines so multi-line entries (rare) replay cleanly.
+            printf '%sJSON:%s\n' "$PARALLEL_MARKER" "$entry"
+        done
+    ) &
+}
+
+run_checks_parallel() {
+    # $@ = check function names, in canonical display order.
+    local fn idx=0 active=0 padded
+    local -a pids=()
+
+    for fn in "$@"; do
+        padded=$(printf '%03d' "$idx")
+        run_check_in_subshell "$padded" "$fn"
+        pids+=($!)
+        idx=$((idx + 1))
+        active=$((active + 1))
+        if [[ "$active" -ge "$PARALLEL_JOBS" ]]; then
+            # Wait for any one job to finish; -n requires bash 4.3+.
+            # A non-zero exit from a check would otherwise trip `set -e`
+            # — checks signal their findings via PASS/WARN/FAIL counters,
+            # not exit codes, so we deliberately ignore the status here.
+            wait -n || true
+            active=$((active - 1))
+        fi
+    done
+    # Drain remaining jobs (same rationale as above for the `|| true`).
+    wait || true
+}
+
+replay_check_outputs() {
+    # Replay temp files in numeric index order so the report reads exactly
+    # like the serial run did. Marker lines re-populate counters; everything
+    # else is forwarded to stdout.
+    local f line stripped
+    while IFS= read -r f; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            case "$line" in
+                "${PARALLEL_MARKER}PASS:"*)
+                    stripped="${line#${PARALLEL_MARKER}PASS:}"
+                    PASS_COUNT=$((PASS_COUNT + stripped))
+                    ;;
+                "${PARALLEL_MARKER}WARN:"*)
+                    stripped="${line#${PARALLEL_MARKER}WARN:}"
+                    WARN_COUNT=$((WARN_COUNT + stripped))
+                    ;;
+                "${PARALLEL_MARKER}FAIL:"*)
+                    stripped="${line#${PARALLEL_MARKER}FAIL:}"
+                    FAIL_COUNT=$((FAIL_COUNT + stripped))
+                    ;;
+                "${PARALLEL_MARKER}JSON:"*)
+                    JSON_RESULTS+=("${line#${PARALLEL_MARKER}JSON:}")
+                    ;;
+                *)
+                    printf '%s\n' "$line"
+                    ;;
+            esac
+        done < "$f"
+    done < <(find "$TMP_DIR" -maxdepth 1 -type f -name '*.out' | sort)
+}
+
 # --- Argument parsing ---
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -75,15 +178,19 @@ parse_args() {
             --no-fix)     FIX=false; shift ;;
             --quiet|-q)   QUIET=true; shift ;;
             --json)       JSON=true; shift ;;
+            --serial)     PARALLEL=false; shift ;;
+            --parallel)   PARALLEL=true; PARALLEL_JOBS="$2"; shift 2 ;;
             --kubeconfig) KUBECONFIG_PATH="$2"; shift 2 ;;
             -h|--help)
-                echo "Usage: $0 [--fix|--no-fix] [--quiet|-q] [--json] [--kubeconfig <path>]"
+                echo "Usage: $0 [--fix|--no-fix] [--quiet|-q] [--json] [--serial|--parallel N] [--kubeconfig <path>]"
                 echo ""
                 echo "Flags:"
                 echo "  --fix              Auto-remediate safe issues (delete evicted pods)"
                 echo "  --no-fix           Disable auto-remediation (default)"
                 echo "  --quiet, -q        Only show WARN and FAIL sections"
                 echo "  --json             Machine-readable JSON output"
+                echo "  --serial           Run checks sequentially (default: parallel)"
+                echo "  --parallel N       Run up to N checks concurrently (default: 12, env HEALTHCHECK_PARALLEL_JOBS)"
                 echo "  --kubeconfig PATH  Override kubeconfig (default: \$(pwd)/config)"
                 exit 0
                 ;;
@@ -2681,50 +2788,51 @@ main() {
         fi
     fi
 
-    check_nodes
-    check_resources
-    check_conditions
-    check_pods
-    check_evicted
-    check_daemonsets
-    check_deployments
-    check_pvcs
-    check_hpa
-    check_cronjobs
-    check_crowdsec
-    check_ingresses
-    check_alerts
-    check_uptime_kuma
-    check_resourcequota
-    check_statefulsets
-    check_node_disk
-    check_helm_releases
-    check_kyverno
-    check_nfs
-    check_dns
-    check_tls_certs
-    check_gpu
-    check_cloudflare_tunnel
-    check_overcommit
-    check_ha_entities
-    check_ha_integrations
-    check_ha_automations
-    check_ha_system
-    check_hardware_exporters
-    check_cert_manager_certificates
-    check_cert_manager_expiry
-    check_cert_manager_requests
-    check_backup_per_db
-    check_backup_offsite_sync
-    check_backup_lvm_snapshots
-    check_monitoring_prom_am
-    check_monitoring_vault
-    check_monitoring_css
-    check_external_replicas
-    check_external_divergence
-    check_pve_thermals
-    check_pve_load
-    check_external_traefik_5xx
+    # Canonical check order — also defines the order in the human-readable
+    # report and the JSON `checks` array.
+    local checks=(
+        check_nodes check_resources check_conditions check_pods check_evicted
+        check_daemonsets check_deployments check_pvcs check_hpa check_cronjobs
+        check_crowdsec check_ingresses check_alerts check_uptime_kuma
+        check_resourcequota check_statefulsets check_node_disk check_helm_releases
+        check_kyverno check_nfs check_dns check_tls_certs check_gpu
+        check_cloudflare_tunnel check_overcommit check_ha_entities
+        check_ha_integrations check_ha_automations check_ha_system
+        check_hardware_exporters check_cert_manager_certificates
+        check_cert_manager_expiry check_cert_manager_requests check_backup_per_db
+        check_backup_offsite_sync check_backup_lvm_snapshots
+        check_monitoring_prom_am check_monitoring_vault check_monitoring_css
+        check_external_replicas check_external_divergence check_pve_thermals
+        check_pve_load check_external_traefik_5xx
+    )
+
+    # Auto-fix mutates cluster state inside individual checks — keep that
+    # path serial so the mutation order matches what an operator would
+    # expect when reading the report top-to-bottom.
+    if [[ "$FIX" == true ]]; then
+        PARALLEL=false
+    fi
+
+    if [[ "$PARALLEL" == true ]]; then
+        TMP_DIR=$(mktemp -d -t cluster-healthcheck.XXXXXX)
+        # Pre-populate the HA Sofia cache once in the parent so the four HA
+        # checks share a single API round-trip instead of each subshell
+        # re-fetching states/entries/config. ha_sofia_fetch_cache installs
+        # its own EXIT trap for HA_CACHE_DIR cleanup; we re-install ours
+        # afterwards so both temp dirs get cleaned.
+        if ha_sofia_available; then
+            ha_sofia_fetch_cache || true
+        fi
+        trap 'rm -rf "$TMP_DIR" "${HA_CACHE_DIR:-}"' EXIT
+        run_checks_parallel "${checks[@]}"
+        replay_check_outputs
+    else
+        local fn
+        for fn in "${checks[@]}"; do
+            "$fn"
+        done
+    fi
+
     print_summary
 
     # Exit code: 2 for failures, 1 for warnings, 0 for clean
