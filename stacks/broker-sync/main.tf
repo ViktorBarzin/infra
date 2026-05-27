@@ -164,6 +164,13 @@ resource "kubernetes_cron_job_v1" "trading212" {
           }
           spec {
             restart_policy = "OnFailure"
+            # See imap cron — without fsGroup=10001 the broker user (uid=10001
+            # gid=999) can't write the sqlite3 journal next to /data/sync.db
+            # and the dedup.record() call after a successful WF import crashes
+            # with "attempt to write a readonly database".
+            security_context {
+              fs_group = 10001
+            }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
@@ -325,15 +332,6 @@ resource "kubernetes_cron_job_v1" "ibkr" {
                   secret_key_ref {
                     name = "broker-sync-secrets"
                     key  = "ibkr_flex_query_id"
-                  }
-                }
-              }
-              env {
-                name = "IBKR_ACCOUNT_ID"
-                value_from {
-                  secret_key_ref {
-                    name = "broker-sync-secrets"
-                    key  = "ibkr_account_id"
                   }
                 }
               }
