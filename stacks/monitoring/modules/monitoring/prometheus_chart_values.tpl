@@ -2141,13 +2141,18 @@ serverFiles:
             annotations:
               summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 10%)"
           - alert: HighService4xxRate
+            # `.*catchall-error-pages.*` is excluded because that IngressRoute
+            # is the wildcard `HostRegexp(^(.+\.)?viktorbarzin\.me$)` handler
+            # — its entire purpose is to return 404 for unmatched hostnames
+            # (typos + scanner traffic), so its 4xx rate is permanently ~100%.
+            # Without this exclusion the alert is a perpetual false positive.
             expr: |
               (
-                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service)
-                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service)
+                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service)
+                / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service)
                 * 100
               ) > 30
-              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*"}[5m])) by (service) > 0.1
+              and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service) > 0.1
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
             labels:
