@@ -385,12 +385,18 @@ resource "kubernetes_cron_job_v1" "imap" {
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 5
-    # Unsuspended 2026-04-19 for RSU vest ground-truth ingestion — the parser
-    # now detects Schwab Release Confirmations and scaffolds VestEvents; the
-    # postgres sink that persists them into payslip_ingest.rsu_vest_events is
-    # pending a real-email fixture and cross-service DB grant (see
-    # follow-up beads task filed under the RSU tax spike fix epic).
-    suspend = false
+    # 2026-05-27: RESUSPENDED. Despite BROKER_SYNC_IMAP_EXCLUDE_PROVIDERS=invest-engine
+    # being set on the cronjob (commit a4dab03), 39 IMAP-source IE BUYs were
+    # re-inserted into Wealthfolio at 2026-05-27T09:22:18 UTC — exactly the
+    # rows I'd deleted yesterday during the £252k dedup. The 02:30 cron at
+    # 02:30 UTC today logged `ie_skipped=53` (skip is working), so the 09:22
+    # source is something else we haven't pinpointed yet. Suspending eliminates
+    # one possible vector (e.g., manual reruns / replay queues / future bugs
+    # where the exclude env doesn't bind correctly). Schwab vest ingestion is
+    # the only thing we lose; it can be unsuspended once the IE re-dup root
+    # cause is fixed (researcher subagent investigating; beads task pending).
+    # Also see code-9ko8 (pre-existing reliability issues).
+    suspend = true
     job_template {
       metadata {}
       spec {
