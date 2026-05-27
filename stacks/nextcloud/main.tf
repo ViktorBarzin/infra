@@ -30,13 +30,55 @@ resource "kubernetes_namespace" "nextcloud" {
       tier                                    = local.tiers.edge
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
-      "keel.sh/enrolled"                      = "true"
+      # Keel disabled for nextcloud: the 2026-05-26 Keel-driven bump
+      # 32.0.3-apache → 32.0.9-apache left the pod in maintenance mode
+      # (needsDbUpgrade=true) for ~22h because Keel doesn't run
+      # `occ upgrade` after rolling the image. Defense-in-depth:
+      # (a) namespace not enrolled here, (b) workload carries the
+      # `keel.sh/policy=never` label + annotation below so even if the
+      # ns label gets re-added, Kyverno excludes this Deployment.
+      # "keel.sh/enrolled"                    = "true"
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
   }
+}
+
+# Workload-level Keel opt-out (see namespace comment above).
+# Keel reads the ANNOTATION `keel.sh/policy` (it's what un-tracks the
+# image watcher); the LABEL exists for the Kyverno exclude rule in
+# `inject-keel-annotations` (defense-in-depth in case the namespace
+# label gets re-added later). Both are set via these helper resources
+# because the nextcloud chart 8.8.1 doesn't expose Deployment-level
+# commonLabels / commonAnnotations.
+resource "kubernetes_labels" "nextcloud_keel_optout" {
+  api_version = "apps/v1"
+  kind        = "Deployment"
+  metadata {
+    name      = "nextcloud"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  labels = {
+    "keel.sh/policy" = "never"
+  }
+  force      = true
+  depends_on = [helm_release.nextcloud]
+}
+
+resource "kubernetes_annotations" "nextcloud_keel_optout" {
+  api_version = "apps/v1"
+  kind        = "Deployment"
+  metadata {
+    name      = "nextcloud"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  annotations = {
+    "keel.sh/policy" = "never"
+  }
+  force      = true
+  depends_on = [helm_release.nextcloud]
 }
 
 resource "kubernetes_manifest" "external_secret" {
