@@ -77,6 +77,7 @@ resource "kubernetes_manifest" "external_secret" {
             TRADING_ANTHROPIC_OAUTH_TOKEN = "{{ .anthropic_oauth_token }}"
             TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
             TRADING_SLACK_WEBHOOK_URL     = "{{ .slack_webhook_url }}"
+            TRADING_SLACK_BOT_TOKEN       = "{{ .slack_bot_token }}"
           }
         }
       }
@@ -92,6 +93,8 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "anthropic_oauth_token", remoteRef = { key = "trading-bot", property = "anthropic_oauth_token" } },
         { secretKey = "meet_kevin_channel_id", remoteRef = { key = "trading-bot", property = "meet_kevin_channel_id" } },
         { secretKey = "slack_webhook_url", remoteRef = { key = "trading-bot", property = "slack_webhook_url" } },
+        # slack_bot_token is sourced from secret/viktor (shared bot identity), NOT secret/trading-bot.
+        { secretKey = "slack_bot_token", remoteRef = { key = "viktor", property = "slack_bot_token" } },
       ]
     }
   }
@@ -589,6 +592,12 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_KEVIN_DAILY_LOSS_CIRCUIT_PCT"
             value = "0.05"
+          }
+          # Slack channel for trade alerts. User must create #trading-bot
+          # in Slack UI; bot uses chat:write.public so no invite needed.
+          env {
+            name  = "TRADING_SLACK_CHANNEL"
+            value = "trading-bot"
           }
           env_from {
             secret_ref {
