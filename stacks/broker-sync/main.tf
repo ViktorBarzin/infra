@@ -427,15 +427,20 @@ resource "kubernetes_cron_job_v1" "imap" {
                 name  = "BROKER_SYNC_DATA_DIR"
                 value = "/data"
               }
-              # IE email parsing IS enabled (2026-05-27). The bearer-token CLI
-              # path (`broker-sync invest-engine`) is not wired as a CronJob
-              # — token expires ~monthly, MFA blocks scripted refresh, and
-              # the `/api/v0.3X/` version probe drifts every 4-6 weeks. Email
-              # confirmations land on every fill anyway, so we standardise on
-              # IMAP as the single canonical path for IE (parity with Schwab).
-              # If the bearer CLI is ever run manually, dedup is at WF level
-              # (external_id) so a re-run is safe; just expect the IMAP store
-              # not to know about those rows.
+              # 2026-05-27 (afternoon, post-incident): IE-via-IMAP is now
+              # STRUCTURALLY OPT-IN at the code level — broker_sync.providers.imap
+              # default-excludes `invest-engine`. The earlier "standardise on IMAP
+              # for IE" comment was inverted after a sibling Claude session ran
+              # broker-sync imap-ingest at 09:22 UTC without the EXCLUDE env and
+              # re-imported the 39 IE BUYs/DEPOSITs the previous day's dedup had
+              # removed. To re-enable IE-via-IMAP, add:
+              #   env {
+              #     name  = "BROKER_SYNC_IMAP_INCLUDE_PROVIDERS"
+              #     value = "invest-engine"
+              #   }
+              # Until that env is set, only Schwab is parsed (the canonical use
+              # of the IMAP path — Schwab has no public API).
+              # See post-mortem in beads code-dc1b.
               env {
                 name  = "WF_SESSION_PATH"
                 value = "/data/wealthfolio_session.json"
