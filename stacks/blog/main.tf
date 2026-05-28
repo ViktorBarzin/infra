@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "website" {
     name = "website"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -148,6 +148,24 @@ module "ingress" {
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Carve-out for /net-diag.sh — a curl|bash diagnostic script for macOS.
+# Anubis can't gate this path because non-JS clients (curl) can't solve PoW.
+# Points at the bare blog nginx service, bypassing the Anubis proxy.
+module "ingress_net_diag" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public read-only static file (curl|bash diagnostic script). No login, no PoW.
+  auth             = "none"
+  namespace        = kubernetes_namespace.website.metadata[0].name
+  name             = "blog-net-diag"
+  service_name     = kubernetes_service.blog.metadata[0].name
+  port             = "80"
+  ingress_path     = ["/net-diag.sh"]
+  full_host        = "viktorbarzin.me"
+  dns_type         = "none" # DNS already owned by the main blog ingress.
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Single static file; nothing for scrapers to mine.
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
