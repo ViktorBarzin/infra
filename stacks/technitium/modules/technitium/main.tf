@@ -799,3 +799,120 @@ sys.exit(0 if correct else 1)
   }
 }
 
+
+# ServiceAccount + RBAC for the ingress-dns-sync CronJob to list ingresses cluster-wide.
+resource "kubernetes_service_account" "ingress_dns_sync" {
+  metadata {
+    name      = "ingress-dns-sync"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role" "ingress_dns_sync" {
+  metadata {
+    name = "ingress-dns-sync"
+  }
+  rule {
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "ingress_dns_sync" {
+  metadata {
+    name = "ingress-dns-sync"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.ingress_dns_sync.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.ingress_dns_sync.metadata[0].name
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+}
+
+# CronJob to sync K8s Ingress hosts -> Technitium CNAME records.
+# Discovers all *.viktorbarzin.me ingress hosts, ensures each has a CNAME
+# pointing to viktorbarzin.me in Technitium's authoritative zone.
+# Prevents the desync where Cloudflare has the record but internal DNS doesn't.
+resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
+  metadata {
+    name      = "technitium-ingress-dns-sync"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/15 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.ingress_dns_sync.metadata[0].name
+            container {
+              name  = "sync"
+              image = "bitnami/kubectl:latest"
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+              env {
+                name  = "TECH_USER"
+                value = var.technitium_username
+              }
+              env {
+                name  = "TECH_PASS"
+                value = var.technitium_password
+              }
+              command = ["/bin/sh", "-c", <<-EOT
+                set -e
+                ZONE="viktorbarzin.me"
+                TECH_API="http://technitium-web:5380"
+
+                TOKEN=$$(curl -sf "$$TECH_API/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -z "$$TOKEN" ]; then echo "Login failed"; exit 1; fi
+
+                EXISTING=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$ZONE&listZone=true" | grep -o '"name":"[^"]*\.viktorbarzin\.me"' | sed 's/"name":"//;s/"//' | sort -u)
+
+                HOSTS=$$(kubectl get ingress -A -o jsonpath='{range .items[*]}{range .spec.rules[*]}{.host}{"\n"}{end}{end}' | grep "\.$$ZONE$$" | grep -v "^$$ZONE$$" | sort -u)
+
+                CREATED=0
+                for HOST in $$HOSTS; do
+                  if echo "$$EXISTING" | grep -qx "$$HOST"; then
+                    continue
+                  fi
+                  RESULT=$$(curl -sf "$$TECH_API/api/zones/records/add?token=$$TOKEN&zone=$$ZONE&domain=$$HOST&type=CNAME&cname=$$ZONE&ttl=86400" 2>&1) || true
+                  if echo "$$RESULT" | grep -q '"status":"ok"'; then
+                    echo "Created CNAME: $$HOST -> $$ZONE"
+                    CREATED=$$((CREATED + 1))
+                  elif echo "$$RESULT" | grep -q 'already exists'; then
+                    echo "Already exists: $$HOST"
+                  else
+                    echo "Failed: $$HOST -- $$RESULT"
+                  fi
+                done
+                echo "Sync complete. Created $$CREATED new records."
+              EOT
+              ]
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
