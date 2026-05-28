@@ -111,6 +111,13 @@ resource "kubernetes_deployment" "wealthfolio" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[1].image,
+      spec[0].template[0].spec[0].container[2].image,
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
   metadata {
@@ -422,22 +429,53 @@ resource "kubernetes_deployment" "wealthfolio" {
             FROM activities
             WHERE notes LIKE 'cash-flow-match:%'
               AND account_id = '72d34e09-c1a6-41aa-99ea-abe3305ecc4a' -- Schwab
+          ),
+          base AS (
+            SELECT
+              d.id, d.account_id, d.valuation_date, d.account_currency,
+              d.base_currency, d.fx_rate_to_base, d.cash_balance,
+              d.investment_market_value, d.total_value, d.cost_basis,
+              d.net_contribution AS nc_raw,
+              COALESCE(SUM(s.synthetic_net), 0) AS synthetic_adjustment
+            FROM daily_account_valuation d
+            LEFT JOIN synthetic_flows s
+              ON s.account_id = d.account_id
+              AND s.effective_date <= d.valuation_date
+            GROUP BY d.id, d.account_id, d.valuation_date, d.account_currency,
+              d.base_currency, d.fx_rate_to_base, d.cash_balance,
+              d.investment_market_value, d.total_value, d.cost_basis,
+              d.net_contribution
+          ),
+          -- LOCF gap-fill: a Fidelity pension valuation of 0 is always a
+          -- PlanViewer scrape gap (the pot can't really be £0), never a real
+          -- balance. Without this a missed scrape craters net worth to £0 for
+          -- the gap and the "Monthly contributions" panel shows a phantom
+          -- withdrawal then rebound (witnessed Feb 2026: -£97k / +£100k). Carry
+          -- the last non-zero day forward across the gap. Scoped to Fidelity
+          -- (account_id below); brokerage 0s are left untouched.
+          filled AS (
+            SELECT *,
+              SUM(CASE WHEN total_value > 0 THEN 1 ELSE 0 END)
+                OVER (PARTITION BY account_id ORDER BY valuation_date) AS tv_grp
+            FROM base
           )
           SELECT
-            d.id, d.account_id, d.valuation_date, d.account_currency,
-            d.base_currency, d.fx_rate_to_base, d.cash_balance,
-            d.investment_market_value, d.total_value, d.cost_basis,
-            d.net_contribution AS net_contribution_raw,
-            (d.net_contribution - COALESCE(SUM(s.synthetic_net), 0)) AS net_contribution,
-            COALESCE(SUM(s.synthetic_net), 0) AS synthetic_adjustment
-          FROM daily_account_valuation d
-          LEFT JOIN synthetic_flows s
-            ON s.account_id = d.account_id
-            AND s.effective_date <= d.valuation_date
-          GROUP BY d.id, d.account_id, d.valuation_date, d.account_currency,
-            d.base_currency, d.fx_rate_to_base, d.cash_balance,
-            d.investment_market_value, d.total_value, d.cost_basis,
-            d.net_contribution;
+            id, account_id, valuation_date, account_currency, base_currency,
+            fx_rate_to_base,
+            CASE WHEN account_id = 'a7d6208d-2bd6-4f85-bf54-b77984c78234' AND total_value = 0
+                 THEN MAX(cash_balance) OVER w ELSE cash_balance END AS cash_balance,
+            CASE WHEN account_id = 'a7d6208d-2bd6-4f85-bf54-b77984c78234' AND total_value = 0
+                 THEN MAX(investment_market_value) OVER w ELSE investment_market_value END AS investment_market_value,
+            CASE WHEN account_id = 'a7d6208d-2bd6-4f85-bf54-b77984c78234' AND total_value = 0
+                 THEN MAX(total_value) OVER w ELSE total_value END AS total_value,
+            CASE WHEN account_id = 'a7d6208d-2bd6-4f85-bf54-b77984c78234' AND total_value = 0
+                 THEN MAX(cost_basis) OVER w ELSE cost_basis END AS cost_basis,
+            nc_raw AS net_contribution_raw,
+            (CASE WHEN account_id = 'a7d6208d-2bd6-4f85-bf54-b77984c78234' AND total_value = 0
+                  THEN MAX(nc_raw) OVER w ELSE nc_raw END) - synthetic_adjustment AS net_contribution,
+            synthetic_adjustment
+          FROM filled
+          WINDOW w AS (PARTITION BY account_id, tv_grp);
           SQL
 
           # Snapshot SQLite (online backup — non-blocking).
