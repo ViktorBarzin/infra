@@ -28,7 +28,7 @@ locals {
     # trips a sticky multi-hour 429 on Sonnet after 5-10 burst calls.
     # Switch to "claude-sonnet-4-5" if/when the Enterprise quota allows.
     TRADING_MEET_KEVIN_LLM_MODEL             = "claude-haiku-4-5-20251001"
-    TRADING_MEET_KEVIN_PROMPT_VERSION        = "v1"
+    TRADING_MEET_KEVIN_PROMPT_VERSION        = "v2"
   }
 }
 
