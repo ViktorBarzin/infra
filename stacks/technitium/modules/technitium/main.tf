@@ -845,7 +845,7 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
     namespace = kubernetes_namespace.technitium.metadata[0].name
   }
   spec {
-    schedule                      = "*/15 * * * *"
+    schedule                      = "0 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     job_template {
