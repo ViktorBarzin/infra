@@ -156,15 +156,16 @@ lifecycle {
 
 ### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
 
-When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects three annotations on every Deployment / StatefulSet / DaemonSet:
+When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
 
 ```
-keel.sh/policy: force
+keel.sh/policy: patch
+keel.sh/match-tag: "true"
 keel.sh/trigger: poll
 keel.sh/pollSchedule: "@every 1h"
 ```
 
-To suppress the resulting Terraform drift, **enrolled workloads** must extend their `ignore_changes` block:
+To suppress the resulting Terraform drift, **enrolled workloads** must carry the complete `ignore_changes` block below. This is the canonical form — it folds together every marker (see the legend after it):
 
 ```hcl
 lifecycle {
@@ -173,15 +174,31 @@ lifecycle {
     metadata[0].annotations["keel.sh/policy"],
     metadata[0].annotations["keel.sh/trigger"],
     metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    metadata[0].annotations["keel.sh/match-tag"],
+    spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+    metadata[0].annotations["kubernetes.io/change-cause"],
+    metadata[0].annotations["deployment.kubernetes.io/revision"],
+    spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
   ]
 }
 ```
 
-The V2 snippet is added **per workload** as namespaces are phase-enrolled — not as a mass sweep. Workloads in un-enrolled namespaces do not receive the annotation and don't need the V2 block.
+**Marker legend** (the names are historical; grep each to audit coverage):
+
+| Marker | Ignores | Why |
+|---|---|---|
+| `# KYVERNO_LIFECYCLE_V1` | `dns_config` | Kyverno injects pod DNS `ndots` config |
+| `# KYVERNO_LIFECYCLE_V2` | `keel.sh/policy`, `/trigger`, `/pollSchedule` | Kyverno-injected Keel control annotations |
+| `# KEEL_IGNORE_IMAGE` | `container[N].image` (one line **per container index**, incl. `init_container[N]`) | Keel rewrites the image tag on `policy=patch`; without this, `apply` reverts the bump (a **downgrade**) |
+| `# KEEL_LIFECYCLE_V1` | `keel.sh/match-tag`, `keel.sh/update-time` (pod template), `kubernetes.io/change-cause`, `deployment.kubernetes.io/revision` | every Keel digest-update restamps these; without ignoring them `apply` strips them → forces a rollout → Keel re-stamps → fight loop |
+
+**Multi-container caveat**: `container[0].image` only covers the first container. Add one `container[N].image` line for **every** container index, plus `init_container[N].image` for init containers — otherwise the un-ignored container's image still drifts/downgrades.
+
+The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces don't receive the annotations and don't need the block.
 
 Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment metadata (not pod template); the policy's `exclude` clause respects it, no annotation gets injected, no `ignore_changes` needed.
 
-**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads.
+**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines).
 
 **Design context**: `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
 
