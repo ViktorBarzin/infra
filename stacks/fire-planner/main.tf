@@ -546,7 +546,7 @@ module "ingress_api" {
   ingress_path    = ["/api/"]
   tls_secret_name = var.tls_secret_name
   # auth = "none": XHR-based API endpoints; forward-auth 302+cookie-dance breaks CORS preflight and browser fetch().
-  auth            = "none"
+  auth = "none"
 }
 
 # Plan-time read of the ESO-created K8s Secret for Grafana datasource
@@ -605,3 +605,318 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# ----------------------------------------------------------------------
+# Reddit FIRE examples ingest — Job (bulk, toggled) + weekly CronJob
+# Backs the fire_planner.examples module. See:
+#   ~/code/fire-planner/docs/plans/2026-05-28-reddit-examples-{design,plan}.md
+# ----------------------------------------------------------------------
+
+variable "llama_cpp_base_url" {
+  type        = string
+  description = "llama-cpp /v1/chat/completions endpoint for primary LLM extraction"
+  default     = "http://llama-cpp.llama-cpp.svc.cluster.local:8000/v1/chat/completions"
+}
+
+variable "claude_agent_service_url" {
+  type        = string
+  description = "claude-agent-service /v1/chat/completions endpoint for Tier 2 fallback"
+  default     = "http://claude-agent-service.claude-agent.svc.cluster.local:8080/v1/chat/completions"
+}
+
+variable "run_examples_bulk_ingest" {
+  type        = bool
+  description = "Flip to true once to bulk-populate fire_example. Reset to false after."
+  default     = false
+}
+
+# Reddit OAuth creds pulled from Vault secret/viktor.
+resource "kubernetes_manifest" "external_secret_examples_reddit" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "fire-planner-examples-reddit"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "fire-planner-examples-reddit"
+      }
+      data = [
+        {
+          secretKey = "REDDIT_CLIENT_ID"
+          remoteRef = {
+            key      = "viktor"
+            property = "trading_bot_reddit_client_id"
+          }
+        },
+        {
+          secretKey = "REDDIT_CLIENT_SECRET"
+          remoteRef = {
+            key      = "viktor"
+            property = "trading_bot_reddit_client_secret"
+          }
+        },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.fire_planner]
+}
+
+# claude-agent-service bearer pulled separately so its rotation cadence
+# is decoupled from the Reddit creds.
+resource "kubernetes_manifest" "external_secret_examples_claude" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "fire-planner-examples-claude"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "fire-planner-examples-claude"
+      }
+      data = [
+        {
+          secretKey = "CLAUDE_AGENT_BEARER"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "api_bearer_token"
+          }
+        },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.fire_planner]
+}
+
+# Bulk one-shot Job — toggled via var.run_examples_bulk_ingest. Flip to
+# true once, apply, wait for completion, flip back. The timestamp() in
+# the name ensures Terraform creates a fresh Job on each (true)
+# transition rather than refusing to recreate an existing one.
+resource "kubernetes_job_v1" "examples_bulk_ingest" {
+  count = var.run_examples_bulk_ingest ? 1 : 0
+  metadata {
+    name      = "fire-planner-examples-bulk-${formatdate("YYYYMMDDhhmm", timestamp())}"
+    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  }
+  spec {
+    backoff_limit = 0
+    template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        restart_policy = "OnFailure"
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        container {
+          name              = "ingest"
+          image             = local.image
+          image_pull_policy = "IfNotPresent"
+          command = ["python", "-m", "fire_planner", "examples", "ingest",
+          "--top=all,year", "--limit=1000"]
+
+          # DB plumbing — mirror the fire_planner_recompute CronJob.
+          env_from {
+            secret_ref {
+              name = "fire-planner-secrets"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "fire-planner-db-creds"
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "wealthfolio-sync-db-creds"
+            }
+          }
+
+          # Examples-specific vars.
+          env {
+            name = "REDDIT_CLIENT_ID"
+            value_from {
+              secret_key_ref {
+                name = "fire-planner-examples-reddit"
+                key  = "REDDIT_CLIENT_ID"
+              }
+            }
+          }
+          env {
+            name = "REDDIT_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "fire-planner-examples-reddit"
+                key  = "REDDIT_CLIENT_SECRET"
+              }
+            }
+          }
+          env {
+            name = "CLAUDE_AGENT_BEARER"
+            value_from {
+              secret_key_ref {
+                name = "fire-planner-examples-claude"
+                key  = "CLAUDE_AGENT_BEARER"
+              }
+            }
+          }
+          env {
+            name  = "REDDIT_USER_AGENT"
+            value = "fire-planner/0.1"
+          }
+          env {
+            name  = "LLAMA_CPP_BASE_URL"
+            value = var.llama_cpp_base_url
+          }
+          env {
+            name  = "CLAUDE_AGENT_SERVICE_URL"
+            value = var.claude_agent_service_url
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # The name embeds a timestamp so a re-plan after time has passed
+    # would otherwise propose a no-op rename. Ignore.
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      metadata[0].name,
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+    kubernetes_manifest.wealthfolio_sync_db_external_secret,
+    kubernetes_manifest.external_secret_examples_reddit,
+    kubernetes_manifest.external_secret_examples_claude,
+  ]
+}
+
+# Weekly delta — top-of-week milestone posts. Sunday 04:00 UTC.
+resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
+  metadata {
+    name      = "fire-planner-examples-weekly"
+    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 4 * * 0"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name              = "ingest"
+              image             = local.image
+              image_pull_policy = "IfNotPresent"
+              command = ["python", "-m", "fire_planner", "examples", "ingest",
+              "--top=week", "--limit=200"]
+
+              # DB plumbing — mirror the fire_planner_recompute CronJob.
+              env_from {
+                secret_ref {
+                  name = "fire-planner-secrets"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "fire-planner-db-creds"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "wealthfolio-sync-db-creds"
+                }
+              }
+
+              # Examples-specific vars — keep in sync with the bulk Job.
+              env {
+                name = "REDDIT_CLIENT_ID"
+                value_from {
+                  secret_key_ref {
+                    name = "fire-planner-examples-reddit"
+                    key  = "REDDIT_CLIENT_ID"
+                  }
+                }
+              }
+              env {
+                name = "REDDIT_CLIENT_SECRET"
+                value_from {
+                  secret_key_ref {
+                    name = "fire-planner-examples-reddit"
+                    key  = "REDDIT_CLIENT_SECRET"
+                  }
+                }
+              }
+              env {
+                name = "CLAUDE_AGENT_BEARER"
+                value_from {
+                  secret_key_ref {
+                    name = "fire-planner-examples-claude"
+                    key  = "CLAUDE_AGENT_BEARER"
+                  }
+                }
+              }
+              env {
+                name  = "REDDIT_USER_AGENT"
+                value = "fire-planner/0.1"
+              }
+              env {
+                name  = "LLAMA_CPP_BASE_URL"
+                value = var.llama_cpp_base_url
+              }
+              env {
+                name  = "CLAUDE_AGENT_SERVICE_URL"
+                value = var.claude_agent_service_url
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+    kubernetes_manifest.wealthfolio_sync_db_external_secret,
+    kubernetes_manifest.external_secret_examples_reddit,
+    kubernetes_manifest.external_secret_examples_claude,
+  ]
+}
