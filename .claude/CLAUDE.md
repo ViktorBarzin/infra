@@ -131,7 +131,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 | Service | Key Operational Knowledge |
 |---------|--------------------------|
 | Nextcloud | MaxRequestWorkers=150, needs 8Gi limit (Apache transient memory spikes, see commit eb94144), very generous startup probe |
-| Immich | ML on SSD, disable ModSecurity (breaks streaming), CUDA for ML, frequent upgrades |
+| Immich | ML on SSD (CUDA), disable ModSecurity (breaks streaming), frequent upgrades. **Video transcoding is GPU-accelerated**: `immich-server` is pinned to GPU node1 (nodeSelector `nvidia.com/gpu.present` + NoSchedule toleration + `gpu-workload` priority) with a time-sliced `nvidia.com/gpu=1` slice — the stock immich-server image's ffmpeg already ships h264/hevc_nvenc + NVDEC. Activated via `ffmpeg.accel=nvenc` + `accelDecode=true` in the **DB** system-config (`system_metadata` table, key `system-config`, JSONB — NOT Terraform; app config is DB-managed here like oauth/smtp). Direct DB edits need a pod **recreate** to reload (config is cached at boot; only API-driven changes broadcast a reload). If Immich is ever reinstalled fresh (not restored), re-set these two keys. Thumbnails/previews live on SSD NFS (sdb) — do NOT move to block storage (HDD sdc = slower + the contended IO domain). |
 | CrowdSec | Pin version, disable Metabase when not needed (CPU hog), LAPI scaled to 3, **DB on PostgreSQL** (migrated from MySQL), flush config: max_items=10000/max_age=7d/agents_autodelete=30d, DECISION_DURATION=168h in blocklist CronJob |
 | Frigate | GPU stall detection in liveness probe (inference speed check), high CPU |
 | Authentik | 3 replicas, PgBouncer in front of PostgreSQL, strip auth headers before forwarding |
