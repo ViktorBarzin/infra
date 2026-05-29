@@ -110,6 +110,24 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                 # cnpg-system + dbaas (state-coupled), nvidia (pinned to
                 # 570.195.03 until NVIDIA ships ubuntu26.04 images per
                 # code-8vr0), kube-system (k8s built-ins).
+                #
+                # 2026-05-29: ADDED postiz. Two Keel failure modes, both
+                # unfixable while postiz stays enrolled:
+                #   1. Bundled redis StatefulSets run docker.io/bitnamilegacy/
+                #      redis (the Broadcom archive repo). Keel hourly resolves
+                #      newer patch tags (7.4.0→7.4.1/7.4.2) and tries to roll,
+                #      but require-trusted-registries (security-policies.tf)
+                #      denies bitnamilegacy/* (only bitnami/* is allowlisted).
+                #      Endless deny→retry→Slack-ping loop.
+                #   2. Keel bumped postiz-app v2.21.7→v2.21.8 (2026-05-26); the
+                #      surge pod can't schedule under the 3Gi tier-4-aux quota,
+                #      wedging the rollout for 3 days (rolled back to v2.21.7).
+                # postiz Terraform state is heavily drifted (~2/30 resources
+                # tracked — memory id=2798/2840), so per-workload opt-out can't
+                # be applied from the postiz stack. Namespace exclude here
+                # (clean kyverno state) is the reliable guard. Workloads also
+                # carry keel.sh/policy=never (annotation+label) set via kubectl
+                # since the postiz stack can't apply.
                 namespaces = [
                   "keel",
                   "calico-system",
@@ -118,6 +136,7 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                   "nvidia",
                   "kube-system",
                   "tigera-operator",
+                  "postiz",
                 ]
               }
             },
