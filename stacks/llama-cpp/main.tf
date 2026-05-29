@@ -99,8 +99,8 @@ resource "kubernetes_namespace" "llama_cpp" {
   metadata {
     name = local.namespace
     labels = {
-      tier              = local.tiers.gpu
-      "istio-injection" = "disabled"
+      tier               = local.tiers.gpu
+      "istio-injection"  = "disabled"
       "keel.sh/enrolled" = "true"
     }
   }
@@ -280,10 +280,12 @@ resource "kubernetes_deployment" "llama_swap" {
   # for it to be reachable".
   wait_for_rollout = false
   spec {
-    # TEMP-SCALEDOWN-2026-05-25-IO-STORM: scaled to 0 during cluster recovery.
-    # Restore to 1 when cluster is fully stable. See post-mortem
-    # docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md.
-    replicas = 0
+    # Restored to 1 on 2026-05-29 (was 0 during 2026-05-25 IO-storm recovery —
+    # see docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md). The
+    # immediate trigger was fire-planner's examples ingest needing qwen3-8b for
+    # bulk Reddit-post extraction; only frigate is currently on the GPU on
+    # k8s-node1 so contention is minimal.
+    replicas = 1
     strategy { type = "Recreate" }
 
     selector {
@@ -380,7 +382,7 @@ resource "kubernetes_deployment" "llama_swap" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
       # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
       # update patches `keel.sh/update-time` on the pod template and
       # `kubernetes.io/change-cause` + bumps the K8s rollout revision on
