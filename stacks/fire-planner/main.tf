@@ -620,8 +620,11 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
 
 variable "llama_cpp_base_url" {
   type        = string
-  description = "llama-cpp /v1/chat/completions endpoint for primary LLM extraction"
-  default     = "http://llama-cpp.llama-cpp.svc.cluster.local:8000/v1/chat/completions"
+  description = "llama-swap /v1/chat/completions endpoint for primary LLM extraction"
+  # Service is named `llama-swap`, NOT `llama-cpp` — the proxy in front of
+  # the actual llama-cpp pod. Port 8080. (Initial 2026-05-28 value pointed
+  # at a non-existent service:port and the bulk Job produced 0 rows.)
+  default = "http://llama-swap.llama-cpp.svc.cluster.local:8080/v1/chat/completions"
 }
 
 variable "claude_agent_service_url" {
