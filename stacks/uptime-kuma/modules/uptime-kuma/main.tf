@@ -595,6 +595,9 @@ locals {
       database_password_vault_key = "uptimekuma_db_password"
       hostname                    = null
       port                        = null
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
       interval                    = 60
       retry_interval              = 60
       max_retries                 = 2
@@ -610,6 +613,9 @@ locals {
       database_password_vault_key = null
       hostname                    = null
       port                        = null
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
       interval                    = 60
       retry_interval              = 30
       max_retries                 = 3
@@ -625,9 +631,35 @@ locals {
       database_password_vault_key = null
       hostname                    = "192.168.1.1"
       port                        = 443
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
       interval                    = 60
       retry_interval              = 30
       max_retries                 = 3
+    },
+    {
+      # Proxmox web UI on the PVE host. Probes the IP directly (NOT a
+      # `*.viktorbarzin.lan` name) because in-cluster lookups for those
+      # are vulnerable to CoreDNS pod-level cache skew — pre-fix, this
+      # monitor would intermittently land on a stale `10.0.10.1`
+      # (pfSense gateway, nothing on :8006) and spuriously alert
+      # `ExternalAccessDivergence`. Direct-IP HTTPS eliminates that
+      # variable. Self-signed cert → ignore_tls=true. The 301→HTTPS
+      # redirect from pveproxy lands in the 300-399 band, so we accept
+      # 200-499 to cover redirect + auth-prompt responses.
+      name                        = "Proxmox UI"
+      type                        = "http"
+      database_connection_string  = null
+      database_password_vault_key = null
+      hostname                    = null
+      port                        = null
+      url                         = "https://192.168.1.127:8006/"
+      accepted_statuscodes        = ["200-299", "300-399", "400-499"]
+      ignore_tls                  = true
+      interval                    = 300
+      retry_interval              = 60
+      max_retries                 = 2
     },
   ]
 }
@@ -661,6 +693,9 @@ resource "kubernetes_config_map_v1" "internal_monitor_targets" {
         database_connection_string = m.database_connection_string
         hostname                   = m.hostname
         port                       = m.port
+        url                        = m.url
+        accepted_statuscodes       = m.accepted_statuscodes
+        ignore_tls                 = m.ignore_tls
         password_env               = m.database_password_vault_key != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
         interval                   = m.interval
         retry_interval             = m.retry_interval
@@ -714,7 +749,8 @@ for t in targets:
     # MYSQL uses `databaseConnectionString` + `radiusPassword` (UK v2 re-uses
     # radiusPassword for mysql auth — backwards compat). Redis has auth
     # disabled on the cluster, so password_env is null. PORT monitors use
-    # hostname + port directly.
+    # hostname + port directly. HTTP monitors use url + accepted_statuscodes
+    # + ignoreTls (camelCase on the API; stored as `ignore_tls` in DB).
     desired = {
         "type": mtype,
         "name": name,
@@ -725,6 +761,10 @@ for t in targets:
     if mtype == MonitorType.PORT:
         desired["hostname"] = t["hostname"]
         desired["port"] = t["port"]
+    elif mtype == MonitorType.HTTP:
+        desired["url"] = t["url"]
+        desired["accepted_statuscodes"] = t["accepted_statuscodes"]
+        desired["ignoreTls"] = bool(t["ignore_tls"])
     else:
         desired["databaseConnectionString"] = t["database_connection_string"]
         if t.get("password_env"):
@@ -737,6 +777,8 @@ for t in targets:
     drift_fields = ["interval", "retryInterval", "maxretries"]
     if mtype == MonitorType.PORT:
         drift_fields += ["hostname", "port"]
+    elif mtype == MonitorType.HTTP:
+        drift_fields += ["url", "accepted_statuscodes", "ignoreTls"]
     else:
         drift_fields += ["databaseConnectionString"]
         if "radiusPassword" in desired:
