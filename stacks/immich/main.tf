@@ -145,7 +145,7 @@ resource "kubernetes_namespace" "immich" {
       # so this stack can own the tier-quota with a higher memory cap.
       "resource-governance/custom-quota" = "true"
       tier                               = local.tiers.gpu
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -225,7 +225,7 @@ resource "kubernetes_deployment" "immich_server" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 
@@ -256,6 +256,19 @@ resource "kubernetes_deployment" "immich_server" {
       }
 
       spec {
+        # Pinned to the GPU node for NVENC hardware video transcoding (Tesla T4,
+        # time-sliced). The immich-server image's ffmpeg ships h264/hevc_nvenc;
+        # activation is via system-config ffmpeg.accel=nvenc.
+        priority_class_name = "gpu-workload"
+        node_selector = {
+          "nvidia.com/gpu.present" : "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         container {
           name  = "immich-server"
           image = "ghcr.io/immich-app/immich-server:${var.immich_version}"
@@ -324,8 +337,8 @@ resource "kubernetes_deployment" "immich_server" {
               path = "/api/server/ping"
               port = "http"
             }
-            period_seconds    = 10
-            timeout_seconds   = 1
+            period_seconds  = 10
+            timeout_seconds = 1
             # Bumped 30 → 360 (5min → 1h): after a PG restart, immich-server
             # reindexes the clip_index + face_index vector tables before binding
             # the API port. Hundreds of thousands of rows take longer than 5min
@@ -371,7 +384,8 @@ resource "kubernetes_deployment" "immich_server" {
               memory = "8Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory           = "8Gi"
+              "nvidia.com/gpu" = "1"
             }
           }
         }
@@ -462,7 +476,7 @@ resource "kubernetes_deployment" "immich-postgres" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
     ]
   }
 
@@ -636,7 +650,7 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 

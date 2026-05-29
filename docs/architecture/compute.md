@@ -330,10 +330,14 @@ label with it, and `null_resource.gpu_node_config` re-applies the
 next apply (discovery keyed on
 `feature.node.kubernetes.io/pci-10de.present=true`).
 
-**GPU Workloads**:
-- Ollama (LLM inference)
-- ComfyUI (Stable Diffusion workflows)
-- Stable Diffusion WebUI
+**GPU Workloads** (time-sliced — node advertises `Tesla-T4-SHARED`,
+`sharing-strategy=time-slicing`, `nvidia.com/gpu.replicas=100`, so many pods
+share the single T4; request `nvidia.com/gpu: 1` for a slice, not the whole card):
+- immich-machine-learning (CLIP smart-search + facial recognition, CUDA)
+- immich-server (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`)
+- Frigate (object-detection inference)
+- llama-cpp / llama-swap (LLM inference)
+- nvidia-exporter + gpu-pod-exporter (DCGM metrics)
 
 ## Configuration
 
