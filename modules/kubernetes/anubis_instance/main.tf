@@ -60,7 +60,7 @@ variable "replicas" {
   description = "Optional replica count override. When null, defaults to 1 if shared_store_url is null and 2 otherwise. Capped at 2 — Redis can handle more but anti-affinity assumes ≤2 replicas per Anubis instance on a 5-node cluster."
 
   validation {
-    condition     = var.replicas == null || (var.replicas >= 1 && var.replicas <= 2)
+    condition     = var.replicas == null ? true : (var.replicas >= 1 && var.replicas <= 2)
     error_message = "replicas must be 1 or 2 (or null to auto-pick from shared_store_url presence)."
   }
 }
