@@ -1,8 +1,3 @@
-variable "tls_secret_name" {
-  type      = string
-  sensitive = true
-}
-
 resource "kubernetes_namespace" "tuya-bridge" {
   metadata {
     name = "tuya-bridge"
@@ -77,9 +72,13 @@ resource "kubernetes_deployment" "tuya-bridge" {
         }
       }
       spec {
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
         container {
-          image = "viktorbarzin/tuya_bridge:latest"
-          name  = "tuya-bridge"
+          image             = "forgejo.viktorbarzin.me/viktor/tuya_bridge:${var.image_tag}"
+          image_pull_policy = "IfNotPresent"
+          name              = "tuya-bridge"
           port {
             container_port = 8080
           }
