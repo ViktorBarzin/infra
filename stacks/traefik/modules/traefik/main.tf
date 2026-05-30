@@ -165,11 +165,14 @@ resource "helm_release" "traefik" {
     service = {
       type = "LoadBalancer"
       annotations = {
-        "metallb.io/loadBalancerIPs" = "10.0.20.200"
-        "metallb.io/allow-shared-ip" = "shared"
+        # Dedicated IP + ETP=Local so direct-app clients keep their real source
+        # IP (CrowdSec) and QUIC handshakes pin to one pod. Proxied apps are
+        # unaffected — cloudflared targets the in-cluster Traefik Service
+        # (traefik.traefik.svc), not this LB IP, so the LB IP can move freely.
+        "metallb.io/loadBalancerIPs" = "10.0.20.203"
       }
       spec = {
-        externalTrafficPolicy = "Cluster"
+        externalTrafficPolicy = "Local"
       }
     }
 
