@@ -254,11 +254,11 @@ Additional middleware:
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. Most LoadBalancer services share **10.0.20.200** using the `metallb.io/allow-shared-ip: shared` annotation. Technitium DNS has a **dedicated IP (10.0.20.201)** with `externalTrafficPolicy: Local` to preserve client source IPs for query logging.
+MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. Most LoadBalancer services share **10.0.20.200** using the `metallb.io/allow-shared-ip: shared` annotation. Two services have **dedicated IPs** with `externalTrafficPolicy: Local` to preserve real client source IPs: **Traefik (10.0.20.203)** — so CrowdSec sees real public IPs on the direct-ingress path and QUIC/HTTP3 works (a shared IP forbids the mixed ETP that QUIC's UDP listener needs) — and **Technitium DNS (10.0.20.201)** for query logging.
 
 | Service | Namespace | IP | Ports |
 |---------|-----------|-----|-------|
-| traefik | traefik | 10.0.20.200 (shared) | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
+| traefik | traefik | **10.0.20.203 (dedicated, ETP=Local)** | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
 | coturn | coturn | 10.0.20.200 (shared) | 3478/UDP (STUN/TURN), 49152-49252/UDP (relay) |
 | headscale | headscale | 10.0.20.200 (shared) | 41641/UDP, 3479/UDP |
 | windows-kms¹ | kms | 10.0.20.200 (shared) | 1688/TCP |
@@ -270,7 +270,7 @@ MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 
 | xray-reality | xray | 10.0.20.200 (shared) | 7443/TCP |
 | **technitium-dns** | **technitium** | **10.0.20.201 (dedicated)** | **53/UDP+TCP** |
 
-pfSense aliases reference these IPs: `k8s_shared_lb` (10.0.20.200), `technitium_dns` (10.0.20.201). NAT rules use aliases for maintainability.
+pfSense aliases reference these IPs: `k8s_shared_lb` (10.0.20.200), `traefik_lb` (10.0.20.203), `technitium_dns` (10.0.20.201). NAT rules use aliases for maintainability — the WAN 443 (TCP+UDP) forward targets `traefik_lb`.
 
 ¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_shared_lb:1688` so any internet host can activate. The matching filter rule applies a per-source rate limit (`max-src-conn 50`, `max-src-conn-rate 10/60`) with `overload <virusprot>` flush — offenders are auto-added to pfSense's stock `virusprot` pf table for follow-on blocks. Operations (rate-limit tuning, log locations, revocation) are documented in `docs/runbooks/kms-public-exposure.md`.
 
@@ -282,6 +282,28 @@ Critical services are scaled to **3 replicas**:
 - Cloudflared
 
 PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance or disruptions.
+
+### IPv6 Ingress (HE Tunnel + HAProxy Bridge)
+
+Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). The apex `viktorbarzin.me AAAA` → `2001:470:6e:43d::2`.
+
+pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy** on pfSense (a separate config/service — *not* the pfSense HAProxy package) that listens on the tunnel IPv6 and forwards to the IPv4 cluster LBs with **PROXY protocol v2 (`send-proxy-v2`)**, so real client IPv6 addresses propagate to CrowdSec instead of being masked as `10.0.20.1`:
+
+| Listen `[2001:470:6e:43d::2]:` | → Backend (`send-proxy-v2`) | Purpose |
+|---|---|---|
+| 443, 80 | Traefik `10.0.20.203:443` / `:80` | Web apps |
+| 25, 465, 587, 993 | mail NodePorts `30125` / `30126` / `30127` / `30128` on .101-103 | SMTP / SMTPS / Submission / IMAPS |
+
+The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`entryPoints.web/websecure.proxyProtocol.trustedIPs` in `stacks/traefik/.../main.tf`) — real IPv4 clients arrive via ETP=Local with their own source IP (never `10.0.20.1`), so they are unaffected. Mail backends hit the mailserver's PROXY-aware alt-listeners (same pattern as the IPv4 mail HAProxy — see `mailserver.md`).
+
+**No QUIC over IPv6** — the bridge is TCP/h2 only; IPv4 carries QUIC/HTTP3.
+
+pfSense files (out-of-band, **not Terraform**):
+- `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
+- `/usr/local/etc/rc.d/ipv6proxy` — service wrapper (`service ipv6proxy {start,stop,status}`); `start` does a graceful `-sf` reload.
+- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): patches pfSense nginx off `[::]:443/:80` (rebinds to LAN IPv6) to free the tunnel IPv6, then `service ipv6proxy onestart`.
+
+**Gotcha:** the backends use **no health `check`** — a plain TCP check hits the PROXY-expecting listeners without a PROXY header and would false-mark them DOWN. This path previously used `socat` (functional, but masked every IPv6 client as `10.0.20.1`); replaced by HAProxy on 2026-05-30 for real client IPs.
 
 ### Container Registry Pull-Through Cache
 

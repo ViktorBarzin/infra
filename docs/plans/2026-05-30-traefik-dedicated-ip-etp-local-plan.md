@@ -197,3 +197,34 @@ node `10.0.20.103`); PG state DB OK; TF state reconciled (`tg apply` exit 0).
   (`2001:470:6e:43d::2`, separate HE-tunnel path, unchanged) and fails before
   reaching Traefik. Confirm QUIC from a real device (Chrome → Protocol `h3`).
 - pfSense `nginx` alias (=`.200`) is now unused; `traefik_lb` (=`.203`) is live.
+
+## IPv6 follow-up — 2026-05-30 — DONE (HAProxy bridge, real client IPs)
+
+The ETP=Local cutover fixed real client IPs + QUIC on the **IPv4** direct path
+only. The **IPv6** path (HE 6in4 tunnel `2001:470:6e:43d::2` → pfSense) still ran
+`socat`, which (a) masked every IPv6 client as `10.0.20.1`, and (b) broke
+outright once Traefik's `proxyProtocol.trustedIPs` started requiring PROXY-v2
+from `10.0.20.1`. Replaced socat with a **standalone HAProxy bridge** on pfSense
+using `send-proxy-v2` so real IPv6 client IPs reach Traefik/CrowdSec.
+
+Executed:
+1. **Traefik** (TF, `stacks/traefik/.../main.tf`): added
+   `proxyProtocol = { trustedIPs = ["10.0.20.1"] }` to the `web` + `websecure`
+   entrypoints. Bounded risk — only connections *from* `10.0.20.1` (the bridge)
+   are PROXY-parsed; real IPv4 clients (ETP=Local, own source IP) are untouched.
+   Applied; IPv4 + proxied verified 200 immediately after.
+2. **pfSense HAProxy** (`/usr/local/etc/ipv6-haproxy.cfg`): 6 frontends on
+   `[::2]:{443,80,25,465,587,993}` → Traefik `.203:{443,80}` and mail NodePorts
+   `{30125,30126,30127,30128}` (.101-103), all `send-proxy-v2`, **no `check`**
+   (a plain check would false-DOWN the PROXY-expecting listeners).
+3. **Persistence**: rewrote `rc.d/ipv6proxy` → manages HAProxy
+   (`service ipv6proxy {start,stop,status}`, graceful `-sf`); rewrote
+   `ipv6_proxy.sh` (config.xml `<shellcmd>` boot entrypoint) to keep the
+   nginx-off-`[::]` patch then `service ipv6proxy onestart`. socat backups kept
+   as `*.socat-bak-*`.
+
+**Verified:** web over `::2` = 200; Traefik logs show real public IPv6 clients
+(e.g. `2620:10d:c092:500::6:1eda`), **zero** `10.0.20.1` artifacts; mail-over-IPv6
+`220` banners on `::2:25/587` + IMAPS connect on `::2:993`; IPv4 direct/proxied
++ QUIC (`alt-svc: h3=":443"`) unaffected. **No QUIC over IPv6** (bridge is TCP/h2).
+Authoritative as-built: `docs/architecture/networking.md` → "IPv6 Ingress".
