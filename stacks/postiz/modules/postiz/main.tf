@@ -22,7 +22,6 @@ resource "kubernetes_namespace" "postiz" {
     name = var.namespace
     labels = {
       tier = var.tier
-      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -117,138 +116,12 @@ resource "kubernetes_manifest" "external_secret_jwt" {
   depends_on = [kubernetes_namespace.postiz]
 }
 
-resource "helm_release" "postiz" {
-  namespace        = kubernetes_namespace.postiz.metadata[0].name
-  name             = "postiz"
-  create_namespace = false
-  atomic           = true
-  timeout          = 600
-
-  repository = "oci://ghcr.io/gitroomhq/postiz-helmchart/charts"
-  chart      = "postiz-app"
-  version    = var.chart_version
-
-  values = [yamlencode({
-    fullnameOverride = "postiz"
-
-    image = {
-      repository = "ghcr.io/gitroomhq/postiz-app"
-      tag        = var.image_tag
-      pullPolicy = "IfNotPresent"
-    }
-
-    service = {
-      type = "ClusterIP"
-      port = 80 # chart maps Service port 80 -> targetPort http (containerPort 5000)
-    }
-
-    # Non-secret env. Note: BACKEND_INTERNAL_URL stays in-pod (Postiz convention).
-    env = {
-      MAIN_URL                     = "https://postiz.viktorbarzin.me"
-      FRONTEND_URL                 = "https://postiz.viktorbarzin.me"
-      NEXT_PUBLIC_BACKEND_URL      = "https://postiz.viktorbarzin.me/api"
-      BACKEND_INTERNAL_URL         = "http://localhost:3000"
-      STORAGE_PROVIDER             = "local"
-      UPLOAD_DIRECTORY             = "/uploads"
-      NEXT_PUBLIC_UPLOAD_DIRECTORY = "/uploads"
-      # Disabled — admin user already created; sign-in only.
-      DISABLE_REGISTRATION = "true"
-      IS_GENERAL           = "true"
-      NX_ADD_PLUGINS       = "false"
-      # Postiz uses Temporal for cron/scheduling — bring our own; Helm chart doesn't.
-      TEMPORAL_ADDRESS = "temporal:7233"
-      # Live audit (2026-05-21): only `instagram-standalone` is connected
-      # in the Integration table. Disable polling/workers for every other
-      # provider to stop unused queues idle-polling Temporal. Keep facebook
-      # + instagram providers loaded since their ESO secrets are still
-      # populated. Re-enable by removing this env entirely. NOTE: temporal
-      # deployment must have keel.sh/policy=never first (see memory id
-      # 2315-2319 for the Keel force-policy trap that fires here otherwise).
-      DISABLED_PROVIDERS = "x,linkedin,reddit,threads,youtube,tiktok,pinterest,dribbble,slack,discord,mastodon,bluesky,lemmy,warpcast,vk,beehiiv,telegram,wordpress,nostr,farcaster"
-    }
-
-    # Postiz reads DATABASE_URL/REDIS_URL from this Secret. The chart does
-    # NOT auto-wire bundled subcharts — we have to point at the in-namespace
-    # PG/Redis Services. ESO patches JWT_SECRET + FACEBOOK_APP_* on top via
-    # creationPolicy=Merge from secret/instagram-poster.
-    # Subchart auth uses the chart defaults (postiz / postiz-password,
-    # postiz-redis-password) — both Services are ClusterIP, only routable
-    # from inside the postiz namespace, so the well-known creds are safe.
-    secrets = {
-      DATABASE_URL = "postgresql://postiz:postiz-password@postiz-postgresql:5432/postiz"
-      REDIS_URL    = "redis://default:postiz-redis-password@postiz-redis-master:6379"
-      JWT_SECRET   = ""
-      # IG-via-Facebook OAuth (Postiz Instagram-Business integration). Empty
-      # placeholder; ESO patches the real values from Vault below.
-      FACEBOOK_APP_ID     = ""
-      FACEBOOK_APP_SECRET = ""
-      # IG standalone (Postiz Instagram-Login integration). Uses the modern
-      # `instagram_business_*` scopes — does not require the FB Login dance.
-      INSTAGRAM_APP_ID     = ""
-      INSTAGRAM_APP_SECRET = ""
-    }
-
-    # Use our PVC for uploads (overrides the chart's emptyDir default).
-    extraVolumes = [{
-      name = "uploads-volume"
-      persistentVolumeClaim = {
-        claimName = kubernetes_persistent_volume_claim.uploads.metadata[0].name
-      }
-    }]
-    extraVolumeMounts = [{
-      name      = "uploads-volume"
-      mountPath = "/uploads"
-    }]
-
-    # Postiz runs frontend (Next 16) + backend (NestJS) + orchestrator
-    # (Temporal worker with webpack bundling) in one pod. The orchestrator
-    # alone bundles ~3MB JS per task queue, and on cold start it bundles
-    # several queues — pushed peak RSS past 2Gi → OOMKill mid-NestJS init.
-    resources = {
-      requests = {
-        cpu    = "100m"
-        memory = "2Gi"
-      }
-      limits = {
-        memory = "3Gi"
-      }
-    }
-
-    # Bundled stateful deps — fine for v1, reconsider promotion to CNPG later.
-    # Subchart passwords intentionally left to chart defaults; the bundled
-    # PG/Redis Services are ClusterIP and only routable from the postiz
-    # namespace, so the credentials never leave the pod network. Promotion to
-    # CNPG with Vault-rotated creds is the next step.
-    # Bitnami removed bitnami/postgresql + bitnami/redis from DockerHub
-    # (Broadcom acquisition, Aug 2025). Older tags moved to bitnamilegacy/*.
-    postgresql = {
-      enabled = true
-      image = {
-        registry   = "docker.io"
-        repository = "bitnamilegacy/postgresql"
-        tag        = "16.4.0-debian-12-r7"
-      }
-      auth = {
-        username = "postiz"
-        database = "postiz"
-      }
-    }
-
-    redis = {
-      enabled = true
-      image = {
-        registry   = "docker.io"
-        repository = "bitnamilegacy/redis"
-        tag        = "7.4.0-debian-12-r2"
-      }
-    }
-  })]
-
-  depends_on = [
-    kubernetes_persistent_volume_claim.uploads,
-    kubernetes_manifest.external_secret_jwt,
-  ]
-}
+# helm_release.postiz is intentionally NOT managed by Terraform (2026-05-30).
+# The release is stuck in pending-install; importing it would force a helm
+# upgrade. Left Helm-managed outside TF. The bundled PG/Redis + the postiz
+# Deployment/Service it creates therefore aren't TF resources either — only
+# the wrapper resources (namespace, PVC, ESO, ingresses, temporal Service,
+# nfs backup, backup CronJob) are TF-managed.
 
 # Two ingresses on the same host. /uploads/* must be reachable WITHOUT auth
 # so Meta's IG Graph API fetcher can pull the JPEG when Postiz hands it the
@@ -256,13 +129,13 @@ resource "helm_release" "postiz" {
 # and rejects with error code 36001 (Postiz mistranslates this as "Invalid
 # Instagram image resolution"). Everything else stays behind Authentik.
 module "ingress_uploads_public" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.postiz.metadata[0].name
-  name            = "postiz-uploads"
-  host            = var.host
-  service_name    = "postiz"
-  port            = 80
+  source       = "../../../../modules/kubernetes/ingress_factory"
+  dns_type     = "proxied"
+  namespace    = kubernetes_namespace.postiz.metadata[0].name
+  name         = "postiz-uploads"
+  host         = var.host
+  service_name = "postiz"
+  port         = 80
   # auth = "none": Meta's IG Graph API fetcher needs unprotected /uploads/* to pull JPEGs (forward-auth 302 causes error 36001).
   auth            = "none"
   ingress_path    = ["/uploads"]
@@ -291,148 +164,13 @@ module "ingress" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Temporal — cron/workflow engine Postiz requires for scheduled posts.
-#
-# Lightweight single-replica deployment using temporalio/auto-setup, backed
-# by the bundled postiz-postgresql (separate `temporal` database). Visibility
-# search via Elasticsearch is disabled (ENABLE_ES=false) — Postiz only uses
-# the workflow engine, not visibility, so SQL is enough.
-#
-# Important: temporalio/auto-setup creates schemas in the `temporal` and
-# `temporal_visibility` databases on first boot. We pre-create them with an
-# init container running psql against postiz-postgresql.
+# Temporal — Postiz's scheduled-post backend. The Deployment is intentionally
+# NOT managed here: it was removed from the cluster and postiz currently runs
+# without it (immediate posting works; scheduled posting does not). Only the
+# Service below is retained/adopted so the in-cluster `temporal:7233` name
+# still resolves. To restore scheduled posting, re-add a temporalio/auto-setup
+# Deployment (see git history: removed 2026-05-30 during postiz state adoption).
 # ──────────────────────────────────────────────────────────────────────────────
-
-resource "kubernetes_deployment" "temporal" {
-  metadata {
-    name      = "temporal"
-    namespace = kubernetes_namespace.postiz.metadata[0].name
-    labels = {
-      app = "temporal"
-    }
-  }
-  spec {
-    replicas = 1
-    strategy {
-      type = "Recreate"
-    }
-    selector {
-      match_labels = { app = "temporal" }
-    }
-    template {
-      metadata {
-        labels = { app = "temporal" }
-      }
-      spec {
-        # Pre-create the two databases Temporal expects on the bundled PG.
-        init_container {
-          name  = "create-temporal-dbs"
-          image = "docker.io/bitnamilegacy/postgresql:16.4.0-debian-12-r7"
-          env {
-            name  = "PGPASSWORD"
-            value = "postiz-password"
-          }
-          command = ["/bin/bash", "-c"]
-          args = [
-            <<-EOT
-            set -e
-            for db in temporal temporal_visibility; do
-              psql -h postiz-postgresql -U postiz -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
-                || psql -h postiz-postgresql -U postiz -d postgres -c "CREATE DATABASE \"$db\""
-            done
-            EOT
-          ]
-        }
-        container {
-          name  = "temporal"
-          image = "temporalio/auto-setup:1.28.1"
-          port {
-            container_port = 7233
-            name           = "grpc"
-          }
-          env {
-            name  = "DB"
-            value = "postgres12"
-          }
-          env {
-            name  = "DB_PORT"
-            value = "5432"
-          }
-          env {
-            name  = "POSTGRES_USER"
-            value = "postiz"
-          }
-          env {
-            name  = "POSTGRES_PWD"
-            value = "postiz-password"
-          }
-          env {
-            name  = "POSTGRES_SEEDS"
-            value = "postiz-postgresql"
-          }
-          env {
-            name  = "DBNAME"
-            value = "temporal"
-          }
-          env {
-            name  = "VISIBILITY_DBNAME"
-            value = "temporal_visibility"
-          }
-          env {
-            name  = "ENABLE_ES"
-            value = "false"
-          }
-          env {
-            name  = "TEMPORAL_NAMESPACE"
-            value = "default"
-          }
-          # NOTE: not setting DYNAMIC_CONFIG_FILE_PATH — that file isn't
-          # bundled in temporalio/auto-setup. Defaults are fine for our
-          # use (Postiz only needs the workflow engine, not dynamic config).
-          resources {
-            requests = {
-              cpu    = "50m"
-              memory = "256Mi"
-            }
-            limits = {
-              memory = "1Gi"
-            }
-          }
-          # Auto-setup runs schema migrations on first boot — give it time.
-          startup_probe {
-            tcp_socket {
-              port = 7233
-            }
-            failure_threshold     = 30
-            period_seconds        = 5
-            initial_delay_seconds = 10
-          }
-          liveness_probe {
-            tcp_socket {
-              port = 7233
-            }
-            period_seconds = 30
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].init_container[0].image,
-      metadata[0].annotations["kubernetes.io/change-cause"],
-      metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-    ]
-  }
-  depends_on = [helm_release.postiz]
-}
 
 resource "kubernetes_service" "temporal" {
   metadata {
@@ -449,13 +187,6 @@ resource "kubernetes_service" "temporal" {
   }
 }
 
-# One-shot Job: remove the two default Text-typed search attributes
-# (CustomTextField, CustomStringField) that temporalio/auto-setup ships
-# with. Postiz needs to register `organizationId` + `postId`, and SQL
-# visibility caps at 3 Text attributes total — without this, Postiz's
-# NestJS bootstrap crashes with "cannot have more than 3 search attribute
-# of type Text" and the backend never starts.
-# Upstream issue: https://github.com/gitroomhq/postiz-app/issues/1504
 # ──────────────────────────────────────────────────────────────────────────────
 # Backup CronJob — nightly pg_dump of the bundled postiz-postgresql to NFS.
 #
@@ -515,7 +246,7 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
                 TIMESTAMP=$(date +%Y%m%d_%H%M)
                 BACKUP_DIR=/backup
                 STATUS=0
-                for db in postiz temporal temporal_visibility; do
+                for db in postiz; do
                   echo "Dumping $db..."
                   if PGPASSWORD=postiz-password pg_dump -h postiz-postgresql -U postiz \
                        --format=custom --compress=6 \
@@ -560,52 +291,4 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
   lifecycle {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
-  depends_on = [helm_release.postiz]
-}
-
-resource "kubernetes_job" "temporal_search_attr_cleanup" {
-  metadata {
-    name      = "temporal-search-attr-cleanup"
-    namespace = kubernetes_namespace.postiz.metadata[0].name
-  }
-  spec {
-    backoff_limit              = 30
-    ttl_seconds_after_finished = 300
-    template {
-      metadata {}
-      spec {
-        restart_policy = "OnFailure"
-        container {
-          name    = "cleanup"
-          image   = "temporalio/auto-setup:1.28.1"
-          command = ["/bin/sh", "-c"]
-          args = [
-            <<-EOT
-            set -e
-            # Wait for Temporal to be reachable (auto-setup may take 30s).
-            for i in $(seq 1 60); do
-              if temporal --address temporal:7233 operator search-attribute list >/dev/null 2>&1; then break; fi
-              sleep 5
-            done
-            for attr in CustomTextField CustomStringField; do
-              if temporal --address temporal:7233 operator search-attribute list 2>/dev/null | grep -q "$attr"; then
-                temporal --address temporal:7233 operator search-attribute remove --name "$attr" --yes
-              fi
-            done
-            EOT
-          ]
-        }
-      }
-    }
-  }
-  wait_for_completion = false
-  lifecycle {
-    ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-    ]
-  }
-  depends_on = [kubernetes_deployment.temporal]
 }
