@@ -130,6 +130,9 @@ resource "helm_release" "traefik" {
             }
           }
         }
+        proxyProtocol = {
+          trustedIPs = ["10.0.20.1"]
+        }
       }
       websecure = {
         port        = 8443
@@ -146,6 +149,13 @@ resource "helm_release" "traefik" {
         http3 = {
           enabled        = true
           advertisedPort = 443
+        }
+        # Accept PROXY-v2 ONLY from the pfSense HAProxy IPv6 bridge (10.0.20.1)
+        # so IPv6 clients (forwarded [2001:470:6e:43d::2] -> here) get their real
+        # IP for CrowdSec. Real IPv4 clients arrive with their own source IP
+        # (ETP=Local, not 10.0.20.1) and are unaffected.
+        proxyProtocol = {
+          trustedIPs = ["10.0.20.1"]
         }
       }
       whisper-tcp = {
