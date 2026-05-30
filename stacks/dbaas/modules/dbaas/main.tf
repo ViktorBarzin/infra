@@ -1284,6 +1284,33 @@ resource "null_resource" "pg_job_hunter_db" {
   }
 }
 
+# Create tripit database for the TripIt travel app (FastAPI + SvelteKit SPA).
+# Role password is managed by Vault Database Secrets Engine (static role
+# `pg-tripit`, 7d rotation). Tables live in schema `tripit` (alembic creates
+# them on the app's first migrate).
+resource "null_resource" "pg_tripit_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "tripit"
+    username = "tripit"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tripit'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE tripit WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'tripit'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE tripit OWNER tripit"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE tripit TO tripit"
+        '
+    EOT
+  }
+}
+
 # Postiz: 3 databases (postiz, temporal, temporal_visibility) all owned by the
 # `postiz` role. Bundled bitnami PostgreSQL was retired 2026-05-09 in favour of
 # this CNPG cluster — covered by postgresql-backup-per-db automatically.
