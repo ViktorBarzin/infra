@@ -124,7 +124,8 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - **CrowdSec bouncer**: graceful degradation mode (fail-open on error).
 - **Rate limiting**: Return 429 (not 503). Per-service tuning: Immich/Nextcloud need higher limits.
 - **Retry middleware**: 2 attempts, 100ms — in default ingress chain.
-- **HTTP/3 (QUIC)**: Enabled cluster-wide via Traefik.
+- **HTTP/3 (QUIC)**: Enabled on Traefik. Works for **direct (non-proxied) apps** via the dedicated LB IP below (ETP=Local). Proxied apps get QUIC at the Cloudflare edge.
+- **Traefik LB IP = `10.0.20.203`, `externalTrafficPolicy: Local`** (dedicated, NOT the shared `.200`). Moved off the shared `.200` on 2026-05-30 so direct/non-proxied apps preserve the **real client IP for CrowdSec** (ETP=Cluster SNAT'd them to the node IP) and so QUIC works. **The shared `10.0.20.200` keeps the other 10 LB services** (PG state-backend `postgresql-lb`, headscale, wireguard, coturn, xray, etc. — all ETP=Cluster; MetalLB forbids mixed ETP on a shared IP, hence Traefik's own IP). **cloudflared targets the in-cluster Traefik Service** (`https://traefik.traefik.svc.cluster.local:443`, remote/dashboard tunnel config — edit via CF Global API Key in `secret/platform`), so proxied apps are decoupled from the LB IP. pfSense WAN 443 (tcp+udp) NAT → alias `traefik_lb` (`.203`). Internal split-horizon apex `viktorbarzin.me A` → `.203`. Full runbook + post-mortem: `docs/plans/2026-05-30-traefik-dedicated-ip-etp-local-*`.
 - **IPAM & DNS auto-registration**: pfSense Kea DHCP serves all 3 subnets (VLAN 10, VLAN 20, 192.168.1.x). Kea DDNS auto-registers every DHCP client in Technitium (RFC 2136, A+PTR). CronJob `phpipam-pfsense-import` (hourly) pulls Kea leases + ARP into phpIPAM via SSH (passive, no scanning). CronJob `phpipam-dns-sync` (15min) bidirectional sync phpIPAM ↔ Technitium. 42 MAC reservations for 192.168.1.x.
 
 ## Service-Specific Notes

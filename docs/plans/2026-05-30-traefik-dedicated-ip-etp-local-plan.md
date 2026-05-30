@@ -161,3 +161,39 @@ before retrying:
 
 **Left in place for retry:** pfSense alias `traefik_lb` (=`10.0.20.203`, NAT
 reverted to `nginx`); pfSense `config.xml` backups `config.xml.bak-traefik-*`.
+
+## Attempt 2 — 2026-05-30 — SUCCESS
+
+Live and verified, **no proxied/Vault outage** this time. Key change vs attempt 1:
+**decouple cloudflared from the LB IP FIRST**, so moving Traefik no longer
+touches the proxied path or Vault's ingress.
+
+Executed order (all lessons applied — `tg` always run to a file, creds
+pre-fetched while Vault up):
+1. **Cloudflare tunnel ingress repointed** `https://10.0.20.200:443` →
+   `https://traefik.traefik.svc.cluster.local:443` (both `*.viktorbarzin.me`
+   and apex rules; `noTLSVerify` kept; catch-all 404 kept). Done via the
+   **Cloudflare Global API Key** (`secret/platform` → `cloudflare_api_key`,
+   email `vbarzin@gmail.com`, `X-Auth-Email`+`X-Auth-Key` headers — NOT the
+   tunnel token, which is not an API credential). Tunnel: account
+   `02e035473cfc4834fb10c5d35470d8b4`, id `75182cd7-bb91-4310-b961-5d8967da8b41`.
+   → proxied apps now IP-independent.
+2. Traefik Service → `10.0.20.203` + `ETP=Local` (single service; `tg apply`).
+   Proxied apps + Vault stayed up (cloudflared → ClusterIP).
+3. Technitium apex `viktorbarzin.me A` → `10.0.20.203` (ttl 60).
+4. pfSense 443 (tcp+udp) NAT `nginx` → `traefik_lb` (`.203`); `/etc/rc.filter_configure`.
+
+**Verified:** proxied 307/200 throughout; direct apps 200; **real external
+client IPs now reach Traefik/CrowdSec** (`216.73.217.51`, `54.x`, `52.x` — not
+node `10.0.20.103`); PG state DB OK; TF state reconciled (`tg apply` exit 0).
+
+**Notes / follow-ups:**
+- **Out-of-band (not in TF):** the cloudflared tunnel ingress (remote/dashboard
+  config) and the pfSense `traefik_lb` alias + NAT. Codify the tunnel config in
+  TF (`cloudflare_zero_trust_tunnel_cloudflared_config`) so `→ClusterIP` is
+  declarative — pre-existing gap (tunnel was already remote-managed).
+- **QUIC:** infra correct (ETP=Local + UDP 443 → `.203` + Traefik h3 listener).
+  `http3check.net` is unreliable here — it hits the IPv6 AAAA
+  (`2001:470:6e:43d::2`, separate HE-tunnel path, unchanged) and fails before
+  reaching Traefik. Confirm QUIC from a real device (Chrome → Protocol `h3`).
+- pfSense `nginx` alias (=`.200`) is now unused; `traefik_lb` (=`.203`) is live.
