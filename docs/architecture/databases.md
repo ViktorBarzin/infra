@@ -90,6 +90,7 @@ graph TB
 - affine
 - woodpecker
 - claude-memory-mcp
+- tripit
 - 5 active PG roles
 
 ### MySQL InnoDB Cluster
@@ -168,6 +169,7 @@ Single shared cluster for all 17 consumers (Immich, Authentik, Nextcloud, Paperl
 - affine
 - woodpecker
 - claude_memory
+- tripit (Vault static role `pg-tripit`)
 
 **MySQL Rotation**:
 - speedtest
