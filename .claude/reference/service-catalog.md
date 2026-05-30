@@ -123,7 +123,7 @@
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox, phpipam
+travel, netbox, phpipam, tripit
 ```
 
 ### Non-Proxied (Direct DNS)
@@ -134,8 +134,7 @@ owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine, health, family, openclaw,
-tripit
+jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
 ```
 
 ### Special Subdomains
