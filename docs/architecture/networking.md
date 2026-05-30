@@ -252,6 +252,18 @@ Additional middleware:
 - **Anti-AI**: On by default via `ingress_factory`. Blocks common AI crawler user-agents.
 - **HTTP/3 (QUIC)**: Enabled globally on Traefik.
 
+### Entrypoint Transport Timeouts
+
+The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/traefik/main.tf`:
+
+| Timeout | Value | Bounds |
+|---|---|---|
+| `readTimeout` | `3600s` | Total time to read one request incl. body → **max upload duration** |
+| `writeTimeout` | `0s` (disabled) | Total time to write the response → **max download duration (0 = unlimited)** |
+| `idleTimeout` | `600s` | Keep-alive idle between requests (does *not* apply to active transfers) |
+
+**Gotcha — these are HARD caps on total duration, not idle timeouts** (unlike nginx `proxy_*_timeout`, which reset on every read). A finite `writeTimeout` truncates *any* download that runs longer than it, regardless of progress. A prior `writeTimeout=60s` silently cut large Immich video downloads at the 60s mark (HTTP/2 stream reset). `writeTimeout=0` (Traefik's default) is required for unlimited-size downloads — Immich's own Traefik reverse-proxy guidance assumes it and never sets `writeTimeout`. `readTimeout` is kept finite (not 0) because an unbounded request read is the slow-loris vector; 3600s passes multi-GB uploads while keeping a backstop (Immich has no resumable upload, so the window must exceed real upload times). Single-asset downloads (`GET /api/assets/{id}/original`) serve `206 Partial Content`, so they are also resumable on a dropped connection; on-the-fly ZIP "download all" is not (no stable byte offsets).
+
 ### MetalLB & Load Balancing
 
 MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. Most LoadBalancer services share **10.0.20.200** using the `metallb.io/allow-shared-ip: shared` annotation. Two services have **dedicated IPs** with `externalTrafficPolicy: Local` to preserve real client source IPs: **Traefik (10.0.20.203)** — so CrowdSec sees real public IPs on the direct-ingress path and QUIC/HTTP3 works (a shared IP forbids the mixed ETP that QUIC's UDP listener needs) — and **Technitium DNS (10.0.20.201)** for query logging.
@@ -297,6 +309,8 @@ pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy*
 The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`entryPoints.web/websecure.proxyProtocol.trustedIPs` in `stacks/traefik/.../main.tf`) — real IPv4 clients arrive via ETP=Local with their own source IP (never `10.0.20.1`), so they are unaffected. Mail backends hit the mailserver's PROXY-aware alt-listeners (same pattern as the IPv4 mail HAProxy — see `mailserver.md`).
 
 **No QUIC over IPv6** — the bridge is TCP/h2 only; IPv4 carries QUIC/HTTP3.
+
+The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are **inactivity** timeouts (reset on every byte), *not* total-transfer caps — so steady large downloads/uploads over IPv6 are not limited by the bridge. The download-duration cap was solely Traefik's `writeTimeout` (see Entrypoint Transport Timeouts above), now `0`.
 
 pfSense files (out-of-band, **not Terraform**):
 - `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
@@ -498,6 +512,14 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 **Diagnosis**: Check Traefik middleware config for the affected IngressRoute.
 
 **Fix**: Increase rate limit in `ingress_factory` module. Default is 100 req/min per IP. Immich and Nextcloud use 500 req/min.
+
+### Large Downloads or Uploads Truncate / Fail Partway
+
+**Symptoms**: Large file transfers (e.g. Immich videos, Nextcloud sync) fail at a consistent wall-clock point regardless of file — a download stops at exactly N seconds × throughput bytes; an upload fails ~1 min in. Browser shows "network error"; `curl` exits 18/92 (truncated / HTTP/2 stream reset).
+
+**Diagnosis**: Check the `websecure` entrypoint `respondingTimeouts` (see Entrypoint Transport Timeouts). These are **hard total-duration caps**, not idle timeouts — a finite `writeTimeout` cuts downloads, a finite `readTimeout` cuts uploads, both regardless of progress. Reproduce deterministically: `curl --limit-rate 6M` a file large enough to exceed the cap; it dies at the cap.
+
+**Fix**: `writeTimeout=0` (unlimited downloads), `readTimeout` ≥ longest expected upload (currently `3600s`). Not Cloudflare (Immich is non-proxied) and not the pfSense IPv6 bridge (its 1h timeouts are inactivity-based).
 
 ## Related
 
