@@ -122,3 +122,42 @@ Traefik pod labels). Both `.200` (old) and `.203` (new) serve Traefik. Cut
 DNS+pfSense to `.203`, verify, then convert the Helm Service to ClusterIP
 (drops `.200`). More config to carry long-term (a hand-maintained Service
 duplicating Helm) — weigh against the brief in-place window.
+
+## Attempt 1 — 2026-05-30 — ROLLED BACK (post-mortem)
+
+First execution was rolled back to the `.200` baseline; all service restored,
+TF state reconciled (`No changes`). The cutover **achieved its primary goal
+mid-flight** (real external client IPs reached CrowdSec — confirmed real IPs
+like `34.107.119.124` in Traefik logs instead of node `10.0.20.103`), but a
+**missed dependency took proxied apps down**, forcing rollback. Fix the plan
+before retrying:
+
+1. **BLOCKER — cloudflared targets the LB IP.** The `cloudflared` tunnel is
+   **token-based / Cloudflare-dashboard-managed** (`args: [tunnel]` +
+   `TUNNEL_TOKEN`; no local `config.yaml`). Its ingress sends `*.viktorbarzin.me`
+   to the **Traefik LB IP `10.0.20.200`**. Moving Traefik to `.203` left
+   cloudflared pointing at a dead IP → **every proxied app (vault, home, …)
+   went down**. **The retry MUST also repoint the tunnel ingress `.200 → .203`
+   in Cloudflare (API/dashboard)** as part of the same cutover — ideally point
+   cloudflared at the Traefik *ClusterIP/service* so it's IP-independent.
+2. **Vault-ingress circular dependency.** Fetching the Technitium password from
+   Vault *during* the window failed (Vault's ingress was down). Fix used:
+   pre-fetch all creds before touching Traefik (worked). The DNS step then
+   restored Vault.
+3. **SIGPIPE → stuck PG state locks.** Piping `scripts/tg` through `head`/`grep`
+   (early pipe close) SIGPIPE-killed terragrunt before it released the PG
+   advisory lock, leaving an idle `terraform_state` connection holding the lock
+   (`force-unlock` can't release another session's advisory lock). **Always run
+   `tg` to a file, never pipe through early-closing filters.** Clear a stuck
+   one by terminating the idle backend: `pg_terminate_backend(<pid>)` for the
+   idle conn holding `pg_locks.objid` of the workspace.
+4. **ETP=Local + hairpin.** Internal hosts that resolve `*.viktorbarzin.me` via
+   *public* DNS and hairpin (e.g. the devvm) become flaky under ETP=Local.
+   True external clients and internal-direct (`.203`) clients work. Ensure such
+   hosts resolve internally (Technitium split-horizon).
+5. **QUIC verification.** `http3check.net` was unreliable here (failed on TCP
+   while real clients got 200s) — don't rely on it; confirm from a real device
+   on cellular.
+
+**Left in place for retry:** pfSense alias `traefik_lb` (=`10.0.20.203`, NAT
+reverted to `nginx`); pfSense `config.xml` backups `config.xml.bak-traefik-*`.
