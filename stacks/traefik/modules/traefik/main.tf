@@ -234,9 +234,17 @@ resource "helm_release" "traefik" {
       "--serversTransport.forwardingTimeouts.idleConnTimeout=90s",
       # Increase backend connection pool (default maxIdleConnsPerHost=2 is too low)
       "--serversTransport.maxIdleConnsPerHost=100",
-      # Explicit entrypoint timeouts to bound tail latency from slow clients
-      "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=60s",
-      "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=60s",
+      # Entrypoint transport timeouts. NOTE: Traefik respondingTimeouts are HARD caps on
+      # total request/response duration (unlike nginx proxy_*_timeout, which reset per read).
+      # A finite writeTimeout therefore caps total *download* time regardless of progress —
+      # a prior writeTimeout=60s silently truncated large downloads at 60s (HTTP/2 reset).
+      #   writeTimeout=0  -> unlimited download size/duration (Traefik's own default; Immich's
+      #                      reverse-proxy guidance assumes it — it never sets writeTimeout).
+      #   readTimeout=3600s -> one upload may take up to 1h. NOT 0: an unbounded request read
+      #                      is the slow-loris vector (hence Traefik's 60s default). Immich has
+      #                      no resumable upload, so the window must exceed real upload times.
+      "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=3600s",
+      "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=0s",
       "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=600s",
       # Use forwarded headers from trusted proxies
       "--entryPoints.websecure.forwardedHeaders.insecure=false",
