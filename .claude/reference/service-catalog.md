@@ -114,6 +114,7 @@
 | priority-pass | Boarding pass color transformer | priority-pass |
 | status-page | Status page | status-page |
 | plotting-book | Book plotting/world-building app | plotting-book |
+| tripit | Self-hosted TripIt-clone travel-itinerary PWA (FastAPI + SvelteKit SPA, same-origin). CNPG (`tripit` db, Vault static role `pg-tripit`) + RWX NFS doc vault (`/srv/nfs/tripit-documents`). `auth=required` (Authentik forward-auth, reads `X-authentik-email`); second `auth=none` ingress on `/api/calendar` for HMAC-token-gated `.ics` feed. Email-ingest CronJob `tripit-ingest-mail` (`*/30`) parses me@viktorbarzin.me via read-only IMAP with local LLM (`qwen3vl-4b`); plus `tripit-poll-flights` + `tripit-run-reminders`. App secrets in Vault `secret/tripit`. | tripit |
 
 ## Cloudflare Domains
 
@@ -133,7 +134,8 @@ owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
 onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
-jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
+jellyfin, jellyseerr, tdarr, affine, health, family, openclaw,
+tripit
 ```
 
 ### Special Subdomains
