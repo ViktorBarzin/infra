@@ -22,222 +22,38 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# HAProxy-based master-only proxy for the 17 Redis consumers.
-# Health-checks each redis-v2 pod via `INFO replication` and only routes
-# to the current master. On Sentinel failover, HAProxy detects the new
-# master within ~3s via its 1s tcp-check interval. 3 replicas + PDB
-# minAvailable=2 — HAProxy is the sole client-facing path since the
-# 2026-04-19 redis rework (see beads code-v2b), so it needs its own HA.
-
-resource "kubernetes_config_map" "haproxy" {
-  metadata {
-    name      = "redis-haproxy"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  data = {
-    "haproxy.cfg" = <<-EOT
-      global
-        maxconn 256
-
-      defaults
-        mode tcp
-        timeout connect 5s
-        timeout client  30s
-        timeout server  30s
-        timeout check   5s
-
-      # Dynamic DNS resolution via cluster CoreDNS. Without this, haproxy
-      # resolves server hostnames once at startup and caches forever, so
-      # when redis-node-X pods restart and get new IPs, haproxy keeps
-      # connecting to the old (dead) IPs and returns "Connection refused"
-      # until haproxy itself is restarted. This caused an immich outage
-      # on 2026-04-19 after a redis pod cycle.
-      resolvers kubernetes
-        nameserver coredns kube-dns.kube-system.svc.cluster.local:53
-        resolve_retries 3
-        timeout resolve 1s
-        timeout retry   1s
-        hold other      10s
-        hold refused    10s
-        hold nx         10s
-        hold timeout    10s
-        hold valid      10s
-        hold obsolete   10s
-
-      frontend redis_front
-        bind *:6379
-        default_backend redis_master
-
-      frontend sentinel_front
-        bind *:26379
-        default_backend redis_sentinel
-
-      backend redis_master
-        option tcp-check
-        tcp-check connect
-        tcp-check send "PING\r\n"
-        tcp-check expect string +PONG
-        tcp-check send "INFO replication\r\n"
-        # Match "role:master" only — cannot appear in slave responses
-        # (slave has "role:slave" then "master_host:..." which doesn't match)
-        tcp-check expect rstring role:master
-        tcp-check send "QUIT\r\n"
-        tcp-check expect string +OK
-        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
-        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
-        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:6379 check inter 2s fall 3 rise 2 resolvers kubernetes init-addr last,libc,none
-
-      backend redis_sentinel
-        balance roundrobin
-        server redis-v2-0 redis-v2-0.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
-        server redis-v2-1 redis-v2-1.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
-        server redis-v2-2 redis-v2-2.redis-v2-headless.redis.svc.cluster.local:26379 check inter 5s resolvers kubernetes init-addr last,libc,none
-    EOT
-  }
-}
-
-resource "kubernetes_deployment" "haproxy" {
-  metadata {
-    name      = "redis-haproxy"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-    labels = {
-      app = "redis-haproxy"
-    }
-  }
-  spec {
-    # 3 replicas + PDB minAvailable=2 (see kubernetes_pod_disruption_budget_v1.redis_haproxy).
-    # After Nextcloud drops its sentinel fallback in Phase 6 of the 2026-04-19 redis
-    # rework, HAProxy is the sole client-facing path for all 17 redis consumers, so
-    # it needs HA equivalent to other critical-path pods (Traefik, Authentik, PgBouncer).
-    replicas = 3
-    selector {
-      match_labels = {
-        app = "redis-haproxy"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "redis-haproxy"
-        }
-        annotations = {
-          # Roll the deployment whenever haproxy.cfg content changes so a
-          # config update (e.g. DNS resolver tweaks) actually takes effect.
-          "checksum/config" = sha256(kubernetes_config_map.haproxy.data["haproxy.cfg"])
-        }
-      }
-      spec {
-        container {
-          name  = "haproxy"
-          image = "docker.io/library/haproxy:3.1-alpine"
-          port {
-            container_port = 6379
-            name           = "redis"
-          }
-          port {
-            container_port = 26379
-            name           = "sentinel"
-          }
-          volume_mount {
-            name       = "config"
-            mount_path = "/usr/local/etc/haproxy"
-            read_only  = true
-          }
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "32Mi"
-            }
-            limits = {
-              memory = "64Mi"
-            }
-          }
-          liveness_probe {
-            tcp_socket {
-              port = 6379
-            }
-            initial_delay_seconds = 5
-            period_seconds        = 10
-          }
-        }
-        volume {
-          name = "config"
-          config_map {
-            name = kubernetes_config_map.haproxy.metadata[0].name
-          }
-        }
-      }
-    }
-  }
-
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
-  }
-}
-
-# Dedicated service for HAProxy master-only routing.
-# Clients should use redis-master.redis.svc.cluster.local for write-safe connections.
-# HAProxy health-checks Redis nodes and only routes to the current master.
-resource "kubernetes_service" "redis_master" {
-  metadata {
-    name      = "redis-master"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-    labels = {
-      app = "redis-haproxy"
-    }
-  }
-  spec {
-    selector = {
-      app = "redis-haproxy"
-    }
-    port {
-      name        = "redis"
-      port        = 6379
-      target_port = 6379
-    }
-    port {
-      name        = "sentinel"
-      port        = 26379
-      target_port = 26379
-    }
-  }
-
-  depends_on = [kubernetes_deployment.haproxy]
-}
-
-module "nfs_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "redis-backup-host"
-  namespace  = kubernetes_namespace.redis.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/redis-backup"
-}
-
-#### Redis — 3-node raw StatefulSet (MySQL standalone precedent)
+#### Redis — SINGLE standalone instance (reverted from 3-node Sentinel HA 2026-05-30)
 #
-# Pattern: raw `kubernetes_stateful_set_v1` + official image, no Bitnami Helm
-# chart (deprecated by Broadcom Aug 2025; the atomic-Helm trap broke the old
-# cluster's memory-bump roll during the 2026-04-19 AM incident).
+# History: a 3-node StatefulSet + Sentinel + HAProxy (the "redis-v2" rework of
+# 2026-04-19, beads code-v2b) was built to eliminate the 2-sentinel split-brain
+# of the 2026-04-19 PM incident. It STILL split-brained on 2026-05-30:
+# redis-v2-0 booted during a network partition, hit the init script's
+# "pod-0 is always the bootstrap master" fallback, and became a SECOND master
+# alongside the sentinel-elected redis-v2-2. HAProxy's `expect rstring
+# role:master` matched BOTH, so it round-robined client connections across
+# both masters — Immich enqueued BullMQ jobs on one instance while its workers
+# blocked-popped on the other, wedging every queue (new-upload thumbnails 404'd
+# cluster-wide). Third Redis HA incident in ~6 weeks.
 #
-# Design driven by three April 2026 incidents (see beads code-v2b):
-#   - 3 sentinels (odd count, quorum=2) — eliminates the split-brain class
-#     that caused the 2026-04-19 PM incident (2 sentinels, no majority).
-#   - Init container regenerates sentinel.conf on every boot by probing
-#     peers for role:master — no persistent sentinel runtime state, so stale
-#     entries can never resurface across pod restarts.
-#   - `sentinel resolve-hostnames yes` + `sentinel announce-hostnames yes`
-#     — without both set BEFORE the first MONITOR, sentinel stores resolved
-#     IPs and failover breaks when pod IPs churn on restart.
-#   - podManagementPolicy=Parallel — all 3 pods start together, avoiding the
-#     "sentinel-0 elects before -2 booted" ordering bug.
-#   - Memory 768Mi (up from the old 256→512Mi) — concurrent BGSAVE + AOF-rewrite
-#     fork can double RSS via COW. auto-aof-rewrite-percentage 200 + min-size
-#     128mb tune down rewrite frequency.
-#   - Persistence: RDB snapshots + AOF everysec. Measured <1 GB/day write
-#     volume (2026-04-19 disk-wear analysis) → 40+ year SSD runway.
-#   - Image `redis:8-alpine` (8.6.2) — must match what the Bitnami legacy
-#     cluster ran, otherwise PSYNC fails with "Can't handle RDB format 13".
+# Decision (Viktor, 2026-05-30): revert to a SINGLE instance. A homelab
+# cache/broker does not need HA; a few seconds of downtime on a pod restart is
+# an acceptable trade for structurally removing the entire split-brain class
+# (no sentinel quorum, no second master, no HAProxy master fan-out).
+#
+# eviction policy `volatile-lru` (was `allkeys-lru`): the instance is shared by
+# ~15 consumers split between CACHES (want LRU eviction of disposable keys) and
+# QUEUES (Immich BullMQ `bull:*`, Celery `_kombu:*` — must NEVER be evicted or
+# jobs vanish). `volatile-lru` evicts only keys that carry a TTL (caches set
+# them) and never touches TTL-less keys (queue jobs), so it serves both
+# correctly in one instance. Backstop: PrometheusRule RedisMemoryHigh (>80%)
+# in the monitoring stack — if it ever fills with non-volatile keys, writes
+# error like noeviction, and we want to know before that happens.
+#
+# Service name `redis-master.redis.svc.cluster.local:6379` is UNCHANGED so all
+# ~15 consumers keep working without edits — it now selects the redis pod
+# directly instead of HAProxy. Confirmed (2026-05-30) no consumer used the
+# Sentinel port (26379); Nextcloud dropped its in-process sentinel query in the
+# 2026-04-19 rework. Pattern mirrors the MySQL standalone (memory 711).
 
 resource "kubernetes_config_map" "redis_v2_conf" {
   metadata {
@@ -252,7 +68,11 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       dir /data
 
       maxmemory 640mb
-      maxmemory-policy allkeys-lru
+      # volatile-lru: evict only keys WITH a TTL (caches) under memory
+      # pressure; never evict TTL-less keys (Immich BullMQ + Celery jobs).
+      # See the header comment for the full rationale. Was allkeys-lru, which
+      # silently evicted queue jobs.
+      maxmemory-policy volatile-lru
 
       save 900 1
       save 300 100
@@ -269,14 +89,9 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       aof-load-truncated yes
       aof-use-rdb-preamble yes
       # Allow loading an AOF with up to 1KB of garbage at the tail (post-2026-05-26
-      # node2 unclean reboot corrupted redis-v2-2's incremental AOF at offset
-      # 84799139; without this, redis-v2-2 crashlooped). Redis truncates the
-      # corrupted tail and continues. Default is 0 (refuse to load any corruption).
+      # node2 unclean reboot corrupted an incremental AOF; without this redis
+      # crashlooped). Redis truncates the corrupted tail and continues.
       aof-load-corrupt-tail-max-size 1024
-
-
-      replica-read-only yes
-      replica-serve-stale-data yes
 
       timeout 0
       tcp-keepalive 300
@@ -284,111 +99,6 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       databases 16
 
       loglevel notice
-
-      # Included last so `replicaof` directive written by the init container
-      # overrides the "standalone master" default. Prevents the parallel-
-      # bootstrap race where all 3 pods claim role:master simultaneously.
-      include /shared/replica.conf
-    EOT
-  }
-}
-
-resource "kubernetes_config_map" "redis_v2_sentinel_bootstrap" {
-  metadata {
-    name      = "redis-v2-sentinel-bootstrap"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  data = {
-    "init.sh" = <<-EOT
-      #!/bin/sh
-      set -eu
-
-      HOSTNAME=$(hostname)
-      MY_NUM=$${HOSTNAME##*-}
-      MY_DNS="$HOSTNAME.redis-v2-headless.redis.svc.cluster.local"
-      MASTER_HOST=""
-
-      echo "=== Redis v2 bootstrap ==="
-      echo "hostname: $HOSTNAME (index $MY_NUM)"
-
-      # Priority 1: ask peer sentinels for the consensus master. Covers the
-      # "steady-state pod restart" case — sentinels already agree on reality
-      # and a restarting pod should join that topology.
-      votes_0=0; votes_1=0; votes_2=0; votes_total=0
-      for i in 0 1 2; do
-        if [ "$i" = "$MY_NUM" ]; then continue; fi
-        peer="redis-v2-$i.redis-v2-headless.redis.svc.cluster.local"
-        reply=$(redis-cli -h "$peer" -p 26379 -t 2 SENTINEL get-master-addr-by-name mymaster 2>/dev/null | head -n1 || true)
-        echo "sentinel probe $peer: master=$${reply:-unreachable}"
-        case "$reply" in
-          *redis-v2-0*) votes_0=$((votes_0 + 1)); votes_total=$((votes_total + 1)) ;;
-          *redis-v2-1*) votes_1=$((votes_1 + 1)); votes_total=$((votes_total + 1)) ;;
-          *redis-v2-2*) votes_2=$((votes_2 + 1)); votes_total=$((votes_total + 1)) ;;
-        esac
-      done
-      if [ "$votes_total" -gt 0 ]; then
-        if [ "$votes_0" -ge "$votes_1" ] && [ "$votes_0" -ge "$votes_2" ] && [ "$votes_0" -gt 0 ]; then
-          MASTER_HOST="redis-v2-0.redis-v2-headless.redis.svc.cluster.local"
-        elif [ "$votes_1" -ge "$votes_2" ] && [ "$votes_1" -gt 0 ]; then
-          MASTER_HOST="redis-v2-1.redis-v2-headless.redis.svc.cluster.local"
-        elif [ "$votes_2" -gt 0 ]; then
-          MASTER_HOST="redis-v2-2.redis-v2-headless.redis.svc.cluster.local"
-        fi
-        [ -n "$MASTER_HOST" ] && echo "sentinel vote winner: $MASTER_HOST"
-      fi
-
-      # Priority 2: look for a peer redis that's a master WITH at least one
-      # replica connected. "Standalone master" peers (bootstrap race) are
-      # skipped — connected_slaves=0 is ambiguous.
-      if [ -z "$MASTER_HOST" ]; then
-        for i in 0 1 2; do
-          if [ "$i" = "$MY_NUM" ]; then continue; fi
-          peer="redis-v2-$i.redis-v2-headless.redis.svc.cluster.local"
-          info=$(redis-cli -h "$peer" -t 2 INFO replication 2>/dev/null || true)
-          role=$(echo "$info" | awk -F: '/^role:/ {gsub(/\r/,""); print $2; exit}')
-          slaves=$(echo "$info" | awk -F: '/^connected_slaves:/ {gsub(/\r/,""); print $2; exit}')
-          echo "redis probe $peer: role=$${role:-unreachable} slaves=$${slaves:-0}"
-          if [ "$role" = "master" ] && [ "$${slaves:-0}" -gt 0 ]; then
-            MASTER_HOST="$peer"
-            break
-          fi
-        done
-      fi
-
-      # Priority 3: deterministic fallback — pod -0 is always the bootstrap
-      # master on a fresh cluster. All sentinels converge here, no race.
-      if [ -z "$MASTER_HOST" ]; then
-        MASTER_HOST="redis-v2-0.redis-v2-headless.redis.svc.cluster.local"
-        echo "no master found via probes — bootstrap default: $MASTER_HOST"
-      fi
-
-      cat > /shared/sentinel.conf <<EOF
-      port 26379
-      bind 0.0.0.0 -::*
-      dir /shared
-      sentinel resolve-hostnames yes
-      sentinel announce-hostnames yes
-      sentinel monitor mymaster $MASTER_HOST 6379 2
-      sentinel down-after-milliseconds mymaster 15000
-      sentinel failover-timeout mymaster 60000
-      sentinel parallel-syncs mymaster 1
-      EOF
-
-      # replica.conf is included by redis.conf (see ConfigMap redis_v2_conf).
-      # Master pod gets an empty file; replicas get `replicaof <master>`.
-      # This way pods come up already in the right role — no post-start race.
-      if [ "$MY_DNS" = "$MASTER_HOST" ]; then
-        : > /shared/replica.conf
-        echo "role: master"
-      else
-        echo "replicaof $MASTER_HOST 6379" > /shared/replica.conf
-        echo "role: replica of $MASTER_HOST"
-      fi
-
-      echo "=== bootstrap complete ==="
-      cat /shared/sentinel.conf
-      echo "--- replica.conf ---"
-      cat /shared/replica.conf
     EOT
   }
 }
@@ -412,14 +122,41 @@ resource "kubernetes_service" "redis_v2_headless" {
       port = 6379
     }
     port {
-      name = "sentinel"
-      port = 26379
-    }
-    port {
       name = "exporter"
       port = 9121
     }
   }
+}
+
+# Stable client-facing service for all ~15 Redis consumers.
+# Name/DNS (redis-master.redis.svc.cluster.local) unchanged across the HA
+# teardown; now selects the redis pod directly (HAProxy removed).
+resource "kubernetes_service" "redis_master" {
+  metadata {
+    name      = "redis-master"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+    labels = {
+      app = "redis-v2"
+    }
+  }
+  spec {
+    selector = {
+      app = "redis-v2"
+    }
+    port {
+      name        = "redis"
+      port        = 6379
+      target_port = 6379
+    }
+  }
+}
+
+module "nfs_backup_host" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "redis-backup-host"
+  namespace  = kubernetes_namespace.redis.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/redis-backup"
 }
 
 resource "kubernetes_stateful_set_v1" "redis_v2" {
@@ -428,12 +165,9 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis-v2"
-      # 2026-05-26: Keel patch-bumped :8-alpine → :8.0.6-alpine, which
-      # rejected the `aof-load-corrupt-tail-max-size` config and crashed
-      # redis-v2-2. The bump is also semantically a downgrade (8-alpine is
-      # 8.6.2, 8.0.6 is older). Both LABEL + ANNOTATION are required for
-      # full opt-out: label drives Kyverno's selector exclude, annotation
-      # drives Keel's own gate.
+      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a
+      # semantic downgrade) rejected `aof-load-corrupt-tail-max-size` and
+      # crashed redis. Both LABEL + ANNOTATION required for full opt-out.
       "keel.sh/policy" = "never"
     }
     annotations = {
@@ -441,8 +175,11 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     }
   }
   spec {
-    service_name          = kubernetes_service.redis_v2_headless.metadata[0].name
-    replicas              = 3
+    service_name = kubernetes_service.redis_v2_headless.metadata[0].name
+    replicas     = 1
+    # pod_management_policy is immutable on a StatefulSet — kept as "Parallel"
+    # (unchanged from the 3-node era) so this revert does NOT force a
+    # destroy/recreate of the STS (which would detach the data PVC).
     pod_management_policy = "Parallel"
 
     selector {
@@ -460,52 +197,10 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           "prometheus.io/scrape" = "true"
           "prometheus.io/port"   = "9121"
           "checksum/conf"        = sha256(kubernetes_config_map.redis_v2_conf.data["redis.conf"])
-          "checksum/bootstrap"   = sha256(kubernetes_config_map.redis_v2_sentinel_bootstrap.data["init.sh"])
         }
       }
       spec {
         termination_grace_period_seconds = 30
-
-        affinity {
-          pod_anti_affinity {
-            required_during_scheduling_ignored_during_execution {
-              label_selector {
-                match_expressions {
-                  key      = "app"
-                  operator = "In"
-                  values   = ["redis-v2"]
-                }
-              }
-              topology_key = "kubernetes.io/hostname"
-            }
-          }
-        }
-
-        init_container {
-          name    = "generate-sentinel-conf"
-          image   = "docker.io/library/redis:8-alpine"
-          command = ["/bin/sh", "/bootstrap/init.sh"]
-
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "32Mi"
-            }
-            limits = {
-              memory = "32Mi"
-            }
-          }
-
-          volume_mount {
-            name       = "bootstrap"
-            mount_path = "/bootstrap"
-            read_only  = true
-          }
-          volume_mount {
-            name       = "shared"
-            mount_path = "/shared"
-          }
-        }
 
         container {
           name    = "redis"
@@ -536,12 +231,6 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
             mount_path = "/etc/redis"
             read_only  = true
           }
-          volume_mount {
-            # redis.conf `include /shared/replica.conf` — written by init container.
-            name       = "shared"
-            mount_path = "/shared"
-            read_only  = true
-          }
 
           liveness_probe {
             exec {
@@ -557,51 +246,6 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
               command = ["redis-cli", "PING"]
             }
             initial_delay_seconds = 5
-            period_seconds        = 5
-            timeout_seconds       = 3
-            failure_threshold     = 3
-          }
-        }
-
-        container {
-          name    = "sentinel"
-          image   = "docker.io/library/redis:8-alpine"
-          command = ["redis-sentinel", "/shared/sentinel.conf"]
-
-          port {
-            container_port = 26379
-            name           = "sentinel"
-          }
-
-          resources {
-            requests = {
-              cpu    = "20m"
-              memory = "64Mi"
-            }
-            limits = {
-              memory = "64Mi"
-            }
-          }
-
-          volume_mount {
-            name       = "shared"
-            mount_path = "/shared"
-          }
-
-          liveness_probe {
-            exec {
-              command = ["redis-cli", "-p", "26379", "PING"]
-            }
-            initial_delay_seconds = 20
-            period_seconds        = 10
-            timeout_seconds       = 10
-            failure_threshold     = 5
-          }
-          readiness_probe {
-            exec {
-              command = ["redis-cli", "-p", "26379", "PING"]
-            }
-            initial_delay_seconds = 10
             period_seconds        = 5
             timeout_seconds       = 3
             failure_threshold     = 3
@@ -649,17 +293,6 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
             name = kubernetes_config_map.redis_v2_conf.metadata[0].name
           }
         }
-        volume {
-          name = "bootstrap"
-          config_map {
-            name         = kubernetes_config_map.redis_v2_sentinel_bootstrap.metadata[0].name
-            default_mode = "0755"
-          }
-        }
-        volume {
-          name = "shared"
-          empty_dir {}
-        }
       }
     }
 
@@ -667,7 +300,10 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
       metadata {
         name = "data"
         annotations = {
-          "resize.topolvm.io/threshold"     = "10%"
+          # NOTE: VCT is immutable on a live StatefulSet — this must match the
+          # live value (drifted to 80% out-of-band) or apply fails with
+          # "updates to statefulset spec ... forbidden". Don't "fix" to 10%.
+          "resize.topolvm.io/threshold"     = "80%"
           "resize.topolvm.io/increase"      = "100%"
           "resize.topolvm.io/storage_limit" = "20Gi"
         }
@@ -690,37 +326,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
   }
 }
 
-resource "kubernetes_pod_disruption_budget_v1" "redis_v2" {
-  metadata {
-    name      = "redis-v2"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  spec {
-    min_available = 2
-    selector {
-      match_labels = {
-        app = "redis-v2"
-      }
-    }
-  }
-}
-
-resource "kubernetes_pod_disruption_budget_v1" "redis_haproxy" {
-  metadata {
-    name      = "redis-haproxy"
-    namespace = kubernetes_namespace.redis.metadata[0].name
-  }
-  spec {
-    min_available = 2
-    selector {
-      match_labels = {
-        app = "redis-haproxy"
-      }
-    }
-  }
-}
-
-# Hourly backup: copy RDB snapshot from master to NFS
+# Weekly backup: copy RDB snapshot to NFS
 resource "kubernetes_cron_job_v1" "redis-backup" {
   metadata {
     name      = "redis-backup"

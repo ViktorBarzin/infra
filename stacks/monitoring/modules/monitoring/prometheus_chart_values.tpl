@@ -1676,30 +1676,28 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Redis has no ready replicas"
+              summary: "Redis is down — statefulset redis-v2 has no ready pod"
           - alert: RedisMemoryPressure
-            expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.85
+            # Single instance, volatile-lru (2026-05-30): at maxmemory, TTL'd
+            # (cache) keys are evicted but TTL-less keys (Immich BullMQ + Celery
+            # jobs) are NOT — so once cache headroom is gone, queue writes start
+            # erroring. 80% is the backstop to intervene (bump maxmemory) first.
+            expr: redis_memory_used_bytes{namespace="redis"} / redis_memory_max_bytes{namespace="redis"} > 0.80
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "Redis pod {{ $labels.pod }} using {{ $value | humanizePercentage }} of maxmemory — eviction imminent"
+              summary: "Redis pod {{ $labels.pod }} using {{ $value | humanizePercentage }} of maxmemory — volatile-lru evicting cache keys; queue writes at risk"
           - alert: RedisEvictions
-            # allkeys-lru is configured so evictions under cache pressure are
-            # expected, but sustained evictions mean we're thrashing — raise it.
+            # volatile-lru evicts only TTL'd (cache) keys under pressure — an
+            # occasional eviction is by design, but a sustained rate means we're
+            # near maxmemory and should raise it before queue writes error.
             expr: rate(redis_evicted_keys_total{namespace="redis"}[5m]) > 0
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "Redis pod {{ $labels.pod }} evicting keys ({{ $value }} keys/s)"
-          - alert: RedisReplicationLagHigh
-            expr: redis_connected_slave_lag_seconds{namespace="redis"} > 30
-            for: 3m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Redis replica {{ $labels.slave_ip }} lagging {{ $value }}s behind master"
+              summary: "Redis pod {{ $labels.pod }} evicting keys ({{ $value }} keys/s) — near maxmemory"
           - alert: RedisForkLatencyHigh
             # latest_fork_usec > 500ms means BGSAVE fork is stalling the main
             # thread long enough to drop client requests. COW pressure or
@@ -1717,16 +1715,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Redis pod {{ $labels.pod }} AOF rewrite running >10m — COW memory risk, investigate"
-          - alert: RedisReplicasMissing
-            # redis-v2 StatefulSet should always have 3 replicas connected to
-            # the master (2 replicas + itself). <2 connected_slaves means one
-            # replica is unreachable or still syncing.
-            expr: redis_connected_slaves{namespace="redis", pod=~"redis-v2-.*"} < 2 and redis_instance_info{namespace="redis", pod=~"redis-v2-.*", role="master"} == 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Redis master {{ $labels.pod }} has only {{ $value }} connected replicas (expected 2)"
           - alert: HeadscaleReplicasMismatch
             expr: (kube_deployment_status_replicas_available{namespace="headscale"} or on() vector(0)) < 1
             for: 5m
