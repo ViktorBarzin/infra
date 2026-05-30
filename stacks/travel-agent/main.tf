@@ -39,7 +39,7 @@ resource "kubernetes_namespace" "travel_agent" {
 #     nextcloud_caldav_url   — CalDAV collection URL (Nextcloud)
 #     nextcloud_caldav_user  — CalDAV username
 #     nextcloud_caldav_pass  — CalDAV app password
-#     slack_webhook_url      — incoming-webhook URL for the target channel
+#     slack_bot_token        — Slack bot token (xoxb-...) for chat.postMessage
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
@@ -79,8 +79,8 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = { key = "travel-agent", property = "nextcloud_caldav_pass" }
         },
         {
-          secretKey = "SLACK_WEBHOOK_URL"
-          remoteRef = { key = "travel-agent", property = "slack_webhook_url" }
+          secretKey = "SLACK_BOT_TOKEN"
+          remoteRef = { key = "travel-agent", property = "slack_bot_token" }
         },
       ]
     }
