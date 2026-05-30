@@ -559,10 +559,10 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
 }
 
 # CronJob to configure Split Horizon AddressTranslation on all Technitium instances.
-# Translates 176.12.22.76 (public IP) → 10.0.20.200 (Traefik LB) in DNS responses
+# Translates 176.12.22.76 (public IP) → 10.0.20.203 (Traefik LB) in DNS responses
 # for 192.168.1.x clients, fixing hairpin NAT on the TP-Link router.
 # Also configures DNS Rebinding Protection to allow viktorbarzin.me to return private IPs
-# (otherwise the translated 10.0.20.200 gets stripped as a rebinding attack).
+# (otherwise the translated 10.0.20.203 gets stripped as a rebinding attack).
 resource "kubernetes_cron_job_v1" "technitium_split_horizon_sync" {
   metadata {
     name      = "technitium-split-horizon-sync"
@@ -600,7 +600,7 @@ resource "kubernetes_cron_job_v1" "technitium_split_horizon_sync" {
               }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
-                SPLIT_CONFIG='{"networks":{},"enableAddressTranslation":true,"domainGroupMap":{},"networkGroupMap":{"192.168.1.0/24":"sofia-lan"},"groups":[{"name":"sofia-lan","enabled":true,"translateReverseLookups":false,"externalToInternalTranslation":{"176.12.22.76":"10.0.20.200"}}]}'
+                SPLIT_CONFIG='{"networks":{},"enableAddressTranslation":true,"domainGroupMap":{},"networkGroupMap":{"192.168.1.0/24":"sofia-lan"},"groups":[{"name":"sofia-lan","enabled":true,"translateReverseLookups":false,"externalToInternalTranslation":{"176.12.22.76":"10.0.20.203"}}]}'
                 REBINDING_CONFIG='{"enableProtection":true,"bypassNetworks":[],"privateNetworks":["10.0.0.0/8","127.0.0.0/8","172.16.0.0/12","192.168.0.0/16","169.254.0.0/16","fc00::/7","fe80::/10"],"privateDomains":["home.arpa","viktorbarzin.me"]}'
                 SPLIT_URL="https://download.technitium.com/dns/apps/SplitHorizonApp-v10.zip"
                 REBINDING_URL="https://download.technitium.com/dns/apps/DnsRebindingProtectionApp-v4.zip"
@@ -737,7 +737,7 @@ resource "kubernetes_cron_job_v1" "viktorbarzin_apex_probe" {
                 pip install --quiet --disable-pip-version-check dnspython requests && python3 -c '
 import dns.resolver, requests, time, sys
 
-EXPECTED = {"10.0.20.200"}
+EXPECTED = {"10.0.20.203"}
 NAMESERVER = "10.0.20.201"  # Technitium LB IP
 NAME = "viktorbarzin.me"
 PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/viktorbarzin-apex-probe"
@@ -816,6 +816,13 @@ resource "kubernetes_cluster_role" "ingress_dns_sync" {
     api_groups = ["networking.k8s.io"]
     resources  = ["ingresses"]
     verbs      = ["list"]
+  }
+  # Read the Traefik LoadBalancer Service so the sync can pin the
+  # ingress.viktorbarzin.lan anchor to the live Traefik LB IP (see CronJob).
+  rule {
+    api_groups = [""]
+    resources  = ["services"]
+    verbs      = ["get", "list"]
   }
 }
 
@@ -903,6 +910,26 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                   fi
                 done
                 echo "Sync complete. Created $$CREATED new records."
+
+                # Pin the .lan ingress anchor A record to the LIVE Traefik LB IP.
+                # *.viktorbarzin.lan ingress hosts CNAME to ingress.viktorbarzin.lan,
+                # so a Traefik LB IP move that misses the .lan zone silently breaks
+                # every internal exporter + HA-sourced sensor (regression 2026-05-30:
+                # .200 -> .203 migration updated .me but not .lan). This keeps the
+                # anchor self-correcting on future IP moves.
+                TRAEFIK_IP=$$(kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+                if [ -n "$$TRAEFIK_IP" ]; then
+                  LAN_CUR=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=viktorbarzin.lan&domain=ingress.viktorbarzin.lan&listZone=false" | grep -o '"ipAddress":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  if [ -z "$$LAN_CUR" ]; then
+                    curl -sf "$$TECH_API/api/zones/records/add?token=$$TOKEN&zone=viktorbarzin.lan&domain=ingress.viktorbarzin.lan&type=A&ipAddress=$$TRAEFIK_IP&ttl=300" >/dev/null && echo "Added ingress.viktorbarzin.lan A -> $$TRAEFIK_IP"
+                  elif [ "$$LAN_CUR" != "$$TRAEFIK_IP" ]; then
+                    curl -sf "$$TECH_API/api/zones/records/update?token=$$TOKEN&zone=viktorbarzin.lan&domain=ingress.viktorbarzin.lan&type=A&ipAddress=$$LAN_CUR&newIpAddress=$$TRAEFIK_IP&ttl=300" >/dev/null && echo "Updated ingress.viktorbarzin.lan A: $$LAN_CUR -> $$TRAEFIK_IP"
+                  else
+                    echo "ingress.viktorbarzin.lan A already $$TRAEFIK_IP"
+                  fi
+                else
+                  echo "WARN: could not resolve Traefik LB IP; skipping .lan anchor sync"
+                fi
               EOT
               ]
             }
