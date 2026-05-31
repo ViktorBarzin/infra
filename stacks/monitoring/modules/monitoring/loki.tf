@@ -97,7 +97,20 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    # KEEL: monitoring ns is keel-enrolled — Keel owns the pause image tag and
+    # injects keel.sh annotations. Ignore so TF stops reverting Keel each plan
+    # (completes the cdb7d9a8 KEEL sweep that missed this daemonset and was
+    # tripping drift-detection exit 2 every run). 2026-05-31.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # tier stamped live by tier-labeling; TF doesn't declare it here
+    ]
   }
 }
 
@@ -191,9 +204,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           rules = [
             # V1: Root token created (Vault audit, vault-tail sidecar stream)
             {
-              alert = "VaultRootTokenCreated"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"auth/token/create\" |~ \"\\\"policies\\\":\\\\[\\\"root\\\"\\\\]\" [5m])) > 0"
-              for   = "0m"
+              alert  = "VaultRootTokenCreated"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"auth/token/create\" |~ \"\\\"policies\\\":\\\\[\\\"root\\\"\\\\]\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary     = "Vault root token created"
@@ -203,9 +216,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # V2: Audit device disabled/modified
             {
-              alert = "VaultAuditDeviceModified"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/audit/.+\" | operation=~\"(create|delete|update)\" [5m])) > 0"
-              for   = "0m"
+              alert  = "VaultAuditDeviceModified"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/audit/.+\" | operation=~\"(create|delete|update)\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Vault audit device modified — attacker may be silencing visibility"
@@ -214,9 +227,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # V3: Seal status changed
             {
-              alert = "VaultSealChanged"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"sys/seal\" | operation=\"update\" [5m])) > 0"
-              for   = "0m"
+              alert  = "VaultSealChanged"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=\"sys/seal\" | operation=\"update\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Vault seal status changed via API — confirm planned operation"
@@ -225,9 +238,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # V4: Policy modified
             {
-              alert = "VaultPolicyModified"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/policies/acl/.+\" | operation=~\"(create|update|delete)\" [5m])) > 0"
-              for   = "0m"
+              alert  = "VaultPolicyModified"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | request_path=~\"sys/policies/acl/.+\" | operation=~\"(create|update|delete)\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
                 summary = "Vault policy modified — verify Terraform-driven change"
@@ -236,9 +249,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # V5: Auth failure spike
             {
-              alert = "VaultAuthFailureSpike"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | type=\"response\" |~ \"\\\"error\\\":\\\"permission denied\\\"\" [1m])) > 10"
-              for   = "1m"
+              alert  = "VaultAuthFailureSpike"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | type=\"response\" |~ \"\\\"error\\\":\\\"permission denied\\\"\" [1m])) > 10"
+              for    = "1m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
                 summary = "Vault permission-denied spike >10/min — possible brute force or CI rotation glitch"
@@ -250,9 +263,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # Allowlist regex covers: 10.0.20.x, 192.168.1.x, pod CIDR 10.10.x.x,
             # service CIDR 10.96-111.x.x, Headscale tailnet 100.64-127.x.x.
             {
-              alert = "VaultViktorFromUnexpectedIP"
-              expr  = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | auth_metadata_username=\"me@viktorbarzin.me\" | request_remote_address!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
-              for   = "0m"
+              alert  = "VaultViktorFromUnexpectedIP"
+              expr   = "sum(count_over_time({namespace=\"vault\",container=\"audit-tail\"} | json | auth_metadata_username=\"me@viktorbarzin.me\" | request_remote_address!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Vault auth as me@viktorbarzin.me from non-allowlist source IP — possible stolen OIDC token"
@@ -263,9 +276,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # Allowlist = pod CIDR + LAN + Headscale tailnet. Anything else =
             # likely stolen SA token used externally.
             {
-              alert = "K8sSATokenFromUnexpectedIP"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sSATokenFromUnexpectedIP"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "K8s ServiceAccount token used from non-allowlist source IP — possible stolen SA token"
@@ -276,9 +289,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # Allowlisted readers: ESO controller, sealed-secrets controller,
             # Vault SA, me@viktorbarzin.me. Anyone else = alert.
             {
-              alert = "K8sSensitiveSecretReadByUnexpectedActor"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"get|list\" | objectRef_resource=\"secrets\" | objectRef_namespace=~\"vault|sealed-secrets|external-secrets\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:external-secrets:.+|system:serviceaccount:sealed-secrets:.+|system:serviceaccount:vault:.+)$\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sSensitiveSecretReadByUnexpectedActor"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"get|list\" | objectRef_resource=\"secrets\" | objectRef_namespace=~\"vault|sealed-secrets|external-secrets\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:external-secrets:.+|system:serviceaccount:sealed-secrets:.+|system:serviceaccount:vault:.+)$\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Sensitive Secret read in vault/sealed-secrets/external-secrets by non-allowlisted actor"
@@ -287,9 +300,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # K4: Exec into pod in sensitive namespace.
             {
-              alert = "K8sExecIntoSensitiveNamespace"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sExecIntoSensitiveNamespace"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
                 summary = "kubectl exec into sensitive namespace (vault/kube-system/dbaas/cnpg-system) by non-Viktor actor"
@@ -298,9 +311,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # K5: Mass delete of pods/secrets/configmaps in 60s by single actor.
             {
-              alert = "K8sMassDelete"
-              expr  = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" [1m])) > 5"
-              for   = "1m"
+              alert  = "K8sMassDelete"
+              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" [1m])) > 5"
+              for    = "1m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Mass delete (>5 Pod/Secret/ConfigMap in 60s) by {{ $labels.user_username }}"
@@ -312,9 +325,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # on master; changes go via kubeadm reconfig. Detect via API access
             # to apiserver kubeadm-config ConfigMap.
             {
-              alert = "K8sAuditPolicyModified"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"update|patch\" | objectRef_resource=\"configmaps\" | objectRef_name=\"kubeadm-config\" | objectRef_namespace=\"kube-system\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sAuditPolicyModified"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=~\"update|patch\" | objectRef_resource=\"configmaps\" | objectRef_name=\"kubeadm-config\" | objectRef_namespace=\"kube-system\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "kubeadm-config ConfigMap modified — could be audit policy change"
@@ -325,9 +338,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # Allowlist excludes calico-system, kyverno, nvidia, etc. which legitimately
             # create such ClusterRoles via Helm.
             {
-              alert = "K8sClusterRoleWildcardCreated"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"clusterroles\" |~ \"\\\"verbs\\\":\\\\[\\\"\\\\*\\\"\\\\]\" |~ \"\\\"resources\\\":\\\\[\\\"\\\\*\\\"\\\\]\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sClusterRoleWildcardCreated"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"clusterroles\" |~ \"\\\"verbs\\\":\\\\[\\\"\\\\*\\\"\\\\]\" |~ \"\\\"resources\\\":\\\\[\\\"\\\\*\\\"\\\\]\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
                 summary = "New ClusterRole with verbs=[*]+resources=[*] created — privilege escalation primitive"
@@ -336,9 +349,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # K8: Anonymous binding granted — catastrophic.
             {
-              alert = "K8sAnonymousBindingGranted"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=~\"rolebindings|clusterrolebindings\" |~ \"system:(anonymous|unauthenticated)\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sAnonymousBindingGranted"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=~\"rolebindings|clusterrolebindings\" |~ \"system:(anonymous|unauthenticated)\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "Binding granted to system:anonymous or system:unauthenticated — full cluster compromise risk"
@@ -347,9 +360,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             # K9: Viktor's identity from non-allowlist source IP. Same regex as V7.
             {
-              alert = "K8sViktorFromUnexpectedIP"
-              expr  = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
-              for   = "0m"
+              alert  = "K8sViktorFromUnexpectedIP"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "K8s API request as me@viktorbarzin.me from non-allowlist source IP — possible stolen kubeconfig/OIDC token"
@@ -362,9 +375,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # piece lands). Rule is defined so it fires automatically once logs
             # flow with job=sshd-pve.
             {
-              alert = "PVEsshLoginFromUnexpectedIP"
-              expr  = "sum(count_over_time({job=\"sshd-pve\"} |~ \"Accepted (publickey|password|keyboard-interactive)\" | regexp \"Accepted (?P<method>\\\\S+) for (?P<user>\\\\S+) from (?P<ip>\\\\S+) port\" | ip!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
-              for   = "0m"
+              alert  = "PVEsshLoginFromUnexpectedIP"
+              expr   = "sum(count_over_time({job=\"sshd-pve\"} |~ \"Accepted (publickey|password|keyboard-interactive)\" | regexp \"Accepted (?P<method>\\\\S+) for (?P<user>\\\\S+) from (?P<ip>\\\\S+) port\" | ip!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
                 summary = "PVE sshd login from non-allowlist source IP — possible stolen SSH key"
