@@ -29,8 +29,8 @@ resource "kubernetes_namespace" "kured" {
   metadata {
     name = "kured"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.cluster
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }
@@ -54,17 +54,17 @@ resource "helm_release" "kured" {
 
   values = [yamlencode({
     configuration = {
-      period         = "1h0m0s"
-      timeZone       = "Europe/London"
-      startTime      = "02:00"
-      endTime        = "06:00"
+      period    = "1h0m0s"
+      timeZone  = "Europe/London"
+      startTime = "02:00"
+      endTime   = "06:00"
       # All 7 days — operator decision 2026-05-16. The Mon–Fri restriction
       # was a 2026-03-16-era guardrail (overlapping with weekend on-call
       # response). Today the rest of the safety net (halt-on-alert,
       # sentinel-gate Check 4 = 24h soak, single-concurrency, the
       # K8sUpgradeStalled alert) is strong enough to operate any day; the
       # weekday-only schedule was just slowing the backlog down.
-      rebootDays     = ["mo", "tu", "we", "th", "fr", "sa", "su"]
+      rebootDays = ["mo", "tu", "we", "th", "fr", "sa", "su"]
       # IMPORTANT: must match where kured-sentinel-gate writes (below):
       # `touch /host/var-run/gated-reboot-required` → host
       # `/var/run/gated-reboot-required`. The kured chart derives the host
@@ -220,8 +220,24 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
             "/bin/bash",
             "-c",
             <<-EOT
+              # Self-restart guard (added 2026-05-31): a node stuck in
+              # pending-reboot keeps THIS pod on the kubectl-heavy hot path
+              # every cycle. The long-lived bash loop slowly leaks (repeated
+              # kubectl forks + the Check-4 process substitution) until the
+              # cgroup OOM-kills child processes — PID 1 bash survives, so the
+              # pod never restarts, it just racks up silent oom_events
+              # (149 in 7d / accelerating on k8s-master, 2026-05-30..31).
+              # Exit 0 every MAX_ITER cycles (~6h at 300s) so kubelet restarts
+              # the pod fresh and memory can never accumulate.
+              ITER=0
+              MAX_ITER=72
               while true; do
-                echo "[$(date)] Checking reboot gate conditions..."
+                ITER=$((ITER + 1))
+                if [ "$ITER" -gt "$MAX_ITER" ]; then
+                  echo "  Iteration cap ($MAX_ITER) reached — exit 0 for a clean restart (leak guard)"
+                  exit 0
+                fi
+                echo "[$(date)] Checking reboot gate conditions... (iter $ITER/$MAX_ITER)"
 
                 # Check 1: Does the host need a reboot?
                 if [ ! -f /host/var-run/reboot-required ]; then
@@ -288,8 +304,13 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               cpu    = "10m"
               memory = "32Mi"
             }
+            # 64Mi was too tight for the kubectl-heavy hot path (each kubectl
+            # fork is a ~30-50Mi Go binary). Raised to 256Mi 2026-05-31 after
+            # the k8s-master gate pod OOM-killed child kubectls 149x/7d while
+            # master sat in pending-reboot. The self-restart guard (loop above)
+            # is the primary leak fix; this just gives comfortable headroom.
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
           volume_mount {
