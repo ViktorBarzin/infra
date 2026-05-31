@@ -3,6 +3,15 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
+locals {
+  # Parked since 2026-04-22 (PVC /opt/data perms bug). While parked we run zero
+  # replicas AND skip the PVC entirely: a WaitForFirstConsumer PVC with no
+  # consumer pod sits Pending forever and falsely trips PVCStuckPending, which
+  # halts kured node reboots. Flip to false to bring Hermes back — that
+  # recreates the PVC and scales the Deployment to 1 in a single apply.
+  hermes_parked = true
+}
+
 # --- Namespace ---
 
 resource "kubernetes_namespace" "hermes_agent" {
@@ -57,6 +66,7 @@ resource "kubernetes_manifest" "external_secret" {
 # --- Storage ---
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
+  count            = local.hermes_parked ? 0 : 1
   wait_until_bound = false
   metadata {
     name      = "hermes-agent-data-proxmox"
@@ -228,8 +238,10 @@ resource "kubernetes_deployment" "hermes_agent" {
     strategy {
       type = "Recreate"
     }
-    # Disabled 2026-04-22 — main container fails with "mkdir: cannot create directory '/opt/data': Permission denied" (fsGroup/runAsUser mismatch vs init container). Re-enable after fixing PVC permissions.
-    replicas = 0
+    # Parked 2026-04-22 — main container fails "mkdir: cannot create directory
+    # '/opt/data': Permission denied" (fsGroup/runAsUser mismatch vs init
+    # container). Fix PVC perms before un-parking (set local.hermes_parked = false).
+    replicas = local.hermes_parked ? 0 : 1
     selector {
       match_labels = {
         app = "hermes-agent"
@@ -362,7 +374,9 @@ resource "kubernetes_deployment" "hermes_agent" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            # Static name — the PVC resource is count-gated by local.hermes_parked,
+            # so we can't reference the (possibly zero-instance) resource here.
+            claim_name = "hermes-agent-data-proxmox"
           }
         }
         volume {
