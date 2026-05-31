@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "hermes_agent" {
   metadata {
     name = "hermes-agent"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -431,6 +431,11 @@ module "ingress" {
   name            = "hermes-agent"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  # Parked at replicas=0 since 2026-04-22 (PVC perms bug). Opt out of the
+  # Uptime Kuma external monitor so a deliberately-down service doesn't fire
+  # ExternalAccessDivergence (which halts kured reboots). Re-enable when the
+  # deployment is brought back up. (2026-05-31)
+  external_monitor = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Hermes Agent"
