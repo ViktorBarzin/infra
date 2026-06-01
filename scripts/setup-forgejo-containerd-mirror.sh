@@ -21,8 +21,9 @@ set -euo pipefail
 CERTS_DIR=/etc/containerd/certs.d/forgejo.viktorbarzin.me
 HOSTS_TOML='server = "https://forgejo.viktorbarzin.me"
 
-[host."https://10.0.20.200"]
+[host."https://10.0.20.203"]
   capabilities = ["pull", "resolve"]
+  skip_verify = true
 '
 
 NODES=$(kubectl get nodes -o name | sed 's|^node/||')
