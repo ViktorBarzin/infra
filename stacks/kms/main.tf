@@ -133,25 +133,27 @@ module "ingress" {
   }
 }
 
-# Carve-out for /scripts/* — the PowerShell activators (kms-bootstrap.ps1,
-# setup-kms.ps1) that visitors fetch with `iwr ... | iex`. Anubis cannot gate
-# this path: PowerShell/curl are non-JS clients and can't solve the PoW
-# challenge, so they'd receive the challenge HTML and `iex` would choke on it.
-# Points at the bare kms-web-page nginx service, bypassing the Anubis proxy.
-# Traefik prioritises the longer /scripts prefix over the main "/" router.
+# Carve-out for /scripts/* and /keys.json — the PowerShell activators
+# (kms-bootstrap.ps1, setup-kms.ps1) that visitors fetch with `iwr ... | iex`,
+# plus /keys.json (the published GVLK list the scripts fetch to auto-select a
+# key). Anubis cannot gate these paths: PowerShell/curl are non-JS clients and
+# can't solve the PoW challenge, so they'd receive the challenge HTML and the
+# script (or ConvertFrom-Json) would choke on it. Points at the bare
+# kms-web-page nginx service, bypassing the Anubis proxy. Traefik prioritises
+# the longer /scripts and /keys.json prefixes over the main "/" router.
 module "ingress_scripts" {
   source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": public read-only static scripts (iwr|iex). No login, no PoW.
+  # auth = "none": public read-only static scripts + key list (iwr|iex). No login, no PoW.
   auth             = "none"
   namespace        = kubernetes_namespace.kms.metadata[0].name
   name             = "kms-scripts"
   service_name     = kubernetes_service.kms-web-page.metadata[0].name
   port             = "80"
-  ingress_path     = ["/scripts"]
+  ingress_path     = ["/scripts", "/keys.json"]
   full_host        = "kms.viktorbarzin.me" # MUST match the main ingress host; without this the factory derives kms-scripts.viktorbarzin.me and the carve-out never matches.
   dns_type         = "none"                # DNS already owned by the main kms ingress.
   tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false # Two static scripts; nothing for scrapers to mine.
+  anti_ai_scraping = false # Static scripts + key list; nothing for scrapers to mine.
 }
 
 # Dedicated KMS endpoint hostname. kms.viktorbarzin.me is the *website* (Traefik
