@@ -99,6 +99,21 @@ how to tune the rate limit, how to revoke if abused.
   bootstrap. NOTE: the changepk/ODT execution paths are unverified on real
   hardware (no Home/retail test box; the Pro test VM can't be switched reversibly)
   — syntax-checked + activation regression-tested only.
+- **Self-hosted ODT bootstrapper**: the Office reinstall path fetches the Office
+  Deployment Tool from `https://kms.viktorbarzin.me/scripts/odt-setup.exe` (a
+  committed copy in `kms-website/static/scripts/`), NOT from Microsoft —
+  `download.microsoft.com`'s ODT URL is build-numbered and rotates every release
+  (the old hardcoded one 404'd). `$env:KMS_ODT_URL` overrides. The bootstrapper
+  self-updates the Office payload, so refresh the committed copy only occasionally.
+- **Client telemetry → Loki**: the scripts POST a small ANONYMOUS diagnostics
+  event per run to `https://kms.viktorbarzin.me/diag` (action, outcome, error +
+  exit codes, EditionID/build/locale, detected Office products, script version;
+  NO hostname/user/keys). Fire-and-forget (3s, swallowed) — never affects
+  activation. `$env:KMS_NO_TELEMETRY=1` opts out; `$env:KMS_DIAG_URL` overrides.
+  Collector: standalone `kms-diag` Deployment (`stacks/kms`, python stdlib HTTP
+  on :9102) reachable via the `/diag` ingress carve-out (bypasses Anubis like
+  `/scripts`); it prints `KMSDIAG <json>` to stdout → Loki. Query in Grafana:
+  `{namespace="kms",pod=~"kms-diag.*"} |= "KMSDIAG"`. Disclosed in the site FAQ.
 
 ## Where the logs are
 
