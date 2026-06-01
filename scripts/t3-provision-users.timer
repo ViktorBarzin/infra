@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic t3 per-user reconcile
+
+[Timer]
+OnBootSec=2min
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
