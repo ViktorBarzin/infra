@@ -1,0 +1,13 @@
+[Unit]
+Description=t3 per-user dispatch + auto-pair (X-authentik-username -> user instance)
+After=network.target
+
+[Service]
+Type=simple
+User=wizard
+ExecStart=/usr/local/bin/t3-dispatch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
