@@ -404,9 +404,14 @@ resource "kubernetes_config_map" "backup-script" {
       # so this browsable app-level copy only needs the most recent. Keeping the
       # whole installation (incl. logs) x7 here was the bulk of the 87G that
       # filled the offsite Synology.
-      echo "Cleaning old backups..."
+      #
+      # Sort by NAME, not mtime: dirs are YYYYMMDD_HHMMSS so lexical order is
+      # chronological. `rsync -a` stamps the backup dir with the SOURCE dir's
+      # mtime, which made the old `ls -dt | tail` delete the freshest backup and
+      # keep a stale one — keep the lexically-last (newest) instead.
+      echo "Cleaning old backups (keep latest)..."
       cd "$BACKUP_DIR"
-      ls -dt */ | tail -n +2 | xargs -r rm -rf
+      ls -d */ 2>/dev/null | sort | head -n -1 | xargs -r rm -rf
 
       echo "Backup completed at $(date)"
       echo "Backup stored at: $BACKUP_PATH"
