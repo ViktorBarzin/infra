@@ -1,8 +1,23 @@
-# Runbook: KMS public exposure (kms.viktorbarzin.me:1688)
+# Runbook: KMS public exposure (vlmcs.viktorbarzin.me:1688)
 
-`kms.viktorbarzin.me:1688/TCP` is intentionally open to the internet so any
+`vlmcs.viktorbarzin.me:1688/TCP` is intentionally open to the internet so any
 visitor can activate Volume License Microsoft products. The webpage at
 `https://kms.viktorbarzin.me/` documents how to use it.
+
+**Two hostnames, on purpose** (do not merge them):
+
+- `kms.viktorbarzin.me` — the **website** (Traefik). Serves the docs and the
+  `/scripts/*.ps1` activators. Internally resolves to the Traefik LB
+  (`10.0.20.203`), which has **no** `:1688` listener.
+- `vlmcs.viktorbarzin.me` — the **KMS endpoint** (vlmcsd). A-only (no AAAA —
+  the IPv6 tunnel doesn't forward 1688). Resolves to `10.0.20.202` on the LAN
+  (Technitium split-horizon, set via API — `cloudflare_record.vlmcs` in
+  `stacks/kms` owns the public A) and to `176.12.22.76` on the internet
+  (Cloudflare → pfSense WAN NAT :1688). Every `slmgr` / `ospp` command on the
+  page points here.
+
+Pointing a client at `kms.viktorbarzin.me:1688` fails from the LAN with "KMS
+server cannot be reached" — that name is the website, not the KMS server.
 
 This runbook covers operations on the public exposure: where to find logs,
 how to tune the rate limit, how to revoke if abused.
@@ -25,9 +40,10 @@ how to tune the rate limit, how to revoke if abused.
   - `kms.viktorbarzin.lan` A `10.0.20.200` (Traefik — for the user-facing
     website at `https://kms.viktorbarzin.lan/`; **not** the KMS server)
   Manual override (e.g., for clients without the suffix or for clients
-  on the public internet): `slmgr /skms kms.viktorbarzin.me:1688` (WAN
-  path via pfSense forward) or `slmgr /skms 10.0.20.202:1688` (direct).
-  To revert a manually-overridden client back to auto-discovery:
+  on the public internet): `slmgr /skms vlmcs.viktorbarzin.me:1688` (works
+  LAN + WAN) or `slmgr /skms 10.0.20.202:1688` (LAN, direct). Do **not** use
+  `kms.viktorbarzin.me:1688` — that name is the website (Traefik), not the
+  KMS server. To revert a manually-overridden client back to auto-discovery:
   `slmgr /ckms`.
 - **Pod fluidity**: deployment has `replicas=1` (notifier dedup state is
   per-pod) with no node affinity. TCP readiness/liveness probes on 1688
@@ -54,6 +70,14 @@ how to tune the rate limit, how to revoke if abused.
   `kms_connection_probes_total{source}` (`source` ∈ `internal_pod`,
   `cluster_node`, `external`) and log to stdout, but never post to Slack.
   Real activations still post.
+- **Website `/scripts` carve-out**: the website is Anubis-fronted (PoW
+  challenge). `/scripts/*` is carved out to the bare nginx backend
+  (`module.ingress_scripts` in `stacks/kms`) because PowerShell `iwr | iex`
+  is a non-JS client and can't solve the PoW — without the carve-out the
+  one-liner downloads the Anubis challenge HTML and `iex` chokes on it.
+  Everything except `/scripts/*` stays behind Anubis. Verify:
+  `curl -A curl https://kms.viktorbarzin.me/scripts/setup-kms.ps1` returns
+  the script (not "Making sure you're not a bot!").
 
 ## Where the logs are
 
@@ -153,6 +177,7 @@ itself is independent of any forward and persists across delete/restore.
 
 - Stack: `stacks/kms/` (Terraform; deployment, MetalLB Service, ingress,
   ExternalSecret for the Slack webhook)
-- Webpage source: `kms-website/` repo (Hugo + nginx, deployed via Drone CI)
+- Webpage source: `kms-website/` repo (Hugo + nginx; Woodpecker builds +
+  pushes to forgejo, then `kubectl set image deployment/kms-web-page`)
 - Networking architecture footnote:
   `docs/architecture/networking.md` § "MetalLB & Load Balancing"
