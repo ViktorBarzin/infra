@@ -74,18 +74,22 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
     warp_routing {
       enabled = true
     }
-    # Wildcard rule routes all subdomains through tunnel to Traefik.
-    # Traefik handles host-based routing via K8s Ingress resources.
+    # Wildcard rule routes all subdomains through the tunnel to Traefik,
+    # which handles host-based routing via K8s Ingress resources.
+    # Origin = in-cluster Traefik Service DNS (NOT a MetalLB LB IP) so the
+    # tunnel is decoupled from LB-IP changes. A raw IP here caused a full-site
+    # 502 on 2026-06-01 when Traefik moved 10.0.20.200 -> .203; see
+    # docs/post-mortems/2026-06-01-cloudflared-stale-traefik-origin.md.
     ingress_rule {
       hostname = "*.viktorbarzin.me"
-      service  = "https://10.0.20.200:443"
+      service  = "https://traefik.traefik.svc.cluster.local:443"
       origin_request {
         no_tls_verify = true
       }
     }
     ingress_rule {
       hostname = "viktorbarzin.me"
-      service  = "https://10.0.20.200:443"
+      service  = "https://traefik.traefik.svc.cluster.local:443"
       origin_request {
         no_tls_verify = true
       }
