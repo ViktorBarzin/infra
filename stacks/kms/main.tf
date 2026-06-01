@@ -156,6 +156,125 @@ module "ingress_scripts" {
   anti_ai_scraping = false # Static scripts + key list; nothing for scrapers to mine.
 }
 
+# Anonymous diagnostics collector for the PowerShell activation scripts. The
+# activators POST a tiny JSON blob (action/outcome/error) to /diag so script
+# failures are captured. The collector prints each event to stdout, which Loki
+# scrapes — making them searchable in Grafana. Loki only: no Slack, no
+# Prometheus. Like /scripts, /diag must bypass Anubis: PowerShell/curl can't
+# solve the PoW challenge, so the carve-out below points at the bare collector.
+resource "kubernetes_config_map" "kms_diag_collector" {
+  metadata {
+    name      = "kms-diag-collector"
+    namespace = kubernetes_namespace.kms.metadata[0].name
+  }
+  data = {
+    "diag-collector.py" = file("${path.module}/files/diag-collector.py")
+  }
+}
+
+resource "kubernetes_deployment" "kms_diag" {
+  metadata {
+    name      = "kms-diag"
+    namespace = kubernetes_namespace.kms.metadata[0].name
+    labels = {
+      app  = "kms-diag"
+      tier = local.tiers.aux
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "kms-diag"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "kms-diag"
+        }
+        annotations = {
+          # Reload pods when the collector script changes
+          "checksum/collector" = sha1(file("${path.module}/files/diag-collector.py"))
+        }
+      }
+      spec {
+        volume {
+          name = "diag-collector-script"
+          config_map {
+            name = kubernetes_config_map.kms_diag_collector.metadata[0].name
+          }
+        }
+        container {
+          image   = "python:3.12-alpine"
+          name    = "diag-collector"
+          command = ["python3", "/app/diag-collector.py"]
+          resources {
+            limits = {
+              memory = "64Mi"
+            }
+            requests = {
+              cpu    = "5m"
+              memory = "48Mi"
+            }
+          }
+          port {
+            container_port = 9102
+          }
+          volume_mount {
+            name       = "diag-collector-script"
+            mount_path = "/app"
+            read_only  = true
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+resource "kubernetes_service" "kms_diag" {
+  metadata {
+    name      = "kms-diag"
+    namespace = kubernetes_namespace.kms.metadata[0].name
+    labels = {
+      app = "kms-diag"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "kms-diag"
+    }
+    port {
+      port     = "9102"
+      protocol = "TCP"
+    }
+  }
+}
+
+# Carve-out for /diag — the anonymous telemetry endpoint. Same rationale as
+# /scripts: PowerShell/curl POSTs can't solve Anubis' PoW challenge, so this
+# points at the bare kms-diag collector service. full_host MUST match the main
+# ingress host; without it the factory derives kms-diag.viktorbarzin.me and the
+# carve-out never matches (this exact bug hit the /scripts carve-out).
+module "ingress_diag" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public telemetry collector, no login/PoW
+  auth             = "none"
+  namespace        = kubernetes_namespace.kms.metadata[0].name
+  name             = "kms-diag"
+  service_name     = kubernetes_service.kms_diag.metadata[0].name
+  port             = "9102"
+  ingress_path     = ["/diag"]
+  full_host        = "kms.viktorbarzin.me"
+  dns_type         = "none"
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+}
+
 # Dedicated KMS endpoint hostname. kms.viktorbarzin.me is the *website* (Traefik
 # 10.0.20.203 internally / :443 externally) and cannot also serve raw KMS on
 # :1688, so clients pointed at kms.viktorbarzin.me:1688 from the LAN hit Traefik
