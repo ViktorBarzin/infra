@@ -216,7 +216,7 @@ If the activation surface needs to come down (abuse, legal, audit):
 
 The k8s service stays reachable on the LAN
 (`10.0.20.202:1688` directly, and the website at `kms.viktorbarzin.lan`
-via Traefik on `10.0.20.200:443`) — only the WAN port-forward is removed.
+via Traefik on `10.0.20.203:443`) — only the WAN port-forward is removed.
 
 To put it back, recreate the NAT rule (target alias `k8s_kms_lb`,
 port `1688`) and the filter rule with the same per-source caps. The alias
