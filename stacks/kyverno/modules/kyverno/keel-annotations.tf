@@ -26,7 +26,7 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
         "policies.kyverno.io/title"       = "Inject Keel Auto-Update Annotations"
         "policies.kyverno.io/category"    = "Automation"
         "policies.kyverno.io/severity"    = "low"
-        "policies.kyverno.io/description" = "Adds keel.sh/policy: force + match-tag: true + trigger: poll annotations to workloads in namespaces labeled keel.sh/enrolled=true. force+match-tag is the safe pairing: Keel watches the deployment's CURRENT tag for digest changes only, never rewrites the tag string. Phase rollout per docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md."
+        "policies.kyverno.io/description" = "Adds keel.sh/policy: patch + trigger: poll + pollSchedule annotations to workloads in namespaces labeled keel.sh/enrolled=true, and ACTIVELY STRIPS the legacy keel.sh/match-tag annotation (proven unreliable on 2026-05-26 — it let Keel rewrite tag strings / cross-assign images). Phase rollout per docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md."
       }
     }
     spec = {
@@ -234,6 +234,30 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                 "+(keel.sh/policy)"       = "patch"
                 "+(keel.sh/trigger)"      = "poll"
                 "+(keel.sh/pollSchedule)" = "@every 1h"
+
+                # ACTIVELY STRIP the legacy match-tag annotation. The
+                # 2026-05-26 migration flipped the default policy force→patch
+                # and DROPPED match-tag from this patch — but Kyverno's
+                # add-only mutate can't remove an annotation that's no longer
+                # listed, so ~194 pre-migration workloads kept a stale
+                # keel.sh/match-tag=true. That flag let Keel cross-assign
+                # images across containers in multi-image pods (the `blog`
+                # deployment had its nginx ⇄ nginx-exporter images swapped,
+                # site down 2026-05-26 → 2026-06-01; the nginx blog image
+                # received the exporter's `-nginx.scrape-uri` arg and
+                # CrashLoopBackOff'd). Setting the key to null strips it at
+                # ADMISSION on every enrolled workload create/update
+                # (strategic-merge removal; no-op if absent; annotation-only
+                # ⇒ NO pod restart). Deliberately NO `+(...)` anchor — removal
+                # must be unconditional. NOTE: mutateExistingOnPolicyUpdate did
+                # NOT regenerate UpdateRequests for this removal-only change
+                # (Kyverno re-mutates existing resources for add/set, not
+                # deletions), so the 194 pre-existing workloads were swept once
+                # via `kubectl annotate <kind>/<name> -n <ns> keel.sh/match-tag-`
+                # on 2026-06-01. The policy keeps it gone (never re-added) and
+                # strips it from any future workload.
+                # See post-mortems/2026-06-01-keel-match-tag-image-swap.md.
+                "keel.sh/match-tag" = null
               }
             }
           }
