@@ -29,7 +29,6 @@ provider "registry.terraform.io/gavinbunney/kubectl" {
   constraints = "~> 1.14"
   hashes = [
     "h1:9QkxPjp0x5FZFfJbE+B7hBOoads9gmdfj9aYu5N4Sfc=",
-<<<<<<< Updated upstream
     "zh:1dec8766336ac5b00b3d8f62e3fff6390f5f60699c9299920fc9861a76f00c71",
     "zh:43f101b56b58d7fead6a511728b4e09f7c41dc2e3963f59cf1c146c4767c6cb7",
     "zh:4c4fbaa44f60e722f25cc05ee11dfaec282893c5c0ffa27bc88c382dbfbaa35c",
@@ -45,8 +44,6 @@ provider "registry.terraform.io/gavinbunney/kubectl" {
     "zh:dd7dd18f1f8218c6cd19592288fde32dccc743cde05b9feeb2883f37c2ff4b4e",
     "zh:ec4bd5ab3872dedb39fe528319b4bba609306e12ee90971495f109e142d66310",
     "zh:f610ead42f724c82f5463e0e71fa735a11ffb6101880665d93f48b4a67b9ad82",
-=======
->>>>>>> Stashed changes
   ]
 }
 
@@ -157,7 +154,6 @@ provider "registry.terraform.io/telmate/proxmox" {
   constraints = "3.0.2-rc07"
   hashes = [
     "h1:zp5hpQJQ4t4zROSLqdltVpBO+Riy9VugtfFbpyTw1aM=",
-<<<<<<< Updated upstream
     "zh:2ee860cd0a368b3eaa53f4a9ea46f16dab8a97929e813ea6ef55183f8112c2ca",
     "zh:415965fd915bae2040d7f79e45f64d6e3ae61149c10114efeac1b34687d7296c",
     "zh:6584b2055df0e32062561c615e3b6b2c291ca8c959440adda09ef3ec1e1436bd",
@@ -172,7 +168,5 @@ provider "registry.terraform.io/telmate/proxmox" {
     "zh:d5ade3fae031cc629b7c512a7b60e46570f4c41665e88a595d7efd943dde5ab2",
     "zh:f388c15ad1ecfc09e7361e3b98bae9b627a3a85f7b908c9f40650969c949901c",
     "zh:f415cc6f735a3971faae6ac24034afdb9ee83373ef8de19a9631c187d5adc7db",
-=======
->>>>>>> Stashed changes
   ]
 }
