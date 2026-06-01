@@ -280,12 +280,19 @@ resource "kubernetes_deployment" "llama_swap" {
   # for it to be reachable".
   wait_for_rollout = false
   spec {
+<<<<<<< Updated upstream
     # Restored to 1 on 2026-05-29 (was 0 during 2026-05-25 IO-storm recovery —
     # see docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md). The
     # immediate trigger was fire-planner's examples ingest needing qwen3-8b for
     # bulk Reddit-post extraction; only frigate is currently on the GPU on
     # k8s-node1 so contention is minimal.
     replicas = 1
+=======
+    # TEMP-SCALEDOWN-2026-05-25-IO-STORM: scaled to 0 during cluster recovery.
+    # Restore to 1 when cluster is fully stable. See post-mortem
+    # docs/post-mortems/2026-05-25-immich-anca-elements-io-storm.md.
+    replicas = 0
+>>>>>>> Stashed changes
     strategy { type = "Recreate" }
 
     selector {
