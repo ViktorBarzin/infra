@@ -62,7 +62,7 @@
 | blog | Personal blog | blog |
 | descheduler | Pod descheduler | descheduler |
 | hackmd | Collaborative markdown | hackmd |
-| kms | Key management | kms |
+| kms | Windows/Office volume-license activation (vlmcsd); site kms.viktorbarzin.me, endpoint vlmcs.viktorbarzin.me:1688 | kms |
 | privatebin | Encrypted pastebin | privatebin |
 | vault | HashiCorp Vault | vault |
 | reloader | ConfigMap/Secret reloader | reloader |

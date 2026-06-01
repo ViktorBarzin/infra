@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "kms" {
     name = "kms"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -131,6 +131,45 @@ module "ingress" {
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Carve-out for /scripts/* — the PowerShell activators (kms-bootstrap.ps1,
+# setup-kms.ps1) that visitors fetch with `iwr ... | iex`. Anubis cannot gate
+# this path: PowerShell/curl are non-JS clients and can't solve the PoW
+# challenge, so they'd receive the challenge HTML and `iex` would choke on it.
+# Points at the bare kms-web-page nginx service, bypassing the Anubis proxy.
+# Traefik prioritises the longer /scripts prefix over the main "/" router.
+module "ingress_scripts" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public read-only static scripts (iwr|iex). No login, no PoW.
+  auth             = "none"
+  namespace        = kubernetes_namespace.kms.metadata[0].name
+  name             = "kms-scripts"
+  service_name     = kubernetes_service.kms-web-page.metadata[0].name
+  port             = "80"
+  ingress_path     = ["/scripts"]
+  full_host        = "kms.viktorbarzin.me" # MUST match the main ingress host; without this the factory derives kms-scripts.viktorbarzin.me and the carve-out never matches.
+  dns_type         = "none"                # DNS already owned by the main kms ingress.
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Two static scripts; nothing for scrapers to mine.
+}
+
+# Dedicated KMS endpoint hostname. kms.viktorbarzin.me is the *website* (Traefik
+# 10.0.20.203 internally / :443 externally) and cannot also serve raw KMS on
+# :1688, so clients pointed at kms.viktorbarzin.me:1688 from the LAN hit Traefik
+# (no 1688 listener) and fail with "KMS server cannot be reached". vlmcs.* is
+# A-only (NO AAAA — the IPv6 tunnel doesn't forward 1688) and resolves to the
+# vlmcsd MetalLB IP both ways:
+#   external: vlmcs.viktorbarzin.me -> 176.12.22.76 -> pfSense WAN NAT :1688 -> 10.0.20.202
+#   internal: vlmcs.viktorbarzin.me -> 10.0.20.202 (Technitium split-horizon, set via API)
+resource "cloudflare_record" "vlmcs" {
+  name            = "vlmcs"
+  content         = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
+  proxied         = false          # raw TCP 1688 — Cloudflare proxy is HTTP-only
+  ttl             = 1
+  type            = "A"
+  zone_id         = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
+  allow_overwrite = true
 }
 
 resource "kubernetes_config_map" "kms_slack_notifier" {
