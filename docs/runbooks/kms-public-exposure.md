@@ -94,11 +94,24 @@ how to tune the rate limit, how to revoke if abused.
   overrides) — in-place edition UPGRADE, **needs a reboot then re-run**, one-way
   (no in-place downgrade). Office → slim ODT `setup.exe /configure` to a VL
   product (default ProPlus2024Volume; `$env:KMS_OFFICE_PRODUCT` overrides) — ~3 GB
-  download, closes Office. Non-interactive runs only proceed with an explicit env
-  override. setup-kms.ps1 stays minimal and points non-VL editions at the
-  bootstrap. NOTE: the changepk/ODT execution paths are unverified on real
-  hardware (no Home/retail test box; the Pro test VM can't be switched reversibly)
-  — syntax-checked + activation regression-tested only.
+  download, closes Office. If an INCOMPATIBLE Click-to-Run Office is installed
+  (retail/M365 — `ProductReleaseIds` not ending in `Volume`), it's named in the
+  prompt and **uninstalled first** via ODT `<Remove>` of just those products (VL
+  products of other families are kept), then the VL product installs. The ODT run
+  is one shared `Invoke-Odt` for both `<Add>` and `<Remove>`. **Removing the bundled
+  consumer Office leaves a pending reboot**, so a VL install in the same run — or a
+  re-run before rebooting — fails with `setup.exe` exit **1603**. Two guards: a
+  hard-reboot (CBS/WU) gate before the ~3 GB download, and a reboot-aware 1603
+  message telling the user to reboot + re-run (idempotent — the incompatible Office
+  is already gone). `Invoke-Odt` checks the setup.exe exit code and on failure
+  captures the C2R log from `%TEMP%` into telemetry; `Wait-OfficeInstalled` polls
+  on-disk state (ospp.vbs + ProductReleaseIds) because `setup.exe` can return before
+  the C2R install finishes. Non-interactive runs only proceed with an explicit env
+  override. setup-kms.ps1 stays minimal and points non-VL editions at the bootstrap.
+  NOTE: real-hardware status (2026-06-01) — the incompatible-uninstall path DID run
+  on a real M365/Office-Home box (`O365HomePremRetail` removed cleanly); the VL
+  install then needs a reboot first (hit 1603, now guided). changepk edition-switch
+  remains untested (no Home test box; the Pro test VM can't be switched reversibly).
 - **Self-hosted ODT bootstrapper**: the Office reinstall path fetches the Office
   Deployment Tool from `https://kms.viktorbarzin.me/scripts/odt-setup.exe` (a
   committed copy in `kms-website/static/scripts/`), NOT from Microsoft —
