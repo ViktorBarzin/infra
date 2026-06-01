@@ -160,10 +160,11 @@ When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotation
 
 ```
 keel.sh/policy: patch
-keel.sh/match-tag: "true"
 keel.sh/trigger: poll
 keel.sh/pollSchedule: "@every 1h"
 ```
+
+**`keel.sh/match-tag` is NO LONGER injected — it is actively STRIPPED.** It was the pre-2026-05-26 default (`force + match-tag`), proven unreliable: under `force` it let Keel rewrite tag strings and cross-assign images between containers in multi-image pods. The `blog` deployment was a casualty — its `nginx` ⇄ `nginx-exporter` images got swapped and the site was down 2026-05-26 → 2026-06-01. The policy now sets the annotation to `null` (strips on admission); the 194 pre-existing workloads still carrying it were swept once via `kubectl annotate … keel.sh/match-tag-` on 2026-06-01. The `ignore_changes` line for it (below) is retained as a harmless no-op. See `docs/post-mortems/2026-06-01-keel-match-tag-image-swap.md`.
 
 To suppress the resulting Terraform drift, **enrolled workloads** must carry the complete `ignore_changes` block below. This is the canonical form — it folds together every marker (see the legend after it):
 
