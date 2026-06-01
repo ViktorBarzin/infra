@@ -633,6 +633,12 @@ variable "claude_agent_service_url" {
   default     = "http://claude-agent-service.claude-agent.svc.cluster.local:8080/v1/chat/completions"
 }
 
+variable "examples_llm_model" {
+  type        = string
+  description = "llama-swap model id for the examples LLM primary extractor. Use qwen3-8b when GPU has ≥5GB free; qwen3vl-4b when immich-ml is using ~10GB."
+  default     = "qwen3vl-4b"
+}
+
 variable "run_examples_bulk_ingest" {
   type        = bool
   description = "Flip to true once to bulk-populate fire_example. Reset to false after."
@@ -795,6 +801,10 @@ resource "kubernetes_job_v1" "examples_bulk_ingest" {
           env {
             name  = "CLAUDE_AGENT_SERVICE_URL"
             value = var.claude_agent_service_url
+          }
+          env {
+            name  = "LLM_MODEL"
+            value = var.examples_llm_model
           }
         }
       }
