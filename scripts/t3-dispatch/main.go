@@ -62,9 +62,10 @@ func lookup(ak string) (entry, bool) {
 // user, via the scoped sudoers entry) and exchanges it at the instance's
 // /api/auth/bootstrap, relaying the returned t3_session Set-Cookie to the browser.
 func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
-	out, err := exec.Command("sudo", "-n", "-u", e.OsUser,
-		"t3", "auth", "pairing", "create",
-		"--base-dir", "/home/"+e.OsUser+"/.t3", "--ttl", "5m", "--json").Output()
+	// t3-mint (root, via scoped sudoers) validates the OS user is in
+	// /etc/ttyd-user-map, then mints as that user. The dispatch service itself
+	// runs unprivileged and can invoke nothing else.
+	out, err := exec.Command("sudo", "-n", "/usr/local/bin/t3-mint", e.OsUser).Output()
 	if err != nil {
 		log.Printf("mint for %s failed: %v", e.OsUser, err)
 		http.Error(w, "pairing mint failed", http.StatusInternalServerError)
