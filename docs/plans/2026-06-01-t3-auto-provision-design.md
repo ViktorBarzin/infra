@@ -1,7 +1,7 @@
 # t3code per-user auto-provisioning — design
 
 - **Date:** 2026-06-01
-- **Status:** design (approved verbally; spec under review)
+- **Status:** implemented 2026-06-01 (commits up to e8766756; dispatcher hardened to a dedicated unprivileged user + `t3-mint` wrapper vs the design's run-as-wizard)
 - **Owner:** Viktor (wizard)
 - **Builds on:** the multi-user t3 setup shipped earlier 2026-06-01 (commit `ad9472ab`): Authentik forward-auth on `t3.viktorbarzin.me` → in-cluster nginx `t3-dispatch` → per-OS-user `t3 serve` on devvm (wizard→:3773, emo→:3774).
 
