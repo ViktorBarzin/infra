@@ -357,9 +357,14 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
           # viktorbarzin.me the combined Cookie header exceeds nginx's default
           # 4 x 8k large_client_header_buffers and the ai-bot-block forward-auth
           # rejects it with 400 (and error-pages then shows "Too big request
-          # header" 431). Match auth-proxy-config: 8 x 64k accepts the pile.
+          # header" 431). NOTE the *binding* limit for browsers is Traefik's
+          # HTTP/2 header cap (~64KB, Go maxHeaderListSize, not configurable) —
+          # bigger piles are rejected upstream of here regardless. This 256k
+          # only keeps bot-block from being a *tighter* bottleneck (and covers
+          # HTTP/1.1 clients). poison-fountain (the bot check) ignores cookies.
+          # Real fix for >64KB piles = reduce authentik_proxy_* accumulation.
           client_header_buffer_size 8k;
-          large_client_header_buffers 8 64k;
+          large_client_header_buffers 8 256k;
 
           location /auth {
               access_by_lua_block {
