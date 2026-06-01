@@ -20,6 +20,36 @@ When an onboarded user logs in via Authentik, they land **straight in their own 
 
 `/etc/ttyd-user-map` (already: `vbarzin=wizard`, `emil.barzin=emo`). One file drives both the terminal and t3. A user with no entry → 403 (no shared fallback). Adding a person = one line here (plus they must already be an Authentik identity + OS account — i.e., your existing onboarding).
 
+## Discovered auth contract
+
+*(Task 1 discovery spike — confirmed from `pingdotgg/t3code` source AND a live mint→bootstrap→cookie round-trip against wizard's instance on `http://127.0.0.1:3773`, 2026-06-01.)*
+
+- **Session cookie name: `t3_session`.**
+  - Source: `apps/server/src/auth/utils.ts` — `const SESSION_COOKIE_NAME = "t3_session"`. `resolveSessionCookieName({mode, port})` returns the plain name in **web** mode and `t3_session_<port>` only in **desktop** mode. The server passes `serverConfig.mode`/`serverConfig.port` (`SessionCredentialService.ts`); `t3 serve` runs in `web` mode → plain `t3_session`.
+  - Live `Set-Cookie` from the running instance returned `t3_session=...` (no port suffix) → confirms web mode and cross-checks the source.
+
+- **Bootstrap request body: `{ "credential": "<TOKEN>" }`** (single field `credential`, a non-empty trimmed string).
+  - Schema: `packages/contracts/src/auth.ts` — `AuthBootstrapInput = Schema.Struct({ credential: TrimmedNonEmptyString })`.
+  - Server: `apps/server/src/auth/http.ts` `authBootstrapRouteLayer` (POST `/api/auth/bootstrap`) decodes `AuthBootstrapInput`, calls `exchangeBootstrapCredential(payload.credential, ...)`, then `HttpServerResponse.setCookie(sessions.cookieName, result.sessionToken, { httpOnly: true, path: "/", sameSite: "lax", expires })`.
+  - Web UI: `apps/web/src/environments/primary/auth.ts` posts `const payload: AuthBootstrapInput = { credential }` with `credentials: "include"`.
+  - A wrong/missing field yields `400 "Invalid bootstrap payload."`.
+  - **The `t3 auth pairing create --json` CLI returns the pairing token under the `credential` key** (not `token`/`pairingToken`) — feed that value straight into the bootstrap body's `credential` field.
+
+- **Verified curl** (token redacted):
+
+  ```bash
+  TOK=$(sudo -u wizard t3 auth pairing create --base-dir /home/wizard/.t3 --ttl 5m --json | jq -r '.credential')
+  curl -s -i -XPOST http://127.0.0.1:3773/api/auth/bootstrap \
+    -H 'content-type: application/json' \
+    -d "{\"credential\":\"<TOKEN>\"}" | grep -iE 'HTTP/|set-cookie'
+  # HTTP/1.1 200 OK
+  # set-cookie: t3_session=<JWT>; Path=/; Expires=<+30d>; HttpOnly; SameSite=Lax
+  ```
+
+  The session cookie is a signed JWT (`v:1, kind:session, sid, sub, role, method:"browser-session-cookie", iat, exp`), default TTL 30 days. The dispatch service must inject it `HttpOnly; Path=/; SameSite=Lax` to match t3's own behaviour.
+
+- **Constants for the dispatch service:** `T3_COOKIE = "t3_session"`; bootstrap endpoint `POST /api/auth/bootstrap`; body `{"credential": "<pairing-token>"}`; success = `200` + `Set-Cookie: t3_session=...`.
+
 ## Components
 
 ### 1. Per-user systemd template — `t3-serve@.service` (file-permission enforcement)
