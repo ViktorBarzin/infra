@@ -57,8 +57,9 @@ mkdir -p /etc/containerd/certs.d/forgejo.viktorbarzin.me
 cat > /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml <<'FORGEJO'
 server = "https://forgejo.viktorbarzin.me"
 
-[host."https://10.0.20.200"]
+[host."https://10.0.20.203"]
   capabilities = ["pull", "resolve"]
+  skip_verify = true
 FORGEJO
 
 # quay.io + registry.k8s.io: include mirror configs that match node4's
