@@ -351,6 +351,16 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
       }
       server {
           listen 8080;
+
+          # Browsers accumulate one authentik_proxy_<random> cookie per Authentik
+          # Proxy Provider on the parent domain. With 30+ services under
+          # viktorbarzin.me the combined Cookie header exceeds nginx's default
+          # 4 x 8k large_client_header_buffers and the ai-bot-block forward-auth
+          # rejects it with 400 (and error-pages then shows "Too big request
+          # header" 431). Match auth-proxy-config: 8 x 64k accepts the pile.
+          client_header_buffer_size 8k;
+          large_client_header_buffers 8 64k;
+
           location /auth {
               access_by_lua_block {
                   ngx.req.clear_header("If-Match")
