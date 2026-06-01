@@ -1,6 +1,31 @@
 # Backup & Disaster Recovery Architecture
 
-Last updated: 2026-05-26
+Last updated: 2026-06-01
+
+> **2026-06-01 — regenerable services carved back out** (offsite Synology hit
+> 97%; the `Backup` share had grown +670 G in a week, traced to the 2026-05-26
+> change below that started mirroring large regenerable data offsite):
+> - **`nfs-mirror` re-excludes** `ollama` (20 G), `prometheus-backup` (64 G),
+>   `audiblez` (24 G), `ebook2audiobook` (11 G). Live copy stays on sdc; no
+>   sda/Synology copy. `--delete` reaps them from sda on the next run.
+>   `*-backup` DB dumps (sqlite-backup etc.) are KEPT — real DB safety copies.
+> - **`offsite-sync` Step 2 nfs-ssd → immich-only**: `ollama` (59 G) +
+>   `llamacpp` (26 G) on the SSD no longer ship to Synology (re-pullable
+>   models). Was a blanket `/srv/nfs-ssd/` sync; now immich-only like nfs/.
+> - **`daily-backup` skips `nextcloud/nextcloud-data-proxmox`** — orphaned
+>   pre-encryption PV (Released, Retain) that was still backed up weekly.
+> - **Nextcloud backup shrunk**: the dedicated nextcloud-backup CronJob
+>   (`stacks/nextcloud`) kept 7 full copies incl. a 10 GB+ `nextcloud.log`
+>   (87 G total). Now: `log_rotate_size=10 MB` caps the log at source, backup
+>   excludes `nextcloud.log*` + preview cache, retention 7 → 1 (pvc-data holds
+>   the version history). Footprint < 5 G.
+> - **Nextcloud image pinned to `32.0.9`** in chart_values — the 2026-05-26
+>   Keel bump (32.0.3 → 32.0.9, data migrated to 32.0.9.2) was never pinned in
+>   TF, so this session's apply rolled a 32.0.3 pod and CrashLooped on the
+>   downgrade. Pinning eliminates the drift.
+> - **One-off Synology delete** of the existing copies above + emptied the
+>   `Backup`/`Emo shared` recycle bins (~31 G). ~340 G total; reclaims as the
+>   3-day `Backup`-share snapshots roll off (or via manual snapshot expiry).
 
 > **2026-05-26 — bypass list pruned to a single path** (follow-up to the
 > 2026-05-24 changes below):
@@ -48,9 +73,9 @@ The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 
 - **Copy 1** (live): all PVC data + VM disks on Proxmox sdc thin pool (10.7TB RAID1 HDD); all NFS data at `/srv/nfs[-ssd]/`
 - **Copy 2** (local backup): sda `/mnt/backup` (1.1TB RAID1 SAS) — **46% used** post-2026-05-26 (was 87% before anca-elements cleanup; bypass-list pruning added ~260 G of *-backup + ollama + audiblez + ebook2audiobook)
 - **Copy 3** (offsite): Synology NAS at 192.168.1.13
-  - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs, now also includes ollama/audiblez/ebook2audiobook/*-backup)
+  - `Synology/Backup/Viki/pve-backup/` — sda contents (PVC backups + nfs-mirror output: ~90 service dirs incl. `*-backup` DB dumps. **ollama/audiblez/ebook2audiobook/prometheus-backup excluded 2026-06-01** — regenerable, live-only)
   - `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
-  - `Synology/Backup/Viki/nfs-ssd/` — full SSD NFS (immich-ML, ollama, llamacpp); SSD has no sda-mirror leg, so all three go direct
+  - `Synology/Backup/Viki/nfs-ssd/` — **immich-ML only (2026-06-01)**; ollama/llamacpp dropped (re-pullable models, live-only on the SSD)
 
 ## Architecture Diagram
 

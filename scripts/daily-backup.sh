@@ -215,6 +215,17 @@ else
             continue
         fi
 
+        # Skip-list: PVCs we deliberately don't keep offsite copies of.
+        #   nextcloud-data-proxmox — orphaned pre-encryption PV (Released,
+        #   Retain). Nextcloud moved to nextcloud-data-encrypted on 2026-04-13;
+        #   this old unencrypted PV lingers (Retain) and was still being backed
+        #   up weekly, filling the offsite Synology. Stop copying it (2026-06-01).
+        case "${ns_pvc}" in
+            nextcloud/nextcloud-data-proxmox)
+                log "  skip ${ns_pvc} (orphaned pre-encryption PVC)"
+                continue ;;
+        esac
+
         # Detect LUKS-encrypted volumes and set up mount device
         LUKS_NAME=""
         MOUNT_DEV="/dev/pve/${snap}"
