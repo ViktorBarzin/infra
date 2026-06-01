@@ -101,7 +101,7 @@ This is added per workload as we phase in. Mechanical, grep-able.
 | 2 | Stateless third-party web apps (linkwarden, postiz, affine, etc.) | No migrations |
 | 3 | Exporters, sidecars, utilities | Stateless |
 | 4 | Stateful-but-tolerant (Grafana, Prometheus, etc.) | Restart-safe state |
-| 5 | State-coupled with migrations (Nextcloud, Forgejo, paperless-ngx, mailserver) | Schema-migration risk |
+| 5 | State-coupled with migrations (Nextcloud, Forgejo, paperless-ngx, mailserver) | Schema-migration risk. **Nextcloud enrolled 2026-06-01** with two safeguards for the migration risk: F1 — `nextcloud-watchdog` CronJob runs `occ upgrade` when occ reports `needsDbUpgrade=true` (recovers an interrupted entrypoint upgrade); F2 — `chart_values.yaml` renders the live (Keel-bumped) image tag with a floor, so a helm re-render never downgrades below live. Scope is `patch` (Kyverno-stamped) == `minor` for Nextcloud (32.0.x only). See `stacks/nextcloud/main.tf`. |
 | 6 | Authentik | Auth outage |
 | 7 | Operators (cnpg-operator, ESO, kured, descheduler) | Operator skew |
 | 8 | Critical infra (Calico, proxmox-csi, nfs-csi, traefik, metallb) | Node-level outage potential (memory id=390: 26h Calico cascade) |
