@@ -32,7 +32,7 @@
 |---------|-------------|-------|
 | k8s-dashboard | Kubernetes dashboard | k8s-dashboard |
 | reverse-proxy | Generic reverse proxy | reverse-proxy |
-| t3code | Coding-agent GUI (`t3 serve`) on DevVM 10.0.10.10:3773, exposed at t3.viktorbarzin.me via Service+Endpoints (no pod). `auth=app` — t3's own owner-pairing/bearer auth + CrowdSec gate it (no Authentik, to keep the native app & app.t3.codes cross-origin clients working). RCE surface; re-pair via `t3 auth pairing create` on DevVM. | t3code |
+| t3code | Multi-user coding-agent GUI at t3.viktorbarzin.me. `auth=required` (Authentik) → in-cluster nginx `t3-dispatch` maps `X-authentik-username` → that user's own `t3 serve` on DevVM (vbarzin→:3773 `t3-serve.service`; emil.barzin→:3774 `t3-serve-emo.service`; unmapped→403). Per-user isolation mirroring the `terminal` stack. **Add a user:** create `t3-serve-<u>.service` on DevVM (own `--port`/`--base-dir`, `User=<u>`) + add a line to the dispatch nginx `map` in `stacks/t3code/main.tf` + apply. RCE surface; each user self-pairs via `t3 auth pairing create`. Native app/app.t3.codes unsupported here (cross-origin) — deferred until published. | t3code |
 
 ## Active Use
 | Service | Description | Stack |
