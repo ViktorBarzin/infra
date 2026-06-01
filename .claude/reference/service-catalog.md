@@ -32,6 +32,7 @@
 |---------|-------------|-------|
 | k8s-dashboard | Kubernetes dashboard | k8s-dashboard |
 | reverse-proxy | Generic reverse proxy | reverse-proxy |
+| t3code | Coding-agent GUI (`t3 serve`) on DevVM 10.0.10.10:3773, exposed at t3.viktorbarzin.me via Service+Endpoints (no pod). `auth=app` — t3's own owner-pairing/bearer auth + CrowdSec gate it (no Authentik, to keep the native app & app.t3.codes cross-origin clients working). RCE surface; re-pair via `t3 auth pairing create` on DevVM. | t3code |
 
 ## Active Use
 | Service | Description | Stack |
@@ -123,7 +124,7 @@
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox, phpipam, tripit
+travel, netbox, phpipam, tripit, t3
 ```
 
 ### Non-Proxied (Direct DNS)
