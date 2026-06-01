@@ -24,22 +24,6 @@ provider "registry.terraform.io/cloudflare/cloudflare" {
   ]
 }
 
-provider "registry.terraform.io/gavinbunney/kubectl" {
-  version     = "1.19.0"
-  constraints = "~> 1.14"
-  hashes = [
-    "h1:9QkxPjp0x5FZFfJbE+B7hBOoads9gmdfj9aYu5N4Sfc=",
-  ]
-}
-
-provider "registry.terraform.io/goauthentik/authentik" {
-  version     = "2024.12.1"
-  constraints = "~> 2024.10"
-  hashes = [
-    "h1:roBMd+gi+TGgikH/bMzEI8JfvJiMAQWt+8FmokCrQIs=",
-  ]
-}
-
 provider "registry.terraform.io/hashicorp/helm" {
   version = "3.1.1"
   hashes = [
@@ -105,13 +89,5 @@ provider "registry.terraform.io/hashicorp/vault" {
     "zh:de1fb712784dd8415f011ca5346a34f87fab6046c730557615247e511dbc7d98",
     "zh:e3eafae7da550f86cae395d6660b2a0e93ec8d2b0e0e5ef982ec762e961fc952",
     "zh:ff35fb1ab6add288f0f368981e56f780b50405accd1937131cba1137999c8d83",
-  ]
-}
-
-provider "registry.terraform.io/telmate/proxmox" {
-  version     = "3.0.2-rc07"
-  constraints = "3.0.2-rc07"
-  hashes = [
-    "h1:zp5hpQJQ4t4zROSLqdltVpBO+Riy9VugtfFbpyTw1aM=",
   ]
 }

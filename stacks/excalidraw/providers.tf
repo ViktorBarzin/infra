@@ -20,13 +20,10 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = "~> 1.14"
     }
-<<<<<<< Updated upstream
     proxmox = {
       source  = "telmate/proxmox"
       version = "3.0.2-rc07"
     }
-=======
->>>>>>> Stashed changes
   }
 }
 
