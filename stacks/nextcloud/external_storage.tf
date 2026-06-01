@@ -116,6 +116,16 @@ resource "kubernetes_role_binding" "nextcloud_external_storage_bootstrap" {
 # ── Bootstrap Job ────────────────────────────────────────────────────────────
 
 resource "kubernetes_job_v1" "nextcloud_external_storage_bootstrap" {
+  # The bootstrap script (below) waits up to 10m for the NC pod to be Ready.
+  # kubernetes_job_v1's default create timeout is only 1m, which spuriously
+  # fails the apply whenever the NC pod takes >1m to come up — e.g. now that
+  # Keel auto-upgrades nextcloud, a bump mid-apply runs `occ upgrade` in the
+  # entrypoint and delays readiness past 1m (observed 2026-06-01). Match the
+  # script's 10m wait plus margin.
+  timeouts {
+    create = "12m"
+  }
+
   metadata {
     name      = "nextcloud-external-storage-bootstrap"
     namespace = kubernetes_namespace.nextcloud.metadata[0].name

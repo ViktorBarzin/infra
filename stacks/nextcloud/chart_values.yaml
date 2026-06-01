@@ -1,13 +1,16 @@
-# Pin the image to 32.0.9 (apache). On 2026-05-26 Keel bumped the live
-# Deployment 32.0.3 → 32.0.9-apache and the DATA migrated to 32.0.9.2; Keel
-# was then disabled but chart_values was never pinned, so it kept defaulting
-# to the chart's appVersion (32.0.3). A 2026-06-01 `terragrunt apply`
-# reconciled that drift, rolled a 32.0.3 pod, and Nextcloud refused to
-# downgrade (data 32.0.9.2 > image 32.0.3.2) → CrashLoopBackOff. Pinning here
-# keeps TF the source of truth and matches the on-disk data version.
+# image.tag is rendered dynamically (templatefile var `image_tag`) from the
+# CURRENT live Deployment tag, falling back to var.nextcloud_image_tag_floor
+# (32.0.9) on fresh install / DR — see stacks/nextcloud/main.tf
+# `data.kubernetes_resource.nextcloud_live` + locals. This makes helm upgrades
+# image-no-ops in steady state and means a re-render can NEVER downgrade below
+# the Keel-bumped live tag (the 2026-06-01 CrashLoop: a pinned 32.0.3 lost to
+# live 32.0.9 and Nextcloud refused the downgrade). Keel (keel.sh/policy=minor)
+# bumps the live tag upward within major 32; the next apply just follows it.
+# flavor=apache renders the bare apache-default tag (live image is
+# `nextcloud:<tag>`, no -apache suffix).
 image:
   flavor: apache
-  tag: "32.0.9"
+  tag: "${image_tag}"
 
 nextcloud:
   host: nextcloud.viktorbarzin.me
