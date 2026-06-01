@@ -87,6 +87,18 @@ how to tune the rate limit, how to revoke if abused.
   `ospp /inpkey` the matching key before activating. Only fires when not already
   licensed (never clobbers a working retail key). Azure-Edition server SKUs are
   intentionally unmapped (they collide with Datacenter and KMS may fail there).
+- **Edition switch (kms-bootstrap.ps1, consent-gated)**: when the installed
+  product *can't* KMS-activate (Windows Home/retail; no VL Office), the bootstrap
+  shows the consequences and asks before changing anything (default No). Windows
+  → `changepk.exe /ProductKey <target GVLK>` (default Pro; `$env:KMS_EDITION`
+  overrides) — in-place edition UPGRADE, **needs a reboot then re-run**, one-way
+  (no in-place downgrade). Office → slim ODT `setup.exe /configure` to a VL
+  product (default ProPlus2024Volume; `$env:KMS_OFFICE_PRODUCT` overrides) — ~3 GB
+  download, closes Office. Non-interactive runs only proceed with an explicit env
+  override. setup-kms.ps1 stays minimal and points non-VL editions at the
+  bootstrap. NOTE: the changepk/ODT execution paths are unverified on real
+  hardware (no Home/retail test box; the Pro test VM can't be switched reversibly)
+  — syntax-checked + activation regression-tested only.
 
 ## Where the logs are
 
