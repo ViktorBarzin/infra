@@ -5,6 +5,25 @@ terraform {
       source  = "hashicorp/vault"
       version = "~> 4.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4"
+    }
+    authentik = {
+      source  = "goauthentik/authentik"
+      version = "~> 2024.10"
+    }
+    # kubectl (gavinbunney) — workaround for hashicorp/kubernetes
+    # `kubernetes_manifest` panics on Kyverno CRDs. See beads code-e2dp.
+    # Declared for all stacks but only used where opted-in.
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "3.0.2-rc07"
+    }
   }
 }
 
@@ -26,4 +45,9 @@ provider "helm" {
 provider "vault" {
   address          = "https://vault.viktorbarzin.me"
   skip_child_token = true
+}
+
+provider "kubectl" {
+  config_path      = var.kube_config_path
+  load_config_file = true
 }

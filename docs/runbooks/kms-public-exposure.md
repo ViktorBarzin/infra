@@ -70,14 +70,23 @@ how to tune the rate limit, how to revoke if abused.
   `kms_connection_probes_total{source}` (`source` ∈ `internal_pod`,
   `cluster_node`, `external`) and log to stdout, but never post to Slack.
   Real activations still post.
-- **Website `/scripts` carve-out**: the website is Anubis-fronted (PoW
-  challenge). `/scripts/*` is carved out to the bare nginx backend
-  (`module.ingress_scripts` in `stacks/kms`) because PowerShell `iwr | iex`
-  is a non-JS client and can't solve the PoW — without the carve-out the
-  one-liner downloads the Anubis challenge HTML and `iex` chokes on it.
-  Everything except `/scripts/*` stays behind Anubis. Verify:
-  `curl -A curl https://kms.viktorbarzin.me/scripts/setup-kms.ps1` returns
-  the script (not "Making sure you're not a bot!").
+- **Website `/scripts` + `/keys.json` carve-out**: the website is Anubis-fronted
+  (PoW challenge). `/scripts/*` and `/keys.json` are carved out to the bare
+  nginx backend (`module.ingress_scripts` in `stacks/kms`, `ingress_path`)
+  because PowerShell `iwr | iex` / `ConvertFrom-Json` are non-JS clients that
+  can't solve the PoW — without the carve-out they'd download the Anubis
+  challenge HTML and choke. Everything else stays behind Anubis. Verify:
+  `curl -A curl https://kms.viktorbarzin.me/scripts/setup-kms.ps1` and
+  `.../keys.json` both return real content (not "Making sure you're not a bot!").
+- **Auto-key selection**: the scripts no longer require the user to pick a GVLK.
+  `/keys.json` is `data/products.yaml` rendered to JSON (Hugo KEYS output format).
+  When no Volume License key is installed, `setup-kms.ps1` / `kms-bootstrap.ps1`
+  detect the edition — Windows via registry `EditionID` (+ `CurrentBuildNumber`
+  for LTSC/Server, which share an EditionID across releases), Office via the
+  Click-to-Run `ProductReleaseIds` — fetch `/keys.json`, and `slmgr /ipk` /
+  `ospp /inpkey` the matching key before activating. Only fires when not already
+  licensed (never clobbers a working retail key). Azure-Edition server SKUs are
+  intentionally unmapped (they collide with Datacenter and KMS may fail there).
 
 ## Where the logs are
 
