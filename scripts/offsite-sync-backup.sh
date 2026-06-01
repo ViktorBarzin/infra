@@ -95,16 +95,17 @@ fi
 # reaching Synology via Step 1 (sda → pve-backup/). frigate and temp are
 # excluded from both legs — intentionally NOT backed up.
 #
-# nfs-ssd is handled separately below: its three dirs (immich, ollama,
-# llamacpp) all go direct to Synology since /srv/nfs-ssd is not mirrored
-# to sda. ollama+llamacpp are small enough (~85G total) that the direct
-# leg is fine and we don't need to extend nfs-mirror to cover the SSD.
+# nfs-ssd: as of 2026-06-01 this leg is ALSO immich-only. ollama (59G) and
+# llamacpp (26G) on the SSD were filling the offsite Synology (5.3T hit 97%)
+# for re-pullable model blobs, so they're dropped — live copy stays on the
+# SSD, no offsite. The monthly --delete pass below reaps them from Synology
+# nfs-ssd/; a one-off direct delete cleared the bulk on 2026-06-01.
 #
-# Keep this aligned with /usr/local/bin/nfs-mirror's EXCLUDES — the
-# excludes there are { immich (this leg), frigate (no backup), temp
-# (no backup), anca-elements (deleted), pvc-data and friends (owned by
-# daily-backup) }. Only the bypass-leg subset matters here: { immich }.
-log "--- Step 2: NFS → Synology (immich-only direct leg + nfs-ssd) ---"
+# Keep this aligned with /usr/local/bin/nfs-mirror's EXCLUDES. Both legs now
+# carry immich only; everything else is either curated through sda (Step 1)
+# or intentionally live-only (frigate, temp, ollama, llamacpp, audiblez,
+# ebook2audiobook, prometheus-backup).
+log "--- Step 2: NFS → Synology (immich-only on both nfs/ and nfs-ssd/) ---"
 
 # Regex matching paths NOT on sda (must reach Synology directly).
 NFS_SDA_BYPASS_RE='^/srv/nfs/immich/'
@@ -123,9 +124,9 @@ if [ "${DAY_OF_MONTH}" -le 7 ]; then
     log "Monthly full NFS sync (immich-only — reaps legacy bypass dirs)..."
     rsync -rlt --delete "${NFS_FULL_INCLUDES[@]}" /srv/nfs/ "${NFS_DEST}/" 2>&1 \
         && log "  OK: nfs/ full sync (immich-only)" || { warn "nfs/ full sync failed"; STATUS=1; }
-    # nfs-ssd: full sync of all three dirs (immich, ollama, llamacpp).
-    rsync -rlt --delete /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
-        && log "  OK: nfs-ssd/ full sync" || { warn "nfs-ssd/ full sync failed"; STATUS=1; }
+    # nfs-ssd: immich-only (2026-06-01) — --delete reaps legacy ollama/llamacpp.
+    rsync -rlt --delete "${NFS_FULL_INCLUDES[@]}" /srv/nfs-ssd/ "${NFS_SSD_DEST}/" 2>&1 \
+        && log "  OK: nfs-ssd/ full sync (immich-only)" || { warn "nfs-ssd/ full sync failed"; STATUS=1; }
     > "${NFS_CHANGE_LOG}"
 elif [ -s "${NFS_CHANGE_LOG}" ]; then
     # Incremental: only sync changed files matching the bypass leg (immich).
@@ -147,8 +148,8 @@ elif [ -s "${NFS_CHANGE_LOG}" ]; then
             || { warn "nfs/ incremental failed"; STATUS=1; }
     fi
 
-    # SSD NFS — every nfs-ssd path (immich/ollama/llamacpp) ships direct.
-    grep '^/srv/nfs-ssd/' /tmp/nfs-changes-deduped | \
+    # SSD NFS — immich-only (2026-06-01); ollama/llamacpp are live-only, no offsite.
+    grep '^/srv/nfs-ssd/immich/' /tmp/nfs-changes-deduped | \
         while IFS= read -r f; do [ -f "$f" ] && echo "${f#/srv/nfs-ssd/}"; done \
         > /tmp/sync-nfs-ssd.list 2>/dev/null || true
     SSD_COUNT=$(wc -l < /tmp/sync-nfs-ssd.list 2>/dev/null || echo 0)

@@ -13,21 +13,30 @@
 # destination layout (anca-elements lives at /mnt/backup/anca-elements/),
 # but now covers every other critical NFS subtree in one pass.
 #
-# SKIP-LIST rationale (2026-05-26 simplification — see commit notes):
+# SKIP-LIST rationale (2026-05-26 simplification; REGENERABLE-SERVICE
+# CARVE-OUT added 2026-06-01 — see below):
 #   immich  — 1.5T, doesn't fit on sda; offsite-sync ships it direct to Synology
 #   frigate — camera ring buffer; intentionally NOT backed up anywhere
 #   temp    — scratch; intentionally NOT backed up
 #
-# Everything else (ollama, audiblez, ebook2audiobook, *-backup, …) now
-# flows sdc → sda (this script) → Synology pve-backup/ via offsite-sync
-# Step 1. Previously they went sdc → Synology DIRECT via Step 2; the
-# bypass list got pruned to just `immich` so we have a single canonical
-# mirror at sda. Prometheus/loki/alertmanager were live-orphan entries
-# that no longer exist on /srv/nfs (cleaned 2026-05-26) — dropped from
-# the exclude list as a no-op.
+# 2026-06-01 carve-out: the offsite Synology (5.3T) hit 97% and the
+# `Backup` share had grown +670G in a week — traced to the 2026-05-26
+# change that started mirroring large *regenerable* services to sda and
+# thence to Synology pve-backup/. These are now re-excluded because they
+# cost offsite capacity for data we can rebuild on demand:
+#   ollama          (20G) — LLM model blobs, re-pullable
+#   prometheus-backup (64G) — metrics TSDB snapshots; was offsite-excluded
+#                             pre-2026-05-26 by original intent
+#   audiblez        (24G) — generated audiobooks, re-derivable from ebooks
+#   ebook2audiobook (11G) — same, generation output
+# Their live copy stays on sdc (/srv/nfs); only the sda + Synology copies
+# are dropped. `*-backup` DB dumps (sqlite-backup et al.) are intentionally
+# KEPT — they are real database safety copies, not regenerable.
 #
-# Note: /srv/nfs-ssd is intentionally NOT mirrored — its three dirs
-# (immich, ollama, llamacpp) all go direct to Synology nfs-ssd/.
+# Note: /srv/nfs-ssd is intentionally NOT mirrored — its dirs (immich,
+# ollama, llamacpp) go direct to Synology nfs-ssd/ via offsite-sync
+# Step 2, which (also 2026-06-01) was narrowed to immich-only so ollama
+# + llamacpp on the SSD stop reaching Synology too.
 
 set -euo pipefail
 
@@ -67,6 +76,14 @@ EXCLUDES=(
     --exclude='/immich/'   # 1.5T — ships sdc → Synology direct (Step 2)
     --exclude='/frigate/'  # ring buffer — no backup anywhere
     --exclude='/temp/'     # scratch — no backup anywhere
+
+    # ---- regenerable services: live-only on sdc, no offsite (2026-06-01) ----
+    # See header carve-out. --delete reaps any existing copies from sda on
+    # the next run; a one-off direct delete already cleared them from Synology.
+    --exclude='/ollama/'           # LLM models — re-pullable
+    --exclude='/prometheus-backup/' # metrics TSDB snapshots
+    --exclude='/audiblez/'         # generated audiobooks
+    --exclude='/ebook2audiobook/'  # generated audiobooks
 
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
@@ -119,7 +136,7 @@ mountpoint -q /mnt/backup || { log "FATAL: /mnt/backup not mounted"; push_metric
 [ -d "$SRC" ]              || { log "FATAL: source $SRC missing"; push_metrics 1 0; exit 1; }
 
 log "=== mirror starting: $SRC → $DST ==="
-log "skip: immich (Synology direct), frigate (no backup), temp (no backup), anca-elements"
+log "skip: immich (Synology direct), frigate/temp (no backup), anca-elements, ollama/prometheus-backup/audiblez/ebook2audiobook (regenerable, live-only)"
 
 # Marker file used to identify files written by this rsync run, so we can append
 # their paths to the offsite-sync manifest. Touch BEFORE rsync; `find -newer` AFTER.

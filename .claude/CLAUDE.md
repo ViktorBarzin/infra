@@ -265,9 +265,10 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 **Copy 2**: sda backup disk (`/mnt/backup`, 1.1TB ext4, VG `backup`)
 **Copy 3**: Synology NAS offsite (two-tier: sda + NFS)
 
-**PVE host scripts** (source: `infra/scripts/`):
-- `/usr/local/bin/daily-backup` — Daily 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Auto SQLite backup (magic number check, `?mode=ro`). Auto-discovered BACKUP_DIRS (glob, not hardcoded). Also backs up pfSense (config.xml + tar), PVE config. Prunes snapshots >7d.
-- `/usr/local/bin/offsite-sync-backup` — Daily 06:00 (After=daily-backup). Step 1: sda → Synology `pve-backup/` (PVC snapshots, pfSense, PVE config). Step 2: NFS → Synology `nfs/` + `nfs-ssd/` via inotify change-tracked `rsync --files-from`. Monthly full `rsync --delete` on 1st Sunday.
+**PVE host scripts** (source: `infra/scripts/`; deployed manually via `scp` to `/usr/local/bin/<name>` — strip the `.sh`):
+- `/usr/local/bin/nfs-mirror` — Daily 02:00. `rsync --delete /srv/nfs/<svc>/ → /mnt/backup/<svc>/` (sda leg 1), appends transferred paths to `/mnt/backup/.changed-files` for offsite Step 1. **EXCLUDES**: immich (too big — direct leg), frigate/temp (no backup), anca-elements (in Immich), and **(2026-06-01) ollama, prometheus-backup, audiblez, ebook2audiobook** — regenerable, live-only on sdc, kept off the space-constrained offsite. Does NOT mirror `/srv/nfs-ssd`.
+- `/usr/local/bin/daily-backup` — Daily 05:00. Mounts LVM thin snapshots ro → rsyncs FILES to `/mnt/backup/pvc-data/<YYYY-WW>/<ns>/<pvc>/` with `--link-dest` versioning (4 weeks). Auto SQLite backup (magic number check, `?mode=ro`). Also backs up pfSense (config.xml + tar), PVE config. Prunes snapshots >7d. **Skip-list (2026-06-01)**: `nextcloud/nextcloud-data-proxmox` (orphaned pre-encryption PV).
+- `/usr/local/bin/offsite-sync-backup` — Daily 06:00 (After=daily-backup). Step 1: sda → Synology `pve-backup/` (incremental via manifest; monthly full `rsync --delete` days 1–7). Step 2: NFS direct → Synology — **immich-only on BOTH `nfs/` and `nfs-ssd/` (2026-06-01)**; ollama/llamacpp on the SSD no longer ship offsite.
 - `/usr/local/bin/lvm-pvc-snapshot` — Daily 03:00. Thin snapshots of all PVCs except dbaas+monitoring. 7-day retention. Instant restore: `lvm-pvc-snapshot restore <lv> <snap>`.
 - `nfs-change-tracker.service` — Continuous inotifywait on `/srv/nfs` + `/srv/nfs-ssd`. Logs changed file paths to `/mnt/backup/.nfs-changes.log`. Consumed by offsite-sync-backup for incremental rsync (completes in seconds instead of 30+ minutes).
 

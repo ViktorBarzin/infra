@@ -382,14 +382,31 @@ resource "kubernetes_config_map" "backup-script" {
       # Create backup directory
       mkdir -p "$BACKUP_PATH"
 
-      # Backup everything (config, data, custom_apps, themes, etc.)
+      # Backup config/data/custom_apps. Exclusions (2026-06-01 space fix):
+      #  - nextcloud.log* — rotated at source via log_rotate_size; previously
+      #    grew to 10GB+ and bloated every dated copy (backups hit 20G each).
+      #  - preview cache — regenerable thumbnails, no need to back up.
+      # Backs up config/, data/, custom_apps/ (the irreplaceable bits). Skips:
+      #  - html/ — the Nextcloud app code, reproducible from the pinned image
+      #    (real config is at config/config.php; html/config/config.php is empty).
+      #  - nextcloud.log* — capped at source via log_rotate_size; was 10GB+.
+      #  - preview cache — regenerable thumbnails.
       echo "Backing up Nextcloud installation..."
-      rsync -a "$DATA_DIR/" "$BACKUP_PATH/"
+      rsync -a \
+        --exclude='/html/' \
+        --exclude='nextcloud.log' \
+        --exclude='nextcloud.log.*' \
+        --exclude='data/appdata_*/preview/' \
+        "$DATA_DIR/" "$BACKUP_PATH/"
 
-      # Keep only last 7 backups
+      # Keep only the latest backup. The version history lives in daily-backup's
+      # pvc-data (4 weekly snapshot-consistent copies of this same encrypted PVC),
+      # so this browsable app-level copy only needs the most recent. Keeping the
+      # whole installation (incl. logs) x7 here was the bulk of the 87G that
+      # filled the offsite Synology.
       echo "Cleaning old backups..."
       cd "$BACKUP_DIR"
-      ls -dt */ | tail -n +8 | xargs -r rm -rf
+      ls -dt */ | tail -n +2 | xargs -r rm -rf
 
       echo "Backup completed at $(date)"
       echo "Backup stored at: $BACKUP_PATH"
