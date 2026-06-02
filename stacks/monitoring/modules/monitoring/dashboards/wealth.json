@@ -39,6 +39,19 @@
   "links": [],
   "panels": [
     {
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "id": 9300,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "Net worth (current)",
       "type": "stat",
@@ -48,9 +61,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -102,9 +115,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 0
+        "w": 6,
+        "x": 6,
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -156,9 +169,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 0
+        "w": 6,
+        "x": 12,
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -222,9 +235,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 12,
-        "y": 0
+        "w": 6,
+        "x": 18,
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -282,1620 +295,6 @@
       ]
     },
     {
-      "id": 8,
-      "title": "Per-account stacked \u2014 total value",
-      "description": "Stacked area showing each account's contribution to total net worth over time. Useful for spotting which account drives the trajectory.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 24,
-        "x": 0,
-        "y": 70
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 2,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 70,
-            "pointSize": 3,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT d.valuation_date::timestamp AS \"time\", a.name AS metric, d.total_value AS value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.valuation_date, a.name"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "title": "Cash vs invested (stacked)",
-      "description": "Daily breakdown of uninvested broker cash vs market value of investments. WORKPLACE_PENSION accounts (Fidelity) are reclassified entirely as invested \u2014 Wealthfolio dumps pension wrappers into cash_balance because it doesn't track the underlying fund holdings, but they are not actually cash.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 81
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 2,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 70,
-            "pointSize": 3,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cash"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#FADE2A"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Cash"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "invested"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#56A64B"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Invested"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT d.valuation_date::timestamp AS \"time\", SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN 0 ELSE d.cash_balance END) AS cash, SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN d.cash_balance + d.investment_market_value ELSE d.investment_market_value END) AS invested FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date <= (SELECT d FROM max_complete) GROUP BY d.valuation_date ORDER BY d.valuation_date"
-        }
-      ]
-    },
-    {
-      "id": 10,
-      "title": "Activity log",
-      "description": "Recent activities (BUY / SELL / DEPOSIT / WITHDRAWAL / DIVIDEND / etc.) across all accounts. Limited to 100 most recent.",
-      "type": "table",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 14,
-        "w": 24,
-        "x": 0,
-        "y": 134
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "amount"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "show": false
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT a.activity_date AS \"date\", acc.name AS \"account\", a.activity_type AS \"type\", a.asset_id AS \"asset\", a.quantity AS \"qty\", a.unit_price AS \"unit_price\", a.amount AS \"amount\", a.currency AS \"ccy\", a.notes AS \"notes\" FROM activities a LEFT JOIN accounts acc ON acc.id = a.account_id WHERE $__timeFilter(a.activity_date) ORDER BY a.activity_date DESC LIMIT 100"
-        }
-      ]
-    },
-    {
-      "id": 25,
-      "title": "Monthly contributions vs market gain",
-      "description": "Each month's net contributions vs market gain as two lines. Where the green (market) line crosses above the blue (contributions) line is when investments out-earn savings for that month. Months below zero on the green line = market drawdowns.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 24,
-        "x": 0,
-        "y": 113
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "contributions"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Net contributions"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "market_gain"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#56A64B"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Market gain"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "last",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), month_end AS (SELECT DISTINCT ON (date_trunc('month', valuation_date)) date_trunc('month', valuation_date)::date AS month, nw, contrib FROM daily ORDER BY date_trunc('month', valuation_date), valuation_date DESC), deltas AS (SELECT month, nw, contrib, lag(nw) OVER (ORDER BY month) AS prev_nw, lag(contrib) OVER (ORDER BY month) AS prev_contrib FROM month_end) SELECT month::timestamp AS time, ROUND((contrib - prev_contrib)::numeric, 0) AS contributions, ROUND(((nw - prev_nw) - (contrib - prev_contrib))::numeric, 0) AS market_gain FROM deltas WHERE prev_nw IS NOT NULL ORDER BY month"
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "title": "Per-account ROI %",
-      "description": "(market value \u2212 net contribution) / net contribution \u00d7 100, latest snapshot. Excludes accounts with zero/negative net contribution (Schwab \u2014 RSU vests sold = negative contribution distorts the ratio). Pension shows 0% because Wealthfolio doesn't track underlying fund holdings, so cost_basis = 0 and 'growth' is just the cash balance reported.",
-      "type": "barchart",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 124
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "unit": "percent",
-          "decimals": 2,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0
-              },
-              {
-                "color": "green",
-                "value": 10
-              }
-            ]
-          },
-          "custom": {
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "lineWidth": 1
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.6,
-        "groupWidth": 0.7,
-        "orientation": "horizontal",
-        "showValue": "always",
-        "stacking": "none",
-        "xField": "account",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) a.name, d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT name AS account, ROUND(((total_value - net_contribution) / NULLIF(net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM latest WHERE net_contribution > 0 ORDER BY roi_pct DESC"
-        }
-      ]
-    },
-    {
-      "id": 26,
-      "title": "Positions",
-      "description": "Currently-held positions: shares, cost basis, latest market price, and unrealised return. Latest holdings_snapshots TOTAL aggregate + latest quote per asset.",
-      "type": "table",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 62
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "shares"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "avg cost"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "last"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "market value"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cost"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "gain"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 0
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "return %"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 0
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "show": false
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT a.symbol, a.name, p.quantity AS shares, p.average_cost AS \"avg cost\", q.close AS \"last\", (p.quantity * q.close) AS \"market value\", p.total_cost_basis AS cost, ((p.quantity * q.close) - p.total_cost_basis) AS gain, CASE WHEN p.total_cost_basis > 0 THEN ((p.quantity * q.close) / p.total_cost_basis - 1) * 100 END AS \"return %\", p.currency, q.day AS \"as of\" FROM positions_latest p LEFT JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY (p.quantity * q.close) DESC NULLS LAST"
-        }
-      ]
-    },
-    {
-      "id": 30,
-      "title": "META vest cadence \u2014 value vs share count (per vest event)",
-      "description": "Per-vest event timeline. Left axis (USD): vest value = shares \u00d7 vest-day META price. Right axis: number of shares vested. Each point is one vest date (sometimes a single date has multiple BUY rows \u2014 aggregated here).",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "y": 62,
-        "x": 12,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "lineInterpolation": "linear",
-            "fillOpacity": 10,
-            "pointSize": 7,
-            "showPoints": "always",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "vest value"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Vest value (USD)"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "shares"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Shares vested"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT activity_date::date::timestamp AS \"time\", SUM(quantity*unit_price) AS \"vest value\", SUM(quantity) AS \"shares\" FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY' GROUP BY activity_date::date ORDER BY activity_date::date"
-        }
-      ]
-    },
-    {
-      "id": 31,
-      "title": "META vests \u2014 realized PNL (FIFO-matched against sells)",
-      "description": "One row per vest with realized P&L computed by FIFO-matching that vest's shares against subsequent sells. Each vest's shares may be spread across multiple sells; the matched sell-price column is the weighted average. 'Avg days held' is the average gap between this vest's date and the sell dates that consumed its shares. Compare against panel 28 to see realized vs hypo-if-held.",
-      "type": "table",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
-      "gridPos": {
-        "y": 148,
-        "x": 0,
-        "w": 24,
-        "h": 12
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          },
-          "decimals": 2
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "shares sold"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "vest price"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "vest value"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "avg sell price"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "sell value"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "realized PNL"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 2
-              },
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 0
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "PNL %"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 1
-              },
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 0
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "days held (avg)"
-            },
-            "properties": [
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "unit",
-                "value": "d"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "show": true,
-          "reducer": [
-            "sum"
-          ],
-          "fields": [
-            "shares sold",
-            "vest value",
-            "sell value",
-            "realized PNL"
-          ]
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "WITH lots AS (SELECT id, activity_date::date AS vest_date, quantity, unit_price AS vest_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS lot_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS lot_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY'), sells AS (SELECT activity_date::date AS sell_date, quantity AS sell_qty, unit_price AS sell_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS sell_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS sell_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='SELL'), matched AS (SELECT l.vest_date, l.vest_price, s.sell_date, s.sell_price, GREATEST(LEAST(l.lot_end, s.sell_end) - GREATEST(l.lot_start, s.sell_start), 0::numeric) AS qty FROM lots l CROSS JOIN sells s WHERE LEAST(l.lot_end, s.sell_end) > GREATEST(l.lot_start, s.sell_start)) SELECT vest_date, SUM(qty) AS \"shares sold\", (SUM(qty*vest_price)/NULLIF(SUM(qty),0)) AS \"vest price\", SUM(qty*vest_price) AS \"vest value\", (SUM(qty*sell_price)/NULLIF(SUM(qty),0)) AS \"avg sell price\", SUM(qty*sell_price) AS \"sell value\", SUM(qty*(sell_price-vest_price)) AS \"realized PNL\", (SUM(qty*(sell_price-vest_price))/NULLIF(SUM(qty*vest_price),0)*100) AS \"PNL %\", AVG((sell_date-vest_date)) AS \"days held (avg)\" FROM matched GROUP BY vest_date ORDER BY vest_date"
-        }
-      ]
-    },
-    {
-      "id": 32,
-      "title": "Net pay earned vs market gains (cumulative)",
-      "description": "Active vs passive income race. Blue = total take-home pay earned from work (cumulative net_pay, payslip_ingest). Green = total market gains = portfolio value \u2212 contributions (cumulative, wealthfolio_sync dav_corrected \u2014 matches the 'Growth over time' panel). Set the time range wide (e.g. 2019 \u2192 now) to see the full climb from \u00a30.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "pointSize": 5,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "net_pay_cum"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Net pay earned (cumulative)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "market_gain_cum"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Market gains (cumulative)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#56A64B"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "last",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH m AS (SELECT pay_date, SUM(net_pay) AS net_pay FROM payslip_ingest.payslip GROUP BY pay_date), cum AS (SELECT pay_date, SUM(net_pay) OVER (ORDER BY pay_date) AS net_pay_cum FROM m) SELECT pay_date::timestamp AS \"time\", net_pay_cum FROM cum WHERE $__timeFilter(pay_date) ORDER BY pay_date"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", (SUM(total_value) - SUM(net_contribution)) AS market_gain_cum FROM dav_corrected WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
-        }
-      ]
-    },
-    {
-      "id": 33,
-      "title": "Net pay vs market gain \u2014 per year",
-      "description": "Each calendar year: take-home pay earned (blue, SUM net_pay) vs market gain generated that year (green, change in portfolio value \u2212 contributions across the year). Shows full history regardless of the time picker.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 42
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "net_pay_year"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Net pay (year)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "market_gain_year"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Market gain (year)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#56A64B"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT date_trunc('year', pay_date)::timestamp AS \"time\", SUM(net_pay) AS net_pay_year FROM payslip_ingest.payslip GROUP BY 1 ORDER BY 1"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), yearly AS (SELECT date_trunc('year', valuation_date)::date AS yr, valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), endpoints AS (SELECT yr, (array_agg(nw ORDER BY valuation_date ASC))[1] AS nw_start, (array_agg(nw ORDER BY valuation_date DESC))[1] AS nw_end, (array_agg(contrib ORDER BY valuation_date ASC))[1] AS contrib_start, (array_agg(contrib ORDER BY valuation_date DESC))[1] AS contrib_end FROM yearly GROUP BY yr) SELECT yr::timestamp AS \"time\", ROUND((nw_end - nw_start - (contrib_end - contrib_start))::numeric, 0) AS market_gain_year FROM endpoints ORDER BY yr"
-        }
-      ]
-    },
-    {
-      "id": 34,
-      "title": "Net pay vs market gain \u2014 per month",
-      "description": "Each month: take-home pay (blue, SUM net_pay) vs market gain that month (green, change in portfolio value \u2212 contributions). Monthly market swings are volatile \u2014 the yearly panel above is the smoother read. Shows full history regardless of the time picker.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 52
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": true,
-            "axisPlacement": "auto",
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "net_pay_month"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Net pay (month)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "market_gain_month"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Market gain (month)"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#56A64B"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "payslips-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "SELECT date_trunc('month', pay_date)::timestamp AS \"time\", SUM(net_pay) AS net_pay_month FROM payslip_ingest.payslip GROUP BY 1 ORDER BY 1"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "rawQuery": true,
-          "editorMode": "code",
-          "format": "time_series",
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), month_end AS (SELECT DISTINCT ON (date_trunc('month', valuation_date)) date_trunc('month', valuation_date)::date AS month, nw, contrib FROM daily ORDER BY date_trunc('month', valuation_date), valuation_date DESC), deltas AS (SELECT month, nw, contrib, lag(nw) OVER (ORDER BY month) AS prev_nw, lag(contrib) OVER (ORDER BY month) AS prev_contrib FROM month_end) SELECT month::timestamp AS \"time\", ROUND(((nw - prev_nw) - (contrib - prev_contrib))::numeric, 0) AS market_gain_month FROM deltas WHERE prev_nw IS NOT NULL ORDER BY month"
-        }
-      ]
-    },
-    {
-      "id": 9100,
-      "type": "row",
-      "collapsed": true,
-      "title": "\ud83d\udcc8 Projections (set the time range to include the future)",
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 200
-      },
-      "panels": [
-        {
-          "id": 9101,
-          "type": "text",
-          "title": "How to view the projection",
-          "gridPos": {
-            "h": 3,
-            "w": 24,
-            "x": 0,
-            "y": 201
-          },
-          "options": {
-            "mode": "markdown",
-            "content": "The projection extends 30 years into the **future**, but this dashboard defaults to the last 180 days. **[\u25b6 Show projection range](?from=now-3y&to=now%2B30y)** \u2014 reload with a future-inclusive axis. **[\u21a9 Reset to normal](?from=now-180d&to=now)** \u2014 back to the standard view.\n\nAdjust **Low / Base / High rate %**, **Monthly contribution** (`auto` = your trailing-12mo run-rate; type a number or `0`), and **Horizon** at the top of the dashboard."
-          }
-        },
-        {
-          "id": 9105,
-          "title": "Net worth (today)",
-          "type": "stat",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 8,
-            "x": 0,
-            "y": 204
-          },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "currencyGBP",
-              "decimals": 0,
-              "color": {
-                "mode": "continuous-GrYlRd"
-              }
-            },
-            "overrides": []
-          },
-          "options": {
-            "colorMode": "value",
-            "graphMode": "area",
-            "justifyMode": "center",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "textMode": "auto"
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "wealth-pg"
-              },
-              "format": "table",
-              "editorMode": "code",
-              "rawQuery": true,
-              "rawSql": "WITH latest AS (SELECT DISTINCT ON (account_id) total_value FROM dav_corrected d JOIN accounts a ON a.id=d.account_id ORDER BY account_id, valuation_date DESC) SELECT SUM(total_value) AS nw FROM latest"
-            }
-          ]
-        },
-        {
-          "id": 9106,
-          "title": "Historical return (trailing 3y)",
-          "type": "stat",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 8,
-            "x": 8,
-            "y": 204
-          },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "percent",
-              "decimals": 2,
-              "color": {
-                "mode": "continuous-GrYlRd"
-              }
-            },
-            "overrides": []
-          },
-          "options": {
-            "colorMode": "value",
-            "graphMode": "area",
-            "justifyMode": "center",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "textMode": "auto"
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "wealth-pg"
-              },
-              "format": "table",
-              "editorMode": "code",
-              "rawQuery": true,
-              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value, net_contribution FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), agg AS (SELECT SUM(total_value) nw0, SUM(net_contribution) c_now FROM latest), ago AS (SELECT SUM(x.nc) c_ago FROM latest l LEFT JOIN LATERAL (SELECT net_contribution nc FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date <= (SELECT d FROM mc) - INTERVAL '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int yr, valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) GROUP BY valuation_date), ep AS (SELECT yr, (array_agg(nw ORDER BY valuation_date))[1] nw_s, (array_agg(nw ORDER BY valuation_date DESC))[1] nw_e, (array_agg(contrib ORDER BY valuation_date))[1] c_s, (array_agg(contrib ORDER BY valuation_date DESC))[1] c_e, COUNT(*) days FROM yearly GROUP BY yr), r3 AS (SELECT (nw_e-nw_s-(c_e-c_s))/NULLIF(nw_s+0.5*(c_e-c_s),0) ret FROM ep WHERE (nw_s+0.5*(c_e-c_s))>0 AND days>=300 ORDER BY yr DESC LIMIT 3), x AS (SELECT 1) SELECT round(((SELECT exp(avg(ln(1+ret)))-1 FROM r3)*100)::numeric,2) AS hist_pct"
-            }
-          ]
-        },
-        {
-          "id": 9107,
-          "title": "Monthly contribution (auto run-rate)",
-          "type": "stat",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 8,
-            "x": 16,
-            "y": 204
-          },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "currencyGBP",
-              "decimals": 0,
-              "color": {
-                "mode": "continuous-GrYlRd"
-              }
-            },
-            "overrides": []
-          },
-          "options": {
-            "colorMode": "value",
-            "graphMode": "area",
-            "justifyMode": "center",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "textMode": "auto"
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "wealth-pg"
-              },
-              "format": "table",
-              "editorMode": "code",
-              "rawQuery": true,
-              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value, net_contribution FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), agg AS (SELECT SUM(total_value) nw0, SUM(net_contribution) c_now FROM latest), ago AS (SELECT SUM(x.nc) c_ago FROM latest l LEFT JOIN LATERAL (SELECT net_contribution nc FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date <= (SELECT d FROM mc) - INTERVAL '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int yr, valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) GROUP BY valuation_date), ep AS (SELECT yr, (array_agg(nw ORDER BY valuation_date))[1] nw_s, (array_agg(nw ORDER BY valuation_date DESC))[1] nw_e, (array_agg(contrib ORDER BY valuation_date))[1] c_s, (array_agg(contrib ORDER BY valuation_date DESC))[1] c_e, COUNT(*) days FROM yearly GROUP BY yr), r3 AS (SELECT (nw_e-nw_s-(c_e-c_s))/NULLIF(nw_s+0.5*(c_e-c_s),0) ret FROM ep WHERE (nw_s+0.5*(c_e-c_s))>0 AND days>=300 ORDER BY yr DESC LIMIT 3), x AS (SELECT 1) SELECT round((((SELECT c_now FROM agg)-(SELECT c_ago FROM ago))/12.0)::numeric,0) AS monthly_contribution"
-            }
-          ]
-        },
-        {
-          "id": 9103,
-          "title": "Net worth \u2014 ${horizon_years}-year projection",
-          "description": "Projected net worth at Low/Base/High fixed rates plus your trailing-3y historical return, all compounding from today with your auto monthly contribution (set $monthly_contribution=0 for pure compounding; 'Base, no new contributions' shows the same base rate with zero contributions). NOTE: set the time range to include the future (use the links above) to see the projection.",
-          "type": "timeseries",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "wealth-pg"
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 24,
-            "x": 0,
-            "y": 208
-          },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "currencyGBP",
-              "decimals": 0,
-              "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "smooth",
-                "lineWidth": 2,
-                "fillOpacity": 0,
-                "showPoints": "never",
-                "spanNulls": true
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "^(Low|Base \\(|High|Historical)"
-                },
-                "properties": [
-                  {
-                    "id": "custom.lineStyle",
-                    "value": {
-                      "fill": "dash",
-                      "dash": [
-                        10,
-                        10
-                      ]
-                    }
-                  },
-                  {
-                    "id": "custom.lineWidth",
-                    "value": 1
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Base, no new contributions"
-                },
-                "properties": [
-                  {
-                    "id": "custom.lineStyle",
-                    "value": {
-                      "fill": "dot",
-                      "dash": [
-                        2,
-                        6
-                      ]
-                    }
-                  },
-                  {
-                    "id": "custom.lineWidth",
-                    "value": 1
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Net worth (actual)"
-                },
-                "properties": [
-                  {
-                    "id": "custom.lineWidth",
-                    "value": 3
-                  },
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "white"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "last"
-              ]
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "wealth-pg"
-              },
-              "format": "time_series",
-              "editorMode": "code",
-              "rawQuery": true,
-              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value, net_contribution FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), agg AS (SELECT SUM(total_value) nw0, SUM(net_contribution) c_now FROM latest), ago AS (SELECT SUM(x.nc) c_ago FROM latest l LEFT JOIN LATERAL (SELECT net_contribution nc FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date <= (SELECT d FROM mc) - INTERVAL '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int yr, valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) GROUP BY valuation_date), ep AS (SELECT yr, (array_agg(nw ORDER BY valuation_date))[1] nw_s, (array_agg(nw ORDER BY valuation_date DESC))[1] nw_e, (array_agg(contrib ORDER BY valuation_date))[1] c_s, (array_agg(contrib ORDER BY valuation_date DESC))[1] c_e, COUNT(*) days FROM yearly GROUP BY yr), r3 AS (SELECT (nw_e-nw_s-(c_e-c_s))/NULLIF(nw_s+0.5*(c_e-c_s),0) ret FROM ep WHERE (nw_s+0.5*(c_e-c_s))>0 AND days>=300 ORDER BY yr DESC LIMIT 3), params AS (SELECT (SELECT nw0 FROM agg) nw0, COALESCE(NULLIF('$monthly_contribution','auto')::numeric, ((SELECT c_now FROM agg)-(SELECT c_ago FROM ago))/12.0) cm, ($rate_low::float)/100 rl, ($rate_base::float)/100 rb, ($rate_high::float)/100 rh, (SELECT exp(avg(ln(1+ret)))-1 FROM r3) rhist), m AS (SELECT generate_series(0, ${horizon_years}*12) n) SELECT (now() + (m.n || ' months')::interval) AS \"time\", round((nw0*power(1+(power(1+rl,1/12.0)-1),m.n) + cm*((power(1+(power(1+rl,1/12.0)-1),m.n)-1)/NULLIF((power(1+rl,1/12.0)-1),0)))::numeric,0) AS \"Low ($rate_low%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n) + cm*((power(1+(power(1+rb,1/12.0)-1),m.n)-1)/NULLIF((power(1+rb,1/12.0)-1),0)))::numeric,0) AS \"Base ($rate_base%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n))::numeric,0) AS \"Base, no new contributions\", round((nw0*power(1+(power(1+rh,1/12.0)-1),m.n) + cm*((power(1+(power(1+rh,1/12.0)-1),m.n)-1)/NULLIF((power(1+rh,1/12.0)-1),0)))::numeric,0) AS \"High ($rate_high%)\", round((nw0*power(1+(power(1+rhist,1/12.0)-1),m.n) + cm*((power(1+(power(1+rhist,1/12.0)-1),m.n)-1)/NULLIF((power(1+rhist,1/12.0)-1),0)))::numeric,0) AS \"Historical (trailing 3y)\" FROM m, params"
-            },
-            {
-              "refId": "B",
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "wealth-pg"
-              },
-              "format": "time_series",
-              "editorMode": "code",
-              "rawQuery": true,
-              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(total_value) AS \"Net worth (actual)\" FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) AND valuation_date >= now()::date - INTERVAL '3 years' GROUP BY valuation_date ORDER BY valuation_date"
-            }
-          ]
-        }
-      ]
-    },
-    {
       "id": 9201,
       "title": "Returns over time windows",
       "description": "Replaces the 12mo + \u0394 stat cards. \u0394 all = total change; \u0394 market = change net of contributions; Return % = Modified-Dietz.",
@@ -1906,9 +305,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 201
+        "y": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -2012,171 +411,1430 @@
       ]
     },
     {
-      "id": 9202,
-      "title": "Net worth: contribution vs market value (+ growth)",
-      "description": "Merged: net contribution + market value (net worth) lines; Growth = the gap between them.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
+      "type": "row",
+      "title": "Net worth over time",
+      "collapsed": true,
+      "id": 9301,
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 201
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Growth"
-            },
-            "properties": [
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": [
-            "last"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "id": 9202,
+          "title": "Net worth: contribution vs market value (+ growth)",
+          "description": "Merged: net contribution + market value (net worth) lines; Growth = the gap between them.",
+          "type": "timeseries",
           "datasource": {
             "type": "grafana-postgresql-datasource",
             "uid": "wealth-pg"
           },
-          "format": "time_series",
-          "editorMode": "code",
-          "rawQuery": true,
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(net_contribution) AS \"Net contribution\", SUM(total_value) AS \"Market value (net worth)\", (SUM(total_value)-SUM(net_contribution)) AS \"Growth\" FROM dav_corrected WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyGBP",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Growth"
+                },
+                "properties": [
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 15
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "last"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "format": "time_series",
+              "editorMode": "code",
+              "rawQuery": true,
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT valuation_date::timestamp AS \"time\", SUM(net_contribution) AS \"Net contribution\", SUM(total_value) AS \"Market value (net worth)\", (SUM(total_value)-SUM(net_contribution)) AS \"Growth\" FROM dav_corrected WHERE $__timeFilter(valuation_date) AND valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date ORDER BY valuation_date"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Per-account stacked \u2014 total value",
+          "description": "Stacked area showing each account's contribution to total net worth over time. Useful for spotting which account drives the trajectory.",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 23
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "currencyGBP",
+              "decimals": 2,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 70,
+                "pointSize": 3,
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "last"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "time_series",
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT d.valuation_date::timestamp AS \"time\", a.name AS metric, d.total_value AS value FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date <= (SELECT d FROM max_complete) ORDER BY d.valuation_date, a.name"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Cash vs invested (stacked)",
+          "description": "Daily breakdown of uninvested broker cash vs market value of investments. WORKPLACE_PENSION accounts (Fidelity) are reclassified entirely as invested \u2014 Wealthfolio dumps pension wrappers into cash_balance because it doesn't track the underlying fund holdings, but they are not actually cash.",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 23
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "currencyGBP",
+              "decimals": 2,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 70,
+                "pointSize": 3,
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cash"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#FADE2A"
+                    }
+                  },
+                  {
+                    "id": "displayName",
+                    "value": "Cash"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "invested"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#56A64B"
+                    }
+                  },
+                  {
+                    "id": "displayName",
+                    "value": "Invested"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "last"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "time_series",
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)) SELECT d.valuation_date::timestamp AS \"time\", SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN 0 ELSE d.cash_balance END) AS cash, SUM(CASE WHEN a.account_type = 'WORKPLACE_PENSION' THEN d.cash_balance + d.investment_market_value ELSE d.investment_market_value END) AS invested FROM daily_account_valuation d JOIN accounts a ON a.id = d.account_id WHERE $__timeFilter(d.valuation_date) AND d.valuation_date <= (SELECT d FROM max_complete) GROUP BY d.valuation_date ORDER BY d.valuation_date"
+            }
+          ]
         }
       ]
     },
     {
-      "id": 9203,
-      "title": "Yearly: contributions / market gain / return %",
-      "description": "Merged yearly view. Contributions + market gain as bars (left \u00a3 axis); return % as a line (right % axis). timeFrom=10y so it always shows full history.",
-      "type": "timeseries",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "wealth-pg"
-      },
+      "type": "row",
+      "title": "Returns & contributions",
+      "collapsed": true,
+      "id": 9302,
       "gridPos": {
-        "h": 10,
+        "h": 1,
         "w": 24,
         "x": 0,
-        "y": 209
+        "y": 33
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyGBP",
-          "decimals": 0,
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "lineWidth": 1
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Return %"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "line"
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "custom.axisLabel",
-                "value": "Return %"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "yellow"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": [
-            "last"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "id": 9203,
+          "title": "Yearly: contributions / market gain / return %",
+          "description": "Merged yearly view. Contributions + market gain as bars (left \u00a3 axis); return % as a line (right % axis). timeFrom=10y so it always shows full history.",
+          "type": "timeseries",
           "datasource": {
             "type": "grafana-postgresql-datasource",
             "uid": "wealth-pg"
           },
-          "format": "time_series",
-          "editorMode": "code",
-          "rawQuery": true,
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) GROUP BY valuation_date), ye AS (SELECT DISTINCT ON (date_trunc('year',valuation_date)) date_trunc('year',valuation_date)::date yr, nw, contrib FROM daily ORDER BY date_trunc('year',valuation_date), valuation_date DESC), dd AS (SELECT yr, nw, contrib, lag(nw) OVER (ORDER BY yr) pnw, lag(contrib) OVER (ORDER BY yr) pc FROM ye) SELECT yr::timestamp AS \"time\", round((contrib-pc)::numeric,0) AS \"Contributions\", round(((nw-pnw)-(contrib-pc))::numeric,0) AS \"Market gain\", round((((nw-pnw)-(contrib-pc))/NULLIF(pnw+0.5*(contrib-pc),0)*100)::numeric,2) AS \"Return %\" FROM dd WHERE pnw IS NOT NULL ORDER BY yr"
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 34
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyGBP",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Return %"
+                },
+                "properties": [
+                  {
+                    "id": "custom.drawStyle",
+                    "value": "line"
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "Return %"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "yellow"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": [
+                "last"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "format": "time_series",
+              "editorMode": "code",
+              "rawQuery": true,
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) GROUP BY valuation_date), ye AS (SELECT DISTINCT ON (date_trunc('year',valuation_date)) date_trunc('year',valuation_date)::date yr, nw, contrib FROM daily ORDER BY date_trunc('year',valuation_date), valuation_date DESC), dd AS (SELECT yr, nw, contrib, lag(nw) OVER (ORDER BY yr) pnw, lag(contrib) OVER (ORDER BY yr) pc FROM ye) SELECT yr::timestamp AS \"time\", round((contrib-pc)::numeric,0) AS \"Contributions\", round(((nw-pnw)-(contrib-pc))::numeric,0) AS \"Market gain\", round((((nw-pnw)-(contrib-pc))/NULLIF(pnw+0.5*(contrib-pc),0)*100)::numeric,2) AS \"Return %\" FROM dd WHERE pnw IS NOT NULL ORDER BY yr"
+            }
+          ],
+          "timeFrom": "10y"
+        },
+        {
+          "id": 25,
+          "title": "Monthly contributions vs market gain",
+          "description": "Each month's net contributions vs market gain as two lines. Where the green (market) line crosses above the blue (contributions) line is when investments out-earn savings for that month. Months below zero on the green line = market drawdowns.",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 44
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "currencyGBP",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": true,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "contributions"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  },
+                  {
+                    "id": "displayName",
+                    "value": "Net contributions"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "market_gain"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#56A64B"
+                    }
+                  },
+                  {
+                    "id": "displayName",
+                    "value": "Market gain"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "last",
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "time_series",
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) AS n FROM accounts), max_complete AS (SELECT MAX(valuation_date) AS d FROM (SELECT d.valuation_date, COUNT(*) AS c FROM dav_corrected d JOIN accounts a ON a.id = d.account_id GROUP BY d.valuation_date) x WHERE c >= (SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) AS nw, SUM(net_contribution) AS contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM max_complete) GROUP BY valuation_date), month_end AS (SELECT DISTINCT ON (date_trunc('month', valuation_date)) date_trunc('month', valuation_date)::date AS month, nw, contrib FROM daily ORDER BY date_trunc('month', valuation_date), valuation_date DESC), deltas AS (SELECT month, nw, contrib, lag(nw) OVER (ORDER BY month) AS prev_nw, lag(contrib) OVER (ORDER BY month) AS prev_contrib FROM month_end) SELECT month::timestamp AS time, ROUND((contrib - prev_contrib)::numeric, 0) AS contributions, ROUND(((nw - prev_nw) - (contrib - prev_contrib))::numeric, 0) AS market_gain FROM deltas WHERE prev_nw IS NOT NULL ORDER BY month"
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "Per-account ROI %",
+          "description": "(market value \u2212 net contribution) / net contribution \u00d7 100, latest snapshot. Excludes accounts with zero/negative net contribution (Schwab \u2014 RSU vests sold = negative contribution distorts the ratio). Pension shows 0% because Wealthfolio doesn't track underlying fund holdings, so cost_basis = 0 and 'growth' is just the cash balance reported.",
+          "type": "barchart",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 54
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 10
+                  }
+                ]
+              },
+              "custom": {
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "lineWidth": 1
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.6,
+            "groupWidth": 0.7,
+            "orientation": "horizontal",
+            "showValue": "always",
+            "stacking": "none",
+            "xField": "account",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "table",
+              "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) a.name, d.total_value, d.net_contribution FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC) SELECT name AS account, ROUND(((total_value - net_contribution) / NULLIF(net_contribution, 0) * 100)::numeric, 2) AS roi_pct FROM latest WHERE net_contribution > 0 ORDER BY roi_pct DESC"
+            }
+          ]
         }
-      ],
-      "timeFrom": "10y"
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Income vs market",
+      "collapsed": true,
+      "id": 9303,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      },
+      "panels": [
+        {
+          "id": 32,
+          "title": "Net pay vs market gain (${grain})",
+          "description": "Active vs passive income. Net pay (payslips) vs market gain (portfolio). $grain = cumulative / yearly / monthly.",
+          "type": "timeseries",
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Mixed --"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 66
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "currencyGBP",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "net_pay_cum"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Net pay earned (cumulative)"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "market_gain_cum"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Market gains (cumulative)"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#56A64B"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "last",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "payslips-pg"
+              },
+              "format": "time_series",
+              "editorMode": "code",
+              "rawQuery": true,
+              "rawSql": "WITH p AS (SELECT date_trunc(CASE '$grain' WHEN 'yearly' THEN 'year' ELSE 'month' END, pay_date) bucket, SUM(net_pay) np FROM payslip_ingest.payslip GROUP BY 1) SELECT bucket::timestamp AS \"time\", CASE WHEN '$grain'='cumulative' THEN SUM(np) OVER (ORDER BY bucket) ELSE np END AS \"Net pay\" FROM p ORDER BY bucket"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "format": "time_series",
+              "editorMode": "code",
+              "rawQuery": true,
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), daily AS (SELECT valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) GROUP BY valuation_date), pe AS (SELECT DISTINCT ON (date_trunc(CASE '$grain' WHEN 'yearly' THEN 'year' ELSE 'month' END, valuation_date)) date_trunc(CASE '$grain' WHEN 'yearly' THEN 'year' ELSE 'month' END, valuation_date)::date bucket, nw, contrib FROM daily ORDER BY date_trunc(CASE '$grain' WHEN 'yearly' THEN 'year' ELSE 'month' END, valuation_date), valuation_date DESC), dd AS (SELECT bucket, (nw-lag(nw) OVER (ORDER BY bucket))-(contrib-lag(contrib) OVER (ORDER BY bucket)) mg FROM pe) SELECT bucket::timestamp AS \"time\", CASE WHEN '$grain'='cumulative' THEN SUM(mg) OVER (ORDER BY bucket) ELSE mg END AS \"Market gain\" FROM dd WHERE mg IS NOT NULL ORDER BY bucket"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Holdings",
+      "collapsed": true,
+      "id": 9304,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "panels": [
+        {
+          "id": 26,
+          "title": "Positions",
+          "description": "Currently-held positions: shares, cost basis, latest market price, and unrealised return. Latest holdings_snapshots TOTAL aggregate + latest quote per asset.",
+          "type": "table",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 78
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "shares"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "avg cost"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "last"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "market value"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "gain"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 0
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "return %"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 0
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "table",
+              "rawSql": "SELECT a.symbol, a.name, p.quantity AS shares, p.average_cost AS \"avg cost\", q.close AS \"last\", (p.quantity * q.close) AS \"market value\", p.total_cost_basis AS cost, ((p.quantity * q.close) - p.total_cost_basis) AS gain, CASE WHEN p.total_cost_basis > 0 THEN ((p.quantity * q.close) / p.total_cost_basis - 1) * 100 END AS \"return %\", p.currency, q.day AS \"as of\" FROM positions_latest p LEFT JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY (p.quantity * q.close) DESC NULLS LAST"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Activity log",
+          "description": "Recent activities (BUY / SELL / DEPOSIT / WITHDRAWAL / DIVIDEND / etc.) across all accounts. Limited to 100 most recent.",
+          "type": "table",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 78
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "amount"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "currencyGBP"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "table",
+              "rawSql": "SELECT a.activity_date AS \"date\", acc.name AS \"account\", a.activity_type AS \"type\", a.asset_id AS \"asset\", a.quantity AS \"qty\", a.unit_price AS \"unit_price\", a.amount AS \"amount\", a.currency AS \"ccy\", a.notes AS \"notes\" FROM activities a LEFT JOIN accounts acc ON acc.id = a.account_id WHERE $__timeFilter(a.activity_date) ORDER BY a.activity_date DESC LIMIT 100"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "RSUs (META)",
+      "collapsed": true,
+      "id": 9305,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "panels": [
+        {
+          "id": 30,
+          "title": "META vest cadence \u2014 value vs share count (per vest event)",
+          "description": "Per-vest event timeline. Left axis (USD): vest value = shares \u00d7 vest-day META price. Right axis: number of shares vested. Each point is one vest date (sometimes a single date has multiple BUY rows \u2014 aggregated here).",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 90
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "lineInterpolation": "linear",
+                "fillOpacity": 10,
+                "pointSize": 7,
+                "showPoints": "always",
+                "spanNulls": true,
+                "axisPlacement": "auto",
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "vest value"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "Vest value (USD)"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "shares"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "short"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "Shares vested"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "time_series",
+              "rawSql": "SELECT activity_date::date::timestamp AS \"time\", SUM(quantity*unit_price) AS \"vest value\", SUM(quantity) AS \"shares\" FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY' GROUP BY activity_date::date ORDER BY activity_date::date"
+            }
+          ]
+        },
+        {
+          "id": 31,
+          "title": "META vests \u2014 realized PNL (FIFO-matched against sells)",
+          "description": "One row per vest with realized P&L computed by FIFO-matching that vest's shares against subsequent sells. Each vest's shares may be spread across multiple sells; the matched sell-price column is the weighted average. 'Avg days held' is the average gap between this vest's date and the sell dates that consumed its shares. Compare against panel 28 to see realized vs hypo-if-held.",
+          "type": "table",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 12,
+            "y": 90
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto"
+              },
+              "decimals": 2
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "shares sold"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "vest price"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "vest value"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "avg sell price"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "sell value"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "realized PNL"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "unit",
+                    "value": "currencyUSD"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 0
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "PNL %"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  },
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 0
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "days held (avg)"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 0
+                  },
+                  {
+                    "id": "unit",
+                    "value": "d"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": true,
+              "reducer": [
+                "sum"
+              ],
+              "fields": [
+                "shares sold",
+                "vest value",
+                "sell value",
+                "realized PNL"
+              ]
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "rawQuery": true,
+              "editorMode": "code",
+              "format": "table",
+              "rawSql": "WITH lots AS (SELECT id, activity_date::date AS vest_date, quantity, unit_price AS vest_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS lot_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS lot_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='BUY'), sells AS (SELECT activity_date::date AS sell_date, quantity AS sell_qty, unit_price AS sell_price, SUM(quantity) OVER (ORDER BY activity_date, id) AS sell_end, SUM(quantity) OVER (ORDER BY activity_date, id) - quantity AS sell_start FROM activities WHERE asset_id='4f60833d-0bfb-484f-8ee6-f129af72e137' AND activity_type='SELL'), matched AS (SELECT l.vest_date, l.vest_price, s.sell_date, s.sell_price, GREATEST(LEAST(l.lot_end, s.sell_end) - GREATEST(l.lot_start, s.sell_start), 0::numeric) AS qty FROM lots l CROSS JOIN sells s WHERE LEAST(l.lot_end, s.sell_end) > GREATEST(l.lot_start, s.sell_start)) SELECT vest_date, SUM(qty) AS \"shares sold\", (SUM(qty*vest_price)/NULLIF(SUM(qty),0)) AS \"vest price\", SUM(qty*vest_price) AS \"vest value\", (SUM(qty*sell_price)/NULLIF(SUM(qty),0)) AS \"avg sell price\", SUM(qty*sell_price) AS \"sell value\", SUM(qty*(sell_price-vest_price)) AS \"realized PNL\", (SUM(qty*(sell_price-vest_price))/NULLIF(SUM(qty*vest_price),0)*100) AS \"PNL %\", AVG((sell_date-vest_date)) AS \"days held (avg)\" FROM matched GROUP BY vest_date ORDER BY vest_date"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Projections",
+      "collapsed": true,
+      "id": 9306,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 103
+      },
+      "panels": [
+        {
+          "id": 9103,
+          "title": "Net worth \u2014 ${horizon_years}-year projection",
+          "description": "Projected net worth at Low/Base/High fixed rates plus your trailing-3y historical return, all compounding from today with your auto monthly contribution (set $monthly_contribution=0 for pure compounding; 'Base, no new contributions' shows the same base rate with zero contributions). NOTE: set the time range to include the future (use the links above) to see the projection.",
+          "type": "trend",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 104
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyGBP",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "lineInterpolation": "smooth"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "^(Low|Base \\(|High|Historical)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Base, no new contributions"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dot",
+                      "dash": [
+                        2,
+                        6
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Years from today"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "Years from today"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "xField": "Years from today",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-postgresql-datasource",
+                "uid": "wealth-pg"
+              },
+              "format": "table",
+              "editorMode": "code",
+              "rawQuery": true,
+              "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value, net_contribution FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), agg AS (SELECT SUM(total_value) nw0, SUM(net_contribution) c_now FROM latest), ago AS (SELECT SUM(x.nc) c_ago FROM latest l LEFT JOIN LATERAL (SELECT net_contribution nc FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date <= (SELECT d FROM mc) - INTERVAL '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int yr, valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) GROUP BY valuation_date), ep AS (SELECT yr, (array_agg(nw ORDER BY valuation_date))[1] nw_s, (array_agg(nw ORDER BY valuation_date DESC))[1] nw_e, (array_agg(contrib ORDER BY valuation_date))[1] c_s, (array_agg(contrib ORDER BY valuation_date DESC))[1] c_e, COUNT(*) days FROM yearly GROUP BY yr), r3 AS (SELECT (nw_e-nw_s-(c_e-c_s))/NULLIF(nw_s+0.5*(c_e-c_s),0) ret FROM ep WHERE (nw_s+0.5*(c_e-c_s))>0 AND days>=300 ORDER BY yr DESC LIMIT 3), params AS (SELECT (SELECT nw0 FROM agg) nw0, COALESCE(NULLIF('$monthly_contribution','auto')::numeric, ((SELECT c_now FROM agg)-(SELECT c_ago FROM ago))/12.0) cm, ($rate_low::float)/100 rl, ($rate_base::float)/100 rb, ($rate_high::float)/100 rh, (SELECT exp(avg(ln(1+ret)))-1 FROM r3) rhist), m AS (SELECT generate_series(0, ${horizon_years}*12) n) SELECT round((m.n/12.0)::numeric,2) AS \"Years from today\", round((nw0*power(1+(power(1+rl,1/12.0)-1),m.n) + cm*((power(1+(power(1+rl,1/12.0)-1),m.n)-1)/NULLIF((power(1+rl,1/12.0)-1),0)))::numeric,0) AS \"Low ($rate_low%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n) + cm*((power(1+(power(1+rb,1/12.0)-1),m.n)-1)/NULLIF((power(1+rb,1/12.0)-1),0)))::numeric,0) AS \"Base ($rate_base%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n))::numeric,0) AS \"Base, no new contributions\", round((nw0*power(1+(power(1+rh,1/12.0)-1),m.n) + cm*((power(1+(power(1+rh,1/12.0)-1),m.n)-1)/NULLIF((power(1+rh,1/12.0)-1),0)))::numeric,0) AS \"High ($rate_high%)\", round((nw0*power(1+(power(1+rhist,1/12.0)-1),m.n) + cm*((power(1+(power(1+rhist,1/12.0)-1),m.n)-1)/NULLIF((power(1+rhist,1/12.0)-1),0)))::numeric,0) AS \"Historical (trailing 3y)\" FROM m, params"
+            }
+          ]
+        }
+      ]
     }
   ],
   "refresh": "5m",
@@ -2287,6 +1945,36 @@
         ],
         "hide": 0,
         "skipUrlSync": false
+      },
+      {
+        "name": "grain",
+        "label": "Net-pay grain",
+        "type": "custom",
+        "query": "cumulative,yearly,monthly",
+        "current": {
+          "text": "cumulative",
+          "value": "cumulative"
+        },
+        "options": [
+          {
+            "text": "cumulative",
+            "value": "cumulative",
+            "selected": true
+          },
+          {
+            "text": "yearly",
+            "value": "yearly",
+            "selected": false
+          },
+          {
+            "text": "monthly",
+            "value": "monthly",
+            "selected": false
+          }
+        ],
+        "hide": 0,
+        "includeAll": false,
+        "multi": false
       }
     ]
   },
