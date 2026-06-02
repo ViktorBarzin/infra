@@ -112,6 +112,23 @@ how to tune the rate limit, how to revoke if abused.
   on a real M365/Office-Home box (`O365HomePremRetail` removed cleanly); the VL
   install then needs a reboot first (hit 1603, now guided). changepk edition-switch
   remains untested (no Home test box; the Pro test VM can't be switched reversibly).
+- **SXSMSI/1603 deep-repair + escalation (2026-06-02):** when the VL install fails
+  `[Failing PreReq=SXSMSI]`/1603 with NO pending reboot (the C2R bootstrap MSI fails),
+  the script offers a consent-gated deep repair (`Repair-OfficePrereq`: `msiexec
+  /unregister`+`/regserver` and reset `SoftwareDistribution`+`catroot2` — the level
+  past DISM/SFC; uninstalls nothing; `$env:KMS_DEEP_REPAIR=1` auto-consents). It
+  persists `HKLM\SOFTWARE\kms-bootstrap\DeepRepairDone`; if 1603 recurs AFTER a deep
+  repair it stops looping and shows the in-place-Windows-repair guidance
+  (`Show-InPlaceRepairHint`, telemetry `sxsmsi-unrecoverable`). **Pilot on PVE VM 300
+  (2026-06-02) proved SXSMSI is client-machine-specific, not the script:** the
+  identical script + the exact user journey both reach `office/ok` on a healthy
+  Win10 — CF1 = clean (Remove-All+reboot) → VL install; CF2 = retail
+  `O365HomePremRetail` → script targeted-remove → reboot → VL install. So a
+  persistent SXSMSI is the client's corrupted Windows servicing/Installer subsystem
+  (below DISM/SFC), fixed only by an in-place Windows repair-install. Also learned:
+  the targeted retail uninstall is itself flaky under low disk (exit -1) and the
+  qemu guest-agent drops during heavy C2R installs (poll telemetry/state, not
+  guest-exec, for results).
 - **Self-hosted ODT bootstrapper**: the Office reinstall path fetches the Office
   Deployment Tool from `https://kms.viktorbarzin.me/scripts/odt-setup.exe` (a
   committed copy in `kms-website/static/scripts/`), NOT from Microsoft —
