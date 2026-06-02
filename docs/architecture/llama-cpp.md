@@ -68,11 +68,26 @@ for the initial deployment.
 
 ## GPU allocation
 
-The llama-swap pod requests `nvidia.com/gpu: 1` (whole-T4
-allocation). The shared T4 is also used by Immich's ML pod
-(`immich.immich-machine-learning`); only one of the two can hold the
-GPU at a time. Operator must scale immich-ml to 0 before running a
-benchmark and restore it after:
+The llama-swap pod requests `nvidia.com/gpu: 1`, but the T4 is
+**time-sliced** by the NVIDIA device plugin — several pods on k8s-node1
+each hold a `nvidia.com/gpu: 1` slice and run **concurrently**:
+`llama-swap`, `immich.immich-machine-learning`, `immich.immich-server`
+(NVENC transcode), and `frigate`. Time-slicing shares *compute* but
+**not memory** — the 16 GB VRAM is a single unpartitioned pool, so one
+greedy tenant can starve all the others.
+
+This is a real failure mode, not theoretical: on 2026-06-02 immich-ml
+(running with `MACHINE_LEARNING_MODEL_TTL=0`, so nothing ever unloaded)
+let its onnxruntime CUDA arena balloon to 10.7 GB during an OCR-heavy
+library job and held it, leaving only ~2 GB free. llama-swap then
+couldn't allocate qwen3-8b (~4.5 GB) → `cudaMalloc` OOM → `llama-server`
+exited → 502s → recruiter-responder triage failed silently for ~5 h.
+Fix: immich `MODEL_TTL=600` so idle models unload and return VRAM. See
+`docs/post-mortems/2026-06-02-immich-ml-ttl-gpu-oom-recruiter.md`.
+
+Budget the T4 accordingly: with immich-ml idle (~2 GB CLIP) + frigate
+(~2 GB) there is ample room for an 8 B model. For a heavy benchmark you
+can still evict immich-ml entirely to guarantee headroom:
 
 ```bash
 kubectl scale -n immich deploy/immich-machine-learning --replicas=0
@@ -84,9 +99,14 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 
 | ID | HF repo | Quant | Ctx | mmproj |
 |----|---------|-------|-----|--------|
+| `qwen3-8b` | `Qwen/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
 | `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
 | `minicpm-v-4-5` | `openbmb/MiniCPM-V-4_5-gguf` | Q4_K_M | 3072 | yes |
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
+
+`qwen3-8b` (text-only) is the Tier-0 triage model for
+`recruiter-responder`; the `qwen3vl-*` / `minicpm-v` models serve the
+vision use cases.
 
 llama.cpp build pinned via the `llama-swap:cuda` image (ships a
 recent llama.cpp ≥ b9095, which includes Qwen3-VL projection fix
@@ -107,10 +127,13 @@ mtmd Flash-Attention regression fix
 
 ## Known issues / decisions
 
-- **Cluster-wide GPU contention** — only one of llama-swap or
-  immich-ml can hold the T4. No GPU sharing solution wired in
-  (MPS/MIG would help but T4 has no MIG and MPS is overkill for two
-  workloads).
+- **Cluster-wide GPU contention** — the T4 is time-sliced across
+  llama-swap, immich-ml, immich-server, and frigate; compute is shared
+  but the 16 GB VRAM is **not** isolated, so any tenant can OOM the
+  others (see "GPU allocation" + the 2026-06-02 post-mortem). No hard
+  memory partitioning is wired in (T4 has no MIG; MPS memory limits are
+  overkill). Mitigation is keeping each tenant's resident footprint
+  bounded — for immich-ml that means `MACHINE_LEARNING_MODEL_TTL > 0`.
 - **Filename-agnostic config** — the download Job creates stable
   `model.gguf` / `mmproj.gguf` symlinks per model dir so the
   llama-swap config doesn't need to track exact HF filenames (which
