@@ -1253,6 +1253,22 @@ resource "kubernetes_deployment" "openclaw" {
               }
             }
           }
+          # Bot token for the recruiter-api plugin's announceEvent() Telegram
+          # send. OpenClaw does not pass api.bot to "kind: tools" plugins, so
+          # the plugin's fallback hits the Telegram Bot API directly via this
+          # env (OPENLOBSTER_CHANNELS_TELEGRAM_TOKEN). Without it every poll
+          # tick throws and events are never consumed -> no notifications.
+          # Same token as channels.telegram.botToken in openclaw.json.
+          env {
+            name = "OPENLOBSTER_CHANNELS_TELEGRAM_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "openclaw-secrets"
+                key      = "telegram_bot_token"
+                optional = true
+              }
+            }
+          }
           # Python packages path for skills
           env {
             name  = "PYTHONPATH"
