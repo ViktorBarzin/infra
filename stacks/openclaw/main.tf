@@ -1685,8 +1685,9 @@ resource "kubernetes_service" "task_webhook" {
 }
 
 module "task_webhook_ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  auth             = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": inbound Forgejo webhook receiver - machine sender (no Authentik SSO cookie); receiver filters on payload action + bot-user
+  auth             = "none"
   namespace        = kubernetes_namespace.openclaw.metadata[0].name
   name             = "task-webhook"
   tls_secret_name  = var.tls_secret_name
