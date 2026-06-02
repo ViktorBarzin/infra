@@ -53,6 +53,12 @@ the **non-conforming** subset:
    This makes them "missing." The deterministic `<assetId>.mp4` path is overwritten on
    regen (reclaims space).
 3. Trigger `PUT /api/jobs/videoConversion {"command":"start","force":false}`.
+   **Gotcha (seen 2026-06-02):** the enqueue is an async background scan. If a prior
+   scan is still in-flight when you delete the rows, the freshly-missing assets get
+   MISSED and the queue drains early (only 11/3296 offenders were picked up on the
+   first pass). After the queue first reaches `waiting:0`, **re-trigger `force=false`
+   once while the queue is idle** and confirm the still-missing/offender count actually
+   dropped — a fresh scan enqueues anything missed.
 4. Per-asset API (`POST /api/assets/jobs`) is owner-scoped (admin can't drive other
    users' assets) — hence the delete-then-missing approach via the admin global job.
 
