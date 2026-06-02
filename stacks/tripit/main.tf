@@ -97,9 +97,6 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "VAPID_SUBJECT", remoteRef = { key = "tripit", property = "VAPID_SUBJECT" } },
         { secretKey = "CALENDAR_TOKEN_SECRET", remoteRef = { key = "tripit", property = "CALENDAR_TOKEN_SECRET" } },
         { secretKey = "IMAP_PASSWORD", remoteRef = { key = "tripit", property = "IMAP_PASSWORD" } },
-        # spam@viktorbarzin.me password — used only by the ingest-plans CronJob
-        # (forward-to-parse via the @viktorbarzin.me -> spam@ catch-all).
-        { secretKey = "PLANS_IMAP_PASSWORD", remoteRef = { key = "tripit", property = "PLANS_IMAP_PASSWORD" } },
       ]
     }
   }
@@ -315,17 +312,12 @@ locals {
       suspend   = false
       extra_env = {}
     }
-    # Ongoing forward-to-parse ingest of vbarzin@gmail.com — Viktor's real
-    # travel mailbox (the self-hosted me@ box receives no booking mail). LLM =
-    # qwen3vl-4b on llama-swap (qwen3-8b OOMs the shared T4). Read-only
-    # IMAP_SEARCH over [Gmail]/All Mail (BODY.PEEK, never sets \Seen), bounded
-    # to a rolling 12-month window of travel-sender mail via Gmail X-GM-RAW; the
-    # two Croatia Jet2 refs (33W6Y3/33W7L2) are excluded so the hand-curated
-    # Croatia trip isn't duplicated. Idempotent (skips message_ids already in
-    # inbound_email). Trips land under MAIL_DEFAULT_OWNER_EMAIL (vbarzin@gmail.com
-    # — Viktor's Authentik login identity, so trips show up in his account).
-    # IMAP_PASSWORD (the vbarzin@gmail.com app-password) comes from secret/tripit
-    # via the tripit-secrets ES.
+    # Ongoing forward-to-parse ingest of me@viktorbarzin.me's mailbox. Uses the
+    # real local LLM (qwen3vl-4b on llama-swap — qwen3-8b OOMs the shared T4).
+    # Read-only IMAP (BODY.PEEK), bounded to the 30 most-recent messages/run;
+    # the pipeline is idempotent (skips message_ids already in inbound_email),
+    # so re-reading the recent window is a no-op for already-seen mail.
+    # IMAP_PASSWORD is injected from secret/tripit via the tripit-secrets ES.
     ingest-mail = {
       schedule = "*/30 * * * *"
       command  = ["python", "-m", "tripit_api", "ingest-mail"]
@@ -335,41 +327,13 @@ locals {
         LLM_ENDPOINT             = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
         LLM_MODEL                = "qwen3vl-4b"
         MAIL_INGEST_ENABLED      = "true"
-        MAIL_DEFAULT_OWNER_EMAIL = "vbarzin@gmail.com"
-        IMAP_HOST                = "imap.gmail.com"
-        IMAP_PORT                = "993"
-        IMAP_USER                = "vbarzin@gmail.com"
-        IMAP_FOLDER              = "[Gmail]/All Mail"
-        IMAP_USE_SSL             = "true"
-        IMAP_SEARCH              = "X-GM-RAW \"newer_than:12m -33W6Y3 -33W7L2 (from:jet2.com OR from:ryanair.com OR from:easyjet.com OR from:wizzair.com OR from:booking.com OR from:airbnb.com OR from:expedia.com OR from:croatiaairlines.com OR from:vueling.com OR from:lufthansa.com OR from:trainline)\""
-      }
-    }
-    # Forward-to-parse: forward any booking confirmation to plans@viktorbarzin.me
-    # (which the @viktorbarzin.me catch-all delivers into the spam@ mailbox), and
-    # this job ingests it. Polls spam@ read-only, filtered by IMAP SEARCH to mail
-    # addressed To plans@ — so only deliberate forwards are processed, not the
-    # rest of the catch-all junk. The LLM extracts segments and the pipeline
-    # attaches them to the date-overlapping trip (or creates one) under
-    # MAIL_DEFAULT_OWNER_EMAIL. IMAP_PASSWORD is overridden for this job to
-    # spam@'s password via imap_password_key (secret/tripit PLANS_IMAP_PASSWORD),
-    # because env_from otherwise injects the Gmail app-password.
-    ingest-plans = {
-      schedule          = "*/15 * * * *"
-      command           = ["python", "-m", "tripit_api", "ingest-mail"]
-      suspend           = false
-      imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
-      extra_env = {
-        LLM_MODE                 = "llamacpp"
-        LLM_ENDPOINT             = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        LLM_MODEL                = "qwen3vl-4b"
-        MAIL_INGEST_ENABLED      = "true"
-        MAIL_DEFAULT_OWNER_EMAIL = "vbarzin@gmail.com"
+        MAIL_DEFAULT_OWNER_EMAIL = "me@viktorbarzin.me"
         IMAP_HOST                = "mailserver.mailserver.svc.cluster.local"
         IMAP_PORT                = "993"
-        IMAP_USER                = "spam@viktorbarzin.me"
+        IMAP_USER                = "me@viktorbarzin.me"
         IMAP_FOLDER              = "INBOX"
         IMAP_USE_SSL             = "true"
-        IMAP_SEARCH              = "TO \"plans@viktorbarzin.me\""
+        IMAP_RECENT_N            = "30"
       }
     }
   }
@@ -424,23 +388,6 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
                 content {
                   name  = env.key
                   value = env.value
-                }
-              }
-
-              # Per-job IMAP_PASSWORD override from a secret key. An explicit env
-              # takes precedence over env_from, so a job that polls a different
-              # mailbox (ingest-plans -> spam@) gets its own password instead of
-              # the default IMAP_PASSWORD (vbarzin@gmail.com) from tripit-secrets.
-              dynamic "env" {
-                for_each = lookup(each.value, "imap_pw_secret_key", null) != null ? [1] : []
-                content {
-                  name = "IMAP_PASSWORD"
-                  value_from {
-                    secret_key_ref {
-                      name = "tripit-secrets"
-                      key  = each.value.imap_pw_secret_key
-                    }
-                  }
                 }
               }
 

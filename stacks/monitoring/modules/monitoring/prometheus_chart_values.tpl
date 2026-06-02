@@ -99,14 +99,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikDown
         target_matchers:
-          - alertname =~ "PoisonFountainDown|ForwardAuthFallbackActive|AuthentikWallingOffPublicPath"
-      # Authentik down: every protected ingress behaves oddly (fallback proxies
-      # engage). The walling-off probe failing then is a symptom, not a regressed
-      # carve-out — suppress it so the root-cause AuthentikDown alert stands alone.
-      - source_matchers:
-          - alertname = AuthentikDown
-        target_matchers:
-          - alertname = AuthentikWallingOffPublicPath
+          - alertname =~ "PoisonFountainDown|ForwardAuthFallbackActive"
       # A stale Traefik replica returns 404 for a fraction of requests; the same
       # bug surfaces as TTFB / 4xx / 5xx / external-divergence symptoms downstream.
       # When TraefikReplicaConfigStale fires, the root cause is identified —
@@ -2949,59 +2942,8 @@ serverFiles:
               subsystem: traefik
             annotations:
               summary: "Traefik replicas have diverging router counts (skew={{ $value | printf \"%.0f\" }}). Restart the laggard pod: `kubectl get pods -n traefik` and delete the one with fewer routers."
-      # Authentik walling-off guard. Fires when a must-stay-public carve-out URL
-      # (job blackbox-authentik-walloff, targets in authentik_walloff_probe.tf)
-      # starts returning an Authentik forward-auth 302. probe_success==0 there
-      # means blackbox's fail_if_header_matches caught a Location -> Authentik:
-      # a path-scoped `auth = "none"` carve-out was clobbered (TF revert, deploy,
-      # ingress_factory default flipping back to auth="required"). lane=security
-      # routes it to the #security Slack receiver (Slack-only, no paging).
-      - name: Authentik Walling Off
-        rules:
-          - alert: AuthentikWallingOffPublicPath
-            # probe_failed_due_to_regex==1 means the response's Location header
-            # matched Authentik — the precise walling-off signature, independent
-            # of status code. (We deliberately do NOT alert on bare
-            # probe_success==0: with the broad valid_status_codes, a 404 carve-out
-            # is success, and a 5xx/DNS/TLS failure is a DIFFERENT failure mode
-            # already covered by reachability alerts — not a forward-auth wall.)
-            # for:10m rides out scrape blips / brief Traefik restarts.
-            expr: probe_failed_due_to_regex{job="blackbox-authentik-walloff"} == 1
-            for: 10m
-            labels:
-              severity: warning
-              lane: security
-              subsystem: authentik
-            annotations:
-              summary: "Public path walled off by Authentik: {{ $labels.service }} ({{ $labels.instance }})"
-              description: "The must-stay-public URL {{ $labels.instance }} (carve-out `{{ $labels.service }}`) is failing its blackbox probe — most likely it now 302-redirects to Authentik SSO. A path-scoped `auth = \"none\"` carve-out probably regressed (TF revert / deploy / ingress_factory auth default flipping back to \"required\"). Native-client / public / webhook / WebSocket / SPA-XHR traffic to this endpoint is broken for strangers and machines. Check the owning stack's ingress_factory `auth` + `ingress_path`, and curl the URL: `curl -sI '{{ $labels.instance }}'` — a Location to authentik.viktorbarzin.me confirms the regression. Probe config + target list: stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf."
 
 extraScrapeConfigs: |
-  # Authentik walling-off guard. Probes each must-stay-public carve-out URL via
-  # blackbox-exporter's `http_no_authentik_redirect` module (no_follow_redirects +
-  # fail_if_header_matches on a Location -> Authentik). probe_success == 0 for a
-  # target here means that URL now 302s to Authentik — a carve-out regressed.
-  # Target list + "how to add a target" docs: authentik_walloff_probe.tf.
-  # Alert: AuthentikWallingOffPublicPath (alerting_rules.yml, lane=security).
-  - job_name: 'blackbox-authentik-walloff'
-    scrape_interval: 1m
-    scrape_timeout: 30s
-    metrics_path: /probe
-    params:
-      module: [http_no_authentik_redirect]
-    static_configs:
-%{ for svc, url in authentik_walloff_targets ~}
-      - targets: ["${url}"]
-        labels:
-          service: "${svc}"
-%{ endfor ~}
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: __param_target
-      - source_labels: [__param_target]
-        target_label: instance
-      - target_label: __address__
-        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   # The `mailserver-dovecot` scrape job was retired in code-1ik together
   # with the Dovecot exporter. docker-mailserver 15.0.0's Dovecot 2.3
   # doesn't emit the old_stats protocol the exporter expected, so the
