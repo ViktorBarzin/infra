@@ -137,9 +137,12 @@ bd assign <id> agent     # re-arm for next dispatcher tick
 
 - **Sentinel assignee `agent`** — free-form, no Beads schema change. Any bd
   client can set it (`bd assign <id> agent`).
-- **Sequential dispatch** — matches `claude-agent-service`'s single-slot
-  `asyncio.Lock`. With a 2-min poll cadence and ~5-min average run,
-  throughput is ~12 beads/hour. Parallelism is a separate plan.
+- **One-bead-per-tick dispatch** — the dispatcher submits at most one bead
+  per 2-min tick, gating on `claude-agent-service`'s `/health` `busy` flag.
+  `busy` now means `active >= capacity` (bounded semaphore, default 10) — the
+  service no longer single-flight-locks via `asyncio.Lock`. So up to
+  ~`capacity` beads can run concurrently; the 2-min poll cadence (not
+  single-slot execution) now bounds ramp-up.
 - **Fixed agent (`beads-task-runner`)** — read-only rails, matches BeadBoard's
   manual Dispatch button. Broader-privilege agents stay manual.
 - **CronJob (not in-service polling, not n8n)** — matches existing infra

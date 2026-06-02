@@ -141,7 +141,7 @@ curl -s -X POST "$WEBHOOK" \
   -d '{"diun_entry_status":"update","diun_entry_image":"<image>","diun_entry_imagetag":"<new_tag>","diun_entry_provider":"kubernetes"}'
 ```
 
-n8n processes all webhooks in parallel (one `claude -p` per webhook). Before bulk runs, increase the rate limit in the n8n Code node (`MAX_UPGRADES_PER_WINDOW`) and reset the counter:
+n8n processes all webhooks in parallel (one `claude -p` per webhook); `claude-agent-service` runs them concurrently via a bounded pool (`MAX_CONCURRENCY`, default 10, excess queued) — it no longer single-flight-locks. Before bulk runs, increase the rate limit in the n8n Code node (`MAX_UPGRADES_PER_WINDOW`) and reset the counter:
 
 ```sql
 -- Reset rate limiter
