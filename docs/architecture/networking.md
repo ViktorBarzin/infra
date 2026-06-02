@@ -185,7 +185,7 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - Only affects non-proxied domains (ha-sofia, immich, headscale, etc.) — Cloudflare-proxied domains resolve to Cloudflare IPs and are unaffected
 - Other clients (10.0.x.x, K8s pods) are NOT translated — they reach the public IP via pfSense outbound NAT
 - Config synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h)
-- **Mail port carve-out**: the translation sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203` too, but Traefik does not serve mail ports. A pfSense NAT rdr rule redirects `10.0.20.203:{25,465,587,993}` → `10.0.20.1` (mail HAProxy) on any incoming interface, so LAN mail clients land on the right service unchanged. Script: `scripts/pfsense-nat-mail-lan-redirect.php`
+- **Known mail-name collision**: the translation also sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203`, but Traefik does not listen on mail ports there. iOS Mail on Barzini WiFi silently hangs. Fix in flight: dedicated pfSense Virtual IP for the mail listener so DNS can point at a stable mail-only IP instead of relying on Traefik's LB IP.
 
 **K8s cluster DNS path**:
 - CoreDNS forwards `.viktorbarzin.lan` to Technitium ClusterIP (10.96.0.53)
