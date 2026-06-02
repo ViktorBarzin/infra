@@ -12,7 +12,7 @@ locals {
   namespace = "claude-agent"
   # Phase 3 cutover 2026-05-07 — see infra/docs/plans/2026-05-07-forgejo-registry-consolidation-plan.md.
   image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service"
-  image_tag = "191ed5dd"
+  image_tag = "latest"
   labels = {
     app = "claude-agent-service"
   }
@@ -201,8 +201,11 @@ resource "kubernetes_cluster_role_binding" "claude_agent" {
 # For cases where the agent DOES need to persist state across pod restarts
 # (caches, ad-hoc outputs, anything that should survive a pod reschedule),
 # `module.persistent` below provides a 5Gi NFS-backed RWX volume mounted
-# at /persistent. RWX so all 3 replicas can read/write the same dir;
-# sequential job mutex in the service prevents concurrent writes.
+# at /persistent for state that should survive a pod reschedule. Since the
+# service now runs jobs concurrently (bounded semaphore, no single-flight
+# lock), agents sharing /persistent must use per-job paths to avoid races —
+# per-job *workspaces* are isolated (own clone under /workspace/jobs/<id>),
+# but /persistent is shared.
 module "persistent" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "claude-agent-persistent"
@@ -416,6 +419,14 @@ resource "kubernetes_deployment" "claude_agent" {
             value = "/workspace/infra"
           }
 
+          # Soft-unbounded concurrency: this caps simultaneous agent runs;
+          # excess calls queue FIFO rather than 409/503. Each run peaks ~0.5-1.5Gi
+          # (claude + terraform), so this and the memory limit are sized together.
+          env {
+            name  = "MAX_CONCURRENCY"
+            value = "10"
+          }
+
           liveness_probe {
             http_get {
               path = "/health"
@@ -451,13 +462,23 @@ resource "kubernetes_deployment" "claude_agent" {
             mount_path = "/home/agent/.claude"
           }
 
+          # git-crypt key — each job re-unlocks its own clone, so the runtime
+          # container (not just the git-init init container) needs the key.
+          volume_mount {
+            name       = "git-crypt-key"
+            mount_path = "/secrets/git-crypt"
+          }
+
+          # Burstable (tier-aux). Sized for ~10 concurrent agent runs at
+          # ~0.5-1.5Gi each (see MAX_CONCURRENCY). No CPU limit per cluster
+          # policy (CFS throttling); request only.
           resources {
             requests = {
-              cpu    = "500m"
-              memory = "1Gi"
+              cpu    = "1"
+              memory = "2Gi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "12Gi"
             }
           }
         }
