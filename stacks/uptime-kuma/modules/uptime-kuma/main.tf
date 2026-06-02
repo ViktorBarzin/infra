@@ -241,6 +241,44 @@ module "ingress" {
   }
 }
 
+# Path-level carve-out for Uptime Kuma's public-by-design endpoints.
+# The main ingress above gates the ENTIRE site (path "/") behind Authentik
+# forward-auth — which 302-bounces the public status pages, push-monitor
+# ingest, status-page API, badges, and static assets to the SSO login. Status
+# pages are meant for logged-out viewers and push monitors POST from machines;
+# neither can follow the Authentik 302 → OAuth → cookie dance, so all of these
+# were broken (302 instead of 200/JSON). This second ingress points the public
+# paths at the same uptime-kuma Service with NO Authentik middleware. Traefik
+# routes by rule length, so these path-scoped routers out-prioritise the "/"
+# catch-all (same mechanism as the meshcentral agent carve-out, commit
+# 9a15f3f2). The dashboard ("/", "/dashboard", "/manage-*", "/add", "/edit",
+# "/settings", "/setup") stays Authentik-gated via the module above. Uptime
+# Kuma is WebSocket-based; the ingress_factory default middleware chain passes
+# Upgrade/Connection through unchanged, so the realtime status UI still works.
+module "ingress_public" {
+  source       = "../../../../modules/kubernetes/ingress_factory"
+  namespace    = kubernetes_namespace.uptime-kuma.metadata[0].name
+  name         = "uptime-public"
+  service_name = "uptime-kuma"
+  # auth = "none": Uptime Kuma public status pages + push-monitor/badge endpoints - hit logged-out / by machines, cannot do Authentik SSO
+  auth = "none"
+  ingress_path = [
+    "/status",          # public status pages (/status/<slug>)
+    "/api/status-page", # status-page data + heartbeat API
+    "/api/push",        # push-monitor ingest (/api/push/<key>)
+    "/api/badge",       # status/uptime/ping badges
+    "/assets",          # JS/CSS/font bundles for the status page
+    "/icon.svg",        # favicon / logo
+    "/upload",          # uploaded status-page logos/images
+  ]
+  full_host        = "uptime.viktorbarzin.me"
+  dns_type         = "none" # DNS already owned by the main uptime ingress above.
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Status pages + push ingest are machine/anon-hit; bot-block forwardAuth would break them.
+  homepage_enabled = false # Homepage tile belongs to the main UI ingress.
+  external_monitor = false # The main ingress already carries the external monitor.
+}
+
 # CronJob for daily SQLite backups # no longer needed as we're using the mysql
 # resource "kubernetes_cron_job_v1" "sqlite-backup" {
 #   metadata {
