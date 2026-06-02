@@ -663,7 +663,8 @@ module "ingress" {
   name            = "trading"
   service_name    = "trading-bot-frontend"
   tls_secret_name = var.tls_secret_name
-  auth            = "required"
+  # auth = "app": app has its own WebAuthn/passkey + JWT auth (RP_ID=trading.viktorbarzin.me); Authentik would 302-break the WebAuthn XHR + /ws WebSocket
+  auth = "app"
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Trading Bot"
