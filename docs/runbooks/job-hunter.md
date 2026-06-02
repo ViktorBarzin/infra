@@ -277,10 +277,14 @@ from job_hunter.storage_comp import upsert_comp_point
 async def m():
     e=create_engine_from_env(); sf=make_session_factory(e)
     async with sf() as s:
+        # total_value is what the comparison/bar uses — it MUST be full TC
+        # (base + bonus + RSU). Store the components too for transparency.
         await upsert_comp_point(s, CompPoint(source='self', external_id='self-current',
             company_slug='self-current', company_display_name='Me (Meta IC5)',
             level_slug='senior', location_bucket='london',
-            total_value=Decimal('267000'), currency='GBP', effective_date=date.today()))
+            base_value=Decimal('123682'), bonus_value=Decimal('25734'),
+            rsu_grant_value=Decimal('117927'), rsu_vesting_years=1,
+            total_value=Decimal('267343'), currency='GBP', effective_date=date.today()))
         await s.commit()
     await e.dispose()
 asyncio.run(m())"
