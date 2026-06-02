@@ -255,18 +255,30 @@ WHERE c.slug = 'janestreet' AND s.snapshot_date IN ('2026-06-02', '2026-08-30')
 GROUP BY c.display_name, s.snapshot_date;
 ```
 
-### "Your comp vs the market" dashboard panel + your baseline
+### "Your comp vs the market" dashboard panel + your baselines
 
 The Job Hunter Grafana dashboard (`grafana.viktorbarzin.me` → Job Hunter) has a
 bar chart **"Your comp vs the market — London p50 total comp"** ranking every
-company's London median TC with your current comp shown in line. Your figure is
-deliberately **not hardcoded in the committed dashboard JSON** — it lives in the
-DB as a labeled comp_point (`company_slug='self-current'`, `source='self'`,
-display "Me (Meta IC5)"). It sits below the £500k alert bar (never pings Slack)
-and ranks too low to surface in `analyze` leaders — it only appears on this
-chart and as its own `comp-table` row.
+company's London median TC with your comp shown in line. Your figures are
+deliberately **not hardcoded in the committed dashboard JSON** — they live in
+the DB as labeled comp_points with `source='self'` (the panel tags any
+`source='self'` row as "You" and renders one bar each). There are **two**, by
+design:
 
-Update it when your comp changes (the only place the number lives):
+- `self-realized` — **"Me - realized gross" ≈ £409k**: your actual P60 gross
+  for the current tax year. **Source = `SUM(payslip_ingest.payslip.taxable_pay)`**
+  for the tax year (this equals the P60 "pay for tax"; do NOT use
+  `salary+bonus+rsu_vest`, where `rsu_vest` is net/partial and understates RSU
+  income by ~half). Inflated by concurrent stacked RSU vests + META price.
+- `self-current` — **"Me - package (grant TC)" ≈ £267k**: base + bonus +
+  current-year RSU refresher *grant face* (£117,927). This is the basis
+  **levels.fyi uses for the company bars**, so it's the apples-to-apples figure
+  for comparing a job *offer*.
+
+Both sit below the £500k alert bar (never ping Slack). Re-seed when comp changes
+(realized: re-pull `taxable_pay`; grant-value: from the YE letter). The
+grant-value seed (run the realized one the same way with `company_slug='self-realized'`,
+`company_display_name='Me - realized gross'`, `total_value=<taxable_pay sum>`):
 
 ```bash
 kubectl -n job-hunter exec deploy/job-hunter -- python -c "
