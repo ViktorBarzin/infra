@@ -690,9 +690,14 @@ resource "kubernetes_deployment" "immich-machine-learning" {
             protocol       = "TCP"
             name           = "immich-ml"
           }
+          # Idle models unload after 600s, returning VRAM to the shared T4.
+          # MUST stay > 0: at 0 nothing ever unloads and onnxruntime's CUDA
+          # arena (OCR's dynamic input shapes balloon it to ~10GB) is held
+          # forever, starving llama-swap (qwen3-8b) on the same time-sliced
+          # GPU and silently breaking recruiter-responder triage.
           env {
             name  = "MACHINE_LEARNING_MODEL_TTL"
-            value = "0"
+            value = "600"
           }
           env {
             name  = "TRANSFORMERS_CACHE"
