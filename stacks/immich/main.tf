@@ -795,6 +795,64 @@ resource "kubernetes_service" "immich-machine-learning" {
   }
 }
 
+# Keeps the CLIP *textual* (smart-search) model resident on the shared T4.
+# MACHINE_LEARNING_MODEL_TTL=600 is a single GLOBAL knob — without traffic it
+# unloads CLIP after 600s idle exactly like OCR/face (immich has no per-model
+# pin). This job pings the textual encoder every 5 min (< the 600s TTL) so a
+# search query never pays the cold-load, while idle OCR/face still free their
+# VRAM. Textual only: smart search is text->embedding->pgvector; the visual
+# encoder is import-time and is intentionally left to unload. The modelName
+# MUST match MACHINE_LEARNING_PRELOAD__CLIP__TEXTUAL on the deployment above.
+resource "kubernetes_cron_job_v1" "clip-keepalive" {
+  metadata {
+    name      = "clip-keepalive"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "*/5 * * * *"
+    starting_deadline_seconds     = 60
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        active_deadline_seconds    = 60
+        ttl_seconds_after_finished = 120
+        template {
+          metadata {}
+          spec {
+            container {
+              name = "warmup"
+              # curl baked into the image — never apt/apk/pip install at
+              # runtime in a CronJob (writes to the node container layer on
+              # every run; see status-page-pusher disk-write incident).
+              image = "docker.io/curlimages/curl:8.11.1"
+              # exec form (no shell) so the JSON quotes pass through verbatim.
+              command = [
+                "curl", "-sf", "-m", "30",
+                "-F", "entries={\"clip\":{\"textual\":{\"modelName\":\"ViT-B-16-SigLIP2__webli\"}}}",
+                "-F", "text=keepalive",
+                "http://immich-machine-learning:3003/predict",
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "16Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 module "ingress-immich" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "app": Immich has its own user auth + bearer-token API. Authentik
