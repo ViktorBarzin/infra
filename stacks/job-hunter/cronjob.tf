@@ -5,8 +5,10 @@
 #
 # The alembic-migrate init container mirrors the Deployment so the CronJob can
 # never run a refresh against an un-migrated DB (snapshot inserts would fail).
-# Image is :latest (Keel-managed for the Deployment); the CronJob pulls the
-# current latest at each run, so it always executes the newest code.
+# Image is local.image (:latest via image_tag) with imagePullPolicy=Always: a
+# CronJob spawns a fresh pod each run, so Always pull = it always executes the
+# newest built code. The Deployment is rolled by CI (kubectl set image to the
+# build SHA); the CronJob needs no rollout — Always pull covers it.
 resource "kubernetes_cron_job_v1" "job_hunter_refresh" {
   metadata {
     name      = "job-hunter-refresh"
@@ -40,9 +42,10 @@ resource "kubernetes_cron_job_v1" "job_hunter_refresh" {
             }
 
             init_container {
-              name    = "alembic-migrate"
-              image   = local.image
-              command = ["python", "-m", "job_hunter", "migrate"]
+              name              = "alembic-migrate"
+              image             = local.image
+              image_pull_policy = "Always"
+              command           = ["python", "-m", "job_hunter", "migrate"]
               env_from {
                 secret_ref {
                   name = "job-hunter-secrets"
@@ -65,8 +68,9 @@ resource "kubernetes_cron_job_v1" "job_hunter_refresh" {
             }
 
             container {
-              name  = "refresh"
-              image = local.image
+              name              = "refresh"
+              image             = local.image
+              image_pull_policy = "Always"
               command = ["python", "-m", "job_hunter", "refresh",
               "--source", "ats", "--source", "hn", "--source", "levels_fyi"]
 

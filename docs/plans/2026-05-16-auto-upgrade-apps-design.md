@@ -3,6 +3,21 @@
 **Date**: 2026-05-16
 **Status**: Approved (brainstorm + grill complete; implementation pending)
 
+> **UPDATE 2026-06-02 — decision #12 / Q1 reversed for OWNED apps.** The
+> original "uniform Keel-only, no per-repo `kubectl set image` step" call held
+> only for **upstream** images (which we can't build, so Keel poll-and-bump is
+> the only option). For **self-hosted apps we build**, CI now ALSO drives the
+> rollout: `build-and-push` tags `latest` + `:<sha>`, then a `deploy` step runs
+> `kubectl set image deployment/<app> ...:<sha>` + `rollout status`. Rationale
+> (memory id=3183, proven on tuya-bridge 2026-05-29): the pipeline is atomic
+> and deterministic — no wait for Keel's hourly poll, no risk of Keel resolving
+> `:latest` to a stale concrete tag. **Keel stays enrolled in parallel** as a
+> redundant net (it finds the just-deployed SHA already running → no-op), so
+> upstream apps and owned apps share one mental model. Enabled cluster-wide by
+> the `woodpecker-agent` SA being `cluster-admin` (no per-app RBAC). Owned apps
+> being rolled out to this pattern 2026-06-02; CronJobs in owned apps use
+> `:latest` + `imagePullPolicy: Always` instead of a deploy step.
+
 ## Problem
 
 Three constraints in tension across the cluster's ~70 services:

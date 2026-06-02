@@ -89,7 +89,26 @@ Violations cause state drift, which causes future applies to break or silently r
 
 ## CI/CD Architecture — GHA Builds + Woodpecker Deploy
 
-**Flow**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
+**Owned-app deploy model (build triggers the rollout — 2026-06-02):** For
+self-hosted apps **we build** (Forgejo `viktor/<name>` + Dockerfile +
+`.woodpecker.yml`), the build pipeline ALSO drives the rollout — atomic +
+deterministic, no wait for Keel's poll. Pattern (`build-and-push` tags `latest`
++ `${CI_COMMIT_SHA:0:8}`, then a `deploy` step): `kubectl set image
+deployment/<app> <container>=<repo>:${CI_COMMIT_SHA:0:8} -n <ns>` +
+`kubectl rollout status ... --timeout=300s`. The `woodpecker-agent` SA is
+`cluster-admin`, so the `bitnami/kubectl` step needs no kubeconfig/RBAC (uses
+its in-cluster SA). **Keel stays enrolled in parallel** as a redundant net
+(finds the deployed SHA already running → no-op). Requires the Deployment to
+have `ignore_changes` on `…container[0].image` (KEEL_IGNORE_IMAGE) so CI
+`set image` doesn't fight `terragrunt apply`. CronJobs in owned apps use
+`:latest` + `imagePullPolicy: Always` (fresh pod each run) instead of a deploy
+step. **Never** `set image`/`rollout restart` operator-managed StatefulSets
+(memory id=740). Reference impls: `tuya_bridge/.woodpecker.yml`,
+`job-hunter`. This reverses decision #12 of
+`docs/plans/2026-05-16-auto-upgrade-apps-design.md` for owned (not upstream)
+images.
+
+**Flow (GHA-migrated apps)**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
 
 **Migrated to GHA** (10): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search, council-complaints
 **Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
