@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "meshcentral" {
     name = "meshcentral"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -145,6 +145,22 @@ if [ -f "$CONFIG" ]; then
   sed -i 's/"_TLSOffload":/"TLSOffload":/g' "$CONFIG"
   sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' "$CONFIG"
   sed -i 's/"TLSOffload": false/"TLSOffload": true/g' "$CONFIG"
+
+  # ignoreAgentHashCheck: stop pinning the OUTER (Traefik) TLS cert hash on the
+  # agent handshake. With TLS offload, the agent sees Traefik's Let's Encrypt
+  # cert (which also differs between the internal .203 LB and the external
+  # Cloudflare path, and rotates ~monthly), not MeshCentral's own webserver
+  # cert — so the default cert-pin fails with "Agent bad web cert hash" and
+  # holds EVERY agent connection (the whole fleet went offline). With this set,
+  # MeshCentral echoes back whatever cert hash the agent reports, so the
+  # pin succeeds on any path/cert. The agent's separate mesh-certificate
+  # handshake (ServerID) still authenticates the server — this only drops the
+  # redundant outer-TLS pin, which is safe behind our trusted-network Traefik.
+  # Insert the key right after TLSOffload (guaranteed present post-patch) if not
+  # already there. MeshCentral lowercases settings keys, so casing is flexible.
+  if ! grep -qi '"ignoreAgentHashCheck"' "$CONFIG"; then
+    sed -i 's/"TLSOffload": true/"TLSOffload": true,\n    "ignoreAgentHashCheck": true/' "$CONFIG"
+  fi
 else
   # First run: create config from template before startup.sh runs, so REVERSE_PROXY
   # env var doesn't generate a bad certUrl. Pre-seed with correct values.
@@ -159,6 +175,7 @@ else
     "redirPort": 80,
     "AgentPong": 300,
     "TLSOffload": true,
+    "ignoreAgentHashCheck": true,
     "SelfUpdate": false,
     "AllowFraming": false,
     "WebRTC": false
@@ -306,6 +323,43 @@ module "ingress" {
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Path-level carve-out for MeshCentral's agent/relay/native-client endpoints.
+# The main ingress above gates the ENTIRE site (path "/") behind Authentik
+# forward-auth — which 302-bounces these endpoints to the SSO login. Mesh
+# agents are native WebSocket/HTTP clients that authenticate with their own
+# mesh certificate (TLS server-cert pinning + binary handshake on
+# /agent.ashx); they cannot follow the Authentik 302 → OAuth → cookie dance,
+# so every agent went OFFLINE. This second ingress points the agent paths at
+# the same meshcentral Service with NO Authentik middleware. Traefik routes
+# by rule length, so these path-scoped routers out-prioritise the "/"
+# catch-all (same mechanism as blog's /net-diag.sh carve-out). The human web
+# UI ("/") stays Authentik-gated via the module above.
+module "ingress_agent" {
+  source       = "../../modules/kubernetes/ingress_factory"
+  namespace    = kubernetes_namespace.meshcentral.metadata[0].name
+  name         = "meshcentral-agent"
+  service_name = kubernetes_service.meshcentral.metadata[0].name
+  port         = 80
+  # auth = "none": MeshCentral agent/relay endpoints - native clients (mesh cert auth), cannot do Authentik SSO
+  auth = "none"
+  ingress_path = [
+    "/agent.ashx",         # agent <-> server control channel (WebSocket)
+    "/control.ashx",       # management WebSocket (also used by agent tunnels)
+    "/meshrelay.ashx",     # relay/peer WebSocket for desktop/terminal/files
+    "/meshagents",         # agent binary download (install + self-update)
+    "/devicefile.ashx",    # file transfer to/from device
+    "/agentdownload.ashx", # agent installer download
+    "/meshsettings.ashx",  # agent .msh settings blob (server URL + mesh id)
+    "/amtevents.ashx",     # Intel AMT/CIRA event ingest
+  ]
+  full_host        = "meshcentral.viktorbarzin.me"
+  dns_type         = "none" # DNS already owned by the main meshcentral ingress.
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Native-client endpoints; bot-block forwardAuth would break the agent handshake.
+  homepage_enabled = false # Homepage tile belongs to the main UI ingress.
+  external_monitor = false # The main ingress already carries the external monitor.
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
