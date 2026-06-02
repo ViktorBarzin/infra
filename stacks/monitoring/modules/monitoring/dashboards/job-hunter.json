@@ -332,6 +332,78 @@
       ],
       "title": "Base-salary trend (p50) — top 5 companies",
       "type": "timeseries"
+    },
+    {
+      "id": 10,
+      "type": "barchart",
+      "title": "Your comp vs the market \u2014 London p50 total comp (GBP)",
+      "description": "Per-company London median total comp (COALESCE total/base) ranked vs your current TC. 'Me (Meta IC5)' is a labeled data point in the DB (source='self'), not a hardcoded dashboard value.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "job-hunter-pg"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 85,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "axisCenteredZero": false
+          },
+          "mappings": [],
+          "unit": "currencyGBP",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "company",
+        "colorByField": "who",
+        "showValue": "auto",
+        "stacking": "none",
+        "barRadius": 0,
+        "barWidth": 0.85,
+        "groupWidth": 0.9,
+        "fullHighlight": false,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "job-hunter-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT c.display_name AS company, CASE WHEN bool_or(cp.source = 'self') THEN 'You' ELSE 'Market' END AS who, percentile_cont(0.5) WITHIN GROUP (ORDER BY COALESCE(cp.total_gbp, cp.base_gbp)) AS \"p50_gbp\" FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON c.id = cp.company_id WHERE cp.location_bucket = 'london' AND COALESCE(cp.total_gbp, cp.base_gbp) IS NOT NULL GROUP BY c.display_name ORDER BY \"p50_gbp\" DESC"
+        }
+      ]
     }
   ],
   "refresh": "",

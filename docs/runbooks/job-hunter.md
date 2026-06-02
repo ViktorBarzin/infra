@@ -255,6 +255,37 @@ WHERE c.slug = 'janestreet' AND s.snapshot_date IN ('2026-06-02', '2026-08-30')
 GROUP BY c.display_name, s.snapshot_date;
 ```
 
+### "Your comp vs the market" dashboard panel + your baseline
+
+The Job Hunter Grafana dashboard (`grafana.viktorbarzin.me` → Job Hunter) has a
+bar chart **"Your comp vs the market — London p50 total comp"** ranking every
+company's London median TC with your current comp shown in line. Your figure is
+deliberately **not hardcoded in the committed dashboard JSON** — it lives in the
+DB as a labeled comp_point (`company_slug='self-current'`, `source='self'`,
+display "Me (Meta IC5)"). It sits below the £500k alert bar (never pings Slack)
+and ranks too low to surface in `analyze` leaders — it only appears on this
+chart and as its own `comp-table` row.
+
+Update it when your comp changes (the only place the number lives):
+
+```bash
+kubectl -n job-hunter exec deploy/job-hunter -- python -c "
+import asyncio; from decimal import Decimal; from datetime import date
+from job_hunter.db import create_engine_from_env, make_session_factory
+from job_hunter.sources.comp.base import CompPoint
+from job_hunter.storage_comp import upsert_comp_point
+async def m():
+    e=create_engine_from_env(); sf=make_session_factory(e)
+    async with sf() as s:
+        await upsert_comp_point(s, CompPoint(source='self', external_id='self-current',
+            company_slug='self-current', company_display_name='Me (Meta IC5)',
+            level_slug='senior', location_bucket='london',
+            total_value=Decimal('267000'), currency='GBP', effective_date=date.today()))
+        await s.commit()
+    await e.dispose()
+asyncio.run(m())"
+```
+
 ### Interpreting the numbers — caveats
 
 - **Sample size**: `analyze` flags companies with `n < 3` as `low_confidence`. A single self-reported datapoint is anecdote, not a band — chase the p50 only where n is healthy.
