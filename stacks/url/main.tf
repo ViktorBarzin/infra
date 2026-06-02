@@ -372,7 +372,7 @@ resource "kubernetes_deployment" "shlink-web" {
       }
       spec {
         container {
-          image = "shlinkio/shlink-web-client"
+          image = "shlinkio/shlink-web-client:4.7.1"
           name  = "shlink-web"
           volume_mount {
             mount_path = "/usr/share/nginx/html/servers.json"
@@ -388,16 +388,19 @@ resource "kubernetes_deployment" "shlink-web" {
               memory = "64Mi"
             }
           }
-          # shlinkio/shlink-web-client >=0.1.0 listens on port 80 (nginx default);
-          # prior :latest builds listened on 8080. Keep both probes + service
-          # target_port aligned with the image.
+          # shlinkio/shlink-web-client 4.x serves via non-root nginx on port 8080.
+          # The ancient 0.1.1 image served on 80; Keel's 2026-05-26 match-tag
+          # rewrite had pinned the untagged (:latest) image down to 0.1.1, which
+          # forced this whole block to 80 and broke the admin UI (the 0.1.1 client
+          # also speaks the removed /rest/v1/authenticate API). Pinned to 4.7.1 —
+          # keep container port + probes + service target_port at 8080.
           port {
-            container_port = 80
+            container_port = 8080
           }
           liveness_probe {
             http_get {
               path = "/"
-              port = 80
+              port = 8080
             }
             initial_delay_seconds = 15
             period_seconds        = 30
@@ -407,7 +410,7 @@ resource "kubernetes_deployment" "shlink-web" {
           readiness_probe {
             http_get {
               path = "/"
-              port = 80
+              port = 8080
             }
             initial_delay_seconds = 5
             period_seconds        = 30
@@ -455,7 +458,7 @@ resource "kubernetes_service" "shlink-web" {
     port {
       name        = "http"
       port        = 80
-      target_port = 80
+      target_port = 8080
     }
   }
 }
