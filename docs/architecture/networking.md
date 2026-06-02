@@ -180,11 +180,12 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 
 **Split Horizon / Hairpin NAT fix (192.168.1.0/24 → *.viktorbarzin.me)**:
 - TP-Link router does NOT support hairpin NAT — LAN clients can't reach the public IP (176.12.22.76) for non-proxied domains
-- Technitium's Split Horizon `AddressTranslation` post-processor translates `176.12.22.76 → 10.0.20.200` (Traefik LB) in DNS responses for 192.168.1.0/24 clients
+- Technitium's Split Horizon `AddressTranslation` post-processor translates `176.12.22.76 → 10.0.20.203` (Traefik LB) in DNS responses for 192.168.1.0/24 clients (was `.200` until 2026-05-30 Traefik dedicated-IP move)
 - DNS Rebinding Protection has `viktorbarzin.me` in `privateDomains` to allow the translated private IP
 - Only affects non-proxied domains (ha-sofia, immich, headscale, etc.) — Cloudflare-proxied domains resolve to Cloudflare IPs and are unaffected
 - Other clients (10.0.x.x, K8s pods) are NOT translated — they reach the public IP via pfSense outbound NAT
 - Config synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h)
+- **Mail port carve-out**: the translation sends `mail.viktorbarzin.me` (and `imap.`/`smtp.`) to `.203` too, but Traefik does not serve mail ports. A pfSense NAT rdr rule redirects `10.0.20.203:{25,465,587,993}` → `10.0.20.1` (mail HAProxy) on any incoming interface, so LAN mail clients land on the right service unchanged. Script: `scripts/pfsense-nat-mail-lan-redirect.php`
 
 **K8s cluster DNS path**:
 - CoreDNS forwards `.viktorbarzin.lan` to Technitium ClusterIP (10.96.0.53)
