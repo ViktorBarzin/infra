@@ -108,6 +108,34 @@ kubectl -n job-hunter exec deploy/job-hunter -- python -m job_hunter cdio-reconc
 Changes hit `/webhook/cdio`; comp/role extraction from the diff is manual or
 LLM-side (CDIO only captures the changed text).
 
+### Deploying (build triggers the rollout)
+
+Deploys are **automatic on push to master** — we build the image, so CI also
+drives the rollout (`.woodpecker.yml`: `build-and-push` tags `latest` +
+`${CI_COMMIT_SHA:0:8}`, then a `deploy` step runs
+`kubectl set image deployment/job-hunter ...:${SHA}` + `rollout status`). The
+woodpecker-agent SA is cluster-admin, so no kubeconfig/RBAC is wired into the
+step. Keel stays enrolled in parallel as a redundant net (finds the SHA already
+running → no-op). So to ship code:
+
+```bash
+# in the job-hunter source repo (forgejo viktor/job-hunter)
+git push origin master      # → lint+test → build (latest + :<sha>) → set image → rollout
+```
+
+The **Deployment** rolls to the just-built `:<sha>`. The **CronJob** runs
+`:latest` with `imagePullPolicy: Always`, so its next scheduled pod pulls the
+newest image (no rollout needed for a CronJob). `image_tag = "latest"` in
+`terragrunt.hcl` is just the TF baseline; the running Deployment digest is
+whatever CI last set (`kubectl -n job-hunter get deploy job-hunter -o jsonpath='{..image}'`).
+
+**Versioning** is still semver — bump `pyproject.toml` and cut a `git tag
+vX.Y.Z` to mark a release; that's the human version record, independent of the
+`:<sha>` deploy tag (map a running SHA back to a version with `git describe`).
+
+**Rollback**: `kubectl -n job-hunter rollout undo deployment/job-hunter` (last
+ReplicaSet), or push a revert commit (CI redeploys the reverted SHA).
+
 ### Applying the Terraform stack
 
 ```bash
