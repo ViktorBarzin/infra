@@ -111,3 +111,83 @@ resource "kubernetes_cron_job_v1" "job_hunter_refresh" {
     kubernetes_manifest.db_external_secret,
   ]
 }
+
+# Weekly above-target comp alert. Runs an hour after the refresh (so it reads
+# fresh data + the just-written snapshot) and posts to Slack the companies whose
+# London p50 total comp >= £500k, flagging any that newly crossed since last
+# week's snapshot. Read-only query + a Slack POST — no init/migrate needed.
+resource "kubernetes_cron_job_v1" "job_hunter_alert" {
+  metadata {
+    name      = "job-hunter-alert"
+    namespace = kubernetes_namespace.job_hunter.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule                      = "0 5 * * 0"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 600
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 2
+        active_deadline_seconds    = 300
+        ttl_seconds_after_finished = 86400
+
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            container {
+              name              = "alert"
+              image             = local.image
+              image_pull_policy = "Always"
+              command = ["python", "-m", "job_hunter", "alert",
+              "--threshold", "500000", "--location", "london", "--slack"]
+
+              env_from {
+                secret_ref {
+                  name = "job-hunter-secrets"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "job-hunter-db-creds"
+                }
+              }
+
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "256Mi"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
+}

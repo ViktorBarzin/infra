@@ -89,6 +89,13 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "DIGEST_FROM_ADDRESS"
           remoteRef = { key = "job-hunter", property = "digest_from_address" }
         },
+        {
+          # Weekly above-target comp alert (job-hunter-alert CronJob). Seeded
+          # from the shared workspace webhook; repoint to a dedicated channel
+          # by updating secret/job-hunter slack_webhook_url.
+          secretKey = "SLACK_WEBHOOK_URL"
+          remoteRef = { key = "job-hunter", property = "slack_webhook_url" }
+        },
       ]
     }
   }
