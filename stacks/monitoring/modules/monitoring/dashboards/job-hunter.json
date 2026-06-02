@@ -38,7 +38,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('day', fetched_at) AT TIME ZONE 'UTC' AS time, source, COUNT(*) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) GROUP BY 1, 2 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day', fetched_at) AT TIME ZONE 'UTC' AS time, source, COUNT(*) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) AND primary_location IN (${location:sqlstring}) GROUP BY 1, 2 ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -69,7 +69,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT source AS metric, COUNT(DISTINCT dedup_key) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) GROUP BY source ORDER BY value DESC",
+          "rawSql": "SELECT source AS metric, COUNT(DISTINCT dedup_key) AS value FROM job_hunter.roles WHERE $__timeFilter(fetched_at) AND primary_location IN (${location:sqlstring}) GROUP BY source ORDER BY value DESC",
           "refId": "A"
         }
       ],
@@ -113,7 +113,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT c.display_name, COUNT(*) AS roles FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) GROUP BY c.display_name ORDER BY roles DESC LIMIT 20",
+          "rawSql": "SELECT c.display_name, COUNT(*) AS roles FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) AND r.primary_location IN (${location:sqlstring}) GROUP BY c.display_name ORDER BY roles DESC LIMIT 20",
           "refId": "A"
         }
       ],
@@ -143,7 +143,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT parsed_base_gbp::float AS base_gbp FROM job_hunter.roles WHERE parsed_base_gbp IS NOT NULL AND $__timeFilter(fetched_at)",
+          "rawSql": "SELECT parsed_base_gbp::float AS base_gbp FROM job_hunter.roles WHERE parsed_base_gbp IS NOT NULL AND $__timeFilter(fetched_at) AND primary_location IN (${location:sqlstring})",
           "refId": "A"
         }
       ],
@@ -191,7 +191,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "job-hunter-pg"},
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT r.posted_at, c.display_name AS company, r.title, r.location, r.remote_policy, r.parsed_base_gbp::float AS base_gbp, r.salary_parse_confidence, r.source, r.apply_url FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) ORDER BY r.salary_parse_confidence DESC NULLS LAST, r.parsed_base_gbp DESC NULLS LAST, r.posted_at DESC NULLS LAST LIMIT 100",
+          "rawSql": "SELECT r.posted_at, c.display_name AS company, r.title, r.location, r.remote_policy, r.parsed_base_gbp::float AS base_gbp, r.salary_parse_confidence, r.source, r.apply_url FROM job_hunter.roles r JOIN job_hunter.companies c ON r.company_id = c.id WHERE $__timeFilter(r.fetched_at) AND r.primary_location IN (${location:sqlstring}) ORDER BY r.salary_parse_confidence DESC NULLS LAST, r.parsed_base_gbp DESC NULLS LAST, r.posted_at DESC NULLS LAST LIMIT 100",
           "refId": "A"
         }
       ],
@@ -401,7 +401,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT c.display_name AS company, CASE WHEN bool_or(cp.source = 'self') THEN 'You' ELSE 'Market' END AS who, percentile_cont(0.5) WITHIN GROUP (ORDER BY COALESCE(cp.total_gbp, cp.base_gbp)) AS \"p50_gbp\" FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON c.id = cp.company_id WHERE cp.location_bucket = 'london' AND COALESCE(cp.total_gbp, cp.base_gbp) IS NOT NULL GROUP BY c.display_name ORDER BY \"p50_gbp\" DESC"
+          "rawSql": "SELECT c.display_name AS company, CASE WHEN bool_or(cp.source = 'self') THEN 'You' ELSE 'Market' END AS who, percentile_cont(0.5) WITHIN GROUP (ORDER BY COALESCE(cp.total_gbp, cp.base_gbp)) AS \"p50_gbp\" FROM job_hunter.comp_points cp JOIN job_hunter.companies c ON c.id = cp.company_id WHERE cp.cp.location_bucket IN (${location:sqlstring}) AND COALESCE(cp.total_gbp, cp.base_gbp) IS NOT NULL GROUP BY c.display_name ORDER BY \"p50_gbp\" DESC"
         }
       ]
     }
