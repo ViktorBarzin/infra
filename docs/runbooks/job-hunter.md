@@ -164,6 +164,31 @@ Grafana datasource password is mirrored via a second ExternalSecret in the
 
 ## ANALYST
 
+### Weekly above-target Slack alert
+
+The `job-hunter-alert` CronJob (Sundays 05:00 UTC, an hour after the refresh)
+posts to Slack the companies whose London p50 total comp **≥ £500k**, flagging
+any that **newly crossed** since last week's snapshot. Threshold is the
+`--threshold` arg in `cronjob.tf` (default 500000 — well above the ~£267k move
+floor, so only clearly-exceptional comp pings). Slack webhook comes from Vault
+`secret/job-hunter` → `slack_webhook_url` (seeded from the shared workspace
+webhook → currently posts to the same channel as Keel; repoint to a dedicated
+channel by `vault kv patch secret/job-hunter slack_webhook_url=<url>`).
+
+```bash
+# Preview the message without posting
+kubectl -n job-hunter exec deploy/job-hunter -- python -m job_hunter alert --stdout
+# Different bar / location
+kubectl -n job-hunter exec deploy/job-hunter -- \
+  python -m job_hunter alert --threshold 350000 --location london --stdout
+# Fire it now (posts to Slack)
+kubectl -n job-hunter create job --from=cronjob/job-hunter-alert jh-alert-manual
+```
+
+`newly_crossed` needs ≥2 snapshot dates — it's empty until the second weekly
+run accumulates. To change the standing threshold, edit `--threshold` in
+`infra/stacks/job-hunter/cronjob.tf` and apply.
+
 ### The periodic "market leaders in comp" report
 
 This is the headline command — current leaders by p50 total comp, week-over-week
