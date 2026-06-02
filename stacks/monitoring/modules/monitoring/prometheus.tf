@@ -60,5 +60,5 @@ resource "helm_release" "prometheus" {
   # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
   force_update = false
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token, authentik_walloff_targets = local.authentik_walloff_targets })]
+  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token })]
 }
