@@ -24,7 +24,7 @@ resource "kubernetes_namespace" "shlink" {
     name = "url"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -297,8 +297,14 @@ resource "kubernetes_service" "shlink" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": url.viktorbarzin.me serves public short-link redirects plus
+  # the shlink REST API, which is self-gated by its X-Api-Key (CrowdSec +
+  # rate-limit + anti-AI bot-block still front it). Authentik forward-auth must
+  # NOT gate it — forward-auth 302s shlink-web's cross-origin API XHR (CORS
+  # preflight) and SSO-bounces every public short link. The admin web UI
+  # (shlink.viktorbarzin.me) stays auth = "required" via module.ingress-web.
+  auth            = "none"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.shlink.metadata[0].name
   name            = "url"
