@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -99,6 +100,12 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	ak := r.Header.Get("X-authentik-username")
+	// Authentik injects the full email (e.g. vbarzin@gmail.com); /etc/ttyd-user-map
+	// (and thus dispatch.json) keys on the local part. Strip @domain, matching the
+	// terminal stack's tmux-attach.sh (`${auth_user%%@*}`).
+	if i := strings.IndexByte(ak, '@'); i >= 0 {
+		ak = ak[:i]
+	}
 	e, ok := lookup(ak)
 	if !ok {
 		http.Error(w, "no t3 instance provisioned for this user", http.StatusForbidden)
