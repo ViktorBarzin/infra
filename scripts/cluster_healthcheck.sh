@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 42 diagnostic checks against the Kubernetes cluster and prints
+# Runs 45 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=44
+TOTAL_CHECKS=45
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -1502,6 +1502,34 @@ try:
 except Exception as e:
     errors.append(f"config:{e}")
 
+# Fetch lovelace dashboard config for `dashboard-barzini` via WebSocket
+# (used by check 45). The lovelace storage config is only exposed over the
+# WS API — there is no equivalent REST endpoint.
+try:
+    import websocket  # websocket-client (sync)
+    import urllib.parse as up
+    parsed = up.urlparse(url)
+    ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+    ws_url = f"{ws_scheme}://{parsed.netloc}/api/websocket"
+    ws = websocket.create_connection(ws_url, timeout=15)
+    hello = json.loads(ws.recv())
+    if hello.get("type") == "auth_required":
+        ws.send(json.dumps({"type": "auth", "access_token": token}))
+        ack = json.loads(ws.recv())
+        if ack.get("type") != "auth_ok":
+            raise RuntimeError(f"auth failed: {ack}")
+    ws.send(json.dumps({
+        "id": 1, "type": "lovelace/config", "url_path": "dashboard-barzini"
+    }))
+    resp = json.loads(ws.recv())
+    if not resp.get("success"):
+        raise RuntimeError(f"lovelace fetch failed: {resp.get('error', resp)}")
+    with open(f"{cache}/lovelace_status_dashboard.json", "w") as f:
+        json.dump(resp["result"], f)
+    ws.close()
+except Exception as e:
+    errors.append(f"lovelace_status:{e}")
+
 if errors:
     with open(f"{cache}/errors.txt", "w") as f:
         f.write("\n".join(errors))
@@ -2736,6 +2764,203 @@ except Exception as e:
     fi
 }
 
+# --- 45. HA Sofia — Status Dashboard ---
+#
+# Mirrors the verdict that emo's curated Барзини → Статус Lovelace view
+# would show: each card is a `custom:mushroom-template-card` whose
+# `secondary` template renders to an Online/Offline + optional ⚠️ status
+# line. We pull the dashboard config (cached over WebSocket once per run),
+# concatenate every card's secondary template into one bulk render call
+# against /api/template, and bucket the rendered text per card:
+#   FAIL  — contains "Offline" / "Disconnected" / "Разкачен" / "— No data"
+#   WARN  — contains "⚠️" / "Abnormal" / "Trouble (" / "(ниска)" /
+#           "Пълен резервоар" / "Грешка" / "attention" / "Внимание"
+#   PASS  — otherwise
+# Verdict for the check is FAIL if any card is FAIL, WARN if any is WARN,
+# otherwise PASS. Per-section counts feed the one-line detail string.
+check_ha_status_dashboard() {
+    section 45 "HA Sofia — Status Dashboard (Барзини / Статус)"
+
+    if ! ha_sofia_available; then
+        warn "HA Sofia token not configured — skipping"
+        json_add "ha_status_dashboard" "WARN" "Token not configured"
+        return 0
+    fi
+
+    ha_sofia_fetch_cache
+
+    if [[ ! -f "$HA_CACHE_DIR/lovelace_status_dashboard.json" ]]; then
+        local err=""
+        [[ -f "$HA_CACHE_DIR/errors.txt" ]] && err=$(grep "^lovelace_status:" "$HA_CACHE_DIR/errors.txt" | head -1)
+        [[ "$QUIET" == true ]] && section_always 45 "HA Sofia — Status Dashboard"
+        warn "Dashboard config unreachable: ${err:-unknown error}"
+        json_add "ha_status_dashboard" "WARN" "Dashboard fetch failed"
+        return 0
+    fi
+
+    local result
+    result=$(export HA_CACHE_DIR; python3 << 'PYEOF'
+import os, json, requests, sys
+
+url = os.environ["HOME_ASSISTANT_SOFIA_URL"]
+token = os.environ["HOME_ASSISTANT_SOFIA_TOKEN"]
+cache = os.environ["HA_CACHE_DIR"]
+headers = {"Authorization": f"Bearer {token}"}
+
+with open(f"{cache}/lovelace_status_dashboard.json") as f:
+    config = json.load(f)
+
+status_view = next((v for v in config.get("views", [])
+                    if v.get("path") == "status"), None)
+if not status_view:
+    print("ERROR:status view not found in dashboard-barzini")
+    sys.exit(0)
+
+# Collect (section, primary, secondary, entity) per template card.
+cards = []
+for section in status_view.get("sections", []):
+    section_title = "?"
+    for c in section.get("cards", []):
+        if c.get("type") == "heading" and c.get("heading"):
+            section_title = c["heading"]
+        elif c.get("type") == "custom:mushroom-template-card":
+            sec_tmpl = c.get("secondary") or ""
+            if not sec_tmpl:
+                continue
+            cards.append({
+                "section": section_title,
+                "primary": c.get("primary") or "",
+                "secondary": sec_tmpl,
+                "entity": c.get("entity") or "",
+            })
+
+if not cards:
+    print("0:0:0:no cards")
+    sys.exit(0)
+
+# Bulk-render: concatenate all card templates with a separator. One POST
+# instead of N (≈40 cards). On failure fall back to per-card rendering.
+SEP = "###NEXT_CARD###"
+delim = "{{ '" + SEP + "' }}"
+
+def post_template(tmpl):
+    r = requests.post(f"{url}/api/template", headers=headers,
+                      json={"template": tmpl}, timeout=30)
+    r.raise_for_status()
+    return r.text
+
+def render_each(items):
+    out = []
+    for it in items:
+        try:
+            out.append(post_template(it))
+        except Exception as e:
+            out.append(f"__RENDER_ERR__:{e}")
+    return out
+
+try:
+    composite = delim.join(c["secondary"] for c in cards)
+    rendered = post_template(composite)
+    sec_parts = rendered.split(SEP)
+    if len(sec_parts) != len(cards):
+        # Mismatch — fall back to per-card render so we don't mis-attribute.
+        sec_parts = render_each([c["secondary"] for c in cards])
+except Exception:
+    sec_parts = render_each([c["secondary"] for c in cards])
+
+# Some primaries are templates too (e.g. include a ⚠️ marker). Try them in
+# bulk; on failure leave the raw primary (also lets us still classify).
+try:
+    composite_p = delim.join(c["primary"] for c in cards)
+    rendered_p = post_template(composite_p)
+    pri_parts = rendered_p.split(SEP)
+    if len(pri_parts) != len(cards):
+        pri_parts = [c["primary"] for c in cards]
+except Exception:
+    pri_parts = [c["primary"] for c in cards]
+
+FAIL_KEYWORDS = ("Offline", "Disconnected", "Разкачен", "— No data")
+WARN_KEYWORDS = ("⚠️", "Abnormal", "Trouble (", "(ниска)",
+                 "Пълен резервоар", "Грешка", "attention", "Внимание")
+
+def classify(sec_text, pri_text):
+    blob = (sec_text or "") + "\n" + (pri_text or "")
+    if any(k in blob for k in FAIL_KEYWORDS):
+        return "FAIL"
+    if any(k in blob for k in WARN_KEYWORDS):
+        return "WARN"
+    return "PASS"
+
+# Aggregate by section.
+order = []
+counts = {}
+offenders = []
+for c, sec_r, pri_r in zip(cards, sec_parts, pri_parts):
+    status = classify(sec_r, pri_r)
+    s = c["section"]
+    if s not in counts:
+        counts[s] = {"FAIL": 0, "WARN": 0, "PASS": 0}
+        order.append(s)
+    counts[s][status] += 1
+    if status != "PASS":
+        name = (pri_r or c["primary"]).strip().splitlines()[0] if (pri_r or c["primary"]) else c["entity"]
+        detail = " · ".join(line.strip() for line in (sec_r or "").splitlines() if line.strip())
+        offenders.append((s, name, status, detail))
+
+total_fail = sum(v["FAIL"] for v in counts.values())
+total_warn = sum(v["WARN"] for v in counts.values())
+total_pass = sum(v["PASS"] for v in counts.values())
+
+# Per-section summary line. Drop the leading emoji to keep it terse.
+parts = []
+for s in order:
+    label = s.split(" ", 1)[1] if " " in s and not s[0].isalnum() else s
+    parts.append(f"{label}:{counts[s]['FAIL']}F/{counts[s]['WARN']}W/{counts[s]['PASS']}P")
+summary = "; ".join(parts)
+
+print(f"{total_fail}:{total_warn}:{total_pass}:{summary}")
+for s, name, status, detail in offenders:
+    label = s.split(" ", 1)[1] if " " in s and not s[0].isalnum() else s
+    print(f"OFFENDER:{status}:{label}:{name}:{detail}")
+PYEOF
+) || result="ERROR:python execution failed"
+
+    if [[ "$result" == "ERROR:"* ]]; then
+        [[ "$QUIET" == true ]] && section_always 45 "HA Sofia — Status Dashboard"
+        warn "Dashboard parse failed: ${result#ERROR:}"
+        json_add "ha_status_dashboard" "WARN" "${result#ERROR:}"
+        return 0
+    fi
+
+    local first_line total_fail total_warn total_pass summary total
+    first_line=$(echo "$result" | head -1)
+    total_fail=$(echo "$first_line" | cut -d: -f1)
+    total_warn=$(echo "$first_line" | cut -d: -f2)
+    total_pass=$(echo "$first_line" | cut -d: -f3)
+    summary=$(echo "$first_line" | cut -d: -f4-)
+    total=$((total_fail + total_warn + total_pass))
+
+    if [[ "$total_fail" -gt 0 ]]; then
+        [[ "$QUIET" == true ]] && section_always 45 "HA Sofia — Status Dashboard"
+        fail "$total_fail/$total devices unreachable ($summary)"
+        if [[ "$JSON" != true && "$QUIET" != true ]]; then
+            echo "$result" | grep "^OFFENDER:FAIL:" | sed 's/^OFFENDER:FAIL:/    FAIL · /'
+            echo "$result" | grep "^OFFENDER:WARN:" | head -10 | sed 's/^OFFENDER:WARN:/    WARN · /'
+        fi
+        json_add "ha_status_dashboard" "FAIL" "$total_fail FAIL, $total_warn WARN of $total devices: $summary"
+    elif [[ "$total_warn" -gt 0 ]]; then
+        [[ "$QUIET" == true ]] && section_always 45 "HA Sofia — Status Dashboard"
+        warn "$total_warn/$total devices degraded ($summary)"
+        if [[ "$JSON" != true && "$QUIET" != true ]]; then
+            echo "$result" | grep "^OFFENDER:WARN:" | head -15 | sed 's/^OFFENDER:WARN:/    WARN · /'
+        fi
+        json_add "ha_status_dashboard" "WARN" "$total_warn WARN of $total devices: $summary"
+    else
+        pass "All $total dashboard devices OK ($summary)"
+        json_add "ha_status_dashboard" "PASS" "$total/$total OK: $summary"
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -2803,7 +3028,7 @@ main() {
         check_backup_offsite_sync check_backup_lvm_snapshots
         check_monitoring_prom_am check_monitoring_vault check_monitoring_css
         check_external_replicas check_external_divergence check_pve_thermals
-        check_pve_load check_external_traefik_5xx
+        check_pve_load check_external_traefik_5xx check_ha_status_dashboard
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that
