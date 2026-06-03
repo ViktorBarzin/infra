@@ -100,6 +100,12 @@ resource "kubernetes_manifest" "external_secret" {
         # spam@viktorbarzin.me password — used only by the ingest-plans CronJob
         # (forward-to-parse via the @viktorbarzin.me -> spam@ catch-all).
         { secretKey = "PLANS_IMAP_PASSWORD", remoteRef = { key = "tripit", property = "PLANS_IMAP_PASSWORD" } },
+        # Proactive nudges (travel-agent merged into tripit): Slack bot token for
+        # chat.postMessage + Dawarich read API key for the current-location
+        # lookup. Seeded into secret/tripit from secret/travel-agent and
+        # secret/owntracks respectively.
+        { secretKey = "SLACK_BOT_TOKEN", remoteRef = { key = "tripit", property = "SLACK_BOT_TOKEN" } },
+        { secretKey = "DAWARICH_API_KEY", remoteRef = { key = "tripit", property = "DAWARICH_API_KEY" } },
       ]
     }
   }
@@ -372,6 +378,39 @@ locals {
         IMAP_SEARCH              = "TO \"plans@viktorbarzin.me\""
       }
     }
+    # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
+    # London-local schedules (timeZone honoured by K8s 1.27+). NUDGES_ENABLED
+    # gates the workers; Slack + Dawarich providers selected here. The app_env
+    # base already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush.
+    # SLACK_BOT_TOKEN + DAWARICH_API_KEY arrive via env_from tripit-secrets;
+    # SLACK_CHANNEL (#travel) falls back to the config default. DAWARICH_BASE_URL
+    # uses the PUBLIC host deliberately: Dawarich is a Rails app whose host
+    # authorization 403s the in-cluster *.svc Host header, so we reach it through
+    # the ingress (auth=none, api_key-gated) instead.
+    transport-nudge = {
+      schedule  = "0 8 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "run-transport-nudge"]
+      suspend   = false
+      extra_env = {
+        NUDGES_ENABLED    = "true"
+        SLACK_PROVIDER    = "slack"
+        LOCATION_PROVIDER = "dawarich"
+        DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
+      }
+    }
+    weather-brief = {
+      schedule  = "0 21 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "run-weather-brief"]
+      suspend   = false
+      extra_env = {
+        NUDGES_ENABLED    = "true"
+        SLACK_PROVIDER    = "slack"
+        LOCATION_PROVIDER = "dawarich"
+        DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
+      }
+    }
   }
 }
 
@@ -385,6 +424,7 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
   }
   spec {
     schedule                      = each.value.schedule
+    timezone                      = lookup(each.value, "timezone", null)
     suspend                       = each.value.suspend
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
