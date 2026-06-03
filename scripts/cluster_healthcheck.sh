@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=45
+TOTAL_CHECKS=46
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -2961,6 +2961,57 @@ PYEOF
     fi
 }
 
+# --- 46. Immich Smart (Context) Search ---
+# Smart search = ML embedding (kept warm by clip-keepalive) + a pgvector ANN
+# query over the vchord clip_index. The index must stay resident in PG
+# shared_buffers (kept warm by clip-index-prewarm); if it decays out of cache a
+# query pays a ~1.8s cold storage read instead of ~4ms warm. We measure both
+# the live ANN latency and the clip_index residency to catch the regression.
+check_immich_search() {
+    section 46 "Immich Smart Search"
+    local pg pct dur_ms dur detail=""
+
+    pg=$($KUBECTL get pods -n immich --no-headers 2>/dev/null | awk '/^immich-postgresql-/ && $3=="Running"{print $1; exit}')
+    if [[ -z "$pg" ]]; then
+        warn "immich-postgresql pod not running — cannot probe smart search"
+        json_add "immich_search" "WARN" "immich-postgresql pod not running"
+        return 0
+    fi
+
+    # clip_index residency in shared_buffers (single-quoted SQL → pass as one arg)
+    pct=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- psql -U postgres -d immich -tAc \
+        "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null | tr -d ' ')
+
+    # Representative random-vector ANN latency, measured in-pod (excludes exec overhead)
+    dur_ms=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
+        's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ')
+
+    if ! [[ "$dur_ms" =~ ^[0-9]+$ ]]; then
+        warn "Smart-search probe query failed (clip_index residency: ${pct:-?}%)"
+        json_add "immich_search" "WARN" "probe query failed; residency=${pct:-?}%"
+        return 0
+    fi
+    dur=$(awk "BEGIN{printf \"%.2f\", $dur_ms/1000}")
+    detail="latency=${dur}s clip_index_resident=${pct:-?}%"
+
+    if (( dur_ms > 1500 )); then
+        [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
+        fail "Smart search SLOW: $detail — clip_index likely evicted; check clip-index-prewarm CronJob"
+        json_add "immich_search" "FAIL" "$detail"
+    elif [[ "$pct" =~ ^[0-9.]+$ ]] && awk "BEGIN{exit !($pct < 50)}"; then
+        [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
+        fail "clip_index only ${pct}% resident in PG cache — searches cold ($detail)"
+        json_add "immich_search" "FAIL" "$detail"
+    elif (( dur_ms > 500 )) || { [[ "$pct" =~ ^[0-9.]+$ ]] && awk "BEGIN{exit !($pct < 90)}"; }; then
+        [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
+        warn "Smart search degraded: $detail"
+        json_add "immich_search" "WARN" "$detail"
+    else
+        pass "Smart search healthy: $detail"
+        json_add "immich_search" "PASS" "$detail"
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -3029,6 +3080,7 @@ main() {
         check_monitoring_prom_am check_monitoring_vault check_monitoring_css
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
+        check_immich_search
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that

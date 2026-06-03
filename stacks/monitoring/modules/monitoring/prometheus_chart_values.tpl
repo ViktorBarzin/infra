@@ -135,6 +135,12 @@ alertmanager:
           - alertname = EmailRoundtripFailing
         target_matchers:
           - alertname = EmailRoundtripStale
+      # A stale search probe means its Pushgateway gauges are frozen — don't
+      # let the (now meaningless) latency/cache alerts fire off stale data.
+      - source_matchers:
+          - alertname = ImmichSearchProbeStale
+        target_matchers:
+          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache"
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -854,6 +860,34 @@ serverFiles:
               subsystem: gpu
             annotations:
               summary: "GPU node {{ $labels.node }} is cordoned — Frigate and GPU workloads cannot schedule"
+      - name: Immich Smart Search
+        rules:
+          # Context (smart) search latency. The vchord clip_index must stay
+          # resident in PG shared_buffers; if it decays out of cache an ANN
+          # probe pays a ~1.8s cold storage read vs ~4ms warm. clip-index-prewarm
+          # (immich ns, */5) pins it; immich-search-probe (*/5) measures it and
+          # pushes these gauges to the Pushgateway.
+          - alert: ImmichSmartSearchSlow
+            expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s) — clip_index likely evicted; check clip-index-prewarm CronJob"
+          - alert: ImmichClipIndexColdCache
+            expr: immich_clip_index_cached_pct{job="immich-search-probe"} >= 0 and immich_clip_index_cached_pct{job="immich-search-probe"} < 50
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich clip_index only {{ $value | printf \"%.0f\" }}% resident in PG shared_buffers — smart search will be slow (clip-index-prewarm may be failing)"
+          - alert: ImmichSearchProbeStale
+            expr: time() - immich_smart_search_probe_last_run_timestamp{job="immich-search-probe"} > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
       - name: Power
         rules:
           - alert: OnBattery
