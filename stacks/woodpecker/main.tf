@@ -178,20 +178,34 @@ resource "helm_release" "woodpecker" {
 # Keeps the OAuth/forge-API path off the WAN gateway (forgejo.viktorbarzin.me
 # resolves to the public IP via DNS, which round-trips through Cloudflare
 # and routinely tripped 30s context-deadline timeouts when fetching pipeline
-# config). 10.0.20.200 is the Traefik LB that fronts forgejo internally;
-# Traefik serves the *.viktorbarzin.me wildcard so SNI verification still
-# passes.
+# config). We pin forgejo.viktorbarzin.me to the in-cluster Traefik Service
+# ClusterIP (read dynamically below); Traefik serves the *.viktorbarzin.me
+# wildcard so SNI verification still passes. ClusterIP (not the LB IP) avoids
+# two traps: (1) the Traefik LB IP is ETP=Local and not reliably hairpin-
+# reachable from an arbitrary pod's node; (2) a hard-coded LB IP rots on every
+# Traefik renumber — this previously pinned 10.0.20.200, which went dead when
+# Traefik moved to its dedicated .203 (2026-05-30), the same failure class the
+# cloudflared origin hit (also fixed by targeting the in-cluster Service).
+data "kubernetes_service" "traefik" {
+  metadata {
+    name      = "traefik"
+    namespace = "traefik"
+  }
+}
+
 resource "null_resource" "woodpecker_server_host_alias" {
   triggers = {
-    # Re-run on every helm_release version bump or values change.
-    helm_version = helm_release.woodpecker.version
-    helm_values  = sha256(join("", helm_release.woodpecker.values))
+    # Re-run on helm version/values change, and when the Traefik ClusterIP
+    # changes (e.g. the Service is recreated) so the alias self-heals.
+    helm_version       = helm_release.woodpecker.version
+    helm_values        = sha256(join("", helm_release.woodpecker.values))
+    traefik_cluster_ip = data.kubernetes_service.traefik.spec[0].cluster_ip
   }
 
   provisioner "local-exec" {
     command     = <<-BASH
       set -euo pipefail
-      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '{"spec":{"template":{"spec":{"hostAliases":[{"ip":"10.0.20.200","hostnames":["forgejo.viktorbarzin.me"]}]}}}}'
+      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '{"spec":{"template":{"spec":{"hostAliases":[{"ip":"${data.kubernetes_service.traefik.spec[0].cluster_ip}","hostnames":["forgejo.viktorbarzin.me"]}]}}}}'
       kubectl -n woodpecker rollout status statefulset/woodpecker-server --timeout=120s
     BASH
     interpreter = ["/bin/bash", "-c"]

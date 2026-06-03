@@ -267,25 +267,31 @@ The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from the range 10.0.20.200-10.0.20.220 in **Layer 2 mode**. Most LoadBalancer services share **10.0.20.200** using the `metallb.io/allow-shared-ip: shared` annotation. Two services have **dedicated IPs** with `externalTrafficPolicy: Local` to preserve real client source IPs: **Traefik (10.0.20.203)** — so CrowdSec sees real public IPs on the direct-ingress path and QUIC/HTTP3 works (a shared IP forbids the mixed ETP that QUIC's UDP listener needs) — and **Technitium DNS (10.0.20.201)** for query logging.
+MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **four are in use**. Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Three services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
 
-| Service | Namespace | IP | Ports |
-|---------|-----------|-----|-------|
-| traefik | traefik | **10.0.20.203 (dedicated, ETP=Local)** | 80, 443, 443/UDP (HTTP/3), 10200, 10300, 11434/TCP |
-| coturn | coturn | 10.0.20.200 (shared) | 3478/UDP (STUN/TURN), 49152-49252/UDP (relay) |
-| headscale | headscale | 10.0.20.200 (shared) | 41641/UDP, 3479/UDP |
-| windows-kms¹ | kms | 10.0.20.200 (shared) | 1688/TCP |
-| qbittorrent | servarr | 10.0.20.200 (shared) | 50000/TCP+UDP |
-| shadowsocks | shadowsocks | 10.0.20.200 (shared) | 8388/TCP+UDP |
-| torrserver-bt | tor-proxy | 10.0.20.200 (shared) | 5665/TCP |
-| wireguard | wireguard | 10.0.20.200 (shared) | 51820/UDP |
-| mailserver | mailserver | 10.0.20.200 (shared) | 25, 465, 587, 993/TCP |
-| xray-reality | xray | 10.0.20.200 (shared) | 7443/TCP |
-| **technitium-dns** | **technitium** | **10.0.20.201 (dedicated)** | **53/UDP+TCP** |
+> **Why not consolidate to fewer IPs?** The three dedicated IPs can't be merged. MetalLB L2 only lets `ETP=Local` services share an IP if they have *identical pod selectors* (Traefik/KMS/Technitium don't), and a shared `ETP=Local` IP announces from a single node — blackholing any service whose pods aren't on it. Traefik additionally can never leave a dedicated IP (QUIC needs the UDP listener on its own ETP=Local IP). Merging would cost client-IP preservation or HA, so the 4-IP layout is deliberate — not sprawl. Full analysis: `docs/plans/2026-06-03-lb-ip-hygiene-design.md`.
 
-pfSense aliases reference these IPs: `k8s_shared_lb` (10.0.20.200), `traefik_lb` (10.0.20.203), `technitium_dns` (10.0.20.201). NAT rules use aliases for maintainability — the WAN 443 (TCP+UDP) forward targets `traefik_lb`.
+| IP | ETP | Services (ns/name → ports) |
+|----|-----|----------------------------|
+| **10.0.20.200** (shared) | Cluster | dbaas/postgresql-lb→5432 · beads-server/dolt→3306 · coturn/coturn→3478 TCP+UDP, 49152-49252/UDP · headscale/headscale-server→41641/UDP, 3479/UDP · wireguard/wireguard→51820/UDP · servarr/qbittorrent-torrenting→50000 TCP+UDP · shadowsocks/shadowsocks→8388 TCP+UDP · tor-proxy/torrserver-bt→5665 TCP+UDP · xray/xray-reality→7443 |
+| **10.0.20.201** (dedicated) | Local | technitium/technitium-dns→53 UDP+TCP |
+| **10.0.20.202** (dedicated)¹ | Local | kms/windows-kms→1688 |
+| **10.0.20.203** (dedicated) | Local | traefik/traefik→80, 443, 443/UDP (HTTP/3), 10200 (piper), 10300 (whisper) |
 
-¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_shared_lb:1688` so any internet host can activate. The matching filter rule applies a per-source rate limit (`max-src-conn 50`, `max-src-conn-rate 10/60`) with `overload <virusprot>` flush — offenders are auto-added to pfSense's stock `virusprot` pf table for follow-on blocks. Operations (rate-limit tuning, log locations, revocation) are documented in `docs/runbooks/kms-public-exposure.md`.
+**Mailserver does NOT use a LB IP** — inbound mail enters via pfSense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
+
+**pfSense aliases** map to these IPs: `k8s_shared_lb`→.200, `technitium_dns`→.201, `k8s_kms_lb`→.202, `traefik_lb`→.203 (plus a legacy `nginx`→.200 duplicate — cruft). NAT rules reference aliases, so repointing an alias cascades to its paired filter rule.
+
+¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_kms_lb` (.202) so any internet host can activate. The matching filter rule rate-limits per source (`max-src-conn 50`, `max-src-conn-rate 10/60`, `overload <virusprot>`). See `docs/runbooks/kms-public-exposure.md`.
+
+#### LB-IP renumber checklist
+
+These IPs are referenced by consumers that do **not** auto-follow when an IP moves — the 2026-05-30 Traefik `.200→.203` move broke five of them (cloudflared 502, woodpecker forge API, containerd pulls, the `.lan` + `.me` zones). **Before moving any LB IP, update every consumer below.** Bootstrap-critical literals (containerd mirror, PG state, node DNS) deliberately stay IP literals (DNS chicken-and-egg) — this list is their single source of truth.
+
+- **`.203` Traefik:** assigner `stacks/traefik/modules/traefik/main.tf` · split-horizon translation `stacks/technitium/modules/technitium/main.tf` (`externalToInternalTranslation`) · prometheus apex-alert summary `stacks/monitoring/.../prometheus_chart_values.tpl` · containerd Forgejo mirror `modules/create-template-vm/k8s-node-containerd-setup.sh` + `scripts/setup-forgejo-containerd-mirror.sh` (OOB, per node) · cloudflared origin (already IP-independent → `traefik.traefik.svc`) · woodpecker forge alias (now reads the Traefik **ClusterIP** dynamically — no literal) · pfSense NAT 80/443 → `traefik_lb`.
+- **`.201` Technitium:** assigner `stacks/technitium/modules/technitium/main.tf` · DNS records `config.tfvars` (ns1/ns2/`viktorbarzin.lan`, dnscrypt forwarder) · `modules/create-template-vm/cloud_init.yaml` FallbackDNS · `scripts/provision-k8s-worker` · pfSense NAT 53 (**literal `10.0.20.201`**, not the `technitium_dns` alias — known inconsistency).
+- **`.202` KMS:** assigner `stacks/kms/main.tf` · pfSense NAT 1688 → `k8s_kms_lb` · Cloudflare `vlmcs` public A → WAN → `.202`.
+- **`.200` shared:** the 9 assigners above · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (wireguard/shadowsocks/coturn/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
 
 Critical services are scaled to **3 replicas**:
 - Traefik (PDB: minAvailable=2)

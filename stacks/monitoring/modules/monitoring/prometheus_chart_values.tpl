@@ -2455,7 +2455,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "viktorbarzin.me apex A drifted from expected 10.0.20.200"
+              summary: "viktorbarzin.me apex A drifted from expected 10.0.20.203"
               description: "Technitium serves the split-horizon apex for ~80 *.viktorbarzin.me CNAMEs. If this is wrong, every internal service (auth, vault, immich, ha-sofia, ...) breaks. Check Technitium primary zone records via API or web console."
           - alert: ViktorBarzinApexProbeStale
             expr: (time() - viktorbarzin_apex_last_correct_timestamp{job="viktorbarzin-apex-probe"}) > 900
