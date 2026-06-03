@@ -853,6 +853,215 @@ resource "kubernetes_cron_job_v1" "clip-keepalive" {
   }
 }
 
+# Keeps the ~665MB vchord `clip_index` resident in PG shared_buffers.
+# The immich-postgresql postStart hook prewarms it ONCE at pod start, but
+# nothing re-warms it during runtime — pg_prewarm.autoprewarm only reloads at
+# *startup*. Under buffer pressure from thumbnail/OCR/library jobs the index
+# slowly decays out of cache (observed ~33% resident after 9 days uptime). A
+# smart-search ANN probe that lands on an evicted vchord list then pays a
+# ~1.8s cold storage read instead of the ~4ms warm path. This job re-prewarms
+# every 5 min, pinning the whole index hot. Parallel to clip-keepalive (which
+# keeps the ML *model* warm); this keeps the *index* warm — BOTH are needed for
+# fast smart search. immich PG role is a superuser, so it can run pg_prewarm.
+resource "kubernetes_cron_job_v1" "clip-index-prewarm" {
+  metadata {
+    name      = "clip-index-prewarm"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "*/5 * * * *"
+    starting_deadline_seconds     = 60
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        active_deadline_seconds    = 120
+        ttl_seconds_after_finished = 120
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name  = "prewarm"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+              # command overrides the postgres entrypoint → runs psql directly.
+              command = [
+                "psql", "-v", "ON_ERROR_STOP=1", "-c",
+                "SELECT pg_prewarm('clip_index'); SELECT pg_prewarm('smart_search');",
+              ]
+              env {
+                name  = "PGHOST"
+                value = "immich-postgresql.immich.svc.cluster.local"
+              }
+              env {
+                name  = "PGUSER"
+                value = "immich"
+              }
+              env {
+                name  = "PGDATABASE"
+                value = "immich"
+              }
+              env {
+                name  = "PGCONNECT_TIMEOUT"
+                value = "10"
+              }
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "immich-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# Measures real context-search (smart-search) latency for alerting + the
+# cluster-health script. Two stages in one pod: an init container (postgres
+# image, has psql) times a representative random-vector ANN query and reads
+# clip_index residency from pg_buffercache, writing Prometheus exposition text
+# to a shared emptyDir; the main container (curl image) pushes it to the
+# Pushgateway. Stock images only — no apt/pip install at runtime (see the
+# clip-keepalive note). A random probe vector each run samples different vchord
+# lists, so the metric reflects true cache warmth rather than one hot list.
+resource "kubernetes_cron_job_v1" "immich-search-probe" {
+  metadata {
+    name      = "immich-search-probe"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    schedule                      = "*/5 * * * *"
+    starting_deadline_seconds     = 60
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 1
+        active_deadline_seconds    = 120
+        ttl_seconds_after_finished = 120
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            volume {
+              name = "shared"
+              empty_dir {}
+            }
+            init_container {
+              name  = "measure"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+              command = ["/bin/bash", "-c", <<-EOT
+                set -uo pipefail
+                OUT=/shared/metrics.prom
+                success=1
+                start=$(date +%s%3N)
+                if ! psql -v ON_ERROR_STOP=1 -tA -c "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s" >/dev/null 2>/tmp/err; then
+                  success=0
+                  cat /tmp/err >&2
+                fi
+                end=$(date +%s%3N)
+                dur_ms=$((end - start))
+                dur=$(printf '%d.%03d' $((dur_ms/1000)) $((dur_ms%1000)))
+                pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null)
+                if [ -z "$pct" ]; then pct=-1; fi
+                {
+                  echo "# HELP immich_smart_search_db_seconds Wall-clock latency of a representative smart-search ANN query."
+                  echo "# TYPE immich_smart_search_db_seconds gauge"
+                  echo "immich_smart_search_db_seconds $dur"
+                  echo "# HELP immich_clip_index_cached_pct Percent of clip_index vchord index resident in PG shared_buffers."
+                  echo "# TYPE immich_clip_index_cached_pct gauge"
+                  echo "immich_clip_index_cached_pct $pct"
+                  echo "# HELP immich_smart_search_probe_success 1 if the probe ANN query succeeded."
+                  echo "# TYPE immich_smart_search_probe_success gauge"
+                  echo "immich_smart_search_probe_success $success"
+                  echo "# HELP immich_smart_search_probe_last_run_timestamp Unix time of last probe run."
+                  echo "# TYPE immich_smart_search_probe_last_run_timestamp gauge"
+                  echo "immich_smart_search_probe_last_run_timestamp $(date +%s)"
+                } > "$OUT"
+                echo "probe dur=$dur pct=$pct success=$success"
+                exit 0
+              EOT
+              ]
+              env {
+                name  = "PGHOST"
+                value = "immich-postgresql.immich.svc.cluster.local"
+              }
+              env {
+                name  = "PGUSER"
+                value = "immich"
+              }
+              env {
+                name  = "PGDATABASE"
+                value = "immich"
+              }
+              env {
+                name  = "PGCONNECT_TIMEOUT"
+                value = "10"
+              }
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "immich-secrets"
+                    key  = "db_password"
+                  }
+                }
+              }
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+            container {
+              name  = "push"
+              image = "docker.io/curlimages/curl:8.11.1"
+              command = [
+                "curl", "-sf", "-m", "20", "--data-binary", "@/shared/metrics.prom",
+                "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-search-probe",
+              ]
+              volume_mount {
+                name       = "shared"
+                mount_path = "/shared"
+              }
+              resources {
+                requests = { cpu = "10m", memory = "16Mi" }
+                limits   = { memory = "32Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 module "ingress-immich" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "app": Immich has its own user auth + bearer-token API. Authentik

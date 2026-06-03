@@ -167,6 +167,13 @@ spec:
 - **RegistryIntegrityProbeStale**: Probe hasn't reported in >1h (CronJob broken)
 - **RegistryCatalogInaccessible**: Probe cannot fetch `/v2/_catalog` (auth failure or registry down)
 
+#### Immich Smart Search Alerts
+- **ImmichSmartSearchSlow**: Representative context-search ANN query >1s for 15m. Root cause is almost always the `clip_index` (vchord, ~665MB) decaying out of PG `shared_buffers` — a cold list read is ~1.8s vs ~4ms warm. Remediation: confirm the `clip-index-prewarm` CronJob (immich ns, `*/5`) is succeeding; manual fix `kubectl exec -n immich -c immich-postgresql <pg-pod> -- psql -U postgres -d immich -c "SELECT pg_prewarm('clip_index')"`.
+- **ImmichClipIndexColdCache**: `clip_index` <50% resident in shared_buffers for 15m (leading indicator; same remediation).
+- **ImmichSearchProbeStale**: `immich-search-probe` hasn't reported in >30m (CronJob broken). Inhibits the two above so frozen Pushgateway gauges don't false-fire.
+
+The Immich smart-search monitoring uses two CronJobs in the `immich` namespace (both `*/5`): `clip-index-prewarm` re-runs `pg_prewarm('clip_index')` to keep the vector index hot during runtime (the `postStart` prewarm only fires at pod start; `pg_prewarm.autoprewarm` only reloads at startup, so the index otherwise decays under job buffer-pressure), and `immich-search-probe` (postgres init-container measures a random-vector ANN latency + `pg_buffercache` residency → curl sidecar pushes `immich_smart_search_db_seconds` / `immich_clip_index_cached_pct` / `immich_smart_search_probe_success` / `immich_smart_search_probe_last_run_timestamp` to the Pushgateway). Also surfaced by cluster-health check #46 (`check_immich_search`). Note this is the **Postgres** half of smart-search warmth; the **ML model** half is kept warm by the separate `clip-keepalive` CronJob.
+
 The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 min) in the `mailserver` namespace that:
 1. Sends a test email via Mailgun HTTP API to `smoke-test@viktorbarzin.me`
 2. Email lands in the `spam@` catch-all mailbox via MX delivery
