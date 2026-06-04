@@ -43,25 +43,28 @@ data "authentik_certificate_key_pair" "signing" {
   name = "authentik Self-signed Certificate"
 }
 
-# Default OIDC scope mappings. `profile` carries the `groups` claim in
-# Authentik's default expression, which the apiserver reads via
-# --oidc-groups-claim=groups. offline_access enables refresh tokens.
-data "authentik_property_mapping_provider_scope" "defaults" {
-  managed_list = [
-    "goauthentik.io/providers/oauth2/scope-openid",
-    "goauthentik.io/providers/oauth2/scope-email",
-    "goauthentik.io/providers/oauth2/scope-profile",
-    "goauthentik.io/providers/oauth2/scope-offline_access",
-  ]
+# Scope mappings — MIRROR the proven `kubernetes` provider exactly. Two are
+# custom (no `managed` field) and are looked up by name:
+#   * "Kubernetes Email (verified)" hardcodes `email_verified: true`. REQUIRED:
+#     the apiserver rejects the email username-claim when email_verified is
+#     false (Authentik external/social users are unverified), so the default
+#     `scope-email` mapping (which passes through the real false) yields
+#     "invalid bearer token" 401s. This custom mapping is why the CLI works.
+#   * "Kubernetes Groups" emits the `groups` claim (scope_name=groups), so the
+#     client must request the `groups` scope (see oauth2_proxy.tf).
+# The token `aud` defaults to the client_id (`k8s-dashboard`), which the
+# apiserver's k8s-dashboard issuer trusts — no custom audience mapping needed.
+data "authentik_property_mapping_provider_scope" "openid" {
+  managed = "goauthentik.io/providers/oauth2/scope-openid"
 }
-
-# Custom scope mapping that overrides the audience. It only fires when the
-# client REQUESTS this scope, so oauth2-proxy must include
-# `k8s-dashboard-audience` in its --scope (see oauth2_proxy.tf).
-resource "authentik_property_mapping_provider_scope" "k8s_dashboard_aud" {
-  name       = "k8s-dashboard audience"
-  scope_name = "k8s-dashboard-audience"
-  expression = "return {\"aud\": [\"kubernetes\", \"k8s-dashboard\"]}"
+data "authentik_property_mapping_provider_scope" "profile" {
+  managed = "goauthentik.io/providers/oauth2/scope-profile"
+}
+data "authentik_property_mapping_provider_scope" "email_verified" {
+  name = "Kubernetes Email (verified)"
+}
+data "authentik_property_mapping_provider_scope" "groups" {
+  name = "Kubernetes Groups"
 }
 
 resource "authentik_provider_oauth2" "k8s_dashboard" {
@@ -85,10 +88,12 @@ resource "authentik_provider_oauth2" "k8s_dashboard" {
   include_claims_in_id_token = true
   signing_key                = data.authentik_certificate_key_pair.signing.id
 
-  property_mappings = concat(
-    data.authentik_property_mapping_provider_scope.defaults.ids,
-    [authentik_property_mapping_provider_scope.k8s_dashboard_aud.id],
-  )
+  property_mappings = [
+    data.authentik_property_mapping_provider_scope.openid.id,
+    data.authentik_property_mapping_provider_scope.profile.id,
+    data.authentik_property_mapping_provider_scope.email_verified.id,
+    data.authentik_property_mapping_provider_scope.groups.id,
+  ]
 }
 
 resource "authentik_application" "k8s_dashboard" {
