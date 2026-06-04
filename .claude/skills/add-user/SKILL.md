@@ -182,7 +182,8 @@ auto-creates a `dashboard-<user>` SA + token for every namespace-owner
 (`dashboard-sa.tf`), and the **k8s-dashboard** stack's token-injector maps the
 user's Authentik identity → that token (`dashboard_injector.tf`, auto-derived
 from `k8s_users`). The new user just logs into `https://k8s.viktorbarzin.me` and
-lands in the dashboard scoped to their namespace (`admin` + cluster read-only).
+lands in the dashboard scoped to their namespace (`admin` on their namespace +
+read-only on the namespace list & nodes for nav — no cross-tenant resource reads).
 
 > **Apply order for a new namespace-owner:** after the vault/rbac/woodpecker
 > applies above, ALSO `cd stacks/k8s-dashboard && ../../scripts/tg apply` so the

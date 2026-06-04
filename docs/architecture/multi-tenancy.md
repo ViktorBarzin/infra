@@ -177,7 +177,8 @@ Namespace-owners just log into `https://k8s.viktorbarzin.me` with their Authenti
 account and land straight in the dashboard scoped to their namespace — **no token
 to paste**. A token-injector (`stacks/k8s-dashboard/dashboard_injector.tf`) maps
 their Authentik identity (`X-authentik-username`) to their `dashboard-<user>` SA
-token (`admin` on their namespace + cluster read-only) and injects it as
+token (`admin` on their namespace + read-only on the namespace list & nodes
+only — they can't read other tenants' resources) and injects it as
 `Authorization: Bearer`. Forward-auth admits the `kubernetes-*` groups for this
 host (`stacks/authentik/admin-services-restriction.tf`).
 
