@@ -378,6 +378,8 @@ resource "kubernetes_deployment" "claude_agent" {
             cp /usr/share/agent-seed/beads-metadata.json /workspace/.beads/metadata.json
             cp /usr/share/agent-seed/beads-task-runner.md /home/agent/.claude/agents/beads-task-runner.md
             cp /usr/share/agent-seed/recruiter-triage.md /home/agent/.claude/agents/recruiter-triage.md
+            cp /usr/share/agent-seed/nextcloud-todos-planner.md /home/agent/.claude/agents/nextcloud-todos-planner.md
+            cp /usr/share/agent-seed/nextcloud-todos-exec.md /home/agent/.claude/agents/nextcloud-todos-exec.md
           EOT
           ]
 
