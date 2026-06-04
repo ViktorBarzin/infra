@@ -58,6 +58,19 @@ resource "kubernetes_manifest" "external_secret" {
           key = "openclaw"
         }
       }]
+      # Cross-path key: the nextcloud-todos-api plugin authenticates to the
+      # nextcloud-todos service with ITS bearer token, which lives in
+      # secret/nextcloud-todos (not secret/openclaw). Pull just that one key
+      # into openclaw-secrets so the plugin's NEXTCLOUD_TODOS_TOKEN env can
+      # secret_key_ref it (same model as the recruiter plugin, whose token
+      # happens to already live under secret/openclaw).
+      data = [{
+        secretKey = "nextcloud_todos_bearer_token"
+        remoteRef = {
+          key      = "nextcloud-todos"
+          property = "webhook_bearer_token"
+        }
+      }]
     }
   }
   depends_on = [kubernetes_namespace.openclaw]
@@ -202,7 +215,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = ["memory-core", "recruiter-api"]
+        allow = ["memory-core", "recruiter-api", "nextcloud-todos-api"]
         slots = { memory = "memory-core" }
         load = {
           # /app/extensions is the legacy bundled-plugins path; OpenClaw
@@ -502,6 +515,39 @@ resource "kubernetes_deployment" "openclaw" {
           EOT
           ]
           # /home/node/.openclaw is uid 1000 on NFS; recruiter-responder image
+          # otherwise drops to uid 10001 which can't write or chown. Run as
+          # root so mkdir + chown succeed.
+          security_context {
+            run_as_user = 0
+          }
+          volume_mount {
+            name       = "openclaw-home"
+            mount_path = "/home/node/.openclaw"
+          }
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "128Mi" }
+          }
+        }
+
+        # Init 3b: install the nextcloud-todos-api OpenClaw plugin from the
+        # nextcloud-todos image into NFS extensions/. Plugin lifecycle is
+        # coupled to the nextcloud-todos image tag — bumping that tag
+        # re-installs the plugin on next openclaw pod restart. Same pattern as
+        # install-recruiter-plugin above.
+        init_container {
+          name  = "install-nextcloud-todos-plugin"
+          image = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:latest"
+          command = ["sh", "-c", <<-EOT
+            set -eu
+            mkdir -p /home/node/.openclaw/extensions/nextcloud-todos-api
+            cp -r /app/openclaw-plugin/. /home/node/.openclaw/extensions/nextcloud-todos-api/
+            chown -R 1000:1000 /home/node/.openclaw/extensions/nextcloud-todos-api
+            echo "nextcloud-todos-api plugin installed at /home/node/.openclaw/extensions/nextcloud-todos-api"
+            ls -la /home/node/.openclaw/extensions/nextcloud-todos-api
+          EOT
+          ]
+          # /home/node/.openclaw is uid 1000 on NFS; nextcloud-todos image
           # otherwise drops to uid 10001 which can't write or chown. Run as
           # root so mkdir + chown succeed.
           security_context {
@@ -1126,9 +1172,10 @@ resource "kubernetes_deployment" "openclaw" {
             # doctor --fix overwrites plugins.allow with its bundled-plugins
             # list. Re-add our third-party plugin to the allow list via
             # `config patch`, then enable it. (Same pattern as mcp set above.)
-            echo '{"plugins":{"allow":["memory-core","recruiter-api","telegram","openrouter","brave","openai","codex"]}}' \
+            echo '{"plugins":{"allow":["memory-core","recruiter-api","nextcloud-todos-api","telegram","openrouter","brave","openai","codex"]}}' \
               | node openclaw.mjs config patch --stdin 2>/dev/null || true
             node openclaw.mjs plugins enable recruiter-api 2>/dev/null || true
+            node openclaw.mjs plugins enable nextcloud-todos-api 2>/dev/null || true
             # Reindex memory-core so the seeded devvm-fallback note (and
             # anything else dropped under /workspace/memory/) is searchable
             # on first boot; daily memory-sync CronJob also keeps it indexed.
@@ -1242,7 +1289,25 @@ resource "kubernetes_deployment" "openclaw" {
               }
             }
           }
+          # nextcloud-todos API — consumed by the nextcloud-todos-api plugin
+          # (mounted into /home/node/.openclaw/extensions/nextcloud-todos-api/
+          # via the install-nextcloud-todos-plugin init container above).
+          env {
+            name  = "NEXTCLOUD_TODOS_URL"
+            value = "http://nextcloud-todos.nextcloud-todos.svc.cluster.local:8080"
+          }
+          env {
+            name = "NEXTCLOUD_TODOS_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "openclaw-secrets"
+                key      = "nextcloud_todos_bearer_token"
+                optional = true
+              }
+            }
+          }
           # Telegram chat ID for the recruiter-api plugin's announcement loop.
+          # Also consumed by the nextcloud-todos-api plugin (shared chat).
           env {
             name = "VIKTOR_CHAT_ID"
             value_from {
