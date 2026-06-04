@@ -6,12 +6,16 @@
 Chromium browser exposed over the Chrome DevTools Protocol (CDP). It
 serves two distinct populations:
 
-1. **In-cluster automation callers** (e.g. `f1-stream`'s
-   `playback_verifier`, `chrome_browser` extractor) — connect via
+1. **In-cluster automation callers** — connect via
    `chromium.connect_over_cdp("http://chrome-service.chrome-service.svc:9222")`
    to drive a real browser when upstream anti-bot trips a headless one
    (`disable-devtool.js` redirect-to-google trap, `navigator.webdriver`
-   checks, console-clear timing tricks).
+   checks, console-clear timing tricks). The only currently-active
+   in-cluster caller is the `chrome-service-snapshot-harvester` CronJob;
+   the `stacks/f1-stream/files/backend/playback_verifier.py` +
+   `chrome_browser.py` tree is a vestigial design — the deployed
+   f1-stream image (built from `github.com/ViktorBarzin/f1-stream`)
+   does not use this code path.
 2. **External dev-box Claude Code sessions** — pull an hourly snapshot
    of cookies + localStorage from `chrome.viktorbarzin.me/api/snapshot`
    (bearer-gated) and seed local `@playwright/mcp` instances in
