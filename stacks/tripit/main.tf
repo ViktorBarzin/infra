@@ -29,14 +29,15 @@ locals {
   # at the RWX NFS PVC — the app's default ./var is not writable by the
   # non-root user.
   app_env = {
-    AUTH_MODE           = "forwardauth"
-    SERVE_FRONTEND_DIR  = "/app/frontend_build"
-    STORAGE_DIR         = "/data/documents"
-    FLIGHT_PROVIDER     = "fake"
-    WEATHER_PROVIDER    = "openmeteo"
-    PUSH_PROVIDER       = "webpush"
-    LLM_MODE            = "fake"
-    MAIL_INGEST_ENABLED = "false"
+    AUTH_MODE            = "forwardauth"
+    SERVE_FRONTEND_DIR   = "/app/frontend_build"
+    STORAGE_DIR          = "/data/documents"
+    PERSONAL_STORAGE_DIR = "/data/personal-documents"
+    FLIGHT_PROVIDER      = "fake"
+    WEATHER_PROVIDER     = "openmeteo"
+    PUSH_PROVIDER        = "webpush"
+    LLM_MODE             = "fake"
+    MAIL_INGEST_ENABLED  = "false"
     # Outbound mail for linked-email verification — submitted via the cluster
     # mailserver as spam@ (which relays out via Brevo). SMTP_PASSWORD comes from
     # tripit-secrets (mapped to the existing PLANS_IMAP_PASSWORD). PUBLIC_BASE_URL
@@ -106,6 +107,7 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "VAPID_PRIVATE_KEY", remoteRef = { key = "tripit", property = "VAPID_PRIVATE_KEY" } },
         { secretKey = "VAPID_SUBJECT", remoteRef = { key = "tripit", property = "VAPID_SUBJECT" } },
         { secretKey = "CALENDAR_TOKEN_SECRET", remoteRef = { key = "tripit", property = "CALENDAR_TOKEN_SECRET" } },
+        { secretKey = "DOCUMENT_ENCRYPTION_KEY", remoteRef = { key = "tripit", property = "DOCUMENT_ENCRYPTION_KEY" } },
         { secretKey = "IMAP_PASSWORD", remoteRef = { key = "tripit", property = "IMAP_PASSWORD" } },
         # spam@viktorbarzin.me password — used only by the ingest-plans CronJob
         # (forward-to-parse via the @viktorbarzin.me -> spam@ catch-all).
@@ -183,6 +185,37 @@ module "documents_nfs" {
   access_modes = ["ReadWriteMany"]
 }
 
+# RWO encrypted PVC for the PERSONAL document vault (passports, IDs). Separate
+# from the RWX NFS trip-doc store: owner-private identity docs get LUKS2 at-rest
+# (proxmox-lvm-encrypted) UNDER the app-layer AES-256-GCM ciphertext (defense in
+# depth). RWO is safe because the Deployment is replicas=1 + Recreate (single
+# writer); only the app container mounts it, not the worker CronJobs.
+resource "kubernetes_persistent_volume_claim" "personal_documents" {
+  wait_until_bound = false
+  metadata {
+    name      = "tripit-personal-documents"
+    namespace = kubernetes_namespace.tripit.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+  lifecycle {
+    # Autoresizer grows requests.storage up to storage_limit; PVCs can't shrink.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
 resource "kubernetes_deployment" "tripit" {
   metadata {
     name      = "tripit"
@@ -235,6 +268,28 @@ resource "kubernetes_deployment" "tripit" {
           }
         }
 
+        # The proxmox-lvm-encrypted block PVC mounts root-owned; the app runs as
+        # uid 10001. chown it so the non-root app can write. Scoped to THIS block
+        # volume only (a pod-level fsGroup would also recursively chown the NFS
+        # doc vault, whose CSI fsGroupPolicy=File — risky on a root-squashed
+        # export). The NFS vault handles its own perms and is left untouched.
+        init_container {
+          name    = "chown-personal-documents"
+          image   = "busybox:1.37"
+          command = ["sh", "-c", "chown -R 10001:999 /data/personal-documents"]
+          security_context {
+            run_as_user = 0
+          }
+          volume_mount {
+            name       = "personal-documents"
+            mount_path = "/data/personal-documents"
+          }
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { memory = "32Mi" }
+          }
+        }
+
         container {
           name  = "tripit"
           image = local.image
@@ -261,6 +316,11 @@ resource "kubernetes_deployment" "tripit" {
           volume_mount {
             name       = "documents"
             mount_path = "/data/documents"
+          }
+
+          volume_mount {
+            name       = "personal-documents"
+            mount_path = "/data/personal-documents"
           }
 
           readiness_probe {
@@ -290,6 +350,13 @@ resource "kubernetes_deployment" "tripit" {
           name = "documents"
           persistent_volume_claim {
             claim_name = module.documents_nfs.claim_name
+          }
+        }
+
+        volume {
+          name = "personal-documents"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.personal_documents.metadata[0].name
           }
         }
       }
@@ -373,9 +440,9 @@ locals {
     # spam@'s password via imap_password_key (secret/tripit PLANS_IMAP_PASSWORD),
     # because env_from otherwise injects the Gmail app-password.
     ingest-plans = {
-      schedule          = "*/15 * * * *"
-      command           = ["python", "-m", "tripit_api", "ingest-mail"]
-      suspend           = false
+      schedule           = "*/15 * * * *"
+      command            = ["python", "-m", "tripit_api", "ingest-mail"]
+      suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
       extra_env = {
         LLM_MODE                 = "llamacpp"
@@ -401,10 +468,10 @@ locals {
     # authorization 403s the in-cluster *.svc Host header, so we reach it through
     # the ingress (auth=none, api_key-gated) instead.
     transport-nudge = {
-      schedule  = "0 8 * * *"
-      timezone  = "Europe/London"
-      command   = ["python", "-m", "tripit_api", "run-transport-nudge"]
-      suspend   = false
+      schedule = "0 8 * * *"
+      timezone = "Europe/London"
+      command  = ["python", "-m", "tripit_api", "run-transport-nudge"]
+      suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
         SLACK_PROVIDER    = "slack"
@@ -413,10 +480,10 @@ locals {
       }
     }
     weather-brief = {
-      schedule  = "0 21 * * *"
-      timezone  = "Europe/London"
-      command   = ["python", "-m", "tripit_api", "run-weather-brief"]
-      suspend   = false
+      schedule = "0 21 * * *"
+      timezone = "Europe/London"
+      command  = ["python", "-m", "tripit_api", "run-weather-brief"]
+      suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
         SLACK_PROVIDER    = "slack"
