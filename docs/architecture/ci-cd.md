@@ -58,23 +58,16 @@ graph LR
 
 ### Project Migration Status
 
-**Migrated to GHA (8 projects)**:
+**Migrated to GHA (9 projects)**:
 - Website
 - k8s-portal
+- f1-stream
 - claude-memory-mcp
 - apple-health-data
 - audiblez-web
 - plotting-book
 - insta2spotify
 - book-search (audiobook-search)
-
-**Woodpecker-native owned-app builds** (build + push to the Forgejo private
-registry + `kubectl set image` rollout, all in one `.woodpecker.yml`; Keel
-stays enrolled as a redundant net):
-- `tuya_bridge`, `job-hunter`, `f1-stream`
-- `f1-stream` was extracted from this monorepo into its own repo
-  (`viktor/f1-stream`) on 2026-06-04; its Woodpecker repo id is 166 (the old
-  GHA-era id 10 is defunct).
 
 **Woodpecker-only (infra + large apps)**:
 - `travel_blog`: 5.7GB content directory exceeds GHA limits
@@ -99,6 +92,7 @@ Woodpecker API uses numeric IDs (not owner/name):
 | travel_blog | 5 |
 | webhook-handler | 6 |
 | audiblez-web | 9 |
+| f1-stream | 10 |
 | plotting-book | 43 |
 | claude-memory-mcp | 78 |
 | infra-onboarding | 79 |

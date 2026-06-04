@@ -6,15 +6,6 @@ variable "nfs_server" { type = string }
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
-# Image tag for the Forgejo-registry image. CI (.woodpecker.yml in
-# viktor/f1-stream) builds + pushes `latest` and `<short-sha>`, then drives the
-# rollout via `kubectl set image`. Keel stays enrolled as a redundant net, so
-# the running tag is managed outside Terraform (see KEEL_IGNORE_IMAGE below).
-variable "image_tag" {
-  type    = string
-  default = "latest"
-}
-
 resource "kubernetes_namespace" "f1-stream" {
   metadata {
     name = "f1-stream"
@@ -22,7 +13,7 @@ resource "kubernetes_namespace" "f1-stream" {
       "istio-injection" : "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/client" = "true"
-      "keel.sh/enrolled"                      = "true"
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -127,7 +118,7 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image             = "forgejo.viktorbarzin.me/viktor/f1-stream:${var.image_tag}"
+          image             = "viktorbarzin/f1-stream:latest"
           image_pull_policy = "Always"
           name              = "f1-stream"
           resources {
@@ -184,11 +175,6 @@ resource "kubernetes_deployment" "f1-stream" {
           persistent_volume_claim {
             claim_name = module.nfs_data_host.claim_name
           }
-        }
-        # Pull the (private) Forgejo-registry image. Kyverno syncs
-        # registry-credentials into every namespace.
-        image_pull_secrets {
-          name = "registry-credentials"
         }
       }
     }
