@@ -115,7 +115,7 @@
 | priority-pass | Boarding pass color transformer | priority-pass |
 | status-page | Status page | status-page |
 | plotting-book | Book plotting/world-building app | plotting-book |
-| tripit | Self-hosted TripIt-clone travel-itinerary PWA (FastAPI + SvelteKit SPA, same-origin). CNPG (`tripit` db, Vault static role `pg-tripit`) + RWX NFS doc vault (`/srv/nfs/tripit-documents`). `auth=required` (Authentik forward-auth, reads `X-authentik-email`); second `auth=none` ingress on `/api/calendar` for HMAC-token-gated `.ics` feed. Email-ingest CronJob `tripit-ingest-mail` (`*/30`) parses me@viktorbarzin.me via read-only IMAP with local LLM (`qwen3vl-4b`); plus `tripit-poll-flights` + `tripit-run-reminders`. App secrets in Vault `secret/tripit`. | tripit |
+| tripit | Self-hosted TripIt-clone travel-itinerary PWA (FastAPI + SvelteKit SPA, same-origin). CNPG (`tripit` db, Vault static role `pg-tripit`) + RWX NFS trip-doc vault (`/srv/nfs/tripit-documents`) + RWO `proxmox-lvm-encrypted` personal-document vault `tripit-personal-documents` (passports/IDs — AES-256-GCM app-layer envelope, master key `DOCUMENT_ENCRYPTION_KEY` in `secret/tripit`). `auth=required` (Authentik forward-auth, reads `X-authentik-email`); second `auth=none` ingress on `/api/calendar` for HMAC-token-gated `.ics` feed. Email-ingest CronJob `tripit-ingest-mail` (`*/30`) parses me@viktorbarzin.me via read-only IMAP with local LLM (`qwen3vl-4b`); plus `tripit-poll-flights` + `tripit-run-reminders`. App secrets in Vault `secret/tripit`. | tripit |
 
 ## Cloudflare Domains
 
