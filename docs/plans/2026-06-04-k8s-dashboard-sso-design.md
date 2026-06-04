@@ -266,3 +266,55 @@ follow-up. No apiserver, RBAC, data, or CLI changes to unwind.
 | Dashboard v7 ignores a pre-set Authorization header (known friction: kubernetes/dashboard #5105, #1213) | `pass_authorization_header` + `set_authorization_header`; validate in §7; kong forwards headers by default |
 | ESO first-apply ordering | `terragrunt apply -target` the ExternalSecret first (documented plan-time pattern) |
 | Single-master apiserver assumption (memory id=2484) | We don't touch apiserver flags; no new exposure |
+
+---
+
+## 12. ADDENDUM (2026-06-04) — As-built pivoted to Option B (apiserver multi-issuer)
+
+Sections 4–5 above describe the *original* plan: a separate `k8s-dashboard`
+confidential client whose token carries a dual `aud` so the apiserver (pinned
+to `--oidc-client-id=kubernetes`) would accept it **without** an apiserver
+change. **That approach does not work**, for a reason discovered during
+implementation:
+
+1. **The issuer is the binding constraint, not the audience.** Every Authentik
+   OAuth2 application has its own per-slug issuer. A token from the
+   `k8s-dashboard` app has `iss=…/o/k8s-dashboard/`, but the apiserver does an
+   **exact issuer-string match** against its single configured issuer
+   (`…/o/kubernetes/`). The dual-`aud` scope mapping is irrelevant — the token
+   is rejected on issuer before audience is even considered.
+
+2. **Apiserver OIDC was already silently broken.** Inspecting the live
+   `kube-apiserver` static-pod manifest showed **no `--oidc-*` flags at all** —
+   the kubeadm v1.34 upgrade had regenerated the manifest and dropped the
+   flags the `rbac` stack's `null_resource` had injected (its content-hash
+   trigger never re-fired). So OIDC apiserver auth was off cluster-wide.
+
+3. **Reusing the `kubernetes` app (make it confidential) — rejected.** It would
+   force distributing the now-confidential client secret to every CLI user via
+   the **public** k8s-portal `/setup/script` endpoint (a leak), plus
+   re-onboarding existing CLI users. Too invasive.
+
+**As-built = Option B: structured `AuthenticationConfiguration` on the
+apiserver trusting BOTH issuers.** `stacks/rbac/modules/rbac/apiserver-oidc.tf`
+now writes `/etc/kubernetes/pki/auth-config.yaml`
+(`apiserver.config.k8s.io/v1`) with two `jwt` issuers — `kubernetes`
+(audience `kubernetes`, for the kubelogin CLI) and `k8s-dashboard` (audience
+`k8s-dashboard`, for oauth2-proxy) — each mapping `username<-email` and
+`groups<-groups` with empty prefixes (to match existing RBAC subjects). The
+legacy `--oidc-*` flags are replaced by `--authentication-config=…`. The remote
+script health-gates `/livez` and **auto-rolls-back** the manifest if the
+single-master apiserver doesn't recover. The oauth2-proxy + `k8s-dashboard`
+Authentik app from §4 are reused unchanged (the dual-`aud` mapping is now
+harmless — issuer2 only requires `k8s-dashboard ∈ aud`).
+
+This keeps the CLI flow 100% untouched (its own `kubernetes` issuer is one of
+the two trusted issuers) and restores the apiserver OIDC that the kubeadm
+upgrade had broken.
+
+**Known drift (carried forward):** a future `kubeadm upgrade` will again
+regenerate the manifest and drop `--authentication-config`. The
+content-hash trigger won't auto-detect this. **Operational mitigation:
+re-apply the `rbac` stack after every k8s control-plane upgrade** (add to the
+upgrade runbook). The `rbac` provisioner needs `TF_VAR_ssh_private_key` (an SSH
+key authorized on the master) — it is not wired from Vault yet.

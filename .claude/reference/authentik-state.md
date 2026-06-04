@@ -2,7 +2,7 @@
 
 > Snapshot of applications, groups, users, and flows. Use `authentik` skill for management tasks.
 
-## Applications (10)
+## Applications (11)
 | Application | Provider Type | Auth Flow |
 |-------------|--------------|-----------|
 | Cloudflare Access | OAuth2/OIDC | explicit consent |
@@ -12,9 +12,18 @@
 | Headscale | OAuth2/OIDC | explicit consent |
 | Immich | OAuth2/OIDC | explicit consent |
 | Kubernetes | OAuth2/OIDC (public) | implicit consent |
+| Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | explicit consent |
 | Matrix | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
+
+> **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
+> confidential client `k8s-dashboard` consumed by oauth2-proxy in front of the
+> web dashboard. Has a custom scope mapping `k8s-dashboard audience` (scope
+> `k8s-dashboard-audience`) emitting `aud=[kubernetes,k8s-dashboard]`, plus a
+> group-access policy restricting login to `kubernetes-admins` /
+> `kubernetes-power-users` / `kubernetes-namespace-owners`. The apiserver trusts
+> this app's issuer via the `rbac` stack structured `AuthenticationConfiguration`.
 
 ## Groups (9)
 | Group | Parent | Superuser | Purpose |
@@ -36,7 +45,7 @@
 | vbarzin@gmail.com | Viktor Barzin | internal | authentik Admins, Home Server Admins, Wrongmove Users, Headscale Users |
 | emil.barzin@gmail.com | Emil Barzin | internal | Home Server Admins, Headscale Users |
 | ancaelena98@gmail.com | Anca Milea | external | Wrongmove Users, Headscale Users |
-| vabbit81@gmail.com | GHEORGHE Milea | external | Headscale Users |
+| vabbit81@gmail.com | GHEORGHE Milea | external | Headscale Users, kubernetes-namespace-owners, sops-vabbit81 |
 | valentinakolevabarzina@gmail.com | Valentina | internal | Headscale Users |
 | anca.r.cristian10@gmail.com | -- | internal | Wrongmove Users |
 | kadir.tugan@gmail.com | Kadir | internal | Wrongmove Users |
