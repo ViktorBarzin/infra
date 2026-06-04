@@ -171,17 +171,23 @@ Each user receives:
    ```
 6. User can now run `kubectl` commands
 
-### Web Dashboard (no CLI needed)
+### Web Dashboard (token-paste)
 
-Namespace-owners can also manage their namespace from the **Kubernetes
-Dashboard** at `https://k8s.viktorbarzin.me` using their Authentik account — no
-kubectl, no token paste. oauth2-proxy runs the SSO flow and injects the user's
-OIDC id_token, so the dashboard talks to the apiserver **as the user**: a
-namespace-owner gets full control of their namespace(s) and read-only
-visibility elsewhere; admins see everything. Login is restricted (Authentik
-group policy) to the `kubernetes-*` groups. See
-`docs/architecture/authentication.md` → "Kubernetes RBAC via OIDC" and
-`docs/plans/2026-06-04-k8s-dashboard-sso-design.md`.
+Namespace-owners can manage their namespace from the **Kubernetes Dashboard** at
+`https://k8s.viktorbarzin.me`:
+
+1. Log in via Authentik (forward-auth admits the `kubernetes-*` groups for this
+   host — `stacks/authentik/admin-services-restriction.tf`).
+2. On the Dashboard login page, choose **Token** and paste the personal token:
+   `kubectl -n <namespace> get secret dashboard-<user>-token -o jsonpath='{.data.token}' | base64 -d`
+   (the `dashboard-<user>` SA is created per namespace-owner in
+   `stacks/rbac/modules/rbac/dashboard-sa.tf` — `admin` on their namespace(s) +
+   cluster read-only).
+
+> **Why token-paste, not seamless SSO:** the intended oauth2-proxy SSO is built
+> but blocked — the apiserver currently rejects all Authentik OIDC tokens. See
+> `docs/architecture/authentication.md` → "Kubernetes API authentication" and
+> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12.
 
 ### RBAC Groups
 

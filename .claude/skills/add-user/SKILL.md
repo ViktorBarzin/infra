@@ -177,6 +177,17 @@ Tell the user to share these onboarding instructions with the new user:
 - K8s Portal: `https://k8s-portal.viktorbarzin.me/onboarding?role=namespace-owner`
 - README: `https://github.com/ViktorBarzin/infra#new-user-onboarding`
 
+**Web dashboard access** (the `rbac` stack auto-creates a `dashboard-<user>` SA +
+token for every namespace-owner — `stacks/rbac/modules/rbac/dashboard-sa.tf`):
+the new user logs into `https://k8s.viktorbarzin.me` (forward-auth admits the
+`kubernetes-*` groups) and pastes the **Token**:
+```bash
+kubectl -n NAMESPACE get secret dashboard-USERNAME-token -o jsonpath='{.data.token}' | base64 -d
+```
+Gives them `admin` on their namespace(s) + cluster read-only. (Token-paste is the
+interim model while seamless OIDC SSO is blocked — see
+`docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12.)
+
 The user can decrypt their stack's state with:
 ```bash
 vault login -method=oidc   # authenticates via Authentik SSO
