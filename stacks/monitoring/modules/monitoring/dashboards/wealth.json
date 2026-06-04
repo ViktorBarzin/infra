@@ -295,79 +295,44 @@
       ]
     },
     {
-      "id": 9201,
-      "title": "Returns over time windows",
-      "description": "Replaces the 12mo + \u0394 stat cards. \u0394 all = total change; \u0394 market = change net of contributions; Return % = Modified-Dietz.",
-      "type": "table",
+      "id": 9211,
+      "title": "1d",
+      "description": "Return % (Modified-Dietz) and \u0394 market = \u00a3 change net of contributions, over the trailing 1d.",
+      "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "wealth-pg"
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 5,
         "x": 0,
         "y": 5
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "right"
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
           }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "\u0394 all (\u00a3)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "continuous-RdYlGr"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\u0394 market (\u00a3)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyGBP"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "continuous-RdYlGr"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Return %"
+              "options": "Return"
             },
             "properties": [
               {
@@ -375,26 +340,38 @@
                 "value": "percent"
               },
               {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
               {
-                "id": "color",
-                "value": {
-                  "mode": "continuous-RdYlGr"
-                }
+                "id": "unit",
+                "value": "currencyGBP"
               }
             ]
           }
         ]
       },
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "show": false
-        }
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
       },
       "targets": [
         {
@@ -403,10 +380,382 @@
             "type": "grafana-postgresql-datasource",
             "uid": "wealth-pg"
           },
-          "format": "table",
-          "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), w(label,ord,iv) AS (VALUES ('1d',1,interval '1 day'),('7d',2,interval '7 days'),('30d',3,interval '30 days'),('90d',4,interval '90 days'),('12mo',5,interval '12 months')), ago AS (SELECT wl.label, wl.ord, SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM w wl CROSS JOIN latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-wl.iv ORDER BY dd.valuation_date DESC LIMIT 1) x ON true GROUP BY wl.label, wl.ord) SELECT a.label AS \"Window\", round((an.nw_now-a.nw_ago)::numeric,0) AS \"\u0394 all (\u00a3)\", round(((an.nw_now-a.nw_ago)-(an.c_now-a.c_ago))::numeric,0) AS \"\u0394 market (\u00a3)\", round((((an.nw_now-a.nw_ago)-(an.c_now-a.c_ago))/NULLIF(a.nw_ago+0.5*(an.c_now-a.c_ago),0)*100)::numeric,2) AS \"Return %\" FROM ago a CROSS JOIN an ORDER BY a.ord"
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), ago AS (SELECT SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-interval '1 day' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true) SELECT round((((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))/NULLIF(ago.nw_ago+0.5*(an.c_now-ago.c_ago),0)*100)::numeric,2) AS \"Return\", round(((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))::numeric,0) AS \"\u0394 market\" FROM an CROSS JOIN ago"
+        }
+      ]
+    },
+    {
+      "id": 9212,
+      "title": "7d",
+      "description": "Return % (Modified-Dietz) and \u0394 market = \u00a3 change net of contributions, over the trailing 7d.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 5,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Return"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), ago AS (SELECT SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-interval '7 days' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true) SELECT round((((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))/NULLIF(ago.nw_ago+0.5*(an.c_now-ago.c_ago),0)*100)::numeric,2) AS \"Return\", round(((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))::numeric,0) AS \"\u0394 market\" FROM an CROSS JOIN ago"
+        }
+      ]
+    },
+    {
+      "id": 9213,
+      "title": "30d",
+      "description": "Return % (Modified-Dietz) and \u0394 market = \u00a3 change net of contributions, over the trailing 30d.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 10,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Return"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), ago AS (SELECT SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-interval '30 days' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true) SELECT round((((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))/NULLIF(ago.nw_ago+0.5*(an.c_now-ago.c_ago),0)*100)::numeric,2) AS \"Return\", round(((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))::numeric,0) AS \"\u0394 market\" FROM an CROSS JOIN ago"
+        }
+      ]
+    },
+    {
+      "id": 9214,
+      "title": "90d",
+      "description": "Return % (Modified-Dietz) and \u0394 market = \u00a3 change net of contributions, over the trailing 90d.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 15,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Return"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), ago AS (SELECT SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-interval '90 days' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true) SELECT round((((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))/NULLIF(ago.nw_ago+0.5*(an.c_now-ago.c_ago),0)*100)::numeric,2) AS \"Return\", round(((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))::numeric,0) AS \"\u0394 market\" FROM an CROSS JOIN ago"
+        }
+      ]
+    },
+    {
+      "id": 9215,
+      "title": "12mo",
+      "description": "Return % (Modified-Dietz) and \u0394 market = \u00a3 change net of contributions, over the trailing 12mo.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Return"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c>=(SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value nw_now, net_contribution c_now FROM dav_corrected WHERE valuation_date<=(SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), an AS (SELECT SUM(nw_now) nw_now, SUM(c_now) c_now FROM latest), ago AS (SELECT SUM(x.nw) nw_ago, SUM(x.c) c_ago FROM latest l LEFT JOIN LATERAL (SELECT total_value nw, net_contribution c FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date<=(SELECT d FROM mc)-interval '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true) SELECT round((((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))/NULLIF(ago.nw_ago+0.5*(an.c_now-ago.c_ago),0)*100)::numeric,2) AS \"Return\", round(((an.nw_now-ago.nw_ago)-(an.c_now-ago.c_ago))::numeric,0) AS \"\u0394 market\" FROM an CROSS JOIN ago"
         }
       ]
     },
