@@ -26,7 +26,7 @@ resource "kubernetes_namespace" "uptime-kuma" {
   metadata {
     name = "uptime-kuma"
     labels = {
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
     # labels = {
@@ -192,12 +192,12 @@ resource "kubernetes_deployment" "uptime-kuma" {
       # as `never` so a Kyverno reconcile (or manual kubectl) can't flip it
       # back to `force` and re-enable auto-updates.
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],   # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],      # injected by Kyverno
+      metadata[0].annotations["keel.sh/match-tag"],                       # injected by Kyverno
     ]
   }
 }
@@ -698,6 +698,29 @@ locals {
       interval                    = 300
       retry_interval              = 60
       max_retries                 = 2
+    },
+    {
+      # Direct port probe of the Traefik MetalLB LB IP. Complements the
+      # `[External] traefik` HTTPS monitor (full DNS→CF→tunnel path) and the
+      # in-cluster `Traefik Dashboard` monitor: this one checks the dedicated
+      # LB IP + :443 bind directly, so a MetalLB L2 / Traefik-bind failure is
+      # distinguishable from a Cloudflare/tunnel outage. The IP is .203 (the
+      # DEDICATED Traefik LB, ETP=Local) — NOT the shared .200, which Traefik
+      # moved off on 2026-05-30. Replaces a hand-created monitor that still
+      # pointed at the dead .200:443. Keep this IP in sync with the Traefik LB
+      # in `docs/architecture/networking.md`.
+      name                        = "Traefik LoadBalancer (10.0.20.203)"
+      type                        = "port"
+      database_connection_string  = null
+      database_password_vault_key = null
+      hostname                    = "10.0.20.203"
+      port                        = 443
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
+      interval                    = 60
+      retry_interval              = 30
+      max_retries                 = 3
     },
   ]
 }
