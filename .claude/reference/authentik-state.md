@@ -18,12 +18,16 @@
 | wrongmove | OAuth2/OIDC | implicit consent |
 
 > **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
-> confidential client `k8s-dashboard` consumed by oauth2-proxy in front of the
-> web dashboard. Has a custom scope mapping `k8s-dashboard audience` (scope
-> `k8s-dashboard-audience`) emitting `aud=[kubernetes,k8s-dashboard]`, plus a
-> group-access policy restricting login to `kubernetes-admins` /
-> `kubernetes-power-users` / `kubernetes-namespace-owners`. The apiserver trusts
-> this app's issuer via the `rbac` stack structured `AuthenticationConfiguration`.
+> confidential client `k8s-dashboard`, built for seamless dashboard SSO via
+> oauth2-proxy. **Currently IDLE** — the apiserver rejects all OIDC tokens (see
+> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12), so the dashboard runs
+> on forward-auth + token-paste instead and oauth2-proxy is unwired. Kept for a
+> future SSO retry once apiserver OIDC is fixed.
+>
+> **admin-services-restriction** policy (TF-managed in
+> `stacks/authentik/admin-services-restriction.tf`, adopted 2026-06-04): gates the
+> 15 admin-only hostnames to `Home Server Admins`, with a carve-out admitting the
+> `kubernetes-*` RBAC groups to `k8s.viktorbarzin.me` (dashboard login page).
 
 ## Groups (9)
 | Group | Parent | Superuser | Purpose |

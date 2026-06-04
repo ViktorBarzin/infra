@@ -100,54 +100,48 @@ Authentik provides OIDC for 10 applications:
 | Headscale | OIDC | Tailscale control plane auth |
 | Immich | OIDC | Photo management SSO |
 | Kubernetes | OIDC (public client) | K8s API authentication (kubectl / kubelogin CLI) |
-| Kubernetes Dashboard | OIDC (confidential, via oauth2-proxy) | Web dashboard SSO with per-user RBAC |
+| Kubernetes Dashboard | OIDC (confidential) | Built for dashboard SSO — currently **idle** (apiserver OIDC blocked; dashboard uses forward-auth + token-paste) |
 | Linkwarden | OIDC | Bookmark manager SSO |
 | Matrix | OIDC | Matrix homeserver SSO |
 | Wrongmove | OIDC | Real estate app SSO |
 
-### Kubernetes RBAC via OIDC
+### Kubernetes API authentication (OIDC) — CURRENTLY NON-FUNCTIONAL
 
-The kube-apiserver uses a **structured `AuthenticationConfiguration`**
-(`apiserver.config.k8s.io/v1`, file `/etc/kubernetes/pki/auth-config.yaml`,
-flag `--authentication-config`) that trusts **two** Authentik issuers — managed
-by `stacks/rbac/modules/rbac/apiserver-oidc.tf`:
+> ⚠️ **apiserver OIDC does not work in this cluster** (as of 2026-06-04). The
+> kube-apiserver rejects *every* valid Authentik OIDC token — with both the
+> legacy `--oidc-*` flags AND a structured `AuthenticationConfiguration`, for
+> both the `kubernetes` and `k8s-dashboard` issuers — despite verified
+> signature, issuer, audience, `email_verified=true`, synced clock, and a
+> reachable + publicly-trusted JWKS. Root cause is still open; see
+> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12. A kubeadm v1.34
+> upgrade had earlier silently wiped the apiserver `--oidc-*` flags, so OIDC
+> CLI/dashboard login has effectively been off. **Do not assume `kubectl`
+> OIDC (kubelogin) works until this is resolved.**
 
-| Issuer (Authentik app) | Audience | Used by |
-|---|---|---|
-| `…/application/o/kubernetes/` | `kubernetes` | `kubectl` / kubelogin CLI (public client) |
-| `…/application/o/k8s-dashboard/` | `k8s-dashboard` | oauth2-proxy in front of the web Dashboard (confidential client) |
+The intended model (binds by `email`, see `stacks/rbac/modules/rbac/main.tf`):
+`admin` → `cluster-admin`; `power-user` → custom read-mostly ClusterRole;
+`namespace-owner` → `admin` RoleBinding in their namespace(s) + cluster read-only.
 
-Both map `username <- email` and `groups <- groups` with **empty prefixes** (so
-tokens map to RBAC subjects `kind: User, name: <raw email>` and verbatim group
-names). This replaced the legacy single `--oidc-*` flags (one issuer only),
-which a kubeadm upgrade had silently wiped.
+### Kubernetes Dashboard access (token-paste, interim)
 
-The flow:
+Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses:
 
-1. User authenticates to Authentik (via the `kubectl` plugin, or via oauth2-proxy
-   for the web Dashboard).
-2. Receives an OIDC id_token with `email` + `groups` claims.
-3. K8s API validates the token against the matching issuer's Authentik JWKS.
-4. RBAC binds the user (by email) to roles — see `stacks/rbac/modules/rbac/main.tf`:
-   - `admin` role users → `cluster-admin`
-   - `power-user` role → custom cluster ClusterRole (read-mostly, limited write)
-   - `namespace-owner` role → `admin` RoleBinding in their namespace(s) + cluster read-only
+1. **Authentik forward-auth** gates *who reaches the login page*
+   (`admin-services-restriction` policy — admits `Home Server Admins` plus the
+   `kubernetes-admins` / `kubernetes-power-users` / `kubernetes-namespace-owners`
+   groups for this host; see `stacks/authentik/admin-services-restriction.tf`).
+2. **Token paste**: each namespace-owner has a ServiceAccount
+   (`dashboard-<user>` in their namespace, `stacks/rbac/modules/rbac/dashboard-sa.tf`)
+   scoped to `admin` on their namespace(s) + cluster read-only, with a long-lived
+   token they paste into the Dashboard's "Token" login. The pasted token — not
+   forward-auth — is the per-namespace security boundary.
+   Retrieve: `kubectl -n <ns> get secret dashboard-<user>-token -o jsonpath='{.data.token}' | base64 -d`.
+   Admins use the cluster-admin `kubernetes-dashboard` SA token
+   (`kubectl create token kubernetes-dashboard -n kubernetes-dashboard`).
 
-> **Web Dashboard SSO:** the `k8s.viktorbarzin.me` ingress points at
-> **oauth2-proxy** (`stacks/k8s-dashboard/oauth2_proxy.tf`, `auth = "none"` —
-> oauth2-proxy is the gate), which runs the Authentik OIDC code-flow against the
-> `k8s-dashboard` confidential client and injects the user's id_token as
-> `Authorization: Bearer` upstream to the Dashboard's Kong proxy. The Dashboard
-> then talks to the apiserver **as the user**, so per-user RBAC applies (a
-> namespace-owner manages only their namespace; admins see everything). A group
-> policy on the Authentik app restricts login to the `kubernetes-*` groups.
-> Replaced the prior forward-auth + static cluster-admin ServiceAccount (which
-> made every authenticated user cluster-admin). Design:
-> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md`.
-
-> **Upgrade caveat:** `--authentication-config` lives in the kube-apiserver
-> static-pod manifest, which `kubeadm upgrade` regenerates — **re-apply the
-> `rbac` stack after any control-plane upgrade** to restore apiserver OIDC.
+The oauth2-proxy + `k8s-dashboard` Authentik OIDC app (built for the
+seamless-SSO design) remain deployed but **idle/unwired** pending the
+apiserver-OIDC fix; the dashboard ingress is on forward-auth.
 
 ### Authentik Groups
 
