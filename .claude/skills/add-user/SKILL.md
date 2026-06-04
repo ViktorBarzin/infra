@@ -177,16 +177,19 @@ Tell the user to share these onboarding instructions with the new user:
 - K8s Portal: `https://k8s-portal.viktorbarzin.me/onboarding?role=namespace-owner`
 - README: `https://github.com/ViktorBarzin/infra#new-user-onboarding`
 
-**Web dashboard access** (the `rbac` stack auto-creates a `dashboard-<user>` SA +
-token for every namespace-owner — `stacks/rbac/modules/rbac/dashboard-sa.tf`):
-the new user logs into `https://k8s.viktorbarzin.me` (forward-auth admits the
-`kubernetes-*` groups) and pastes the **Token**:
-```bash
-kubectl -n NAMESPACE get secret dashboard-USERNAME-token -o jsonpath='{.data.token}' | base64 -d
-```
-Gives them `admin` on their namespace(s) + cluster read-only. (Token-paste is the
-interim model while seamless OIDC SSO is blocked — see
-`docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12.)
+**Web dashboard access** (auto-login, no token paste): the `rbac` stack
+auto-creates a `dashboard-<user>` SA + token for every namespace-owner
+(`dashboard-sa.tf`), and the **k8s-dashboard** stack's token-injector maps the
+user's Authentik identity → that token (`dashboard_injector.tf`, auto-derived
+from `k8s_users`). The new user just logs into `https://k8s.viktorbarzin.me` and
+lands in the dashboard scoped to their namespace (`admin` + cluster read-only).
+
+> **Apply order for a new namespace-owner:** after the vault/rbac/woodpecker
+> applies above, ALSO `cd stacks/k8s-dashboard && ../../scripts/tg apply` so the
+> injector map picks up the new user. (Manual token fallback:
+> `kubectl -n NAMESPACE get secret dashboard-USERNAME-token -o jsonpath='{.data.token}' | base64 -d`.)
+> Seamless OIDC SSO is built but blocked — see
+> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12.
 
 The user can decrypt their stack's state with:
 ```bash
