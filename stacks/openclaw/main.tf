@@ -536,8 +536,13 @@ resource "kubernetes_deployment" "openclaw" {
         # re-installs the plugin on next openclaw pod restart. Same pattern as
         # install-recruiter-plugin above.
         init_container {
-          name  = "install-nextcloud-todos-plugin"
-          image = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:latest"
+          name = "install-nextcloud-todos-plugin"
+          # SHA-pinned (not :latest) because the node's imagePullPolicy is
+          # IfNotPresent: a cached stale :latest meant the plugin manifest
+          # (configSchema fix) never got pulled. An uncached SHA forces the
+          # pull. Bump this when the openclaw plugin in nextcloud-todos changes.
+          image           = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:f85c6de1"
+          image_pull_policy = "Always"
           command = ["sh", "-c", <<-EOT
             set -eu
             mkdir -p /home/node/.openclaw/extensions/nextcloud-todos-api
@@ -1147,7 +1152,13 @@ resource "kubernetes_deployment" "openclaw" {
         # Main container: OpenClaw
         container {
           name  = "openclaw"
-          image = "ghcr.io/openclaw/openclaw:2026.5.4"
+          # Pinned back to 2026.2.26 (2026-06-04): 2026.5.4's gateway writes a
+          # model `agentRuntime` key for the openai-codex provider that it then
+          # rejects on startup ("Invalid config ... Unrecognized key:
+          # agentRuntime"), crashlooping the gateway on any restart. 2026.2.26
+          # predates that bug. Revisit the openai-codex/ChatGPT-Plus OAuth
+          # primary (commit 4b39cb72) when upgrading openclaw again.
+          image = "ghcr.io/openclaw/openclaw:2026.2.26"
           # Startup sequence:
           #   1. doctor --fix     — repair sessions/state (also resets some config)
           #   2. models set       — pin gpt-5.4-mini (doctor auto-promotes to gpt-5-pro otherwise)
@@ -1164,22 +1175,28 @@ resource "kubernetes_deployment" "openclaw" {
             # /home/node (image overlay), .ssh files live on the PVC
             # at /home/node/.openclaw/.ssh (set up by init 5).
             ln -sfn /home/node/.openclaw/.ssh /home/node/.ssh
+            # FAST critical path (runs synchronously, ~seconds): doctor repairs
+            # config + wipes plugins.allow; config patch restores our plugins to
+            # the allow list. --allow-unconfigured then loads them at gateway
+            # start WITHOUT needing the slow `plugins enable` step.
             node openclaw.mjs doctor --fix 2>/dev/null
-            node openclaw.mjs models set nim/meta/llama-3.1-70b-instruct 2>/dev/null
-            node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
-            node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
-            node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
-            # doctor --fix overwrites plugins.allow with its bundled-plugins
-            # list. Re-add our third-party plugin to the allow list via
-            # `config patch`, then enable it. (Same pattern as mcp set above.)
             echo '{"plugins":{"allow":["memory-core","recruiter-api","nextcloud-todos-api","telegram","openrouter","brave","openai","codex"]}}' \
-              | node openclaw.mjs config patch --stdin 2>/dev/null || true
-            node openclaw.mjs plugins enable recruiter-api 2>/dev/null || true
-            node openclaw.mjs plugins enable nextcloud-todos-api 2>/dev/null || true
-            # Reindex memory-core so the seeded devvm-fallback note (and
-            # anything else dropped under /workspace/memory/) is searchable
-            # on first boot; daily memory-sync CronJob also keeps it indexed.
-            node openclaw.mjs memory index --force 2>/dev/null || true
+              | timeout 20 node openclaw.mjs config patch --stdin 2>/dev/null || true
+            # SLOW/optional steps run in the BACKGROUND so they can NEVER delay
+            # the gateway past its readiness/liveness window. (2026-06-04: with
+            # these inline, `plugins enable nextcloud-todos-api` hung on an npm
+            # install on the tight openclaw-home PVC and the cumulative waits
+            # tripped liveness → crashloop. The gateway loads plugins from
+            # plugins.allow above regardless; mcp servers register async.)
+            (
+              timeout 30 node openclaw.mjs models set nim/meta/llama-3.1-70b-instruct 2>/dev/null
+              timeout 30 node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
+              timeout 30 node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
+              timeout 30 node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
+              timeout 120 node openclaw.mjs plugins enable recruiter-api 2>/dev/null
+              timeout 120 node openclaw.mjs plugins enable nextcloud-todos-api 2>/dev/null
+              timeout 120 node openclaw.mjs memory index --force 2>/dev/null
+            ) >/dev/null 2>&1 &
             exec node openclaw.mjs gateway --allow-unconfigured --bind lan
           EOC
           ]
