@@ -245,7 +245,11 @@ module "ingress" {
   }
 }
 
-# RBAC — grant vabbit81 (Gheorghe) admin access to novelapp namespace
+# RBAC — grant vabbit81 (Gheorghe) admin access to novelapp namespace.
+# Two subjects: the OIDC User (for kubectl/kubelogin, once apiserver OIDC works)
+# AND his dashboard ServiceAccount (the web dashboard injects this SA's token —
+# see stacks/k8s-dashboard/dashboard_injector.tf — so it needs the grant too,
+# since the apiserver sees the SA, not the email, as the subject).
 resource "kubernetes_role_binding" "novelapp_owner_vabbit81" {
   metadata {
     name      = "novelapp-owner-vabbit81"
@@ -260,6 +264,12 @@ resource "kubernetes_role_binding" "novelapp_owner_vabbit81" {
     api_group = "rbac.authorization.k8s.io"
     kind      = "User"
     name      = "vabbit81@gmail.com"
+  }
+  subject {
+    api_group = ""
+    kind      = "ServiceAccount"
+    name      = "dashboard-vabbit81"
+    namespace = "vabbit81"
   }
 }
 
