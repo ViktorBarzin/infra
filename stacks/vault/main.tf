@@ -572,9 +572,9 @@ resource "vault_policy" "terraform_state" {
   # SECURITY: this grants the SHARED claude-agent pod broad Vault READ —
   # effectively every app secret under secret/ and every rotating DB
   # credential. Every agent that runs on this pod inherits it. Vault's own
-  # admin/root secrets are under secret/data/vault (covered by secret/data/*
-  # here — NOT explicitly denied; tighten with an explicit deny if that path
-  # must stay out of reach). No write/delete on secret/ or database/.
+  # admin/root secrets are under secret/data/vault — now explicitly DENIED
+  # below (2026-06-04, Viktor's choice) so they stay out of the pod's reach.
+  # No write/delete on secret/ or database/.
   policy = <<-EOT
     path "database/static-creds/*" {
       capabilities = ["read"]
@@ -587,6 +587,16 @@ resource "vault_policy" "terraform_state" {
     }
     path "secret/metadata/*" {
       capabilities = ["read", "list"]
+    }
+    # Explicit deny on Vault's own admin/root creds (Viktor's choice 2026-06-04).
+    # An explicit deny overrides the secret/data/* read grant above, so the
+    # shared claude-agent pod cannot read Vault's bootstrap/admin secrets even
+    # though it can read every other app secret.
+    path "secret/data/vault" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/vault" {
+      capabilities = ["deny"]
     }
   EOT
 }
