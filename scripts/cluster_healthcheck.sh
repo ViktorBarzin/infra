@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=46
+TOTAL_CHECKS=47
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -2988,13 +2988,17 @@ check_immich_search() {
         return 0
     fi
 
-    # clip_index residency in shared_buffers (single-quoted SQL → pass as one arg)
+    # clip_index residency in shared_buffers (single-quoted SQL → pass as one arg).
+    # `|| true` guards the substitution: with `set -o pipefail` a non-zero psql/
+    # exec would otherwise propagate and trip `set -e`, killing the check before
+    # json_add (it then silently vanished from the parallel report + broke
+    # --serial). The `=~` checks below already handle an empty/non-numeric value.
     pct=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- psql -U postgres -d immich -tAc \
-        "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null | tr -d ' ')
+        "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null | tr -d ' ' || true)
 
     # Representative random-vector ANN latency, measured in-pod (excludes exec overhead)
     dur_ms=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
-        's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ')
+        's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ' || true)
 
     if ! [[ "$dur_ms" =~ ^[0-9]+$ ]]; then
         warn "Smart-search probe query failed (clip_index residency: ${pct:-?}%)"
@@ -3020,6 +3024,113 @@ check_immich_search() {
         pass "Smart search healthy: $detail"
         json_add "immich_search" "PASS" "$detail"
     fi
+}
+
+# --- 47. Proxmox CSI ghost-disk drift ---
+#
+# The proxmox-csi-plugin hot-plugs each proxmox-lvm PVC as a virtio-scsi disk
+# onto the node's QEMU VM. When a detach fails (e.g. a `query-pci` QMP timeout
+# on a disk-heavy VM), the disk is left pinned in the VM config with NO
+# matching k8s VolumeAttachment — an orphaned "ghost". Ghosts accumulate
+# invisibly: the scheduler's per-node volume limit (CSINode.allocatable.count
+# = 28) counts only k8s attachments, so it keeps placing pods on a node whose
+# REAL scsi-disk count is already near the cap, until `query-pci` times out and
+# every attach/detach on that node wedges (the 2026-06-04 MAM grabber incident:
+# node3 had 13 tracked vs 23 real scsi disks). This check compares per-node
+# real-vs-tracked and flags the drift before it bites.
+#   real == tracked, real < 20            -> PASS
+#   drift (real > tracked), or real 20-24 -> WARN  (ghosts / approaching cap)
+#   real >= 25 (near the 28 LUN cap)      -> FAIL  (imminent query-pci wedge)
+check_csi_ghost_drift() {
+    section 47 "Proxmox CSI — Ghost-Disk Drift"
+
+    # Single `qm list` (not once per VM) + one `qm config` per VM — keeps this
+    # under a few seconds so it doesn't blow the parallel runner's budget.
+    local raw
+    raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2}" | while read -r vmid name; do
+            cnt=$(qm config "$vmid" 2>/dev/null | grep -cE "^scsi[0-9]+:.*vm-9999-pvc")
+            echo "$vmid|$name|$cnt"
+        done' 2>/dev/null || true)
+
+    if [[ -z "$raw" ]]; then
+        [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
+        warn "Could not read VM disk inventory from 192.168.1.127 (SSH)"
+        json_add "csi_ghost_drift" "WARN" "SSH failed"
+        return 0
+    fi
+
+    local va_json
+    va_json=$($KUBECTL get volumeattachment -o json 2>/dev/null || echo '{"items":[]}')
+
+    local result
+    result=$(SSH_RAW="$raw" VA_JSON="$va_json" python3 << 'PYEOF'
+import json, os
+
+# k8s view: count ATTACHED proxmox-CSI VolumeAttachments per node
+va = json.loads(os.environ["VA_JSON"])
+tracked = {}
+for v in va.get("items", []):
+    if v.get("spec", {}).get("attacher") != "csi.proxmox.sinextra.dev":
+        continue
+    if not v.get("status", {}).get("attached"):
+        continue
+    node = v["spec"].get("nodeName", "")
+    tracked[node] = tracked.get(node, 0) + 1
+
+worst = "PASS"
+rows = []
+for line in os.environ["SSH_RAW"].splitlines():
+    parts = line.strip().split("|")
+    if len(parts) != 3:
+        continue
+    vmid, name, cnt = parts[0], parts[1], parts[2]
+    if not cnt.isdigit():
+        continue
+    real = int(cnt)
+    # Only nodes that are k8s worker VMs (name matches a node with attachments
+    # or looks like a k8s node) are interesting; skip non-k8s VMs with 0 disks.
+    if real == 0 and name not in tracked:
+        continue
+    trk = tracked.get(name, 0)
+    drift = real - trk
+    status = "PASS"
+    if real >= 25:
+        status = "FAIL"
+    elif drift > 0 or real >= 20:
+        status = "WARN"
+    if status == "FAIL":
+        worst = "FAIL"
+    elif status == "WARN" and worst != "FAIL":
+        worst = "WARN"
+    if status != "PASS":
+        rows.append(f"{name}: real={real} tracked={trk} ghosts={drift}")
+
+print(worst)
+print(" | ".join(rows) if rows else "all nodes reconciled")
+PYEOF
+) || result=$'WARN\npython parse failed'
+
+    local status detail
+    status=$(echo "$result" | head -1)
+    detail=$(echo "$result" | sed -n '2p')
+
+    case "$status" in
+        FAIL)
+            [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
+            fail "Ghost-disk drift near LUN cap: $detail"
+            json_add "csi_ghost_drift" "FAIL" "$detail"
+            ;;
+        WARN)
+            [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
+            warn "Ghost-disk drift detected: $detail"
+            json_add "csi_ghost_drift" "WARN" "$detail"
+            ;;
+        *)
+            pass "No CSI ghost-disk drift — every node's scsi disks match k8s attachments"
+            json_add "csi_ghost_drift" "PASS" "reconciled"
+            ;;
+    esac
 }
 
 # --- Summary ---
@@ -3090,7 +3201,7 @@ main() {
         check_monitoring_prom_am check_monitoring_vault check_monitoring_css
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
-        check_immich_search
+        check_immich_search check_csi_ghost_drift
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that
