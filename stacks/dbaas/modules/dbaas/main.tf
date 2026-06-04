@@ -1311,6 +1311,39 @@ resource "null_resource" "pg_tripit_db" {
   }
 }
 
+# Create nextcloud_todos database + role for the nextcloud-todos service
+# (FastAPI; watches the Nextcloud Personal task list). Role password is
+# managed by the Vault Database Secrets Engine (static role
+# `pg-nextcloud-todos`, 7d rotation). Tables live in schema `nextcloud_todos`
+# (alembic creates them on the app's first migrate). Unlike most app DBs we
+# also create the schema explicitly + pin the role's search_path to it, so the
+# unqualified tables alembic generates land in `nextcloud_todos` rather than
+# `public`.
+resource "null_resource" "pg_nextcloud_todos_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "nextcloud_todos"
+    username = "nextcloud_todos"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'nextcloud_todos'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE nextcloud_todos WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'nextcloud_todos'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE nextcloud_todos OWNER nextcloud_todos"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE nextcloud_todos TO nextcloud_todos"
+          psql -U postgres -c "ALTER ROLE nextcloud_todos SET search_path TO nextcloud_todos"
+          psql -U postgres -d nextcloud_todos -c "CREATE SCHEMA IF NOT EXISTS nextcloud_todos AUTHORIZATION nextcloud_todos"
+        '
+    EOT
+  }
+}
+
 # Postiz: 3 databases (postiz, temporal, temporal_visibility) all owned by the
 # `postiz` role. Bundled bitnami PostgreSQL was retired 2026-05-09 in favour of
 # this CNPG cluster — covered by postgresql-backup-per-db automatically.

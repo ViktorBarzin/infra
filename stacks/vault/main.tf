@@ -617,6 +617,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-wealthfolio-sync", "pg-fire-planner",
     "pg-postiz", "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
+    "pg-nextcloud-todos",
     "pg-matrix", "pg-technitium",
   ]
 
@@ -808,6 +809,14 @@ resource "vault_database_secret_backend_static_role" "pg_recruiter_responder" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-recruiter-responder"
   username        = "recruiter_responder"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_nextcloud_todos" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-nextcloud-todos"
+  username        = "nextcloud_todos"
   rotation_period = 604800
 }
 
