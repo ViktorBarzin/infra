@@ -192,6 +192,18 @@ read-only on the namespace list & nodes for nav — no cross-tenant resource rea
 > Seamless OIDC SSO is built but blocked — see
 > `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12.
 
+> **Auto-login works only for the user's `k8s_users` HOME namespace.** The
+> dashboard injects the user's `dashboard-<user>` SA token, which the `rbac`
+> stack binds to `admin` on their home namespace only. If their workload lives
+> in a DIFFERENT / pre-existing namespace (e.g. gheorghe's app is in `novelapp`,
+> not his home `vabbit81`), that namespace's stack must ALSO grant their
+> **dashboard SA** — `kind: ServiceAccount, name: dashboard-<user>, namespace:
+> <home-ns>` — not just their OIDC `User` email (the dashboard uses the SA, and
+> apiserver OIDC is blocked). See `stacks/novelapp/main.tf` `novelapp_owner_vabbit81`
+> for the pattern (two subjects: User + SA). Best practice: set the user's
+> `k8s_users` namespace to where their workload actually runs, so the home-ns
+> auto-path covers them with no extra binding.
+
 The user can decrypt their stack's state with:
 ```bash
 vault login -method=oidc   # authenticates via Authentik SSO
