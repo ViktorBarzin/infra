@@ -10,9 +10,14 @@ locals {
     app = "chrome-service"
   }
   # Pin to the same Playwright minor that the Python client requires.
-  # If you bump this image, also bump `playwright==X.Y.Z` in the client
-  # (currently f1-stream) and re-run the connect smoke test.
+  # If you bump this image, also bump `playwright==X.Y.Z` in callers'
+  # requirements (currently f1-stream, snapshot-harvester) and re-run the
+  # connect smoke test. Image ships chromium under /ms-playwright/.
   image = "mcr.microsoft.com/playwright:v1.48.0-noble"
+  # Python image for the snapshot-harvester CronJob and the snapshot-server
+  # sidecar (the latter just runs a 60-line stdlib HTTP server).
+  python_image = "mcr.microsoft.com/playwright/python:v1.48.0-noble"
+  snapshot_dir = "/profile/snapshots"
 }
 
 # --- Namespace ---
@@ -24,7 +29,7 @@ resource "kubernetes_namespace" "chrome_service" {
       "istio-injection"                       = "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/server" = "true"
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                      = "true"
     }
   }
   lifecycle {
@@ -177,42 +182,77 @@ resource "kubernetes_deployment" "chrome_service" {
           image             = local.image
           image_pull_policy = "IfNotPresent"
 
-          # `launch-server` (not `run-server`) lets us pin headed mode +
-          # specific args. `run-server` defaults to headless, which the
-          # disable-devtool.js Performance detector trips under Playwright
-          # (CDP adds latency to console.log; lib detects + redirects).
-          # The Microsoft image ships only the browsers, not the playwright
-          # npm package itself — `npx -y playwright@<ver>` downloads it on
-          # first start (cached under $HOME/.npm via the PVC) and pins to
-          # the same minor as the Python client. Bump in lockstep.
+          # Direct chromium launch (NOT `playwright launch-server`). Reason:
+          # launch-server creates ephemeral browser contexts per `connect()`
+          # call, so cookies/localStorage never persist to the PVC — the
+          # `/profile` mount only ever held npm cache + fontconfig.
+          # Replaced 2026-06-04 with a CDP+persistent-profile model so the
+          # warm browser (where Viktor logs in via noVNC) keeps cookies, and
+          # the hourly snapshot-harvester CronJob can dump them via the
+          # CDP endpoint. Callers migrate `chromium.connect()` →
+          # `chromium.connect_over_cdp()` (see f1-stream's playback_verifier).
+          #
+          # --remote-debugging-port=9222          : TCP CDP (vs default pipe).
+          # --remote-debugging-address=0.0.0.0   : bind on all pod IFs;
+          #                                        NetworkPolicy is the gate.
+          # --remote-allow-origins=*             : Chrome 111+ requires for
+          #                                        non-loopback CDP origins.
+          # --user-data-dir=/profile/chromium-data: persistent profile on
+          #                                        the encrypted PVC.
           command = ["bash", "-c"]
           args = [
             <<-EOT
             set -e
-            # `-listen tcp` enables localhost:6099 so the noVNC sidecar can
-            # connect over the pod's shared network namespace (Ubuntu 24.04
-            # defaults Xvfb to -nolisten tcp).
-            # `-ac` disables X access control so the noVNC sidecar can
-            # attach without an MIT-MAGIC-COOKIE; safe because Xvfb only
-            # listens on localhost (pod's lo).
+            # Locate chromium in the Microsoft image. The path is
+            # /ms-playwright/chromium-XXXX/chrome-linux/chrome where XXXX
+            # is the playwright-pinned build; resolve at runtime so a minor
+            # bump of the image doesn't break the launch line.
+            CHROMIUM=$(find /ms-playwright -maxdepth 4 -name 'chrome' -type f -executable -path '*/chrome-linux/*' 2>/dev/null | head -1)
+            if [ -z "$CHROMIUM" ]; then
+              echo "ERROR: chromium binary not found under /ms-playwright" >&2
+              exit 1
+            fi
+            echo "[chrome-service] using chromium: $CHROMIUM"
+
+            # -listen tcp enables localhost:6099 so the noVNC sidecar can
+            # attach over the pod's shared network ns (Ubuntu 24.04
+            # defaults Xvfb to -nolisten tcp). -ac disables X access
+            # control; safe because Xvfb only listens on the pod's lo.
             Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &
             sleep 1
-            cat > /tmp/launch.json <<JSON
-            {
-              "headless": false,
-              "port": 3000,
-              "host": "0.0.0.0",
-              "wsPath": "/$${PW_TOKEN}",
-              "args": [
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--autoplay-policy=no-user-gesture-required",
-                "--disable-dev-shm-usage"
-              ]
-            }
-            JSON
-            exec npx -y playwright@1.48.0 launch-server --browser chromium --config /tmp/launch.json
+
+            mkdir -p /profile/chromium-data ${local.snapshot_dir}
+
+            # Why a bridge?
+            # Stock Chrome binaries silently ignore --remote-debugging-address
+            # (the flag is gated by a build-time switch most distributions don't
+            # set), so CDP always binds 127.0.0.1:<port> regardless of what we
+            # pass. The K8s liveness/readiness probe + cluster callers reach
+            # the pod via its pod-IP, never localhost.
+            # Fix: chromium listens on 127.0.0.1:9223 (hidden internal port),
+            # cdp_bridge.py listens on 0.0.0.0:9222 (the public CDP port) and
+            # transparently forwards. K8s Service, probes, NetworkPolicy all
+            # stay on 9222 — no caller-side changes needed.
+            # (Microsoft playwright image ships python3 but not socat, so the
+            # bridge is a tiny stdlib script — see files/cdp_bridge.py.)
+            python3 /scripts/cdp_bridge.py &
+            BRIDGE_PID=$!
+            trap "kill $BRIDGE_PID 2>/dev/null" EXIT
+
+            exec "$CHROMIUM" \
+              --remote-debugging-port=9223 \
+              --remote-allow-origins=* \
+              --user-data-dir=/profile/chromium-data \
+              --no-sandbox \
+              --no-first-run \
+              --no-default-browser-check \
+              --disable-blink-features=AutomationControlled \
+              --disable-features=IsolateOrigins,site-per-process \
+              --autoplay-policy=no-user-gesture-required \
+              --disable-dev-shm-usage \
+              --password-store=basic \
+              --use-mock-keychain \
+              about:blank
             EOT
           ]
 
@@ -224,36 +264,28 @@ resource "kubernetes_deployment" "chrome_service" {
             name  = "HOME"
             value = "/profile"
           }
-          env {
-            name = "PW_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "chrome-service-secrets"
-                key  = "api_bearer_token"
-              }
-            }
-          }
 
           port {
-            name           = "ws"
-            container_port = 3000
+            name           = "cdp"
+            container_port = 9222
             protocol       = "TCP"
           }
 
-          # Playwright run-server exposes only the WS endpoint; no /health.
+          # Chrome's CDP endpoint serves /json/version once it's bound;
+          # TCP-open is enough for readiness.
           liveness_probe {
-            tcp_socket { port = 3000 }
+            tcp_socket { port = 9222 }
             initial_delay_seconds = 30
             period_seconds        = 30
             failure_threshold     = 3
           }
           readiness_probe {
-            tcp_socket { port = 3000 }
+            tcp_socket { port = 9222 }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
           startup_probe {
-            tcp_socket { port = 3000 }
+            tcp_socket { port = 9222 }
             period_seconds    = 5
             failure_threshold = 24 # up to 2 minutes
           }
@@ -265,6 +297,13 @@ resource "kubernetes_deployment" "chrome_service" {
           volume_mount {
             name       = "dshm"
             mount_path = "/dev/shm"
+          }
+          # /scripts/cdp_bridge.py provides the 0.0.0.0:9222 → 127.0.0.1:9223
+          # TCP forwarder (see entrypoint comment above for why).
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/scripts"
+            read_only  = true
           }
 
           resources {
@@ -280,8 +319,8 @@ resource "kubernetes_deployment" "chrome_service" {
 
         # noVNC sidecar — exposes a live HTML5 view of the headed Chromium
         # session via x11vnc + websockify, gated by the Authentik-protected
-        # ingress at chrome.viktorbarzin.me. WS port 3000 (the Playwright
-        # endpoint) stays internal-only.
+        # ingress at chrome.viktorbarzin.me. CDP port 9222 (the new
+        # Playwright endpoint) stays internal-only.
         container {
           name = "novnc"
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
@@ -301,6 +340,75 @@ resource "kubernetes_deployment" "chrome_service" {
           }
         }
 
+        # snapshot-server sidecar — serves the hourly storage-state.json
+        # snapshot (written by the snapshot-harvester CronJob to the same
+        # PVC) over an HTTP endpoint, bearer-gated by PW_TOKEN. Mounted
+        # behind Traefik at chrome.viktorbarzin.me/api/snapshot with
+        # auth=none; the bearer check inside this server is the gate.
+        # Source: files/snapshot_server.py — 60 lines, stdlib only.
+        container {
+          name              = "snapshot-server"
+          image             = local.python_image
+          image_pull_policy = "IfNotPresent"
+          command           = ["python3", "/scripts/snapshot_server.py"]
+
+          env {
+            name = "PW_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-secrets"
+                key  = "api_bearer_token"
+              }
+            }
+          }
+          env {
+            name  = "SNAPSHOT_PATH"
+            value = "${local.snapshot_dir}/storage-state.json"
+          }
+          env {
+            name  = "PORT"
+            value = "8088"
+          }
+
+          port {
+            name           = "snap"
+            container_port = 8088
+            protocol       = "TCP"
+          }
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8088
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8088
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 10
+          }
+
+          volume_mount {
+            name       = "profile"
+            mount_path = "/profile"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+
+          resources {
+            requests = { cpu = "5m", memory = "32Mi" }
+            limits   = { memory = "96Mi" }
+          }
+        }
+
         volume {
           name = "profile"
           persistent_volume_claim {
@@ -312,6 +420,13 @@ resource "kubernetes_deployment" "chrome_service" {
           empty_dir {
             medium     = "Memory"
             size_limit = "256Mi"
+          }
+        }
+        volume {
+          name = "scripts"
+          config_map {
+            name         = kubernetes_config_map_v1.snapshot_scripts.metadata[0].name
+            default_mode = "0555"
           }
         }
       }
@@ -334,8 +449,27 @@ resource "kubernetes_deployment" "chrome_service" {
   }
 }
 
+# --- ConfigMap: sidecar + harvester scripts ---
+resource "kubernetes_config_map_v1" "snapshot_scripts" {
+  metadata {
+    name      = "snapshot-scripts"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+    labels    = local.labels
+  }
+  data = {
+    "snapshot_server.py"    = file("${path.module}/files/snapshot_server.py")
+    "snapshot_harvester.py" = file("${path.module}/files/snapshot_harvester.py")
+    # Tiny TCP forwarder used by chrome-service container to bridge
+    # 0.0.0.0:9222 → 127.0.0.1:9223 (Chromium silently ignores
+    # --remote-debugging-address on stock builds; see cdp_bridge.py).
+    "cdp_bridge.py" = file("${path.module}/files/cdp_bridge.py")
+  }
+}
+
 # --- Services ---
-# WS endpoint (internal only, gated by NetworkPolicy + token).
+# CDP endpoint (internal only, gated by NetworkPolicy). 2026-06-04: switched
+# from Playwright WS (:3000) to direct chromium CDP (:9222) so the persistent
+# user-data-dir actually persists cookies; callers use `connect_over_cdp()`.
 resource "kubernetes_service" "chrome_service" {
   metadata {
     name      = "chrome-service"
@@ -346,9 +480,9 @@ resource "kubernetes_service" "chrome_service" {
   spec {
     selector = local.labels
     port {
-      name        = "ws"
-      port        = 3000
-      target_port = 3000
+      name        = "cdp"
+      port        = 9222
+      target_port = 9222
       protocol    = "TCP"
     }
   }
@@ -373,6 +507,27 @@ resource "kubernetes_service" "chrome_novnc" {
   }
 }
 
+# Snapshot-server endpoint (bearer-gated, exposed via ingress sub-path
+# chrome.viktorbarzin.me/api/snapshot — auth=none at the ingress layer
+# because the bearer check happens inside snapshot_server.py).
+resource "kubernetes_service" "chrome_snapshot" {
+  metadata {
+    name      = "chrome-snapshot"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+    labels    = local.labels
+  }
+
+  spec {
+    selector = local.labels
+    port {
+      name        = "snap"
+      port        = 8088
+      target_port = 8088
+      protocol    = "TCP"
+    }
+  }
+}
+
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
@@ -391,12 +546,38 @@ module "ingress" {
   }
 }
 
+# Second ingress on the same host (chrome.viktorbarzin.me) carving out
+# /api/snapshot to the snapshot-server sidecar. Path-level carve-out
+# pattern — see CLAUDE.md "For path-level carve-outs (e.g. wrongmove has
+# `/` behind Anubis but `/api` direct), declare a second ingress_factory
+# with `ingress_path = ["/<path>"]` pointing at the bare backend service."
+module "ingress_snapshot" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": bearer-token gated inside snapshot-server.py; Authentik
+  # forward-auth would require an OIDC cookie that the dev-box refresh
+  # timer can't replay.
+  auth            = "none"
+  dns_type        = "none" # DNS already created by module.ingress
+  namespace       = kubernetes_namespace.chrome_service.metadata[0].name
+  name            = "chrome-snapshot"
+  host            = "chrome"
+  service_name    = kubernetes_service.chrome_snapshot.metadata[0].name
+  port            = 8088
+  ingress_path    = ["/api/snapshot"]
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
 # --- NetworkPolicy: scoped ingress.
-# - TCP/3000 (Playwright WS): only from labelled client namespaces.
-# - TCP/6080 (noVNC HTTP+WS): only from the traefik namespace, since the
-#   public-facing path is `chrome.viktorbarzin.me` ingress → Traefik →
-#   sidecar. Authentik forward-auth still gates external access at the
-#   Traefik layer.
+# - TCP/9222 (Chromium CDP): only from labelled client namespaces.
+# - TCP/6080 (noVNC HTTP+WS): only from the traefik namespace (public path
+#   is chrome.viktorbarzin.me → Traefik → sidecar; Authentik forward-auth
+#   gates external access at the Traefik layer).
+# - TCP/8088 (snapshot-server): only from the traefik namespace
+#   (chrome.viktorbarzin.me/api/snapshot → Traefik → sidecar; bearer token
+#   is the gate inside snapshot-server.py).
 # The cluster has no default-deny, so this NP only takes effect inside
 # chrome-service ns — pods elsewhere remain unaffected.
 resource "kubernetes_network_policy_v1" "ws_ingress" {
@@ -426,8 +607,17 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
           }
         }
       }
+      # Also admit chrome-service's own namespace (the snapshot-harvester
+      # CronJob runs here and needs to reach the CDP endpoint).
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "chrome-service"
+          }
+        }
+      }
       ports {
-        port     = "3000"
+        port     = "9222"
         protocol = "TCP"
       }
     }
@@ -441,6 +631,10 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
       }
       ports {
         port     = "6080"
+        protocol = "TCP"
+      }
+      ports {
+        port     = "8088"
         protocol = "TCP"
       }
     }
@@ -514,6 +708,116 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
               name = "backup"
               persistent_volume_claim {
                 claim_name = module.nfs_chrome_service_backup_host.claim_name
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# --- Snapshot harvester CronJob: hourly storage_state() dump via CDP ---
+# Connects to the live chrome-service CDP endpoint, accesses the
+# persistent default browser context (where Viktor's noVNC logins live),
+# and writes cookies + localStorage to /profile/snapshots/storage-state.json
+# (atomic rename). The snapshot-server sidecar reads from the same file.
+resource "kubernetes_cron_job_v1" "chrome_service_snapshot_harvester" {
+  metadata {
+    name      = "chrome-service-snapshot-harvester"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    successful_jobs_history_limit = 1
+    # Hourly, offset from the backup CronJob (which runs at :47 every 6h)
+    # so they don't fight for the encrypted PVC at the same minute.
+    schedule                  = "23 * * * *"
+    starting_deadline_seconds = 60
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 300
+        template {
+          metadata {}
+          spec {
+            # PVC is RWO — colocate with the chrome-service pod.
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = local.labels
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
+            container {
+              name              = "harvester"
+              image             = local.python_image
+              image_pull_policy = "IfNotPresent"
+              # The Microsoft playwright/python image ships only browsers +
+              # Python — the `playwright` pip package itself is NOT installed
+              # (it's meant for CI that brings its own requirements). We
+              # install at startup, caching to the PVC so subsequent runs
+              # are near-instant.
+              command = ["bash", "-c"]
+              args = [
+                <<-EOT
+                set -e
+                export PIP_CACHE_DIR=/profile/.cache/pip
+                export PIP_DISABLE_PIP_VERSION_CHECK=1
+                python3 -c 'import playwright' 2>/dev/null \
+                  || pip install --quiet --no-warn-script-location playwright==1.48.0
+                exec python3 /scripts/snapshot_harvester.py
+                EOT
+              ]
+              env {
+                name  = "CDP_URL"
+                value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+              }
+              env {
+                name  = "SNAPSHOT_DIR"
+                value = local.snapshot_dir
+              }
+              # Don't try to download browsers — connect_over_cdp doesn't
+              # need them locally.
+              env {
+                name  = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"
+                value = "1"
+              }
+              volume_mount {
+                name       = "profile"
+                mount_path = "/profile"
+              }
+              volume_mount {
+                name       = "scripts"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+              resources {
+                requests = { cpu = "20m", memory = "128Mi" }
+                limits   = { memory = "512Mi" }
+              }
+            }
+            volume {
+              name = "profile"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.profile_encrypted.metadata[0].name
+              }
+            }
+            volume {
+              name = "scripts"
+              config_map {
+                name         = kubernetes_config_map_v1.snapshot_scripts.metadata[0].name
+                default_mode = "0555"
               }
             }
             restart_policy = "OnFailure"

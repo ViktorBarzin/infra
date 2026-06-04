@@ -336,14 +336,32 @@ class PlaybackVerifier:
                 logger.error("playwright not installed — playback verification disabled")
                 return None
             self._playwright = await async_playwright().start()
-            ws_base = os.getenv("CHROME_WS_URL")
-            ws_token = os.getenv("CHROME_WS_TOKEN")
-            if ws_base and ws_token:
-                self._browser = await self._playwright.chromium.connect(
-                    f"{ws_base.rstrip('/')}/{ws_token}", timeout=15_000,
-                )
-                logger.info("connected to remote chrome-service (concurrency=%d)", MAX_CONCURRENCY)
-            else:
+            # CHROME_CDP_URL points to chrome-service's CDP endpoint
+            # (http://chrome-service.chrome-service.svc:9222 by default).
+            # Migrated 2026-06-04 from `chromium.connect(ws_url)` because
+            # chrome-service now runs chromium directly with persistent
+            # user-data-dir for cookie warming — launch-server couldn't
+            # persist. The CDP `Browser` exposes the persistent default
+            # context via `browser.contexts[0]`; here we just call
+            # `new_context()` for incognito-style isolation per verify
+            # round, matching the previous behaviour.
+            cdp_url = os.getenv("CHROME_CDP_URL")
+            if cdp_url:
+                try:
+                    self._browser = await self._playwright.chromium.connect_over_cdp(
+                        cdp_url, timeout=15_000,
+                    )
+                    logger.info("connected to remote chrome-service via CDP (concurrency=%d)", MAX_CONCURRENCY)
+                except Exception:
+                    logger.exception(
+                        "CDP connect failed (%s) — falling back to in-process Chromium", cdp_url,
+                    )
+                    self._browser = None
+            if self._browser is None:
+                # Either CHROME_CDP_URL was unset, or CDP connect failed.
+                # Fall back to in-process headless so the verifier still
+                # returns playable/unplayable verdicts (degraded but
+                # functional — anti-bot pages may bypass).
                 self._browser = await self._playwright.chromium.launch(
                     headless=True,
                     args=[
@@ -355,7 +373,10 @@ class PlaybackVerifier:
                         "--autoplay-policy=no-user-gesture-required",
                     ],
                 )
-                logger.warning("CHROME_WS_URL not set — using in-process Chromium (concurrency=%d)", MAX_CONCURRENCY)
+                logger.warning(
+                    "using in-process Chromium (CHROME_CDP_URL unset or CDP connect failed) (concurrency=%d)",
+                    MAX_CONCURRENCY,
+                )
             return self._browser
 
     async def shutdown(self) -> None:

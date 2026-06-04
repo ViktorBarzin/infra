@@ -86,12 +86,16 @@ def _looks_like_hls_playlist(url: str) -> bool:
     return bool(_HLS_URL_RE.search(url))
 
 
-def _resolve_chrome_ws() -> str | None:
-    base = os.getenv("CHROME_WS_URL")
-    token = os.getenv("CHROME_WS_TOKEN")
-    if not base or not token:
-        return None
-    return f"{base.rstrip('/')}/{token}"
+def _resolve_chrome_cdp() -> str | None:
+    """Resolve the CHROME_CDP_URL env var (set by f1-stream's TF stack).
+
+    Migrated 2026-06-04 from CHROME_WS_URL/CHROME_WS_TOKEN. chrome-service
+    now runs chromium directly with CDP exposed on :9222 so its persistent
+    user-data-dir actually persists cookies (the old playwright launch-server
+    pattern created ephemeral contexts per `connect()`). NetworkPolicy
+    (labelled client namespaces only) is the only gate — no path token.
+    """
+    return os.getenv("CHROME_CDP_URL")
 
 
 class ChromeBrowserExtractor(BaseExtractor):
@@ -106,10 +110,10 @@ class ChromeBrowserExtractor(BaseExtractor):
         return "Chrome Browser"
 
     async def extract(self) -> list[ExtractedStream]:
-        ws_url = _resolve_chrome_ws()
-        if not ws_url:
+        cdp_url = _resolve_chrome_cdp()
+        if not cdp_url:
             logger.warning(
-                "[chrome-browser] CHROME_WS_URL/TOKEN not set — extractor disabled"
+                "[chrome-browser] CHROME_CDP_URL not set — extractor disabled"
             )
             return []
 
@@ -123,9 +127,9 @@ class ChromeBrowserExtractor(BaseExtractor):
         # round. Contexts are cheap; the browser is shared.
         async with async_playwright() as p:
             try:
-                browser = await p.chromium.connect(ws_url, timeout=15_000)
+                browser = await p.chromium.connect_over_cdp(cdp_url, timeout=15_000)
             except Exception:
-                logger.exception("[chrome-browser] connect to chrome-service failed")
+                logger.exception("[chrome-browser] CDP connect to chrome-service failed")
                 return []
 
             results: list[ExtractedStream] = []
