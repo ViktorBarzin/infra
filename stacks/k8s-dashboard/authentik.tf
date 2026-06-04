@@ -34,6 +34,15 @@ data "authentik_flow" "default_provider_invalidation" {
   slug = "default-provider-invalidation-flow"
 }
 
+# RS256 signing keypair — REQUIRED, else Authentik signs the id_token with
+# HS256 (client-secret HMAC) and publishes an EMPTY JWKS, so oauth2-proxy AND
+# the apiserver fail signature verification ("failed to verify id token
+# signature" / 500 on the OAuth callback). Same keypair the `kubernetes`
+# provider uses.
+data "authentik_certificate_key_pair" "signing" {
+  name = "authentik Self-signed Certificate"
+}
+
 # Default OIDC scope mappings. `profile` carries the `groups` claim in
 # Authentik's default expression, which the apiserver reads via
 # --oidc-groups-claim=groups. offline_access enables refresh tokens.
@@ -74,6 +83,7 @@ resource "authentik_provider_oauth2" "k8s_dashboard" {
   access_token_validity      = "hours=1"
   refresh_token_validity     = "days=30"
   include_claims_in_id_token = true
+  signing_key                = data.authentik_certificate_key_pair.signing.id
 
   property_mappings = concat(
     data.authentik_property_mapping_provider_scope.defaults.ids,
