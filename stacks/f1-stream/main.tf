@@ -148,18 +148,14 @@ resource "kubernetes_deployment" "f1-stream" {
           }
           # Verifier connects to in-cluster headed Chromium pool — see
           # stacks/chrome-service/. Falls back to in-process headless if unset.
+          # 2026-06-04: migrated WS (:3000 / path-token) → CDP (:9222 /
+          # NetworkPolicy-gated). Token is no longer needed for the
+          # connection itself; the chrome-service-client-secrets ExternalSecret
+          # below stays in place because the snapshot endpoint (dev-box only,
+          # not used by f1-stream) reuses the same Vault key.
           env {
-            name  = "CHROME_WS_URL"
-            value = "ws://chrome-service.chrome-service.svc.cluster.local:3000"
-          }
-          env {
-            name = "CHROME_WS_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "chrome-service-client-secrets"
-                key  = "api_bearer_token"
-              }
-            }
+            name  = "CHROME_CDP_URL"
+            value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
           }
           # The embed proxy (this pod's /embed?url=…) must be reachable from
           # the remote chrome-service pod. Default 127.0.0.1 only works for
