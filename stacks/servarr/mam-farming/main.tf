@@ -6,7 +6,6 @@ variable "namespace" {
 locals {
   python_image = "docker.io/library/python:3.12-alpine"
   pip_prefix   = "pip install -q requests > /dev/null 2>&1; python3 /tmp/script.py"
-  data_pvc     = "mam-farming-data-proxmox"
 
   # Dry-run window was satisfied by a one-shot test on 2026-04-19 that
   # produced 466 `never_started` candidates and 0 matches in any other
@@ -15,39 +14,22 @@ locals {
   janitor_dry_run = "0"
 }
 
-# ------------------------------- PVC -------------------------------
-# Shared scratch volume for cookie + grabbed-ID dedup list. The existing
-# in-cluster PVC (kubectl-applied 2026-04-14) is adopted via an `import {}`
-# block declared in the root module (servarr/main.tf) — Terraform 1.5+
-# rejects imports inside child modules.
-
-resource "kubernetes_persistent_volume_claim" "mam_data" {
-  wait_until_bound = false
-  metadata {
-    name      = local.data_pvc
-    namespace = var.namespace
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# ----------------------------- NFS data volume -----------------------
+# Migrated off proxmox-lvm (2026-06-04): the cookie + grabbed-ID dedup list
+# are two plain-text files (no embedded DB), so NFS is safe and removes this
+# volume from the per-VM SCSI-LUN hotplug path entirely — a stuck `query-pci`
+# on a disk-heavy node VM used to wedge the grabber in ContainerCreating (the
+# disk never enumerated, Forbid blocked every run → MAMFarmingStuck). NFS
+# mounts over the network, consumes zero LUN slots, and is RWX so the grabber
+# and bp-spender can co-schedule on any node. See docs/architecture/storage.md
+# "Per-VM SCSI-LUN cap" lever #1.
+module "mam_data_nfs" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-mam-farming-data"
+  namespace  = var.namespace
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/mam-farming"
+  storage    = "1Gi"
 }
 
 # --------------------------- Grabber ---------------------------------
@@ -120,7 +102,7 @@ resource "kubernetes_cron_job_v1" "grabber" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.mam_data.metadata[0].name
+                claim_name = module.mam_data_nfs.claim_name
               }
             }
           }
@@ -204,7 +186,7 @@ resource "kubernetes_cron_job_v1" "bp_spender" {
             volume {
               name = "data"
               persistent_volume_claim {
-                claim_name = kubernetes_persistent_volume_claim.mam_data.metadata[0].name
+                claim_name = module.mam_data_nfs.claim_name
               }
             }
           }
