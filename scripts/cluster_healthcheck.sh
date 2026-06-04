@@ -1165,11 +1165,21 @@ check_kyverno() {
 check_nfs() {
     section 20 "NFS Connectivity"
 
+    # Probe order: showmount (richest — lists exports, needs nfs-common) →
+    # nc port check → bash /dev/tcp (no external tooling at all). The last
+    # fallback guarantees correctness on hosts lacking showmount/nc (e.g. the
+    # DevVM ships neither nfs-common nor a GNU nc). NOTE: the timeout flag is
+    # `-w` (portable, OpenBSD + GNU + macOS nc); `-G` is macOS-only and errors
+    # out as "invalid option" on Linux — which previously made this check FAIL
+    # even when 2049 was wide open.
     if showmount -e 192.168.1.127 &>/dev/null; then
         pass "NFS server 192.168.1.127 (Proxmox) reachable (exports listed)"
         json_add "nfs" "PASS" "NFS reachable"
-    elif nc -z -G 3 192.168.1.127 2049 &>/dev/null; then
+    elif nc -z -w 3 192.168.1.127 2049 &>/dev/null; then
         pass "NFS server 192.168.1.127 port 2049 open"
+        json_add "nfs" "PASS" "NFS port open"
+    elif timeout 3 bash -c 'exec 3<>/dev/tcp/192.168.1.127/2049' &>/dev/null; then
+        pass "NFS server 192.168.1.127 port 2049 open (/dev/tcp)"
         json_add "nfs" "PASS" "NFS port open"
     else
         [[ "$QUIET" == true ]] && section_always 20 "NFS Connectivity"
