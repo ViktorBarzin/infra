@@ -91,15 +91,19 @@ resource "helm_release" "kubernetes-dashboard" {
 
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
-  namespace        = kubernetes_namespace.k8s-dashboard.metadata[0].name
-  name             = "kubernetes-dashboard"
-  service_name     = "kubernetes-dashboard-kong-proxy"
+  namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
+  name      = "kubernetes-dashboard"
+  # Route through the token-injector: Authentik forward-auth (auth=required) gates
+  # access AND injects X-authentik-username; the injector maps that to the user's
+  # ServiceAccount token and sets Authorization: Bearer so the dashboard skips its
+  # token-paste login. See dashboard_injector.tf.
+  service_name     = "dashboard-token-injector"
   host             = "k8s"
   dns_type         = "proxied"
   tls_secret_name  = var.tls_secret_name
   auth             = "required"
-  backend_protocol = "HTTPS"
-  port             = 443
+  backend_protocol = "HTTP"
+  port             = 80
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Kubernetes Dashboard"
