@@ -819,16 +819,20 @@ try:
             continue
 
         beats = heartbeats.get(mid, [])
+        status = None
         if beats:
             last_beat = beats[-1]
             if isinstance(last_beat, list):
                 last_beat = last_beat[-1] if last_beat else {}
-            status = last_beat.get("status", 0) if isinstance(last_beat, dict) else 0
+            status = last_beat.get("status") if isinstance(last_beat, dict) else None
             if hasattr(status, "value"):
                 status = status.value
-            is_up = (status == 1)
-        else:
-            is_up = False
+        # Only an explicit DOWN (status==0) counts as down. PENDING (2,
+        # mid-retry) and MAINTENANCE (3) are NOT outages, and no beats = no
+        # data (not an outage). Counting pending/no-data as down caused
+        # recurring false WARNs (Novelapp, ha-sofia 2026-06-04) for monitors
+        # uptime-kuma itself logged 0 downs over 24h.
+        is_up = (status != 0)
 
         if is_external:
             if is_up:
