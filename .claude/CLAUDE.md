@@ -104,13 +104,15 @@ have `ignore_changes` on `…container[0].image` (KEEL_IGNORE_IMAGE) so CI
 `:latest` + `imagePullPolicy: Always` (fresh pod each run) instead of a deploy
 step. **Never** `set image`/`rollout restart` operator-managed StatefulSets
 (memory id=740). Reference impls: `tuya_bridge/.woodpecker.yml`,
-`job-hunter`. This reverses decision #12 of
+`job-hunter`, `f1-stream` (viktor/f1-stream, extracted from this monorepo
+2026-06-04). This reverses decision #12 of
 `docs/plans/2026-05-16-auto-upgrade-apps-design.md` for owned (not upstream)
 images.
 
 **Flow (GHA-migrated apps)**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
 
-**Migrated to GHA** (10): Website, k8s-portal, f1-stream, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search, council-complaints
+**Migrated to GHA** (9): Website, k8s-portal, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search, council-complaints
+**Woodpecker-native owned-app build** (Forgejo registry, build->deploy in one `.woodpecker.yml`): tuya_bridge, job-hunter, f1-stream (extracted to viktor/f1-stream 2026-06-04; Woodpecker repo id 166)
 **Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
 
 **Per-project files**:
@@ -119,7 +121,7 @@ images.
 - `.woodpecker/build-fallback.yml` — Old full build pipeline preserved (event: `deployment` — never auto-fires)
 
 **Woodpecker API**: Uses **numeric repo IDs** (`/api/repos/2/pipelines`), NOT owner/name paths (those return HTML).
-Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handler=6, audiblez-web=9, f1-stream=10, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79, council-complaints=TBD
+Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handler=6, audiblez-web=9, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79, council-complaints=TBD (f1-stream's old GHA-era id 10 is defunct; it's now a Woodpecker-native build at repo id 166)
 
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
