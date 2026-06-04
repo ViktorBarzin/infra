@@ -44,7 +44,23 @@ resource "kubernetes_role_binding" "dashboard_owner_admin" {
   }
 }
 
-# Cluster-wide read-only so the dashboard nav (namespaces, nodes, etc.) renders.
+# Minimal cluster-read for the dashboard nav ONLY: the namespace picker needs to
+# list namespaces, and the Nodes view needs nodes. Deliberately does NOT grant
+# cluster-wide read of pods/services/configmaps/etc — a namespace-owner can see
+# the namespace LIST but can only read resources INSIDE their own namespace
+# (where they have `admin`). Keeps tenants from reading each other's workloads
+# and configmaps. (Separate from the broader OIDC `namespace_owner_readonly`.)
+resource "kubernetes_cluster_role" "dashboard_nav_readonly" {
+  metadata {
+    name = "dashboard-nav-readonly"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["namespaces", "nodes"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+
 resource "kubernetes_cluster_role_binding" "dashboard_owner_readonly" {
   for_each = nonsensitive({ for pair in local.namespace_owner_pairs : "${pair.user_key}-${pair.namespace}" => pair })
 
@@ -55,7 +71,7 @@ resource "kubernetes_cluster_role_binding" "dashboard_owner_readonly" {
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.namespace_owner_readonly.metadata[0].name
+    name      = kubernetes_cluster_role.dashboard_nav_readonly.metadata[0].name
   }
 
   subject {
