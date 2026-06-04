@@ -190,6 +190,7 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 **K8s cluster DNS path**:
 - CoreDNS forwards `.viktorbarzin.lan` to Technitium ClusterIP (10.96.0.53)
 - CoreDNS forwards public queries to pfSense (10.0.20.1), 8.8.8.8, 1.1.1.1
+- **In-cluster `forgejo.viktorbarzin.me` → Traefik ClusterIP**: a CoreDNS `rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local` (Corefile in `stacks/technitium/modules/technitium/main.tf`) keeps pod registry pulls/pushes/builds off the public-IP hairpin. The ETP=Local Traefik LB (`.203`) is not reliably hairpin-reachable from pods, and the public path (the bullet above) intermittently timed out **buildkit pushes** from Woodpecker build pods — which, unlike kubelet, do NOT use the per-node containerd Forgejo mirror. Resolving the Service by name auto-tracks the ClusterIP (no rot on a Traefik renumber); Traefik's `*.viktorbarzin.me` wildcard keeps SNI/TLS valid. Makes the per-pod woodpecker-server hostAlias belt-and-suspenders. (beads code-yh33)
 
 **pfSense dnsmasq (DNS Forwarder)**:
 - Listens on LAN (10.0.10.1), OPT1 (10.0.20.1), localhost only — NOT on WAN (192.168.1.2)

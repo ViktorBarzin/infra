@@ -60,6 +60,15 @@ resource "kubernetes_config_map" "coredns" {
               fallthrough in-addr.arpa ip6.arpa
               ttl 30
           }
+          # Pin forgejo.viktorbarzin.me to the in-cluster Traefik Service so pod
+          # builds/pulls/pushes resolve to its ClusterIP, not the public IP that
+          # hairpins through the WAN gateway and intermittently times out buildkit
+          # pushes (woodpecker build pods don't use the node containerd mirror that
+          # fixes kubelet pulls). Service-name target auto-tracks the ClusterIP (no
+          # rot); Traefik's *.viktorbarzin.me wildcard keeps SNI/TLS valid. The
+          # woodpecker-server hostAlias (main.tf) becomes belt-and-suspenders.
+          # (beads code-yh33 — in-cluster *.viktorbarzin.me hairpin)
+          rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local
           prometheus :9153
           forward . 10.0.20.1 8.8.8.8 1.1.1.1 {
               policy sequential
