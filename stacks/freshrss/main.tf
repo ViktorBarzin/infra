@@ -7,7 +7,7 @@ resource "kubernetes_namespace" "immich" {
   metadata {
     name = "freshrss"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -91,33 +91,16 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
-resource "kubernetes_persistent_volume_claim" "extensions_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "freshrss-extensions-proxmox"
-    namespace = kubernetes_namespace.immich.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Migrated proxmox-lvm -> NFS (2026-06-04) to free a per-node SCSI-LUN slot
+# (node6 LUN-cap relief, beads code-dfjn). FreshRSS extensions are static
+# plugin files (no embedded DB; the app DB is external MySQL), so NFS is safe.
+module "nfs_extensions" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "freshrss-extensions"
+  namespace  = kubernetes_namespace.immich.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/freshrss/extensions"
+  storage    = "1Gi"
 }
 
 
@@ -197,7 +180,7 @@ resource "kubernetes_deployment" "freshrss" {
         volume {
           name = "extensions"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.extensions_proxmox.metadata[0].name
+            claim_name = module.nfs_extensions.claim_name
           }
         }
       }
