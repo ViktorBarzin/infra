@@ -1,5 +1,13 @@
 # K8s Dashboard SSO via Authentik (oauth2-proxy) — Implementation Plan
 
+> **⚠️ AS-BUILT DIVERGED (2026-06-04).** Tasks 2–3 (oauth2-proxy + `k8s-dashboard`
+> Authentik app) shipped as written, but the audience strategy here is WRONG: the
+> apiserver matches the token **issuer** exactly, and a separate app has a
+> different per-slug issuer — so the dual-`aud` trick can't avoid an apiserver
+> change. The implementation pivoted to **Option B**: a structured multi-issuer
+> `AuthenticationConfiguration` on the apiserver (`stacks/rbac`). See the
+> **ADDENDUM (§12)** in `2026-06-04-k8s-dashboard-sso-design.md` for the as-built.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let namespace-owner users (e.g. gheorghe / `vabbit81`) open `https://k8s.viktorbarzin.me`, log in once with Authentik, and manage their own namespace in the Kubernetes Dashboard under their existing per-user RBAC.

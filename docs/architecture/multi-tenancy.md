@@ -171,6 +171,18 @@ Each user receives:
    ```
 6. User can now run `kubectl` commands
 
+### Web Dashboard (no CLI needed)
+
+Namespace-owners can also manage their namespace from the **Kubernetes
+Dashboard** at `https://k8s.viktorbarzin.me` using their Authentik account — no
+kubectl, no token paste. oauth2-proxy runs the SSO flow and injects the user's
+OIDC id_token, so the dashboard talks to the apiserver **as the user**: a
+namespace-owner gets full control of their namespace(s) and read-only
+visibility elsewhere; admins see everything. Login is restricted (Authentik
+group policy) to the `kubernetes-*` groups. See
+`docs/architecture/authentication.md` → "Kubernetes RBAC via OIDC" and
+`docs/plans/2026-06-04-k8s-dashboard-sso-design.md`.
+
 ### RBAC Groups
 
 | Group | ClusterRole | Scope | Members |
