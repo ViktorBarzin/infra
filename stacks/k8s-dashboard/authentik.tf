@@ -89,20 +89,12 @@ resource "authentik_application" "k8s_dashboard" {
   policy_engine_mode = "any"
 }
 
-# Restrict who can complete the OIDC flow to the K8s RBAC groups.
-resource "authentik_policy_expression" "k8s_dashboard_groups" {
-  name       = "k8s-dashboard-group-access"
-  expression = <<-EOT
-    return (
-        ak_is_group_member(request.user, name="kubernetes-admins")
-        or ak_is_group_member(request.user, name="kubernetes-power-users")
-        or ak_is_group_member(request.user, name="kubernetes-namespace-owners")
-    )
-  EOT
-}
-
-resource "authentik_policy_binding" "k8s_dashboard_groups" {
-  target = authentik_application.k8s_dashboard.uuid
-  policy = authentik_policy_expression.k8s_dashboard_groups.id
-  order  = 0
-}
+# NO group-restriction policy: the kube-apiserver RBAC (per-user `User`
+# bindings keyed on the OIDC email claim, from k8s_users in stacks/rbac) is the
+# real, authoritative gate — exactly like the kubelogin CLI. Any Authentik user
+# can complete the login, but only users with an RBAC binding can do anything
+# (everyone else sees an empty/forbidden dashboard). A group gate here was
+# both redundant with RBAC AND wrong: it gated on `kubernetes-*` group
+# membership, but admins (e.g. vbarzin@gmail.com, in Home Server Admins) get
+# cluster-admin via their email binding, not via those groups — so the gate
+# locked out legitimate admins.
