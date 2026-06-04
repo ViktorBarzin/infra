@@ -37,6 +37,16 @@ locals {
     PUSH_PROVIDER       = "webpush"
     LLM_MODE            = "fake"
     MAIL_INGEST_ENABLED = "false"
+    # Outbound mail for linked-email verification — submitted via the cluster
+    # mailserver as spam@ (which relays out via Brevo). SMTP_PASSWORD comes from
+    # tripit-secrets (mapped to the existing PLANS_IMAP_PASSWORD). PUBLIC_BASE_URL
+    # builds the confirmation link mailed to the address.
+    EMAIL_PROVIDER  = "smtp"
+    SMTP_HOST       = "mailserver.mailserver.svc"
+    SMTP_PORT       = "587"
+    SMTP_USER       = "spam@viktorbarzin.me"
+    SMTP_FROM       = "spam@viktorbarzin.me"
+    PUBLIC_BASE_URL = "https://tripit.viktorbarzin.me"
   }
 }
 
@@ -106,6 +116,9 @@ resource "kubernetes_manifest" "external_secret" {
         # secret/owntracks respectively.
         { secretKey = "SLACK_BOT_TOKEN", remoteRef = { key = "tripit", property = "SLACK_BOT_TOKEN" } },
         { secretKey = "DAWARICH_API_KEY", remoteRef = { key = "tripit", property = "DAWARICH_API_KEY" } },
+        # Linked-email verification submits SMTP as spam@; reuse its existing
+        # password (no new secret) as SMTP_PASSWORD.
+        { secretKey = "SMTP_PASSWORD", remoteRef = { key = "tripit", property = "PLANS_IMAP_PASSWORD" } },
       ]
     }
   }
@@ -573,6 +586,26 @@ module "ingress_calendar" {
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/calendar"]
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
+}
+
+# Linked-email confirm carve-out: GET /api/emails/confirm?token=… is gated by the
+# verification token mailed to the address (not Authentik), so the emailed link
+# works without a session — same shape as the calendar feed carve-out.
+module "ingress_emails_confirm" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": GET /api/emails/confirm?token=… is gated by the verification
+  # token mailed to the address (not Authentik), so the emailed link works
+  # without a session — same rationale as the calendar feed carve-out.
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "none" # main `module.ingress` owns the DNS record for this host
+  namespace        = kubernetes_namespace.tripit.metadata[0].name
+  name             = "tripit-emails-confirm"
+  service_name     = "tripit"
+  full_host        = "tripit.viktorbarzin.me"
+  ingress_path     = ["/api/emails/confirm"]
   port             = 8080
   tls_secret_name  = var.tls_secret_name
 }
