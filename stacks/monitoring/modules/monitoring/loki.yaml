@@ -70,7 +70,13 @@ singleBinary:
   resources:
     requests:
       cpu: 250m
-      memory: 3Gi
+      # Right-sized 2026-06-04 (3Gi->1Gi): VPA upperBound 364Mi, actual ~315Mi.
+      # 1Gi request is ~3x the observed ceiling; the 4Gi limit (Burstable)
+      # keeps headroom for query spikes. Frees 2Gi of monitoring-quota
+      # requests.memory, taking it 89%->~79% (under the >80% WARN). NOTE: the
+      # alloy DaemonSet (562Mi/node) grows with node count, so this can creep
+      # back over 80% as the cluster expands — bump the quota then.
+      memory: 1Gi
     limits:
       memory: 4Gi
 
