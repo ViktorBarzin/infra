@@ -91,21 +91,15 @@ resource "helm_release" "kubernetes-dashboard" {
 
 module "ingress" {
   source           = "../../modules/kubernetes/ingress_factory"
-  namespace    = kubernetes_namespace.k8s-dashboard.metadata[0].name
-  name         = "kubernetes-dashboard"
-  service_name = "oauth2-proxy"
-  host         = "k8s"
-  dns_type     = "proxied"
-  tls_secret_name = var.tls_secret_name
-  # auth = "none": oauth2-proxy is the gate — it runs the Authentik OIDC
-  # code-flow and injects the user's id_token as Bearer for dashboard->apiserver
-  # auth. The apiserver trusts the k8s-dashboard issuer (rbac stack structured
-  # AuthenticationConfiguration), so per-user RBAC applies. A group policy on
-  # the Authentik app restricts login to the kubernetes-* RBAC groups.
-  # See docs/plans/2026-06-04-k8s-dashboard-sso-design.md.
-  auth             = "none"
-  backend_protocol = "HTTP"
-  port             = 4180
+  namespace        = kubernetes_namespace.k8s-dashboard.metadata[0].name
+  name             = "kubernetes-dashboard"
+  service_name     = "kubernetes-dashboard-kong-proxy"
+  host             = "k8s"
+  dns_type         = "proxied"
+  tls_secret_name  = var.tls_secret_name
+  auth             = "required"
+  backend_protocol = "HTTPS"
+  port             = 443
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Kubernetes Dashboard"
