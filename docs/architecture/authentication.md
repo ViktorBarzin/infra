@@ -122,26 +122,32 @@ The intended model (binds by `email`, see `stacks/rbac/modules/rbac/main.tf`):
 `admin` → `cluster-admin`; `power-user` → custom read-mostly ClusterRole;
 `namespace-owner` → `admin` RoleBinding in their namespace(s) + cluster read-only.
 
-### Kubernetes Dashboard access (token-paste, interim)
+### Kubernetes Dashboard access (auto-injected SA token)
 
-Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses:
+Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses a
+**token-injector** instead — users never see the dashboard's token prompt:
 
-1. **Authentik forward-auth** gates *who reaches the login page*
-   (`admin-services-restriction` policy — admits `Home Server Admins` plus the
-   `kubernetes-admins` / `kubernetes-power-users` / `kubernetes-namespace-owners`
-   groups for this host; see `stacks/authentik/admin-services-restriction.tf`).
-2. **Token paste**: each namespace-owner has a ServiceAccount
-   (`dashboard-<user>` in their namespace, `stacks/rbac/modules/rbac/dashboard-sa.tf`)
-   scoped to `admin` on their namespace(s) + cluster read-only, with a long-lived
-   token they paste into the Dashboard's "Token" login. The pasted token — not
-   forward-auth — is the per-namespace security boundary.
-   Retrieve: `kubectl -n <ns> get secret dashboard-<user>-token -o jsonpath='{.data.token}' | base64 -d`.
-   Admins use the cluster-admin `kubernetes-dashboard` SA token
-   (`kubectl create token kubernetes-dashboard -n kubernetes-dashboard`).
+1. **Authentik forward-auth** (`auth=required`) gates access AND injects
+   `X-authentik-username` (the user's email). The `admin-services-restriction`
+   policy admits `Home Server Admins` plus `kubernetes-admins` /
+   `kubernetes-power-users` / `kubernetes-namespace-owners` for this host
+   (`stacks/authentik/admin-services-restriction.tf`).
+2. **Token-injector** (`stacks/k8s-dashboard/dashboard_injector.tf`): an nginx
+   that maps `X-authentik-username` → that user's ServiceAccount token and sets
+   `Authorization: Bearer` before proxying to kong-proxy, so the dashboard
+   auto-authenticates. Namespace-owners → `dashboard-<user>` SA (admin on their
+   namespace + cluster read-only, `stacks/rbac/modules/rbac/dashboard-sa.tf`),
+   auto-derived from `k8s_users`. Admins → the cluster-admin `kubernetes-dashboard`
+   SA token (admin identities listed explicitly in `dashboard_injector.tf`, since
+   their Authentik login email ≠ their `k8s_users` email).
+   The injected token is the per-namespace security boundary; the map lives in a
+   **Secret** (namespace-owners' cluster-read covers configmaps, not secrets).
+
+> Manual token (fallback / break-glass): `kubectl -n <ns> get secret dashboard-<user>-token -o jsonpath='{.data.token}' | base64 -d`, or `kubectl create token kubernetes-dashboard -n kubernetes-dashboard` for admin.
 
 The oauth2-proxy + `k8s-dashboard` Authentik OIDC app (built for the
 seamless-SSO design) remain deployed but **idle/unwired** pending the
-apiserver-OIDC fix; the dashboard ingress is on forward-auth.
+apiserver-OIDC fix.
 
 ### Authentik Groups
 
