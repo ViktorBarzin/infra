@@ -1554,12 +1554,18 @@ serverFiles:
             annotations:
               summary: "Redis backup CronJob has never completed successfully"
           - alert: PrometheusBackupStale
-            expr: (time() - prometheus_backup_last_success_timestamp{job="prometheus-backup"}) > 2764800
+            # The backup sidecar runs monthly on the 1st SUNDAY 04:00 UTC.
+            # Consecutive first-Sundays can be up to ~35-37 days apart (e.g.
+            # May 3 → Jun 7 = 35d), so a 32d threshold false-fired every year
+            # in the gap before the next run. 40d (3456000s) clears the max
+            # first-Sunday spacing with margin while still catching a genuinely
+            # missed monthly backup.
+            expr: (time() - prometheus_backup_last_success_timestamp{job="prometheus-backup"}) > 3456000
             for: 30m
             labels:
               severity: critical
             annotations:
-              summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 32d)"
+              summary: "Prometheus backup is {{ $value | humanizeDuration }} old (threshold: 40d)"
           - alert: PrometheusBackupNeverRun
             expr: absent(prometheus_backup_last_success_timestamp{job="prometheus-backup"})
             for: 32d
