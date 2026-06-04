@@ -136,7 +136,8 @@ Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses a
    that maps `X-authentik-username` → that user's ServiceAccount token and sets
    `Authorization: Bearer` before proxying to kong-proxy, so the dashboard
    auto-authenticates. Namespace-owners → `dashboard-<user>` SA (admin on their
-   namespace + cluster read-only, `stacks/rbac/modules/rbac/dashboard-sa.tf`),
+   namespace + read-only on the namespace list & nodes only (dashboard-nav-readonly,
+   NOT cross-tenant resource reads); `stacks/rbac/modules/rbac/dashboard-sa.tf`),
    auto-derived from `k8s_users`. Admins → the cluster-admin `kubernetes-dashboard`
    SA token (admin identities listed explicitly in `dashboard_injector.tf`, since
    their Authentik login email ≠ their `k8s_users` email).
