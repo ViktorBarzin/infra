@@ -25,4 +25,9 @@ dependency "dbaas" {
 inputs = {
   # fire-planner repo HEAD — bump on every deploy.
   image_tag = "latest"
+
+  # Bulk ingest toggle — flip to true once, apply, monitor job, then reset to false.
+  run_examples_bulk_ingest = true
+  # qwen3-8b: GPU has ~10.7 GB free (immich-ml using ~4 GB of 15 GB total).
+  examples_llm_model = "qwen3-8b"
 }

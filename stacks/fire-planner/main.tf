@@ -806,6 +806,10 @@ resource "kubernetes_job_v1" "examples_bulk_ingest" {
             name  = "LLM_MODEL"
             value = var.examples_llm_model
           }
+          env {
+            name  = "LLM_CONCURRENCY"
+            value = "3"
+          }
         }
       }
     }
