@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "wealthfolio" {
     name = "wealthfolio"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -657,6 +657,25 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
           metadata {}
           spec {
             restart_policy = "OnFailure"
+            # Co-locate with the main wealthfolio app pod: both mount the same
+            # RWO `wealthfolio-data-encrypted` volume (the shared wealthfolio.db
+            # SQLite). An RWO volume attaches to only ONE node, so without this
+            # the monthly sync pod can land on a different node than the app and
+            # hang forever with a Multi-Attach error (observed 2026-06-04: a
+            # 2026-06-01 sync sat ContainerCreating for 3 days on node4 while the
+            # app held the volume on node3).
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "wealthfolio"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
             image_pull_secrets {
               name = "registry-credentials"
             }
