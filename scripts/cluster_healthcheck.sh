@@ -1714,6 +1714,15 @@ for e in entries:
     state = e.get("state", "loaded")
     domain = e.get("domain", "?")
     title = e.get("title", "?")
+    # Skip intentionally-off entries — they are NOT failures:
+    #  * disabled_by set  -> user/integration deliberately disabled it
+    #  * source=="ignore" -> a discovered integration the user chose to ignore
+    #    (HA's "don't suggest this" marker; never meant to load)
+    # Counting these produced a false "N not loaded" WARN (2026-06-04:
+    # wyoming/ollama were disabled_by=user; mass_queue/dlna_dms/yalexs_ble
+    # were source=ignore).
+    if e.get("disabled_by") is not None or e.get("source") == "ignore":
+        continue
     if state == "setup_error" or state == "setup_retry":
         setup_error.append(f"{domain} ({title})")
     elif state == "not_loaded":
