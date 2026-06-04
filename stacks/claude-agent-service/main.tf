@@ -63,6 +63,20 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # Forgejo push token for opening PRs on forgejo.viktorbarzin.me
+          # (exec agent uses the Forgejo API via curl + $FORGEJO_TOKEN, and
+          # git push over HTTPS via the url.insteadOf rewrite in git-init).
+          # SECURITY: this is the viktor-scoped admin PAT (write:package +
+          # repo) shared by Woodpecker — see secret/ci/global/forgejo_push_token.
+          # The shared claude-agent pod (all agents on it) can now push to
+          # and open PRs against any repo this token can reach.
+          secretKey = "FORGEJO_TOKEN"
+          remoteRef = {
+            key      = "ci/global"
+            property = "forgejo_push_token"
+          }
+        },
+        {
           secretKey = "API_BEARER_TOKEN"
           remoteRef = {
             key      = "claude-agent-service"
@@ -96,6 +110,18 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "viktor"
             property = "alertmanager_slack_api_url"
+          }
+        },
+        {
+          # Home Assistant MCP endpoint (community ha-mcp add-on on ha-sofia).
+          # The URL embeds a secret path-token, so it ships as a secret, not a
+          # literal. Referenced as ${HA_MCP_URL} by the project-scoped .mcp.json
+          # in the infra repo root. Same Vault key OpenClaw uses
+          # (secret/openclaw -> ha_sofia_mcp_url).
+          secretKey = "HA_MCP_URL"
+          remoteRef = {
+            key      = "openclaw"
+            property = "ha_sofia_mcp_url"
           }
         },
       ]
@@ -187,6 +213,83 @@ resource "kubernetes_cluster_role_binding" "claude_agent" {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role.claude_agent.metadata[0].name
+  }
+}
+
+# -----------------------------------------------------------------------------
+# claude-agent-exec — broad cluster WRITE for the executor agent
+# -----------------------------------------------------------------------------
+# Added 2026-06-04 for the nextcloud-todos-exec executor elevation. The
+# existing `claude-agent` ClusterRole above stays as-is (read + patch
+# deployments + pods/exec) — this is purely ADDITIVE.
+#
+# SECURITY — VERY BROAD, FLAG FOR REVIEW:
+#   - This grants the SHARED claude-agent pod cluster-wide
+#     get/list/watch/create/update/patch/delete across the common API groups
+#     below. EVERY agent that runs on this pod inherits it.
+#   - It explicitly includes core `secrets` (read+write, cluster-wide) and
+#     rbac roles/rolebindings (create/update/delete) — i.e. the agent can
+#     read any Secret in any namespace and grant itself further RBAC. That is
+#     close to cluster-admin in blast radius, minus a few group wildcards.
+#   - It intentionally does NOT bind the built-in `cluster-admin` ClusterRole,
+#     so it lacks: arbitrary CRDs/apiextensions, clusterroles/clusterrolebindings
+#     bind/escalate beyond what's listed, raw `*` on `*`. Viktor can widen to
+#     `cluster-admin` by swapping the role_ref below if he decides the scoped
+#     list is too restrictive.
+# Terraform-managed cluster resources must still be changed via `scripts/tg
+# apply` (CLAUDE.md Terraform-only rule) — this RBAC is for ad-hoc kubectl
+# writes the exec agent needs, not a license to drift Terraform state.
+resource "kubernetes_cluster_role" "claude_agent_exec" {
+  metadata {
+    name = "claude-agent-exec"
+  }
+
+  rule {
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+    api_groups = [""]
+    resources  = ["pods", "pods/log", "pods/exec", "services", "configmaps", "secrets", "persistentvolumeclaims", "serviceaccounts", "namespaces", "events", "endpoints"]
+  }
+
+  rule {
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets", "daemonsets", "replicasets"]
+  }
+
+  rule {
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+    api_groups = ["batch"]
+    resources  = ["jobs", "cronjobs"]
+  }
+
+  rule {
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses", "networkpolicies"]
+  }
+
+  rule {
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+    api_groups = ["rbac.authorization.k8s.io"]
+    resources  = ["roles", "rolebindings"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "claude_agent_exec" {
+  metadata {
+    name = "claude-agent-exec"
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.claude_agent.metadata[0].name
+    namespace = kubernetes_namespace.claude_agent.metadata[0].name
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.claude_agent_exec.metadata[0].name
   }
 }
 
@@ -322,6 +425,14 @@ resource "kubernetes_deployment" "claude_agent" {
             git config --global url."https://$${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
             git config --global url."https://$${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
+            # Authenticate git pushes/clones to Forgejo so the exec agent can
+            # branch + push to open PRs on forgejo.viktorbarzin.me. The PR
+            # itself is created via the Forgejo API (curl + $FORGEJO_TOKEN);
+            # this rewrite only handles the git transport.
+            if [ -n "$${FORGEJO_TOKEN}" ]; then
+              git config --global url."https://$${FORGEJO_TOKEN}@forgejo.viktorbarzin.me/".insteadOf "https://forgejo.viktorbarzin.me/"
+            fi
+
             # Clone or update repo
             if [ ! -d /workspace/infra/.git ]; then
               git clone https://$${GITHUB_TOKEN}@github.com/ViktorBarzin/infra.git /workspace/infra
@@ -406,6 +517,20 @@ resource "kubernetes_deployment" "claude_agent" {
           name  = "claude-agent-service"
           image = "${local.image}:${local.image_tag}"
 
+          # Wrap the image CMD so a Vault token is in place before any agent
+          # runs `scripts/tg apply`. The `vault-token-refresher` sidecar
+          # k8s-auth-logs-in (role=terraform-state) and writes the token to the
+          # shared `vault-token` emptyDir at /vault/token; we symlink
+          # $HOME/.vault-token → that file so `vault` / `scripts/tg` (which fall
+          # through to ~/.vault-token when $VAULT_TOKEN is unset) pick it up.
+          # NOTE: this duplicates the image's CMD (uvicorn line below) — if the
+          # Dockerfile CMD changes, update this too. FLAG for review.
+          command = ["/bin/sh", "-c", <<-EOF
+            ln -sfn /vault/token "$HOME/.vault-token"
+            exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --app-dir /srv
+          EOF
+          ]
+
           port {
             container_port = 8080
           }
@@ -428,6 +553,29 @@ resource "kubernetes_deployment" "claude_agent" {
             name  = "MAX_CONCURRENCY"
             value = "10"
           }
+
+          # Vault — so `scripts/tg apply` can fetch the Tier-1 PG backend
+          # password + the broadened app-secret reads. The CLI + scripts/tg
+          # fall through to $HOME/.vault-token (symlinked above) when
+          # $VAULT_TOKEN is unset; VAULT_K8S_ROLE tells the refresher which
+          # role to log in as.
+          env {
+            name  = "VAULT_ADDR"
+            value = "http://vault-active.vault.svc.cluster.local:8200"
+          }
+          env {
+            name  = "VAULT_K8S_ROLE"
+            value = "terraform-state"
+          }
+
+          # NOTE on MCP: the HA MCP URL (secret — its path segment is the auth
+          # token) arrives as env `HA_MCP_URL` via the claude-agent-secrets
+          # ExternalSecret (env_from above), sourced from Vault
+          # secret/openclaw -> ha_sofia_mcp_url. The project-scoped .mcp.json
+          # in the infra repo root references it as ${HA_MCP_URL}. Paperless
+          # MCP needs no token in-cluster (bearer is enforced only at the
+          # Traefik ingress), so its in-cluster Service URL is a plain literal
+          # in .mcp.json.
 
           liveness_probe {
             http_get {
@@ -471,6 +619,13 @@ resource "kubernetes_deployment" "claude_agent" {
             mount_path = "/secrets/git-crypt"
           }
 
+          # Shared Vault token written by the vault-token-refresher sidecar.
+          # Symlinked to $HOME/.vault-token by the container command above.
+          volume_mount {
+            name       = "vault-token"
+            mount_path = "/vault"
+          }
+
           # Burstable (tier-aux). Sized for ~10 concurrent agent runs at
           # ~0.5-1.5Gi each (see MAX_CONCURRENCY). No CPU limit per cluster
           # policy (CFS throttling); request only.
@@ -482,6 +637,54 @@ resource "kubernetes_deployment" "claude_agent" {
             limits = {
               memory = "12Gi"
             }
+          }
+        }
+
+        # Sidecar: keep a fresh Vault token on disk for `scripts/tg apply`.
+        # k8s-auth login (role=terraform-state) every 30 min — well inside the
+        # 6-day token TTL — and write it to the shared `vault-token` emptyDir.
+        # The main container symlinks $HOME/.vault-token at it. Mirrors the
+        # estate k8s-auth-login pattern (infra/.woodpecker/default.yml "Vault
+        # auth" step, woodpecker vault-sync sidecar).
+        container {
+          name  = "vault-token-refresher"
+          image = "docker.io/curlimages/curl:8.11.0"
+          # No `set -e`: a transient Vault blip must NOT kill the refresh loop
+          # (the stale token keeps working until its 6d TTL). curlimages/curl
+          # is Alpine/busybox — has `sed`, no `jq`, so parse client_token with
+          # sed. umask 077 so the token file is 0600.
+          command = ["/bin/sh", "-c", <<-EOF
+            umask 077
+            while true; do
+              SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+                -d "{\"role\":\"$VAULT_K8S_ROLE\",\"jwt\":\"$SA_TOKEN\"}" \
+                | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
+              if [ -n "$TOKEN" ]; then
+                printf '%s' "$TOKEN" > /vault/token
+                echo "$(date -u +%FT%TZ) refreshed vault token (role=$VAULT_K8S_ROLE)"
+              else
+                echo "$(date -u +%FT%TZ) ERROR: vault k8s login failed (role=$VAULT_K8S_ROLE)" >&2
+              fi
+              sleep 1800
+            done
+          EOF
+          ]
+          env {
+            name  = "VAULT_ADDR"
+            value = "http://vault-active.vault.svc.cluster.local:8200"
+          }
+          env {
+            name  = "VAULT_K8S_ROLE"
+            value = "terraform-state"
+          }
+          volume_mount {
+            name       = "vault-token"
+            mount_path = "/vault"
+          }
+          resources {
+            requests = { cpu = "5m", memory = "16Mi" }
+            limits   = { memory = "32Mi" }
           }
         }
 
@@ -525,6 +728,14 @@ resource "kubernetes_deployment" "claude_agent" {
 
         volume {
           name = "claude-home"
+          empty_dir {}
+        }
+
+        # Holds the Vault token the refresher sidecar mints; main container
+        # symlinks $HOME/.vault-token at /vault/token. emptyDir (memory-backed
+        # not required) — token is re-minted every 30 min and on pod restart.
+        volume {
+          name = "vault-token"
           empty_dir {}
         }
       }

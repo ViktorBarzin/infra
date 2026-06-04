@@ -558,18 +558,50 @@ resource "vault_kubernetes_auth_backend_role" "openclaw" {
 # --- Terraform State Policy & Role (Claude Agent) ---
 
 resource "vault_policy" "terraform_state" {
-  name   = "terraform-state"
+  name = "terraform-state"
+  # Broadened 2026-06-04 for the claude-agent-service executor elevation
+  # (nextcloud-todos-exec). `scripts/tg apply` of an arbitrary stack needs
+  # to read whatever that stack reads at plan/apply time:
+  #   - database/static-creds/pg-terraform-state — the Tier-1 PG backend
+  #     password (was the only grant before; scripts/tg reads it directly).
+  #   - database/static-creds/* + database/creds/* — app DB passwords that
+  #     stacks pull via `data "vault_kv_secret_v2"` / DB engine.
+  #   - secret/data/* + secret/metadata/* — KV v2 app secrets that the ~14
+  #     hybrid stacks still read at plan time (job commands, Helm
+  #     templatefile, module inputs).
+  # SECURITY: this grants the SHARED claude-agent pod broad Vault READ —
+  # effectively every app secret under secret/ and every rotating DB
+  # credential. Every agent that runs on this pod inherits it. Vault's own
+  # admin/root secrets are under secret/data/vault (covered by secret/data/*
+  # here — NOT explicitly denied; tighten with an explicit deny if that path
+  # must stay out of reach). No write/delete on secret/ or database/.
   policy = <<-EOT
-    path "database/static-creds/pg-terraform-state" {
+    path "database/static-creds/*" {
       capabilities = ["read"]
+    }
+    path "database/creds/*" {
+      capabilities = ["read"]
+    }
+    path "secret/data/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/*" {
+      capabilities = ["read", "list"]
     }
   EOT
 }
 
 resource "vault_kubernetes_auth_backend_role" "terraform_state" {
-  backend                          = vault_auth_backend.kubernetes.path
-  role_name                        = "terraform-state"
-  bound_service_account_names      = ["default"]
+  backend   = vault_auth_backend.kubernetes.path
+  role_name = "terraform-state"
+  # The claude-agent-service pod runs as SA `claude-agent` (see
+  # stacks/claude-agent-service/main.tf), NOT `default`. The original
+  # binding listed only `default`, so the pod's own SA token could not
+  # log in to this role — `scripts/tg apply` died fetching the Tier-1 PG
+  # backend password. `claude-agent` added 2026-06-04 to close that gap
+  # (nextcloud-todos-exec executor elevation). `default` kept for any
+  # legacy/manual SA-token logins from the namespace.
+  bound_service_account_names      = ["claude-agent", "default"]
   bound_service_account_namespaces = ["claude-agent"]
   token_policies                   = [vault_policy.terraform_state.name]
   token_ttl                        = 518400 # 6d (staggered from others: ci=7d, eso=10d, woodpecker=8d, openclaw=9d)
