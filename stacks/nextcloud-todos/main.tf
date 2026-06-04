@@ -383,7 +383,10 @@ resource "null_resource" "register_webhooks" {
       EXISTING=$(curl -fsS -H "OCS-APIRequest: true" -H "Accept: application/json" \
         -u "admin:$${NC_ADMIN_APP_PW}" "$${NC}")
 
-      for EV in CalendarObjectCreatedEvent CalendarObjectUpdatedEvent; do
+      # ONLY the Created event — the agent is purely reactive to newly-created
+      # todos. Registering Updated re-fired the pipeline on every edit (incl.
+      # the agent's own note-append) and re-processed completed/edited todos.
+      for EV in CalendarObjectCreatedEvent; do
         # The event class is a PHP namespace: OCP\Calendar\Events\<EV>. In the
         # JSON body each backslash must be doubled (valid JSON escape), so the
         # shell var holds "\\" per separator -> the heredoc source needs four
