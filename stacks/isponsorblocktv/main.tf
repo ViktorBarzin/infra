@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "isponsorblocktv" {
     name = "isponsorblocktv"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -17,33 +17,16 @@ resource "kubernetes_namespace" "isponsorblocktv" {
 # Before running, setup config using 
 # docker run --rm -it -v ./youtube:/app/data -e TERM=$TERM -e COLORTERM=$COLORTERM ghcr.io/dmunozv04/isponsorblocktv --setup
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "isponsorblocktv-data-proxmox"
-    namespace = kubernetes_namespace.isponsorblocktv.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Migrated proxmox-lvm -> NFS (2026-06-04) to free a per-node SCSI-LUN slot
+# (node6 LUN-cap relief, beads code-dfjn). The volume holds only config.json
+# (no embedded DB), so NFS is safe. Data pre-seeded to /srv/nfs/isponsorblocktv.
+module "nfs_data" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "isponsorblocktv-data"
+  namespace  = kubernetes_namespace.isponsorblocktv.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/isponsorblocktv"
+  storage    = "1Gi"
 }
 
 # Mute and skip ads for vermont smart tv
@@ -93,7 +76,7 @@ resource "kubernetes_deployment" "isponsorblocktv-vermont" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_data.claim_name
           }
         }
       }
