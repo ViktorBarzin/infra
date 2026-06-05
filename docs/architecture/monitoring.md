@@ -85,6 +85,47 @@ These monitors test the full external access path (DNS → Cloudflare → Tunnel
 
 Data flows from targets through Prometheus storage to Grafana dashboards. Applications emit logs to stdout/stderr which are aggregated by Loki and queryable through Grafana's log viewer.
 
+### Cluster log aggregation (Alloy → Loki) + the "Cluster Logs" dashboard
+
+Pod logs are tailed off the nodes' `/var/log/pods` by the **Grafana Alloy**
+DaemonSet (`alloy.yaml`) and shipped to Loki with labels `namespace` / `pod` /
+`container` / `app`; node + external-Pi system logs arrive as the `node-journal`
+and `rpi-sofia-journal` jobs (labels `node` / `unit` / `level`).
+
+> **Gotcha (regression found + fixed 2026-06-05):** `loki.source.file` does
+> **not** expand globs. The pod-log pipeline must place a **`local.file_match`**
+> component between `discovery.relabel` (which writes the
+> `/var/log/pods/*<uid>/<container>/*.log` glob into `__path__`) and
+> `loki.source.file`. Without it, `loki.source.file` `stat()`s the literal `*`
+> path and ships **zero** pod logs — for a stretch only the journals reached
+> Loki. A `stage.cri {}` stage parses the containerd CRI wrapper so Loki stores
+> clean messages + real timestamps. If application logs ever vanish from Loki
+> again, check Alloy logs for `loki.source.file ... stat failed`. On first
+> discovery Alloy reads existing files from the start → a brief burst of
+> `entry too far behind` 400s from Loki (old lines rejected, recent accepted);
+> it self-settles. Alloy read-positions are ephemeral, so a pod restart repeats
+> the bounded catch-up read — watch sdc IO (the 2026-05-26 storm surface; mem
+> limits are the safeguard).
+
+Search/observe everything via the **"Cluster Logs"** Grafana dashboard
+(`dashboards/cluster-logs.json`, *Logs* folder): `$namespace`/`$app`/`$pod`
+dropdowns + free-text regex `$search`, log-volume-by-namespace, error/warn rate,
+top namespaces/pods by errors, a live filterable logs panel, and a journals row.
+Error/warn panels use case-insensitive regex line-filters because pod logs carry
+no `level` stream label.
+
+**Surfaced in ha-sofia** for Emo: two RESTful sensors
+(`/config/rest_resources/loki_cluster_{errors,warnings}.yaml`) query Loki for
+cluster error/warn line counts (5-min window) → `sensor.cluster_log_errors_5m` /
+`sensor.cluster_log_warnings_5m`, for a compact trend card on the Барзини status
+view plus a Grafana-link button. Those sensors reach Loki via the Traefik LB IP
+`10.0.20.203` + a `Host: loki.viktorbarzin.lan` header (`verify_ssl: false`)
+because `loki.viktorbarzin.lan` has **no Technitium record yet** (the
+`technitium-ingress-dns-sync` CronJob only creates `.me` CNAMEs + pins
+`ingress.viktorbarzin.lan`). **Follow-up:** register `loki.viktorbarzin.lan` in
+Technitium (or fix the `*.viktorbarzin.lan` wildcard) so both this sensor and the
+Sofia-Pi promtail can resolve it by name instead of pinning the LB IP.
+
 ### External host: rpi-sofia (Sofia Raspberry Pi)
 
 `rpi-sofia` is a physical Raspberry Pi 3 at the Sofia home site (not in the cluster — it's the Frigate camera DNAT gateway + solar-inverter path + HA MQTT sensor publisher). It is monitored **off-box** into the cluster, set up 2026-06-05 after a ~5h hang whose cause couldn't be reconstructed because the Pi's *local* journal had silently stopped writing back in April (an aging 2017 SD card intermittently flips the rootfs read-only). Everything below ships telemetry to the cluster so the **next** failure is captured centrally, surviving the SD card.
