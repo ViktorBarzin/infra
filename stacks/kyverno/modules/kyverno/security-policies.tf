@@ -4,10 +4,10 @@
 # Kyverno validate policies for pod security standards.
 # Wave 1 (locked 2026-05-18, beads code-8ywc): deny-privileged-containers,
 # deny-host-namespaces, restrict-sys-admin flipped from Audit → Enforce with
-# a shared 32-namespace exclude list. require-trusted-registries STAYS in
-# Audit until the allowlist pattern is tightened beyond `*/*` (separate work
-# item — current pattern allows everything with a slash, so Enforce would be
-# a no-op for supply-chain protection).
+# a shared 32-namespace exclude list. require-trusted-registries followed on
+# 2026-05-19 — also Enforce now, with an explicit registry allowlist (the
+# `*/*` catch-all was removed so unknown registries fail closed at admission).
+# To allow a new image source, add it to policy_require_trusted_registries below.
 # failurePolicy stays Ignore (chart-level) to prevent admission webhook
 # failures from cascading.
 
@@ -23,10 +23,10 @@ locals {
     "xray", "infra-maintenance", "metrics-server", "tigera-operator", "frigate",
     # Additions discovered during wave 1 enforce flip — these contain workloads
     # that legitimately need privileged / hostNetwork / SYS_ADMIN:
-    "kured",          # kured DaemonSet is privileged (manages node reboots)
-    "default",        # etcd backup + defrag CronJobs use hostNetwork
+    "kured",           # kured DaemonSet is privileged (manages node reboots)
+    "default",         # etcd backup + defrag CronJobs use hostNetwork
     "changedetection", # uses SYS_ADMIN for chromium sandbox
-    "woodpecker",     # CI pipeline pods (wp-*) run privileged docker builds
+    "woodpecker",      # CI pipeline pods (wp-*) run privileged docker builds
   ]
 }
 
@@ -340,6 +340,7 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   # amruthpillai (resume), athomasson2 (ebook2audiobook),
                   # netboxcommunity (netbox), nousresearch (hermes-agent),
                   # opentripplanner (osm-routing), rhasspy (whisper/piper).
+                  # 2026-06-05: mauriceboe (TREK group-trip planner trial).
                   "actualbudget/*", "afadil/*", "amruthpillai/*", "athomasson2/*",
                   "binwiederhier/*", "bitnami/*",
                   "clickhouse/*", "cloudflare/*", "coturn/*", "crowdsecurity/*",
@@ -347,7 +348,8 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "dpage/*", "dperson/*", "edoburu/*", "esanchezm/*",
                   "freikin/*", "freshrss/*", "hackmdio/*", "hashicorp/*",
                   "headscale/*", "jhonderson/*", "kebe/*", "library/*",
-                  "lissy93/*", "louislam/*", "matrixdotorg/*", "mendhak/*",
+                  "lissy93/*", "louislam/*", "matrixdotorg/*", "mauriceboe/*",
+                  "mendhak/*",
                   "mghee/*", "mindflavor/*", "mpepping/*", "netboxcommunity/*",
                   "netsampler/*", "nousresearch/*", "nvidia/*", "onlyoffice/*",
                   "openresty/*", "opentripplanner/*", "owntracks/*",
