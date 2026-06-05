@@ -20,15 +20,22 @@ resource "kubernetes_config_map" "redfish-config" {
           username: root
           password: calvin
       metrics:
-        all: true
-        # system: true
-        # sensors: true
-        # power: true
-        # sel: false        # Disable SEL - often slow
-        # storage: true    # Disable storage - slowest endpoint
-        # memory: true
-        # network: false    # Disable network adapters
-        # firmware: false   # Don't need this frequently
+        # SNMP (snmp-idrac job, dell_idrac module) is the FAST primary source
+        # for dynamic + health metrics since 2026-06-05. This Redfish exporter
+        # is the slow remnant (10m Prometheus scrape) serving only what SNMP
+        # cannot: indicator LED, NIC link-speed Mbps, SSD life %, machine/BIOS
+        # info, per-DIMM / per-NIC inventory, PSU input-watts/capacity.
+        # NOTE: HA Sofia's sensor.r730_fan_speed reads idrac_sensors_fan_speed
+        # from THIS exporter directly, so `sensors` MUST stay enabled.
+        # events (SEL empty on this box), processors (cpu count via SNMP),
+        # manager, extra -> left disabled (default false) to trim the walk.
+        all: false
+        system: true
+        sensors: true
+        power: true
+        storage: true
+        network: true
+        memory: true
     EOF
   }
 }
