@@ -55,7 +55,7 @@ Edit `/etc/fan-control.env` on the host, then `systemctl restart fan-control`.
 Common knobs:
 - `HOLD_SECS` — how long to stay quiet after the garage door last moved (default 900 = 15 min).
 - `CEILING` — temp at which we abandon manual control and let the firmware take over (default 83).
-- Curves themselves are arrays (`COOL_CURVE`, `QUIET_CURVE`) near the top of the script.
+- Curve shape: **linear anchors** near the top of the script — `COOL_T_LO/COOL_P_LO/COOL_T_HI/COOL_P_HI` (default 50°C/30% → 83°C/100%) and `QUIET_*` (68°C/20% → 83°C/100%); fan% interpolates linearly between them (replaced the old discrete step-bands). `MIN_STEP` (default 3%) = smallest fan-% change worth an IPMI write (anti-jitter); `DEADBAND` (3°C) = ease-down hysteresis. Lower `COOL_P_HI` or raise `COOL_T_HI` to run the top end quieter; steepen by raising `COOL_P_LO` / lowering `COOL_T_LO`.
 
 ## Deploy / update
 

@@ -70,19 +70,24 @@ ceiling. QUIET is unchanged (already at the low-power floor: 20 % / 4,800 RPM /
    `HOLD_SECS` (15 min) ⇒ someone's around ⇒ QUIET; otherwise COOL.
    `house_mode` was rejected — it tracks *apartment* occupancy, irrelevant to
    garage noise.
-4. **Two curves**, picked by presence (COOL power-tuned 2026-06-05 — see
-   "Power characterization" below):
+4. **Two continuous LINEAR curves**, picked by presence. (Originally discrete
+   step-bands; replaced 2026-06-05 — the bands flapped at edges, e.g. 45↔65%.
+   Web research: a linear curve + 2–3°C hysteresis is the homelab standard; PID
+   is overkill for this slow thermal loop and even PID projects "only lower, don't
+   chase a setpoint".) fan% interpolates between per-mode anchors, clamped flat
+   outside; both reach 100% right at the 83°C ceiling:
 
-   | CPU °C | COOL % (empty) | CPU °C | QUIET % (occupied) |
-   |--------|----------------|--------|--------------------|
-   | ≤54    | 30 | ≤72 | 20 (≈silent floor) |
-   | 55–63  | 50 | 73–77 | 40 |
-   | 64–72  | 60 (knee) | 78–81 | 65 |
-   | 73–78  | 80 | ≥82 | 100 |
-   | ≥79    | 100 | | |
+   | Mode | T_LO → P_LO | T_HI → P_HI | slope |
+   |------|-------------|-------------|-------|
+   | COOL (garage empty) | 50°C → 30% | 83°C → 100% | ~2.1%/°C (≈51% at the ~60°C equilibrium) |
+   | QUIET (occupied) | 68°C → 20% | 83°C → 100% | ~4.7%/°C (near-silent until ~70°C) |
 
-   3°C downward hysteresis prevents flapping at band edges (ramp up immediately,
-   step down only once the curve still wants lower 3°C hotter).
+   Anchors are env-tunable (`COOL_T_LO/P_LO/T_HI/P_HI`, `QUIET_*`). Under normal
+   load the COOL equilibrium (~60°C → ~51%) sits near the measured ~60% power
+   knee; the ramp toward 100% only engages at genuinely high temp (safety).
+   Anti-oscillation: asymmetric hysteresis (ramp up immediately, ease down only
+   once the curve wants lower 3°C hotter) **plus** a `MIN_STEP` (3%) min-change
+   threshold so 1–2% wiggles don't churn IPMI writes.
 
 ## Safety
 
