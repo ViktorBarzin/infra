@@ -25,33 +25,17 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_encrypted" {
-  wait_until_bound = false
-  metadata {
-    name      = "hackmd-data-encrypted"
-    namespace = kubernetes_namespace.hackmd.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Image uploads on NFS. Migrated off proxmox-lvm-encrypted 2026-06-05 for
+# LUN-cap relief — codimd is MySQL-backed; this PVC holds only pasted image
+# uploads (low-sensitivity), so dropping LUKS-at-rest for NFS is accepted.
+# No embedded DB. See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
+module "nfs_hackmd" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "hackmd-uploads-nfs"
+  namespace  = kubernetes_namespace.hackmd.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/hackmd"
+  storage    = "5Gi"
 }
 
 resource "kubernetes_deployment" "hackmd" {
@@ -166,7 +150,7 @@ resource "kubernetes_deployment" "hackmd" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
+            claim_name = module.nfs_hackmd.claim_name
           }
         }
       }
