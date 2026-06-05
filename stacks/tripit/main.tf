@@ -384,9 +384,8 @@ resource "kubernetes_deployment" "tripit" {
   ]
 }
 
-# Worker CronJobs share the app image + secret/env wiring. Defined via a map
-# so the three jobs (poll-flights, run-reminders, ingest-mail) stay identical
-# except for schedule, subcommand, and the suspend flag.
+# Worker CronJobs share the app image + secret/env wiring. Defined via a map so
+# the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
     poll-flights = {
@@ -401,61 +400,36 @@ locals {
       suspend   = false
       extra_env = {}
     }
-    # Ongoing forward-to-parse ingest of vbarzin@gmail.com — Viktor's real
-    # travel mailbox (the self-hosted me@ box receives no booking mail). LLM =
-    # qwen3vl-4b on llama-swap (qwen3-8b OOMs the shared T4). Read-only
-    # IMAP_SEARCH over [Gmail]/All Mail (BODY.PEEK, never sets \Seen), bounded
-    # to a rolling 12-month window of travel-sender mail via Gmail X-GM-RAW; the
-    # two Croatia Jet2 refs (33W6Y3/33W7L2) are excluded so the hand-curated
-    # Croatia trip isn't duplicated. Idempotent (skips message_ids already in
-    # inbound_email). Trips land under MAIL_DEFAULT_OWNER_EMAIL (vbarzin@gmail.com
-    # — Viktor's Authentik login identity, so trips show up in his account).
-    # IMAP_PASSWORD (the vbarzin@gmail.com app-password) comes from secret/tripit
-    # via the tripit-secrets ES.
-    ingest-mail = {
-      schedule = "*/30 * * * *"
-      command  = ["python", "-m", "tripit_api", "ingest-mail"]
-      suspend  = false
-      extra_env = {
-        LLM_MODE                 = "llamacpp"
-        LLM_ENDPOINT             = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        LLM_MODEL                = "qwen3vl-4b"
-        MAIL_INGEST_ENABLED      = "true"
-        MAIL_DEFAULT_OWNER_EMAIL = "vbarzin@gmail.com"
-        IMAP_HOST                = "imap.gmail.com"
-        IMAP_PORT                = "993"
-        IMAP_USER                = "vbarzin@gmail.com"
-        IMAP_FOLDER              = "[Gmail]/All Mail"
-        IMAP_USE_SSL             = "true"
-        IMAP_SEARCH              = "X-GM-RAW \"newer_than:12m -33W6Y3 -33W7L2 (from:jet2.com OR from:ryanair.com OR from:easyjet.com OR from:wizzair.com OR from:booking.com OR from:airbnb.com OR from:expedia.com OR from:croatiaairlines.com OR from:vueling.com OR from:lufthansa.com OR from:trainline)\""
-      }
-    }
-    # Forward-to-parse: forward any booking confirmation to plans@viktorbarzin.me
-    # (which the @viktorbarzin.me catch-all delivers into the spam@ mailbox), and
-    # this job ingests it. Polls spam@ read-only, filtered by IMAP SEARCH to mail
-    # addressed To plans@ — so only deliberate forwards are processed, not the
-    # rest of the catch-all junk. The LLM extracts segments and the pipeline
-    # attaches them to the date-overlapping trip (or creates one) under
-    # MAIL_DEFAULT_OWNER_EMAIL. IMAP_PASSWORD is overridden for this job to
-    # spam@'s password via imap_password_key (secret/tripit PLANS_IMAP_PASSWORD),
-    # because env_from otherwise injects the Gmail app-password.
+    # Forward-to-parse — the SOLE ingest channel: forward any booking
+    # confirmation to plans@viktorbarzin.me (which the @viktorbarzin.me catch-all
+    # delivers into the spam@ mailbox), and this job ingests it. Polls spam@
+    # read-only, filtered by IMAP SEARCH to mail addressed To plans@ — so only
+    # deliberate forwards are processed, not the rest of the catch-all junk. The
+    # sender is routed to a registered user (primary email or a verified linked
+    # address); mail from anyone else is ignored — there is no default-owner
+    # fallback. On a parsed/failed outcome the sender is emailed an "Added to
+    # trip" / "Couldn't import" notice (EMAIL_PROVIDER/SMTP_* from app_env;
+    # SMTP_PASSWORD via the tripit-secrets ES). IMAP_PASSWORD is overridden to
+    # spam@'s password via imap_pw_secret_key (secret/tripit PLANS_IMAP_PASSWORD),
+    # because env_from otherwise injects the Gmail app-password. (The old
+    # Gmail-scrape ingest-mail CronJob was removed 2026-06-05 — plans@ is now the
+    # only inbound path; no more auto-scraping vbarzin@gmail.com.)
     ingest-plans = {
       schedule           = "*/15 * * * *"
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
       extra_env = {
-        LLM_MODE                 = "llamacpp"
-        LLM_ENDPOINT             = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        LLM_MODEL                = "qwen3vl-4b"
-        MAIL_INGEST_ENABLED      = "true"
-        MAIL_DEFAULT_OWNER_EMAIL = "vbarzin@gmail.com"
-        IMAP_HOST                = "mailserver.mailserver.svc.cluster.local"
-        IMAP_PORT                = "993"
-        IMAP_USER                = "spam@viktorbarzin.me"
-        IMAP_FOLDER              = "INBOX"
-        IMAP_USE_SSL             = "true"
-        IMAP_SEARCH              = "TO \"plans@viktorbarzin.me\""
+        LLM_MODE            = "llamacpp"
+        LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+        LLM_MODEL           = "qwen3vl-4b"
+        MAIL_INGEST_ENABLED = "true"
+        IMAP_HOST           = "mailserver.mailserver.svc.cluster.local"
+        IMAP_PORT           = "993"
+        IMAP_USER           = "spam@viktorbarzin.me"
+        IMAP_FOLDER         = "INBOX"
+        IMAP_USE_SSL        = "true"
+        IMAP_SEARCH         = "TO \"plans@viktorbarzin.me\""
       }
     }
     # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
