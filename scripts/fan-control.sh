@@ -43,7 +43,11 @@ set -uo pipefail
 : "${RUN_ONCE:=0}"                   # 1 => one iteration then exit (testing)
 
 # Curves as "min_temp:pct" entries, descending; first whose min_temp <= temp wins.
-COOL_CURVE=(74:100 68:85 61:65 53:45 0:25)
+# COOL is power-tuned (2026-06-05 power/temp sweep): the cooling-per-watt knee is
+# ~60% — beyond it airflow buys almost nothing (60->70% = +21W/-2°C, 70->100% =
+# +54W/0°C; the CPU floors ~59°C at cluster load). So the normal band caps at 60%
+# (~303W, ~61°C); 80/100% are a high-load safety ramp before the 83°C ceiling.
+COOL_CURVE=(79:100 73:80 64:60 55:50 0:30)
 QUIET_CURVE=(82:100 78:65 73:40 0:20)
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
