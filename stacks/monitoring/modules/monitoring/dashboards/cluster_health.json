@@ -227,7 +227,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(r730_idrac_idrac_sensors_temperature{name=\"CPU1 Temp\"})",
+          "expr": "max(r730_idrac_temperatureProbeReading{temperatureProbeLocationName=\"CPU1 Temp\"}) / 10",
           "legendFormat": "CPU Temp",
           "refId": "A"
         }
@@ -891,7 +891,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by() (avg_over_time(r730_idrac_idrac_power_control_avg_consumed_watts[$__rate_interval]))",
+          "expr": "max by() (avg_over_time(r730_idrac_amperageProbeReading{amperageProbeLocationName=\"System Board Pwr Consumption\"}[$__rate_interval]))",
           "legendFormat": "Consumed",
           "refId": "A"
         },
@@ -909,7 +909,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(r730_idrac_idrac_sensors_temperature{name=\"CPU1 Temp\"})",
+          "expr": "max(r730_idrac_temperatureProbeReading{temperatureProbeLocationName=\"CPU1 Temp\"}) / 10",
           "legendFormat": "CPU Temp",
           "refId": "C"
         }

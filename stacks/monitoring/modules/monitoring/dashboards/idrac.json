@@ -78,17 +78,35 @@
                     "mappings": [
                         {
                             "options": {
-                                "Critical": {
-                                    "color": "light-red",
-                                    "index": 2
-                                },
-                                "OK": {
-                                    "color": "light-green",
-                                    "index": 3
-                                },
-                                "Warning": {
+                                "1": {
                                     "color": "light-yellow",
-                                    "index": 1
+                                    "index": 4,
+                                    "text": "Other"
+                                },
+                                "2": {
+                                    "color": "light-yellow",
+                                    "index": 5,
+                                    "text": "Unknown"
+                                },
+                                "3": {
+                                    "color": "light-green",
+                                    "index": 0,
+                                    "text": "OK"
+                                },
+                                "4": {
+                                    "color": "light-yellow",
+                                    "index": 1,
+                                    "text": "Warning"
+                                },
+                                "5": {
+                                    "color": "light-red",
+                                    "index": 2,
+                                    "text": "Critical"
+                                },
+                                "6": {
+                                    "color": "light-red",
+                                    "index": 3,
+                                    "text": "Non-Recoverable"
                                 }
                             },
                             "type": "value"
@@ -137,7 +155,7 @@
                     "calcs": [
                         "lastNotNull"
                     ],
-                    "fields": "/^status$/",
+                    "fields": "",
                     "values": false
                 },
                 "showPercentChange": false,
@@ -165,10 +183,10 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "r730_idrac_idrac_system_health{instance=~\"$instance\", job=~\"$job\"}",
-                    "format": "table",
+                    "expr": "r730_idrac_globalSystemStatus{instance=~\"$instance\", job=~\"$job\"}",
+                    "format": "time_series",
                     "instant": true,
-                    "legendFormat": "{{status}}",
+                    "legendFormat": "",
                     "metrics": [
                         {
                             "id": "1",
@@ -796,7 +814,7 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "r730_idrac_idrac_system_memory_size_bytes{instance=\"$instance\", job=~\"$job\"}",
+                    "expr": "sum(r730_idrac_memoryDeviceSize{instance=\"$instance\", job=~\"$job\"}) * 1024",
                     "format": "time_series",
                     "instant": true,
                     "interval": "",
@@ -1026,7 +1044,7 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "r730_idrac_idrac_system_cpu_count{instance=\"$instance\", job=~\"$job\"}",
+                    "expr": "count(r730_idrac_processorDeviceStatus{instance=\"$instance\", job=~\"$job\"})",
                     "format": "time_series",
                     "instant": true,
                     "interval": "",
@@ -1250,12 +1268,12 @@
                     "mappings": [
                         {
                             "options": {
-                                "0": {
+                                "3": {
                                     "color": "red",
                                     "index": 1,
                                     "text": "Off"
                                 },
-                                "1": {
+                                "4": {
                                     "color": "green",
                                     "index": 0,
                                     "text": "On"
@@ -1325,7 +1343,7 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "r730_idrac_idrac_system_power_on{instance=\"$instance\", job=~\"$job\"}",
+                    "expr": "r730_idrac_systemPowerState{instance=\"$instance\", job=~\"$job\"}",
                     "instant": true,
                     "legendFormat": "",
                     "metrics": [
@@ -1975,9 +1993,9 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "avg_over_time(r730_idrac_idrac_sensors_temperature{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
+                    "expr": "avg_over_time(r730_idrac_temperatureProbeReading{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval]) / 10",
                     "instant": false,
-                    "legendFormat": "{{name}}",
+                    "legendFormat": "{{temperatureProbeLocationName}}",
                     "metrics": [
                         {
                             "id": "1",
@@ -2095,9 +2113,9 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "avg_over_time(r730_idrac_idrac_sensors_fan_speed{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
+                    "expr": "avg_over_time(r730_idrac_coolingDeviceReading{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
                     "instant": false,
-                    "legendFormat": "{{name}}",
+                    "legendFormat": "{{coolingDeviceLocationName}}",
                     "metrics": [
                         {
                             "id": "1",
@@ -2234,8 +2252,8 @@
                         "uid": "${datasource}"
                     },
                     "editorMode": "code",
-                    "expr": "avg_over_time(r730_idrac_idrac_power_supply_output_watts{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
-                    "legendFormat": "Output PSU-{{id}}",
+                    "expr": "avg_over_time(r730_idrac_powerSupplyOutputWatts{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
+                    "legendFormat": "Output {{powerSupplyLocationName}}",
                     "metrics": [
                         {
                             "id": "1",
@@ -2331,7 +2349,7 @@
                     },
                     "editorMode": "code",
                     "exemplar": false,
-                    "expr": "avg(r730_idrac_idrac_power_supply_input_voltage{instance=~\"$instance\", job=~\"$job\"})",
+                    "expr": "avg(r730_idrac_powerSupplyCurrentInputVoltage{instance=~\"$instance\", job=~\"$job\"})",
                     "format": "time_series",
                     "instant": true,
                     "interval": "",
@@ -2447,8 +2465,8 @@
                         "uid": "${datasource}"
                     },
                     "editorMode": "code",
-                    "expr": "avg_over_time(r730_idrac_idrac_power_control_avg_consumed_watts{instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
-                    "legendFormat": "{{name}}",
+                    "expr": "avg_over_time(r730_idrac_amperageProbeReading{amperageProbeLocationName=\"System Board Pwr Consumption\",instance=~\"$instance\",job=~\"$job\"}[$__rate_interval])",
+                    "legendFormat": "{{amperageProbeLocationName}}",
                     "metrics": [
                         {
                             "id": "1",

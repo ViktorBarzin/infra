@@ -808,7 +808,7 @@ serverFiles:
             annotations:
               summary: "System load: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
           - alert: FanFailure
-            expr: r730_idrac_redfish_chassis_fan_health != 1
+            expr: r730_idrac_coolingDeviceStatus != 3
             for: 5m
             labels:
               severity: warning
@@ -942,7 +942,7 @@ serverFiles:
             annotations:
               summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
           - alert: HighPowerUsage
-            expr: r730_idrac_idrac_power_control_consumed_watts > 300
+            expr: r730_idrac_amperageProbeReading{amperageProbeLocationName="System Board Pwr Consumption"} > 300
             for: 60m
             labels:
               severity: info
@@ -1015,28 +1015,28 @@ serverFiles:
       - name: Server Health
         rules:
           - alert: iDRACSystemUnhealthy
-            expr: r730_idrac_redfish_system_health_state != 1
+            expr: r730_idrac_globalSystemStatus != 3
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "iDRAC system health state: {{ $value }} (expected 1=OK)"
+              summary: "iDRAC system health state: {{ $value }} (expected 3=OK)"
           - alert: iDRACPowerSupplyUnhealthy
-            expr: r730_idrac_redfish_chassis_power_powersupply_health != 1
+            expr: r730_idrac_powerSupplyStatus != 3
             for: 5m
             labels:
               severity: critical
             annotations:
               summary: "iDRAC PSU {{ $labels.member_id }} unhealthy (state: {{ $value }})"
           - alert: iDRACMemoryUnhealthy
-            expr: r730_idrac_redfish_system_memory_health_state != 1
+            expr: r730_idrac_systemStateMemoryDeviceStatusCombined != 3
             for: 5m
             labels:
               severity: critical
             annotations:
               summary: "iDRAC memory subsystem unhealthy (state: {{ $value }})"
           - alert: iDRACStorageDriveUnhealthy
-            expr: r730_idrac_redfish_system_storage_drive_health_state != 1
+            expr: r730_idrac_physicalDiskComponentStatus != 3
             for: 5m
             labels:
               severity: critical
@@ -1057,12 +1057,12 @@ serverFiles:
             annotations:
               summary: "SSD {{ $labels.id }} has {{ $value }}% life remaining"
           - alert: iDRACServerPoweredOff
-            expr: r730_idrac_redfish_system_power_state != 2
+            expr: r730_idrac_systemPowerState != 4
             for: 3m
             labels:
               severity: critical
             annotations:
-              summary: "R730 server is not powered on (state: {{ $value }}, expected 2=On)"
+              summary: "R730 server is not powered on (state: {{ $value }}, expected 4=On)"
           - alert: ProxmoxExporterDown
             expr: pve_up{id="node/pve"} == 0
             for: 5m
@@ -1171,19 +1171,19 @@ serverFiles:
             annotations:
               summary: "UPS metrics missing for 10m - check SNMP exporter and ups.viktorbarzin.lan"
           - alert: iDRACRedfishMetricsMissing
-            expr: absent(r730_idrac_idrac_power_supply_input_voltage)
+            expr: absent(r730_idrac_powerSupplyCurrentInputVoltage)
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "iDRAC Redfish metrics missing for 10m - check idrac-redfish-exporter pod"
+              summary: "iDRAC SNMP PSU input voltage metric missing for 10m - check SNMP exporter and idrac.viktorbarzin.lan"
           - alert: iDRACSNMPMetricsMissing
-            expr: absent(r730_idrac_idrac_system_health)
+            expr: absent(r730_idrac_globalSystemStatus)
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "iDRAC SNMP metrics missing for 10m - check SNMP exporter and idrac.viktorbarzin.lan"
+              summary: "iDRAC SNMP health metric (globalSystemStatus) missing for 10m - check SNMP exporter and idrac.viktorbarzin.lan"
           - alert: ATSMetricsMissing
             expr: absent(automatic_transfer_switch_power_mode)
             for: 15m
@@ -3149,7 +3149,10 @@ extraScrapeConfigs: |
     metrics_path: '/metrics'
   - job_name: 'snmp-idrac'
     scrape_interval: 1m
-    scrape_timeout: 45s
+    scrape_timeout: 30s
+    params:
+      module: [dell_idrac]
+      auth: [public_v2]
     static_configs:
         - targets:
           - "idrac.viktorbarzin.lan.:161"
@@ -3168,7 +3171,12 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'r730_idrac_$${1}'
   - job_name: 'redfish-idrac'
-    scrape_interval: 3m
+    # Slow remnant since 2026-06-05: SNMP (snmp-idrac, 1m) is the fast primary
+    # source. This Redfish job only feeds the few panels SNMP can't serve (LED,
+    # NIC Mbps, SSD life %, machine/BIOS/DIMM/NIC inventory) and keeps the
+    # exporter warm for HA Sofia's direct sensor.r730_fan_speed read. 10m is
+    # plenty for slow-changing inventory/health.
+    scrape_interval: 10m
     scrape_timeout: 45s
     metrics_path: /metrics
     static_configs:

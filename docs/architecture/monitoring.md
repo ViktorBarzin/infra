@@ -65,6 +65,8 @@ graph TB
 | Email Roundtrip Probe | Python 3.12 | `stacks/mailserver/modules/mailserver/` | E2E email delivery verification via Mailgun API + IMAP |
 | Forgejo Registry Integrity Probe | Alpine 3.20 + curl/jq | `stacks/monitoring/modules/monitoring/main.tf` | CronJob every 15m: walks `/v2/_catalog` on `forgejo.viktorbarzin.me` (HTTP via in-cluster service), HEADs every tagged manifest + index child; emits `registry_manifest_integrity_*` metrics to Pushgateway. Replaces the legacy `registry-integrity-probe` against `registry.viktorbarzin.me:5050` decommissioned in Phase 4 of forgejo-registry-consolidation 2026-05-07. |
 | blackbox-exporter (Authentik walling-off guard) | `prom/blackbox-exporter` (Keel-managed) | `stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf` | Single-purpose blackbox-exporter. Its `http_no_authentik_redirect` module probes each must-stay-public carve-out URL with `no_follow_redirects` and FAILS (`fail_if_header_matches` on `Location`) iff the response redirects to Authentik. Scraped by job `blackbox-authentik-walloff` (1m); feeds alert `AuthentikWallingOffPublicPath`. Target list = `local.authentik_walloff_targets` in the same file. |
+| snmp-exporter | `prom/snmp-exporter` (Keel-managed) | `stacks/monitoring/modules/monitoring/snmp_exporter.tf` + `ups_snmp_values.yaml` | SNMP→Prometheus bridge. Modules in `ups_snmp_values.yaml`: `huawei` (UPS), `if_mib`/`ip_mib`, and **`dell_idrac`** (R730 iDRAC, merged from `prometheus_snmp_chart_values.yaml` 2026-06-05 + hand-added fan-RPM `coolingDeviceReading` / amperage location lookup). Scrape jobs: `snmp-ups` (30s, module=huawei), **`snmp-idrac` (1m, module=dell_idrac, auth=public_v2)** — the FAST primary source for R730 health/thermal/power/fan/voltage since the 2026-06-05 Redfish→SNMP migration (~3.7s/scrape vs Redfish ~18.5s). Relabels all metrics to `r730_idrac_<mibName>`. |
+| idrac-redfish-exporter | `viktorbarzin/idrac-redfish-exporter:2.4.1-voltage-fix` (mrlhansen/idrac_exporter, Keel-managed) | `stacks/monitoring/modules/monitoring/idrac.tf` | **Slow remnant** (10m scrape, job `redfish-idrac`) since the 2026-06-05 SNMP migration — was the sole iDRAC source at a 3m interval, demoted once SNMP took over the fast path. Trimmed to `system,sensors,power,storage,network,memory`. Serves only what SNMP can't (indicator LED, NIC link-speed Mbps, machine/BIOS info, per-drive storage table) **and keeps HA Sofia's `sensor.r730_fan_speed` REST sensor alive** — that sensor reads `idrac_sensors_fan_speed` from this exporter directly, so the `sensors` collector must stay enabled here. |
 
 ## How It Works
 
@@ -102,6 +104,19 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 **Recovery** — a systemd hardware watchdog (`RuntimeWatchdogSec=14s`, bcm2835 max ~15s) auto-reboots the Pi on a hard hang instead of leaving it dead for hours.
 
 > The cluster side (scrape job, alerts, Loki ingress, dashboard) is Terraform-managed in `stacks/monitoring/`. The **Pi-side** pieces (node_exporter, the textfile collector + timer, promtail, the watchdog config, and the `server=/viktorbarzin.lan/192.168.1.2` dnsmasq split-horizon forward needed to resolve the Loki ingress) are configured by hand on the Pi — it is not under Terraform — and are backed up off-box at `/home/wizard/rpi-sofia-backup/`. The real reliability fix (reflash/replace the SD card) needs on-site access.
+
+### Dell R730 iDRAC: SNMP-primary + Redfish remnant (migrated 2026-06-05)
+
+The R730 iDRAC (`192.168.1.4` / `idrac.viktorbarzin.lan`) is monitored by **two** Prometheus jobs, both relabeled to the `r730_idrac_*` prefix (which historically hid which source served what). Design/plan: `docs/plans/2026-06-05-idrac-snmp-migration-{design,plan}.md`.
+
+- **`snmp-idrac` (FAST, primary, 1m / 30s):** snmp-exporter `dell_idrac` module against `:161` (v2c, community `Public0` = `auth=public_v2`). ~3.7s/scrape. Serves all dynamic + health + alerting metrics: `r730_idrac_temperatureProbeReading` (tenths-°C, ÷10), `coolingDeviceReading` (fan RPM, label `coolingDeviceLocationName`), `amperageProbeReading{amperageProbeLocationName="System Board Pwr Consumption"}` (watts), `powerSupplyCurrentInputVoltage`, `globalSystemStatus`, `systemPowerState`, `powerSupplyStatus`, `physicalDiskComponentStatus`, `systemStateMemoryDeviceStatusCombined`, etc.
+- **`redfish-idrac` (SLOW remnant, 10m / 45s):** the old mrlhansen exporter, trimmed, kept only for metrics SNMP can't serve (indicator LED, NIC Mbps, machine/BIOS info, per-drive storage table) and to feed **HA Sofia's `sensor.r730_fan_speed`** (reads `idrac_sensors_fan_speed` from the exporter HTTP endpoint directly — NOT via Prometheus, so its freshness is HA's REST poll, independent of the 10m Prometheus scrape).
+
+**Gotchas:**
+- **Enum values differ from the old Redfish metrics.** DellStatus: `3 = OK` (was Redfish `1`); `systemPowerState`: `4 = on` (was `2`). All iDRAC alert exprs were rewritten accordingly (`!= 3`, `!= 4`).
+- The alert `iDRACSNMPMetricsMissing` was historically a misnomer (checked a Redfish metric); it now correctly probes `absent(r730_idrac_globalSystemStatus)`. `iDRACRedfishMetricsMissing` now probes `absent(r730_idrac_powerSupplyCurrentInputVoltage)`.
+- **SSD life % + SEL are genuine SNMP gaps but were already inert** (Redfish reported `0`/empty), so the SSD-wear alerts (kept on `r730_idrac_idrac_storage_drive_life_left_percent`) and the SEL dashboard panel are unchanged.
+- Why SNMP: the Redfish exporter (`metrics: all: true`) walked every subtree on each scrape — ~18.5s avg / 28s peak against the slow BMC — which forced the infrequent interval. SNMP is a single fast walk.
 
 ### Alert Cascade Inhibition
 
