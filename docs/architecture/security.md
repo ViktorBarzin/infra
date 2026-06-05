@@ -143,10 +143,22 @@ Active middleware chain: `ai-bot-block` (ForwardAuth) + `anti-ai-headers` (X-Rob
 
 #### Layer 1: Bot Blocking (ForwardAuth)
 
-- Middleware calls `poison-fountain` service before backend
-- Analyzes User-Agent, request patterns, timing
-- Blocks known AI scrapers (GPTBot, CCBot, etc.)
-- **Fail-open**: If poison-fountain down, allows traffic
+- `ai-bot-block` middleware forward-auths to the `bot-block-proxy` openresty
+  service (`stacks/traefik/modules/traefik/main.tf`) — the bot-check hop before
+  the backend.
+- **Currently a no-op (allow-all).** `poison-fountain` is intentionally scaled
+  to 0 (clears the ExternalAccessDivergence alert), so `bot-block-proxy`
+  short-circuits `/auth` to `return 200 "allowed"` instead of proxying to an
+  absent upstream. Same effective behaviour as the previous `proxy_pass` +
+  `error_page 5xx=200` fail-open, minus the ~51k/hr upstream-connect error logs
+  and per-request connect latency it generated (cleaned up 2026-06-05, found via
+  Loki). The Deployment carries `configmap.reloader.stakater.com/reload` so
+  config changes actually reload openresty (it does not hot-reload on its own).
+- **To re-enable real bot-blocking**: restore the `upstream poison_fountain` +
+  `proxy_pass http://poison_fountain;` block in the `bot-block-proxy-config`
+  ConfigMap (git history) and scale `poison-fountain` up. It then forward-auths
+  bot checks (User-Agent / patterns) and tarpits known AI scrapers, fail-open if
+  poison-fountain is down.
 
 #### Layer 2: X-Robots-Tag Header
 
@@ -160,12 +172,12 @@ Removed April 2026. The rewrite-body Traefik plugin used to inject hidden trap l
 
 #### Layer 3 (formerly 4): Tarpit / Poison Content
 
-- `poison-fountain` service still exists as a standalone service at `poison.viktorbarzin.me`
-- Serves AI bots extremely slowly (~100 bytes/sec tarpit)
+- `poison-fountain` exists as a standalone service at `poison.viktorbarzin.me` but the serving Deployment is **scaled to 0** (replicas=0); only its 6-hourly content-fetch CronJob runs. The tarpit is therefore dormant until re-enabled.
+- When running: serves AI bots extremely slowly (~50 bytes / 0.5s tarpit drip)
 - CronJob every 6 hours generates fake content
-- Trap links are no longer injected into real pages, but bots that discover `poison.viktorbarzin.me` directly still get tarpitted and poisoned
+- Trap links are no longer injected into real pages, but bots that discover `poison.viktorbarzin.me` directly would get tarpitted and poisoned
 
-**Implementation**: See `stacks/poison-fountain/` and `stacks/platform/modules/traefik/middleware.tf`
+**Implementation**: See `stacks/poison-fountain/` and `stacks/traefik/modules/traefik/{middleware.tf,main.tf}` (traefik moved from the platform stack to its own `traefik` stack)
 
 ### Audit Logging & Anomaly Detection (Wave 1)
 
@@ -441,12 +453,12 @@ spec:
 
 ### Anti-AI Service Down, Traffic Blocked
 
-**Problem**: `poison-fountain` service unhealthy, all traffic blocked.
+**Problem**: anti-AI ForwardAuth (`ai-bot-block`) blocks traffic. With `bot-block-proxy` as a no-op `return 200` (poison-fountain scaled to 0) this should not happen; if it does, `bot-block-proxy` itself is unreachable (Traefik ForwardAuth fails **closed** when the auth server is down).
 
 **Fix**:
-1. Verify fail-open config: Check `stacks/platform/modules/traefik/middleware.tf` for `failurePolicy: allow`
-2. Restart service: `kubectl rollout restart deployment/poison-fountain -n poison-fountain`
-3. Temporary disable: Set `anti_ai_scraping = false` in `ingress_factory` for affected services
+1. Check `bot-block-proxy` pods are Ready: `kubectl get pods -n traefik -l app=bot-block-proxy` (2 replicas; critical-path forward-auth target).
+2. Inspect/restart: `kubectl rollout restart deployment/bot-block-proxy -n traefik`. Config lives in the `bot-block-proxy-config` ConfigMap (`stacks/traefik/modules/traefik/main.tf`); changes auto-reload via the `configmap.reloader.stakater.com/reload` annotation.
+3. Temporary disable: Set `anti_ai_scraping = false` in `ingress_factory` for affected services.
 
 ### Rate Limit Too Aggressive
 
