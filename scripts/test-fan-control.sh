@@ -45,6 +45,18 @@ eq "decide down past band"    60 "$(fc_decide cool 69 80 3)"   # 69+3=72 -> 60% 
 eq "decide 100 holds"        100 "$(fc_decide cool 77 100 3)"  # 77+3=80 -> 100 -> hold
 eq "decide 100 drops"         80 "$(fc_decide cool 75 100 3)"  # 75+3=78 -> 80 < 100 -> drop
 
+# --- fc_clamp / fc_resolve: HA mode resolution ---
+eq "clamp over 100"   100 "$(fc_clamp 150)"
+eq "clamp under 0"      0 "$(fc_clamp -5)"
+eq "clamp passthrough" 45 "$(fc_clamp 45)"
+eq "resolve manual=slider"      42 "$(fc_resolve manual 64 42 cool -1 3)"
+eq "resolve manual clamped"    100 "$(fc_resolve manual 64 150 cool -1 3)"
+eq "resolve cool=cool curve"    60 "$(fc_resolve cool 64 0 cool -1 3)"
+eq "resolve quiet=quiet curve"  65 "$(fc_resolve quiet 80 0 cool -1 3)"
+eq "resolve auto+empty=cool"    60 "$(fc_resolve auto 64 0 cool -1 3)"
+eq "resolve auto+present=quiet" 20 "$(fc_resolve auto 64 0 quiet -1 3)"
+eq "resolve cool hysteresis"    60 "$(fc_resolve cool 69 0 cool 80 3)"
+
 # --- presence ---
 now=1000000
 eq "presence open -> quiet"          quiet "$(fc_presence_mode Отворена 0 $now 900 Отворена)"
