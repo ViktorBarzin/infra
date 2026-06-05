@@ -38,15 +38,19 @@ locals {
     PUSH_PROVIDER        = "webpush"
     LLM_MODE             = "fake"
     MAIL_INGEST_ENABLED  = "false"
-    # Outbound mail for linked-email verification — submitted via the cluster
-    # mailserver as spam@ (which relays out via Brevo). SMTP_PASSWORD comes from
-    # tripit-secrets (mapped to the existing PLANS_IMAP_PASSWORD). PUBLIC_BASE_URL
-    # builds the confirmation link mailed to the address.
+    # Outbound mail (linked-email verification + trip-share invites) — submitted
+    # via the cluster mailserver authenticated as spam@ (SMTP_USER), but sent
+    # From: plans@viktorbarzin.me (SMTP_FROM). docker-mailserver SPOOF_PROTECTION
+    # requires the login to "own" the From; an explicit plans@ -> spam@ virtual
+    # alias grants that (see mailserver extra/aliases.txt) and keeps inbound
+    # plans@ routing to spam@. Relays out via Brevo. SMTP_PASSWORD comes from
+    # tripit-secrets (the existing PLANS_IMAP_PASSWORD = spam@'s password).
+    # PUBLIC_BASE_URL builds the links mailed to recipients.
     EMAIL_PROVIDER  = "smtp"
     SMTP_HOST       = "mailserver.mailserver.svc"
     SMTP_PORT       = "587"
     SMTP_USER       = "spam@viktorbarzin.me"
-    SMTP_FROM       = "spam@viktorbarzin.me"
+    SMTP_FROM       = "plans@viktorbarzin.me"
     PUBLIC_BASE_URL = "https://tripit.viktorbarzin.me"
   }
 }
