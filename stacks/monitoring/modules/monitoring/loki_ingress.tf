@@ -10,7 +10,8 @@
 # 10.0.0.0/8) gates the endpoint to LAN/VPN only — the correct model for a
 # LAN-only Pi, mirroring the idrac-redfish-exporter ingress in this module.
 module "loki-write-ingress" {
-  source                  = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # auth = "none": rpi-sofia's promtail pushes logs programmatically (no browser, no Authentik SSO cookie); gated to LAN/VPN by allow_local_access_only below.
   auth                    = "none"
   namespace               = kubernetes_namespace.monitoring.metadata[0].name
   name                    = "loki"
