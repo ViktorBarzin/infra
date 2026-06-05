@@ -1,0 +1,138 @@
+{
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "description": "Cluster-wide log observability over Loki. Pod logs are shipped by Grafana Alloy (labels namespace/pod/container/app); node + Sofia-Pi system logs come from the journald jobs. Filter with the namespace/app/pod dropdowns and the free-text search box; error/warn panels use case-insensitive regex line-filters so they work regardless of level-label availability.",
+  "editable": true,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "schemaVersion": 39,
+  "tags": ["logs", "loki", "cluster"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "",
+  "title": "Cluster Logs",
+  "uid": "cluster-logs",
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "namespace", "label": "Namespace", "type": "query",
+        "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+        "query": "label_values(namespace)", "definition": "label_values(namespace)",
+        "multi": true, "includeAll": true, "allValue": ".+", "refresh": 2, "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "app", "label": "App", "type": "query",
+        "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+        "query": "label_values({namespace=~\"$namespace\"}, app)", "definition": "label_values({namespace=~\"$namespace\"}, app)",
+        "multi": true, "includeAll": true, "allValue": ".+", "refresh": 2, "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "pod", "label": "Pod", "type": "query",
+        "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+        "query": "label_values({namespace=~\"$namespace\"}, pod)", "definition": "label_values({namespace=~\"$namespace\"}, pod)",
+        "multi": true, "includeAll": true, "allValue": ".+", "refresh": 2, "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "search", "label": "Search (regex, case-insensitive)", "type": "textbox",
+        "query": "", "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Cluster Pod Logs (Alloy)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "collapsed": false },
+    {
+      "type": "stat", "title": "Lines (range)", "id": 1,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum(count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)$search\" [$__range]))", "queryType": "instant", "refId": "A" } ]
+    },
+    {
+      "type": "stat", "title": "Errors (range)", "id": 2,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 50 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum(count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)$search\" |~ \"(?i)(error|fatal|panic|exception)\" [$__range]))", "queryType": "instant", "refId": "A" } ]
+    },
+    {
+      "type": "stat", "title": "Warnings (range)", "id": 3,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum(count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)$search\" |~ \"(?i)(warn)\" [$__range]))", "queryType": "instant", "refId": "A" } ]
+    },
+    {
+      "type": "stat", "title": "Active namespaces", "id": 4,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "short" }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "count(sum by (namespace) (count_over_time({namespace=~\"$namespace\"} [$__range])))", "queryType": "instant", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries", "title": "Log volume by namespace (top 5)", "id": 5,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 0, "stacking": { "mode": "normal", "group": "A" } }, "unit": "short" }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "topk(5, sum by (namespace) (count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)$search\" [$__auto])))", "legendFormat": "{{namespace}}", "queryType": "range", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries", "title": "Error / Warning rate", "id": 6,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "options": { "legend": { "calcs": ["sum", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" }, "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "errors" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }, { "matcher": { "id": "byName", "options": "warnings" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] } ] },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum(count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)(error|fatal|panic|exception)\" [$__auto]))", "legendFormat": "errors", "queryType": "range", "refId": "A" },
+        { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum(count_over_time({namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)(warn)\" [$__auto]))", "legendFormat": "warnings", "queryType": "range", "refId": "B" }
+      ]
+    },
+    {
+      "type": "table", "title": "Top namespaces by errors (range)", "id": 7,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "Value", "desc": true } ] },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "filterable": false } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "topk(10, sum by (namespace) (count_over_time({namespace=~\"$namespace\"} |~ \"(?i)(error|fatal|panic|exception)\" [$__range])))", "queryType": "instant", "format": "table", "instant": true, "refId": "A" } ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "errors" } } } ]
+    },
+    {
+      "type": "table", "title": "Top pods by errors (range)", "id": 8,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "Value", "desc": true } ] },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "filterable": false } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "topk(10, sum by (namespace, pod) (count_over_time({namespace=~\"$namespace\"} |~ \"(?i)(error|fatal|panic|exception)\" [$__range])))", "queryType": "instant", "format": "table", "instant": true, "refId": "A" } ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "errors" } } } ]
+    },
+    {
+      "type": "logs", "title": "Live logs  {namespace=~$namespace, app=~$app, pod=~$pod} |~ search", "id": 9,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 21 },
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending" },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "{namespace=~\"$namespace\", app=~\"$app\", pod=~\"$pod\"} |~ \"(?i)$search\"", "queryType": "range", "refId": "A" } ]
+    },
+    { "type": "row", "title": "Node & Device Journals (systemd)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }, "id": 200, "collapsed": false },
+    {
+      "type": "timeseries", "title": "Journal volume by level", "id": 10,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 0, "stacking": { "mode": "normal", "group": "A" } }, "unit": "short" }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "sum by (level) (count_over_time({job=~\"node-journal|rpi-sofia-journal\"} [$__auto]))", "legendFormat": "{{level}}", "queryType": "range", "refId": "A" } ]
+    },
+    {
+      "type": "logs", "title": "Journal errors & warnings (nodes + rpi-sofia)", "id": 11,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending" },
+      "targets": [ { "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" }, "expr": "{job=~\"node-journal|rpi-sofia-journal\", level=~\"emerg|alert|crit|error|warning\"}", "queryType": "range", "refId": "A" } ]
+    }
+  ]
+}

@@ -132,6 +132,9 @@ locals {
     "loki.json"          = "Operations"
     "k8s-audit.json"     = "Operations"
 
+    # Logs
+    "cluster-logs.json" = "Logs"
+
     # Applications
     "qbittorrent.json"        = "Applications"
     "realestate-crawler.json" = "Applications"
