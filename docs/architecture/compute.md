@@ -2,7 +2,7 @@
 
 ## Overview
 
-The infrastructure runs on a single Dell R730 server with Proxmox VE, hosting a 5-node Kubernetes cluster. Compute resources are managed through a combination of Vertical Pod Autoscaler (VPA) recommendations, tier-based LimitRange defaults, and ResourceQuota enforcement. The cluster employs a no-CPU-limits policy to avoid CFS throttling while using memory requests=limits for stability. GPU workloads run on a dedicated node with Tesla T4 passthrough.
+The infrastructure runs on a single Dell R730 server with Proxmox VE, hosting a 7-node Kubernetes cluster. Compute resources are managed through a combination of Vertical Pod Autoscaler (VPA) recommendations, tier-based LimitRange defaults, and ResourceQuota enforcement. The cluster employs a no-CPU-limits policy to avoid CFS throttling while using memory requests=limits for stability. GPU workloads run on a dedicated node with Tesla T4 passthrough.
 
 ## Architecture Diagram
 

@@ -22,7 +22,7 @@ flowchart TB
     MX --> PF[pfSense WAN<br/>vtnet0 192.168.1.2]
     PF -->|NAT rdr<br/>WAN:25/465/587/993<br/>→ 10.0.20.1:same| HAP
     HAP[pfSense HAProxy<br/>4 TCP frontends on 10.0.20.1<br/>send-proxy-v2 to backends]
-    HAP -->|round-robin<br/>tcp-check inter 120s| KN{k8s worker<br/>node1..4}
+    HAP -->|round-robin<br/>tcp-check inter 120s| KN{k8s worker<br/>node1..6}
     KN -->|NodePort 30125-30128<br/>ETP: Cluster → kube-proxy SNAT| PODEXT
 
     %% Internal ingress path
