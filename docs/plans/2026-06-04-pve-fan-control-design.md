@@ -111,6 +111,20 @@ presence open/recent/stale, temperature parsing, jq-free JSON field extraction,
 and percent→hex. 36 assertions, no hardware needed. The daemon also supports
 `DRY_RUN=1` and `RUN_ONCE=1` for integration checks.
 
+## HA control (added 2026-06-05, on the host daemon)
+
+Delivered ahead of the cron migration (which is Vault-gated) by teaching the
+**host daemon** to poll two ha-sofia helpers each loop (`fc_resolve`):
+`input_select.r730_fan_mode` (auto/cool/quiet/manual) +
+`input_number.r730_fan_manual_pct`. `auto` = the garage-presence curve above;
+cool/quiet force that curve; manual holds a fixed %; `CEILING` still overrides.
+HA owns the setpoint + a 60-min auto-revert-to-auto automation
+(`automation.r730_fan_mode_auto_revert`) — the daemon just polls and actuates.
+Monitoring + control live on the dashboard-it "Server" view (REST sensors: fan
+RPM from the redfish exporter; mode/target-% from the Pushgateway). The same
+logic already exists in the Python controller (`r730-fan-control/`) for the
+eventual in-cluster CronJob; when that deploys it supersedes the host daemon.
+
 ## Rollback
 
 `systemctl disable --now fan-control && ipmitool raw 0x30 0x30 0x01 0x01` on the
