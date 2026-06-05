@@ -16,11 +16,11 @@ _Avoid_: using "Stack" when you mean the running Service.
 
 **Module**:
 A unit of HCL consumed via `source =`. Two homes, two purposes: **shared** modules under the top-level `modules/` tree (reused across many Stacks) and **Stack-local** modules nested under `stacks/<name>/modules/` (one Stack only). Bare "Module" means the shared kind.
-_Avoid_: "library", "package"; assuming everything under `modules/kubernetes/` is live — the per-app dirs (`immich/`, `ollama/`, `frigate/`, `crowdsec/`, …) are **vestigial**, sourced by nothing.
+_Avoid_: "library", "package".
 
 **Factory module**:
-A shared **Module** that hides convention (defaults, drift handling, secret wiring) behind a small input surface. The four in live use: `ingress_factory` (103 Stacks), `setup_tls_secret` (93), `nfs_volume` (41), `anubis_instance` (8) — every current shared module is a factory.
-_Avoid_: "wrapper"; citing `k8s_app` / `helm_app` / `postgres_app` (these never existed in the repo, though `docs/architecture/overview.md` still names them).
+A shared **Module** that hides convention (defaults, drift handling, secret wiring) behind a small input surface. `modules/kubernetes/` holds exactly four, all factories: `ingress_factory` (103 Stacks), `setup_tls_secret` (93), `nfs_volume` (41), `anubis_instance` (8).
+_Avoid_: "wrapper"; citing `k8s_app` / `helm_app` / `postgres_app` (these never existed in the repo).
 
 **Stack-local module**:
 A single Stack's implementation factored into a nested `stacks/<name>/modules/<name>/`, sourced by that one Stack only — organisation, not reuse. ~31 Stacks (authentik, kyverno, dbaas, mailserver, metallb, cloudflared, technitium, …). The alternative to a **flat** Stack.
