@@ -16,7 +16,13 @@ Drive the fans from **dashboard-it → "Server" view → Fans**. The view is
 deliberately minimal — it shows the current **fan speed** (% of capacity +
 absolute RPM) and two controls:
 
-- **Override %** (`input_number.r730_fan_manual_pct`) — the fixed fan % to hold.
+- **Override %** (`input_number.r730_fan_manual_pct`) — the fan % to hold. While
+  **unlocked** it continuously mirrors the live commanded fan %, so it always
+  shows the actual *absolute* speed and updates as the fan moves (NOT a stale
+  value or a delta) — `automation.r730_fan_override_track_live_speed_while_unlocked`
+  syncs it to `sensor.r730_fan_control_target` (guarded to ignore
+  unavailable/unknown). While **locked** it stops tracking and becomes your
+  editable setpoint. A readout under the slider shows the live `% · rpm`.
 - **Lock — freeze speed** (`input_boolean.r730_fan_lock`) — turn the algorithm
   off and hold a fixed speed. Toggling it **ON** snapshots the *current*
   commanded % into Override and switches the daemon to `manual`
