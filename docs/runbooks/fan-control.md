@@ -17,11 +17,19 @@ HA — **dashboard-it → "Server" view → Fans**:
 - `input_select.r730_fan_mode` — **auto** (garage-presence curve, default),
   **cool** / **quiet** (force that curve), **manual** (hold a fixed %).
 - `input_number.r730_fan_manual_pct` — the % used in `manual` mode (slider).
+- `input_boolean.r730_fan_lock` — **lock** the current override so the 60-min
+  auto-revert leaves it alone (a 🔒 banner shows on the view while engaged).
 
 Any non-`auto` override **auto-reverts to `auto` after 60 min**
 (`automation.r730_fan_mode_auto_revert` on ha-sofia), so a forgotten override
-can't run the fans wrong indefinitely. `CEILING` (83 °C) still overrides
-everything → Dell auto. An HA change is applied within one daemon loop (~15 s).
+can't run the fans wrong indefinitely — **unless you engage the Fan Lock**
+(`input_boolean.r730_fan_lock`, toggle on the same view). While locked the
+override persists indefinitely and a "🔒 FAN CONTROL LOCKED" banner appears on
+the view so you remember to unlock; unlocking restarts the 60-min timer. The
+automation re-checks the lock *after* the hour, so locking mid-countdown also
+cancels the pending revert. `CEILING` (83 °C) still overrides everything → Dell
+auto — **the lock does not defeat the ceiling**. An HA change is applied within
+one daemon loop (~15 s).
 
 Monitoring sensors on the same view: `sensor.r730_fan_speed` (redfish exporter),
 `sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` +

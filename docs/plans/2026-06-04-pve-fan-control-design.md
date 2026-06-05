@@ -133,7 +133,11 @@ Delivered ahead of the cron migration (which is Vault-gated) by teaching the
 `input_number.r730_fan_manual_pct`. `auto` = the garage-presence curve above;
 cool/quiet force that curve; manual holds a fixed %; `CEILING` still overrides.
 HA owns the setpoint + a 60-min auto-revert-to-auto automation
-(`automation.r730_fan_mode_auto_revert`) — the daemon just polls and actuates.
+(`automation.r730_fan_mode_auto_revert`), which an `input_boolean.r730_fan_lock`
+toggle can disable so a deliberate override persists (a "🔒 LOCKED" banner shows
+on the view while engaged; the ceiling still wins, and the automation re-checks
+the lock after the delay so locking mid-countdown cancels the revert) — the
+daemon just polls and actuates.
 Monitoring + control live on the dashboard-it "Server" view (REST sensors: fan
 RPM from the redfish exporter; mode/target-% from the Pushgateway). The same
 logic already exists in the Python controller (`r730-fan-control/`) for the
