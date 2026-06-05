@@ -124,6 +124,7 @@ locals {
     "idrac.json"                 = "Hardware"
     "ups.json"                   = "Hardware"
     "nvidia.json"                = "Hardware"
+    "rpi-sofia.json"             = "Hardware"
 
     # Operations
     "backup_health.json" = "Operations"
