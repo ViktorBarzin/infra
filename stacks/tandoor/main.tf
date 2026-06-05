@@ -59,33 +59,16 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "tandoor-data-proxmox"
-    namespace = kubernetes_namespace.tandoor.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Media + staticfiles on NFS. Migrated off proxmox-lvm 2026-06-05 for LUN-cap
+# relief — tandoor is PostgreSQL-backed with no embedded DB, so NFS is safe.
+# See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
+module "nfs_tandoor" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "tandoor-data-nfs"
+  namespace  = kubernetes_namespace.tandoor.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/tandoor"
+  storage    = "5Gi"
 }
 
 resource "kubernetes_deployment" "tandoor" {
@@ -226,7 +209,7 @@ resource "kubernetes_deployment" "tandoor" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_tandoor.claim_name
           }
         }
       }
