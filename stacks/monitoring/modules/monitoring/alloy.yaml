@@ -95,18 +95,33 @@ alloy:
         }
       }
 
+      // local.file_match expands the /var/log/pods/*<uid>/<container>/*.log globs
+      // that discovery.relabel.pod_logs writes into __path__ (doublestar) into
+      // concrete file targets. loki.source.file does NOT expand globs itself, so
+      // feeding it the glob directly makes it stat() the literal `*` path and ship
+      // ZERO pod logs (regression found 2026-06-05 — this component was missing;
+      // only node/Pi journals were reaching Loki). See Grafana Alloy docs
+      // "local.file_match > Send Kubernetes Pod logs to Loki".
+      local.file_match "pod_logs" {
+        path_targets = discovery.relabel.pod_logs.output
+      }
+
       // loki.source.file tails pod logs from /var/log/pods/* on the host filesystem.
       // Previously used loki.source.kubernetes (apiserver streaming) which drove
       // kube-apiserver `CONNECT pods/log` to ~13 req/s + ~2200 sec/s of streams.
-      // discovery.relabel.pod_logs already sets __path__ to the kubelet log path.
       loki.source.file "pod_logs" {
-        targets    = discovery.relabel.pod_logs.output
+        targets    = local.file_match.pod_logs.targets
         forward_to = [loki.process.pod_logs.receiver]
       }
 
       // loki.process receives log entries from other Loki components, applies one or more processing stages,
       // and forwards the results to the list of receivers in the component's arguments.
       loki.process "pod_logs" {
+        // Parse the containerd CRI wrapper ("<ts> <stream> <flags> <msg>") so Loki
+        // stores the clean message + the real timestamp instead of the raw prefixed
+        // line. All cluster nodes run containerd, so a bare stage.cri is correct.
+        stage.cri { }
+
         stage.static_labels {
             values = {
               cluster = "default",
