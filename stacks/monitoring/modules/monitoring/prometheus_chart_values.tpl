@@ -1257,12 +1257,12 @@ serverFiles:
       - name: Storage
         rules:
           - alert: NodeFilesystemFull
-            expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes) * 100 < 10
+            expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes) * 100 < 5
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 10%)"
+              summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }}: {{ $value | printf \"%.1f\" }}% free (threshold: 5%)"
           # PVAutoExpanding removed — was info-only at >80% used, but
           # pvc-autoresizer's threshold is 10% free (= 90% used), so the
           # alert always fired ~10 percentage points before any action
