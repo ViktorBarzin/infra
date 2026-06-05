@@ -22,7 +22,8 @@ locals {
 
   # Env shared by the Deployment app container and the three worker CronJobs.
   # Providers are pinned to fakes/no-op until the real integrations are wired:
-  #   FLIGHT_PROVIDER=fake, WEATHER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush,
+  #   FLIGHT_PROVIDER=fake, WEATHER_PROVIDER=openmeteo,
+  #   GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush,
   #   LLM_MODE=fake, MAIL_INGEST_ENABLED=false.
   # AUTH_MODE=forwardauth: the backend trusts the Authentik-injected
   # X-authentik-email header (forward-auth at the ingress). STORAGE_DIR points
@@ -35,6 +36,9 @@ locals {
     PERSONAL_STORAGE_DIR = "/data/personal-documents"
     FLIGHT_PROVIDER      = "fake"
     WEATHER_PROVIDER     = "openmeteo"
+    # Geocodes lodging addresses -> coords for the per-city itinerary weather
+    # (Open-Meteo keyless geocoding API; results cached in the geocode_cache table).
+    GEOCODER_PROVIDER    = "openmeteo"
     PUSH_PROVIDER        = "webpush"
     LLM_MODE             = "fake"
     MAIL_INGEST_ENABLED  = "false"
