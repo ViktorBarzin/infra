@@ -62,3 +62,28 @@ resource "helm_release" "prometheus" {
 
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token, authentik_walloff_targets = local.authentik_walloff_targets })]
 }
+
+# Local-only Prometheus query-API ingress for ha-sofia REST sensors (added
+# 2026-06-05). ha-sofia (external HAOS) reads R730 iDRAC SNMP metrics
+# (r730_idrac_coolingDeviceReading, etc.) by querying Prometheus directly via
+# this host instead of hitting the slow on-demand Redfish exporter. Distinct
+# host (prometheus-query.viktorbarzin.lan) + resource name to avoid colliding
+# with the chart-created `prometheus-server` ingress (prometheus.viktorbarzin.me).
+# Path-scoped to /api/v1/query so ONLY the read-only instant-query endpoint is
+# reachable on the LAN — not the UI, admin, or federation endpoints.
+module "prometheus-query-ingress" {
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # auth = "none": ha-sofia REST sensor queries the Prometheus HTTP API
+  # programmatically (no browser, no SSO cookie); the allow_local_access_only
+  # IP allowlist (LAN subnets) is the gate. Authentik OIDC would 302 every call.
+  auth                    = "none"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
+  name                    = "prometheus-query"
+  service_name            = "prometheus-server"
+  root_domain             = "viktorbarzin.lan"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  port                    = 80
+  ingress_path            = ["/api/v1/query"]
+}
