@@ -63,33 +63,16 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "changedetection-data-proxmox"
-    namespace = kubernetes_namespace.changedetection.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "8Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "4Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Datastore on NFS. Migrated off proxmox-lvm 2026-06-05 for LUN-cap relief —
+# changedetection uses a file-based JSON datastore (no embedded DB), NFS-safe.
+# See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
+module "nfs_changedetection" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "changedetection-data-nfs"
+  namespace  = kubernetes_namespace.changedetection.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/changedetection"
+  storage    = "8Gi"
 }
 
 resource "kubernetes_deployment" "changedetection" {
@@ -188,7 +171,7 @@ resource "kubernetes_deployment" "changedetection" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_changedetection.claim_name
           }
         }
       }
