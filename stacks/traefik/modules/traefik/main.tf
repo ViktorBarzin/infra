@@ -337,7 +337,11 @@ module "ingress" {
 }
 
 # Bot-block resilience proxy: nginx reverse proxy in front of Poison Fountain
-# Returns 200 (allow all traffic) if Poison Fountain is unreachable (fail-open)
+# Forward-auth target for the ai-bot-block middleware. The poison-fountain bot
+# trap is intentionally scaled to 0 (stacks/poison-fountain), so /auth is a
+# clean no-op returning 200 (allow-all) rather than proxying to an absent
+# upstream. Reloader (annotation on the Deployment below) rolls the pods when
+# this ConfigMap changes — openresty does not reload on its own.
 resource "kubernetes_config_map" "bot_block_proxy_config" {
   metadata {
     name      = "bot-block-proxy-config"
@@ -346,9 +350,6 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
 
   data = {
     "default.conf" = <<-EOT
-      upstream poison_fountain {
-          server poison-fountain.poison-fountain.svc.cluster.local:8080;
-      }
       server {
           listen 8080;
 
@@ -373,23 +374,15 @@ resource "kubernetes_config_map" "bot_block_proxy_config" {
                   ngx.req.clear_header("If-Modified-Since")
                   ngx.req.clear_header("If-Unmodified-Since")
               }
-              proxy_pass http://poison_fountain;
-              # Tight timeouts: poison-fountain may be scaled to 0 (graveyard
-              # endpoints) — failing open in <200ms keeps the 68-ingress chain
-              # responsive instead of paying 3s per request. Healthy upstream
-              # responds in <50ms anyway.
-              proxy_connect_timeout 100ms;
-              proxy_read_timeout 200ms;
-              proxy_send_timeout 200ms;
-              proxy_intercept_errors on;
-              error_page 502 503 504 =200 /fallback-allow;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-          }
-          location = /fallback-allow {
-              internal;
+              # poison-fountain (the bot trap) is intentionally scaled to 0
+              # (stacks/poison-fountain, replicas=0). With no upstream to
+              # consult we short-circuit to allow-all here -- the SAME effective
+              # behaviour as the prior proxy_pass + error_page-5xx-to-200
+              # fail-open (poison-fountain down => 200 allowed), minus the
+              # per-request connect attempt that logged ~51k errors/hr once pod
+              # logs shipped to Loki (2026-06-05) and cost up to 100ms/req. To
+              # re-enable the trap: restore the upstream + proxy_pass (git
+              # history) and scale poison-fountain up.
               return 200 "allowed";
           }
           location /healthz {
@@ -407,6 +400,13 @@ resource "kubernetes_deployment" "bot_block_proxy" {
     namespace = kubernetes_namespace.traefik.metadata[0].name
     labels = {
       app = "bot-block-proxy"
+    }
+    annotations = {
+      # openresty does not hot-reload its ConfigMap-mounted default.conf, so a
+      # config change needs a pod roll. Reloader watches the named ConfigMap and
+      # rolls this Deployment on change (the missing piece that let stale config
+      # run for days before 2026-06-05).
+      "configmap.reloader.stakater.com/reload" = "bot-block-proxy-config"
     }
   }
 
