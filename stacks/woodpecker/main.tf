@@ -32,7 +32,7 @@ resource "kubernetes_namespace" "woodpecker" {
     labels = {
       "resource-governance/custom-quota" = "true"
       tier                               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -89,9 +89,15 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.woodpecker]
 }
 
-# DB credentials from Vault database engine (rotated every 24h)
-# ExternalSecret provides WOODPECKER_DATABASE_DATASOURCE injected via
-# server.extraSecretNamesForEnvFrom — auto-updates when password rotates
+# DB credentials from Vault database engine (rotated every 7 days — static
+# role pg-woodpecker, rotation_period 604800 in stacks/vault). ExternalSecret
+# provides WOODPECKER_DATABASE_DATASOURCE injected via
+# server.extraSecretNamesForEnvFrom. envFrom does NOT hot-reload a running pod,
+# so the target secret carries reloader.stakater.com/match="true" and the
+# server sets reloader.stakater.com/search="true" (values.yaml); together they
+# make Stakater Reloader restart the server when the rotated password lands —
+# without it the pod kept using the revoked password until an unrelated restart
+# (latent weekly rotation outage, fixed 2026-06-05).
 resource "kubernetes_manifest" "db_external_secret" {
   field_manager {
     force_conflicts = true
@@ -112,6 +118,11 @@ resource "kubernetes_manifest" "db_external_secret" {
       target = {
         name = "woodpecker-db-creds"
         template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
           data = {
             WOODPECKER_DATABASE_DATASOURCE = "postgres://woodpecker:{{ .password }}@${var.postgresql_host}:5432/woodpecker?sslmode=disable"
           }
