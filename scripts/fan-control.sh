@@ -37,6 +37,11 @@ set -uo pipefail
 : "${HA_TOKEN:=}"                    # long-lived ha-sofia token; empty => presence disabled (COOL only)
 : "${GARAGE_ENTITY:=sensor.garage_door_state_bg}"
 : "${GARAGE_OPEN_STATE:=Отворена}"   # ha state string meaning "open"
+# HA control: a mode select + manual % the user drives from Home Assistant.
+# auto => garage-presence curve (default); cool/quiet => force that curve;
+# manual => hold MANUAL_ENTITY %. Empty HA_TOKEN or unreachable HA => auto.
+: "${MODE_ENTITY:=input_select.r730_fan_mode}"
+: "${MANUAL_ENTITY:=input_number.r730_fan_manual_pct}"
 : "${PUSHGATEWAY_URL:=}"             # optional Prometheus Pushgateway base URL
 : "${MAX_IPMI_FAILS:=3}"
 : "${DRY_RUN:=0}"                    # 1 => log IPMI actions instead of executing
@@ -98,6 +103,21 @@ fc_json_str_field() {
 # fc_pct_to_hex <pct> -> 0xNN
 fc_pct_to_hex() { printf '0x%02x' "$1"; }
 
+# fc_clamp <pct> -> 0..100
+fc_clamp() { local p="$1"; (( p < 0 )) && p=0; (( p > 100 )) && p=100; echo "$p"; }
+
+# fc_resolve <ha_mode> <temp> <manual_pct> <presence> <current> <deadband> -> pct
+# HA mode resolution (the hard ceiling is handled by the caller):
+#   manual      -> clamp(manual_pct), no hysteresis
+#   cool|quiet  -> that curve (with hysteresis)
+#   auto (else) -> presence-driven curve (garage door)
+fc_resolve() {
+  local ha_mode="$1" temp="$2" manual_pct="$3" presence="$4" current="$5" deadband="$6"
+  if [[ "$ha_mode" == "manual" ]]; then fc_clamp "$manual_pct"; return 0; fi
+  local eff; [[ "$ha_mode" == "auto" ]] && eff="$presence" || eff="$ha_mode"
+  fc_decide "$eff" "$temp" "$current" "$deadband"
+}
+
 # ---- side-effecting wrappers ----
 
 ipmi_manual_on=0
@@ -139,9 +159,18 @@ get_presence() {
   echo "$presence_cache"
 }
 
+# ha_entity_state <entity> -> state string (empty if HA disabled/unreachable)
+ha_entity_state() {
+  [[ -z "$HA_TOKEN" ]] && return 0
+  local resp
+  resp="$(curl -fsS --max-time 5 -H "Authorization: Bearer $HA_TOKEN" \
+            "$HA_URL/api/states/$1" 2>/dev/null)" || return 0
+  fc_json_str_field "$resp" state
+}
+
 push_metrics() {  # <temp> <pct> <mode> <ha_ok> <fallback>
   [[ -z "$PUSHGATEWAY_URL" ]] && return 0
-  local mode_num; case "$3" in quiet) mode_num=1;; cool) mode_num=2;; *) mode_num=0;; esac
+  local mode_num; case "$3" in quiet) mode_num=1;; cool) mode_num=2;; manual) mode_num=3;; *) mode_num=0;; esac
   curl -fsS --max-time 5 --data-binary @- \
     "$PUSHGATEWAY_URL/metrics/job/fan_control/instance/pve-r730" >/dev/null 2>&1 <<EOF || true
 # TYPE pve_fan_control_cpu_temp_celsius gauge
@@ -189,13 +218,23 @@ main() {
       fi
     fi
 
-    local mode ha_ok=1; mode="$(get_presence)"; [[ -z "$HA_TOKEN" ]] && ha_ok=0
-    local pct; pct="$(fc_decide "$mode" "$temp" "$current" "$DEADBAND")"
+    # HA-desired mode (auto/cool/quiet/manual); unreachable/unset => auto.
+    local ha_mode ha_ok=1; ha_mode="$(ha_entity_state "$MODE_ENTITY")"; [[ -z "$HA_TOKEN" ]] && ha_ok=0
+    [[ -z "$ha_mode" ]] && ha_mode="auto"
+    case "$ha_mode" in auto|cool|quiet|manual) ;; *) ha_mode="auto" ;; esac
+    local manual_pct=0
+    if [[ "$ha_mode" == "manual" ]]; then
+      manual_pct="$(ha_entity_state "$MANUAL_ENTITY")"; manual_pct="${manual_pct%%.*}"
+      [[ "$manual_pct" =~ ^[0-9]+$ ]] || manual_pct=0
+    fi
+    local presence="cool"; [[ "$ha_mode" == "auto" ]] && presence="$(get_presence)"
+    local eff; if [[ "$ha_mode" == "manual" ]]; then eff="manual"; elif [[ "$ha_mode" == "auto" ]]; then eff="$presence"; else eff="$ha_mode"; fi
+    local pct; pct="$(fc_resolve "$ha_mode" "$temp" "$manual_pct" "$presence" "$current" "$DEADBAND")"
     if (( pct != current )); then
-      if set_manual "$pct"; then log "temp=${temp}C mode=${mode} fan=${pct}% (was ${current}%)"; current="$pct"
+      if set_manual "$pct"; then log "temp=${temp}C ha_mode=${ha_mode} eff=${eff} fan=${pct}% (was ${current}%)"; current="$pct"
       else log "WARN set_manual ${pct}% failed"; fi
     fi
-    push_metrics "$temp" "$current" "$mode" "$ha_ok" 0
+    push_metrics "$temp" "$current" "$eff" "$ha_ok" 0
     (( RUN_ONCE == 1 )) && break || sleep "$LOOP_INTERVAL"
   done
 }
