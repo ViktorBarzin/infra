@@ -134,10 +134,10 @@ This three-tier network design isolates Kubernetes workloads from management inf
 
 ### Compute Layer
 
-The Kubernetes cluster consists of 5 nodes:
+The Kubernetes cluster consists of 7 nodes:
 - **k8s-master (200)**: 8c/32GB control plane running kube-apiserver, etcd, controller-manager
-- **k8s-node1 (201)**: 16c/32GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
-- **k8s-node2-4 (202-204)**: 8c/32GB workers running general-purpose workloads
+- **k8s-node1 (201)**: 16c/48GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
+- **k8s-node2-6 (202-206)**: 8c/32GB workers running general-purpose workloads
 
 GPU passthrough on node1 uses PCIe device 0000:06:00.0. The NVIDIA GPU Operator's gpu-feature-discovery auto-labels whichever node carries the card with `nvidia.com/gpu.present=true`; `null_resource.gpu_node_config` taints the same set of nodes with `nvidia.com/gpu=true:PreferNoSchedule`. No hostname is hardcoded — moving the card to a different node requires no Terraform edits.
 

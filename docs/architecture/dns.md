@@ -28,7 +28,7 @@ graph TB
     end
 
     subgraph "Kubernetes Cluster"
-        NodeLocalDNS[NodeLocal DNSCache<br/>DaemonSet, 5 nodes<br/>169.254.20.10 + 10.96.0.10]
+        NodeLocalDNS[NodeLocal DNSCache<br/>DaemonSet, 7 nodes<br/>169.254.20.10 + 10.96.0.10]
         CoreDNS[CoreDNS<br/>kube-system<br/>.:53 + viktorbarzin.lan:53]
         KubeDNSUpstream[kube-dns-upstream<br/>ClusterIP, selects CoreDNS pods]
 
