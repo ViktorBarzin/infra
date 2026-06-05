@@ -814,6 +814,36 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Fan unhealthy on R730 - check iDRAC"
+      - name: RPi Sofia
+        rules:
+          - alert: RpiSofiaDown
+            expr: up{job="rpi-sofia"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "rpi-sofia node_exporter unreachable for 5m — Pi down or network/SD wedge (cameras + solar feed at risk)"
+          - alert: RpiSofiaFilesystemReadonly
+            expr: node_filesystem_readonly{instance="rpi-sofia", mountpoint="/"} == 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "rpi-sofia rootfs is READ-ONLY — failing SD card (the silent-journal failure mode from this incident). Reflash/replace the card."
+          - alert: RpiSofiaUndervoltage
+            expr: rpi_under_voltage_occurred{instance="rpi-sofia"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "rpi-sofia under-voltage detected since last boot — check PSU/USB power cable"
+          - alert: RpiSofiaHighTemp
+            expr: rpi_soc_temp_celsius{instance="rpi-sofia"} > 75
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "rpi-sofia SoC temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -3058,6 +3088,21 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'pve-node-r730' # Giving it a friendly name
+  # rpi-sofia: external Raspberry Pi 3 at the Sofia home site (Frigate camera
+  # DNAT passthrough + solar inverter path + HA MQTT sensors). node_exporter
+  # installed via apt; the rpi_* metrics come from a vcgencmd textfile collector
+  # (undervoltage/throttle/SoC temp). Scraped by hostname (-> 192.168.1.10 wired).
+  - job_name: 'rpi-sofia'
+    static_configs:
+      - targets:
+        - "rpi-sofia.viktorbarzin.lan.:9100"
+        labels:
+          node: 'rpi-sofia'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'rpi-sofia' # Giving it a friendly name
   - job_name: 'istiod'
     kubernetes_sd_configs:
     - role: endpoints
