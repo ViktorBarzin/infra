@@ -103,10 +103,19 @@ Manual fan mode bypasses the iDRAC's own protection, so it is backstopped:
 
 ## Observability
 
-Pushes to the existing Pushgateway (`http://10.0.20.100:30091`, job
-`fan_control`): `pve_fan_control_cpu_temp_celsius`, `_fan_percent`, `_mode`
-(1 quiet / 2 cool / 0 fallback), `_ha_reachable`, `_fallback`. The existing CPU-
-temp alert is unaffected.
+Pushes to the Pushgateway (`http://10.0.20.100:30091`, job `fan_control`):
+`pve_fan_control_cpu_temp_celsius`, `_fan_percent`, `_mode` (1 quiet / 2 cool /
+3 manual / 0 fallback), `_ha_reachable`, `_fallback`, `_fan_rpm`, and
+`_fan_watts_est`.
+
+**Fan power is ESTIMATED** — the iDRAC exposes only total DCMI watts + RPM (no
+per-fan power), so `_fan_watts_est` models it from RPM via the fan affinity law
+(power ∝ RPM³), calibrated to the 2026-06-05 sweep: `fan_W ≈ 0.0205·(RPM/1000)³`
+(≈2 W at the floor → ~99 W at full; fits the sweep within ~3 W). Surfaced in HA
+as `sensor.r730_fan_power_est` + a "Fan Power (est)" card on the dashboard-it
+Server view, next to total power (`sensor.r730_power_consumption`, redfish) — so
+the fan tax of the control curve is visible. The existing CPU-temp alert is
+unaffected.
 
 ## Testing
 

@@ -52,6 +52,13 @@ eq "resolve quiet=quiet curve"  73 "$(fc_resolve quiet 78 0 cool -1 3)"
 eq "resolve auto+empty=cool"    51 "$(fc_resolve auto 60 0 cool -1 3)"
 eq "resolve auto+present=quiet" 31 "$(fc_resolve auto 70 0 quiet -1 3)"
 
+# --- fc_fan_watts: estimated fan power from RPM (cube-law, calibrated to the sweep) ---
+eq "fan_watts 0"     0  "$(fc_fan_watts 0)"
+eq "fan_watts 4800"  2  "$(fc_fan_watts 4800)"
+eq "fan_watts 9360"  16 "$(fc_fan_watts 9360)"
+eq "fan_watts 12720" 42 "$(fc_fan_watts 12720)"
+eq "fan_watts 16920" 99 "$(fc_fan_watts 16920)"
+
 # --- presence ---
 now=1000000
 eq "presence open -> quiet"          quiet "$(fc_presence_mode Отворена 0 $now 900 Отворена)"
