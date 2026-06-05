@@ -47,28 +47,31 @@ set -uo pipefail
 : "${DRY_RUN:=0}"                    # 1 => log IPMI actions instead of executing
 : "${RUN_ONCE:=0}"                   # 1 => one iteration then exit (testing)
 
-# Curves as "min_temp:pct" entries, descending; first whose min_temp <= temp wins.
-# COOL is power-tuned (2026-06-05 power/temp sweep): the cooling-per-watt knee is
-# ~60% — beyond it airflow buys almost nothing (60->70% = +21W/-2°C, 70->100% =
-# +54W/0°C; the CPU floors ~59°C at cluster load). So the normal band caps at 60%
-# (~303W, ~61°C); 80/100% are a high-load safety ramp before the 83°C ceiling.
-COOL_CURVE=(79:100 73:80 64:60 55:50 0:30)
-QUIET_CURVE=(82:100 78:65 73:40 0:20)
+# Continuous LINEAR fan curve (2026-06-05): fan% ramps proportionally with CPU
+# temp between (T_LO,P_LO) and (T_HI,P_HI), clamped flat outside. Replaces the old
+# discrete step-bands (which flapped at band edges — e.g. 45<->65%). Both modes
+# reach 100% right at the 83°C ceiling. Anchors are env-tunable.
+#   COOL  (garage empty):  30% @50°C .. 100% @83°C  (~2.1%/°C; equilibrium ~60°C/~51%)
+#   QUIET (someone there): 20% @68°C .. 100% @83°C  (near-silent until ~70°C)
+# Web-researched: a linear curve + 2-3°C hysteresis is the homelab standard; PID is
+# overkill for this slow thermal loop. See docs/plans/2026-06-04-pve-fan-control-design.md.
+: "${COOL_T_LO:=50}"; : "${COOL_P_LO:=30}"; : "${COOL_T_HI:=83}"; : "${COOL_P_HI:=100}"
+: "${QUIET_T_LO:=68}"; : "${QUIET_P_LO:=20}"; : "${QUIET_T_HI:=83}"; : "${QUIET_P_HI:=100}"
+: "${MIN_STEP:=3}"   # min fan-% change worth an IPMI write (anti-jitter on the smooth curve)
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
 
 # ---- pure functions (no side effects; unit-tested) ----
 
-# fc_curve <mode> <temp> -> fan percent
+# fc_curve <mode> <temp> -> fan percent (continuous linear interpolation between
+# the per-mode (T_LO,P_LO)..(T_HI,P_HI) anchors; clamped flat outside the range).
 fc_curve() {
-  local mode="$1" temp="$2"
-  local -a curve
-  if [[ "$mode" == "quiet" ]]; then curve=("${QUIET_CURVE[@]}"); else curve=("${COOL_CURVE[@]}"); fi
-  local entry
-  for entry in "${curve[@]}"; do
-    if (( temp >= ${entry%%:*} )); then echo "${entry##*:}"; return 0; fi
-  done
-  echo "${curve[-1]##*:}"
+  local mode="$1" temp="$2" tlo plo thi phi
+  if [[ "$mode" == "quiet" ]]; then tlo=$QUIET_T_LO; plo=$QUIET_P_LO; thi=$QUIET_T_HI; phi=$QUIET_P_HI
+  else tlo=$COOL_T_LO; plo=$COOL_P_LO; thi=$COOL_T_HI; phi=$COOL_P_HI; fi
+  if (( temp <= tlo )); then echo "$plo"; return 0; fi
+  if (( temp >= thi )); then echo "$phi"; return 0; fi
+  echo $(( plo + ( (temp - tlo) * (phi - plo) + (thi - tlo) / 2 ) / (thi - tlo) ))  # rounded
 }
 
 # fc_decide <mode> <temp> <current_pct> <deadband> -> fan percent
@@ -230,7 +233,9 @@ main() {
     local presence="cool"; [[ "$ha_mode" == "auto" ]] && presence="$(get_presence)"
     local eff; if [[ "$ha_mode" == "manual" ]]; then eff="manual"; elif [[ "$ha_mode" == "auto" ]]; then eff="$presence"; else eff="$ha_mode"; fi
     local pct; pct="$(fc_resolve "$ha_mode" "$temp" "$manual_pct" "$presence" "$current" "$DEADBAND")"
-    if (( pct != current )); then
+    # Only write when first-run or the change clears MIN_STEP (kills 1-2% jitter
+    # on the continuous curve; fc_decide already gives asymmetric hysteresis).
+    if (( current < 0 || pct - current >= MIN_STEP || current - pct >= MIN_STEP )); then
       if set_manual "$pct"; then log "temp=${temp}C ha_mode=${ha_mode} eff=${eff} fan=${pct}% (was ${current}%)"; current="$pct"
       else log "WARN set_manual ${pct}% failed"; fi
     fi
