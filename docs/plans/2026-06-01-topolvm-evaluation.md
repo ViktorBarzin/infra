@@ -1,8 +1,8 @@
 # TopoLVM Migration Evaluation
 
 **Date**: 2026-06-01
-**Status**: Evaluation — not yet decided
-**Decision**: Pending. Used to understand whether to commit to the migration.
+**Status**: ❌ NOT ADOPTED — superseded 2026-06-05.
+**Decision**: **Rejected in favour of option ① (harden proxmox-csi + NFS)** — TopoLVM pins PVCs to a node, which loses the cross-node pod mobility Viktor requires (a node going down must let pods reschedule elsewhere), and Option C's hardware spend was declined. Longhorn was also rejected (replication is 2× write-amplification on the single shared sdc HDD, with no DR benefit on a single host). See `2026-06-05-block-storage-harden-nfs-design.md` for the chosen path and full rationale. This doc is retained for its analysis — the LUN-cap mechanics, the three disk-layout options, and the effort estimate remain accurate reference if a second physical host is ever added (which would revive the Longhorn/replication option).
 
 ## Problem statement
 

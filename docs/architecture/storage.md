@@ -6,9 +6,10 @@ Last updated: 2026-05-24
 
 The cluster uses two storage backends: **Proxmox CSI** for database block storage and **Proxmox NFS** for application data.
 
-**Block storage (Proxmox CSI)**: ~95 PVCs for databases and stateful apps use two StorageClasses provisioned from the same `local-lvm` thin pool (sdc, 10.7TB RAID1 HDD):
-- **`proxmox-lvm`**: Unencrypted block storage for non-sensitive workloads (~67 PVCs)
-- **`proxmox-lvm-encrypted`**: LUKS2-encrypted block storage for all sensitive data (~28 PVCs) — databases, auth, email, password managers, git repos, health data, etc. Uses Argon2id key derivation with passphrase from Vault KV.
+**Block storage (Proxmox CSI)**: ~69 PVCs for databases and stateful apps use two StorageClasses provisioned from the same `local-lvm` thin pool (sdc, 10.7TB RAID1 HDD):
+- **`proxmox-lvm`**: Unencrypted block storage for non-sensitive workloads (~26 PVCs)
+- **`proxmox-lvm-encrypted`**: LUKS2-encrypted block storage for all sensitive data (~43 PVCs) — databases, auth, email, password managers, git repos, health data, etc. Uses Argon2id key derivation with passphrase from Vault KV.
+- **Both StorageClasses use `reclaimPolicy: Retain`.** Deleting a PVC frees the SCSI-LUN slot (the volume is detached) but **retains the underlying LV** for data safety — the PV goes `Released` and the LV (plus its daily `lvm-pvc-snapshot` snapshots) lingers on the thin pool. ~63 such orphan Released PVs exist as of 2026-06-05; batch orphan-LV reclaim is tracked in beads `code-dfjn`. The slot is freed regardless — orphans consume thin-pool space, not LUN slots.
 
 All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 2026-04-15. This eliminates the previous double-CoW (ZFS + LVM-thin) path and ensures data-at-rest encryption.
 
@@ -23,6 +24,8 @@ Both `StorageClass: nfs-truenas` and `StorageClass: nfs-proxmox` point to the Pr
 **History (2026-04-02)**: iSCSI block volumes migrated from democratic-csi (TrueNAS iSCSI → ZFS → LVM-thin) to Proxmox CSI (direct LVM-thin hotplug). democratic-csi iSCSI driver removed.
 
 **History (2026-04-13)**: TrueNAS (VM 9000, 10.0.10.15) fully decommissioned. NFS storage migrated to the Proxmox host (192.168.1.127). ZFS datasets under `/mnt/main/` and `/mnt/ssd/` moved to ext4 LVs at `/srv/nfs/` and `/srv/nfs-ssd/`. Legacy PVs referencing `/mnt/main/` paths still work (bind-mounted or symlinked on the Proxmox host); new PVs use `/srv/nfs/` and `/srv/nfs-ssd/`. TrueNAS VM still exists in stopped state on PVE pending user decision on deletion.
+
+**History (2026-06-05) — Wave 2 NFS migration + strategy decision**: Decided to **keep proxmox-csi and harden it** (option ① — keeps PVC mobility, £0, no new hardware) rather than re-architect to TopoLVM (pins PVCs to a node) or Longhorn (2× write-amplification on the single shared sdc HDD). See `docs/plans/2026-06-05-block-storage-harden-nfs-design.md`. Migrated 5 non-DB, embedded-DB-free workloads off block to NFS to relieve the per-VM LUN cap: **tandoor** (media, PG-backed), **speedtest** (config, MySQL), **hackmd** (image uploads, MySQL — dropped LUKS for low-sensitivity images), **changedetection** (JSON datastore), **send** (upload blobs, Redis). Freed 5 SCSI-LUN slots (4 on the then-hot node6, 21→16). Each followed the scale-0 → busybox mover (`cp -a`) → swap `claim_name` → delete block PVC pattern. **Remaining structural work (the "harden" half) is open in beads `code-dfjn`**: ghost-disk-loop *prevention* (cap disks/node, raise QMP timeout, auto-reconcile) + orphan Released-PV/LV cleanup.
 
 ## Architecture Diagram
 
@@ -187,8 +190,13 @@ Levers (in order of leverage-per-effort):
 1. **Migrate non-DB workloads off block** to NFS. Pre-flight every candidate
    for embedded DBs (SQLite/LevelDB/RocksDB/H2/BoltDB) — they corrupt on NFS
    due to lock semantics. Wave 1 (2026-05-26) moved 5 services
-   (excalidraw, resume, whisper, onlyoffice, f1-stream) and pre-flighted
-   two more out of scope (plotting-book → SQLite + WAL, stirling-pdf → H2).
+   (excalidraw, resume, whisper, onlyoffice, f1-stream). Wave 2 (2026-06-05)
+   moved 5 more (tandoor, speedtest, hackmd, changedetection, send — see
+   History "2026-06-05"). Pre-flighted-and-rejected (stay on block): plotting-book
+   (SQLite+WAL), stirling-pdf (H2), navidrome/ntfy/uptime-kuma/vaultwarden/
+   freshrss/actualbudget/openclaw (SQLite), rybbit (ClickHouse). **This is the
+   chosen long-term strategy (option ①)** — keep proxmox-csi's mobility, shrink
+   the block footprint, prevent the ghost loop (`code-dfjn`); not TopoLVM/Longhorn.
 2. **Add another K8s worker VM** — each new worker brings up to 29 fresh
    slots; the most durable answer if PVC count keeps growing.
 3. **Patch+fork `sergelogvinov/proxmox-csi-plugin`** to bump the loop bound
