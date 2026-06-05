@@ -12,24 +12,28 @@ CPU cool when the garage is empty, quiet when someone's in the garage. Design:
 
 ## HA control (Home Assistant)
 
-The daemon polls two ha-sofia helpers each loop, so you can drive the fans from
-HA — **dashboard-it → "Server" view → Fans**:
-- `input_select.r730_fan_mode` — **auto** (garage-presence curve, default),
-  **cool** / **quiet** (force that curve), **manual** (hold a fixed %).
-- `input_number.r730_fan_manual_pct` — the % used in `manual` mode (slider).
-- `input_boolean.r730_fan_lock` — **lock** the current override so the 60-min
-  auto-revert leaves it alone (a 🔒 banner shows on the view while engaged).
+Drive the fans from **dashboard-it → "Server" view → Fans**. The view is
+deliberately minimal — it shows the current **fan speed** (% of capacity +
+absolute RPM) and two controls:
 
-Any non-`auto` override **auto-reverts to `auto` after 60 min**
-(`automation.r730_fan_mode_auto_revert` on ha-sofia), so a forgotten override
-can't run the fans wrong indefinitely — **unless you engage the Fan Lock**
-(`input_boolean.r730_fan_lock`, toggle on the same view). While locked the
-override persists indefinitely and a "🔒 FAN CONTROL LOCKED" banner appears on
-the view so you remember to unlock; unlocking restarts the 60-min timer. The
-automation re-checks the lock *after* the hour, so locking mid-countdown also
-cancels the pending revert. `CEILING` (83 °C) still overrides everything → Dell
-auto — **the lock does not defeat the ceiling**. An HA change is applied within
-one daemon loop (~15 s).
+- **Override %** (`input_number.r730_fan_manual_pct`) — the fixed fan % to hold.
+- **Lock — freeze speed** (`input_boolean.r730_fan_lock`) — turn the algorithm
+  off and hold a fixed speed. Toggling it **ON** snapshots the *current*
+  commanded % into Override and switches the daemon to `manual`
+  (`automation.r730_fan_lock_freeze_current_speed_resume_algo`); toggling it
+  **OFF** switches back to `auto`, resuming the presence curve. Fine-tune the
+  held % with Override while locked. A 🔒 reminder appears on the view while
+  locked.
+
+Under the hood the daemon still reads `input_select.r730_fan_mode`
+(auto/cool/quiet/manual) + `input_number.r730_fan_manual_pct` each loop; the Lock
+toggle just drives `mode` between `manual` (locked) and `auto` (unlocked).
+`cool`/`quiet` remain valid modes if set directly (via the entity) but are no
+longer surfaced on the simplified dashboard. `CEILING` (83 °C) still overrides
+everything → Dell auto, **even when locked**. A stale non-`auto` mode left while
+*unlocked* still auto-reverts to `auto` after 60 min
+(`automation.r730_fan_mode_auto_revert`, now a dormant safety net). An HA change
+is applied within one daemon loop (~15 s).
 
 Monitoring sensors on the same view: `sensor.r730_fan_speed` (redfish exporter),
 `sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` +
