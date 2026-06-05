@@ -131,13 +131,17 @@ resource "kubernetes_deployment" "f1-stream" {
           image             = "forgejo.viktorbarzin.me/viktor/f1-stream:${var.image_tag}"
           image_pull_policy = "Always"
           name              = "f1-stream"
+          # Right-sized 2026-06-05: was 1Gi (bundled-Chromium era). The image is
+          # now CDP-only (verifier drives the remote chrome-service), so actual
+          # usage is ~116Mi and the VPA upperBound (incl. live races) is ~185Mi.
+          # 256Mi = upperBound x ~1.3 (bursty); requests=limits per convention.
           resources {
             limits = {
-              memory = "1Gi"
+              memory = "256Mi"
             }
             requests = {
-              cpu    = "100m"
-              memory = "1Gi"
+              cpu    = "50m"
+              memory = "256Mi"
             }
           }
           port {
