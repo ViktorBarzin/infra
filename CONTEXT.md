@@ -1,6 +1,6 @@
 # Infra
 
-Terragrunt-managed homelab declaring a 5-node Kubernetes cluster on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
+Terragrunt-managed homelab declaring a 7-node Kubernetes cluster (1 control plane + 6 workers) on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
 
 ## Language
 
@@ -11,16 +11,20 @@ The deployed app as a domain concept — one logical thing that runs in the clus
 _Avoid_: bare "app" without the Service definition; "deployment" (collides with K8s `Deployment`).
 
 **Stack**:
-The HCL directory under `stacks/<name>/` that defines a Service, applied independently with `scripts/tg apply`. A Stack is the unit of Terraform organisation; a Service is the running thing. They are 1:1 but not synonyms.
+The HCL directory under `stacks/<name>/` that defines a Service, applied independently with `scripts/tg apply`. A Stack is the unit of Terraform organisation; a Service is the running thing. They are 1:1 but not synonyms. A Stack is either **flat** (resources declared directly in its own `.tf` files — the majority, ~94, e.g. immich) or wraps a **Stack-local module** (~31, the larger/older ones).
 _Avoid_: using "Stack" when you mean the running Service.
 
 **Module**:
-A reusable HCL primitive under `modules/`, consumed by Stacks via `source =`.
-_Avoid_: "library", "package".
+A unit of HCL consumed via `source =`. Two homes, two purposes: **shared** modules under the top-level `modules/` tree (reused across many Stacks) and **Stack-local** modules nested under `stacks/<name>/modules/` (one Stack only). Bare "Module" means the shared kind.
+_Avoid_: "library", "package"; assuming everything under `modules/kubernetes/` is live — the per-app dirs (`immich/`, `ollama/`, `frigate/`, `crowdsec/`, …) are **vestigial**, sourced by nothing.
 
 **Factory module**:
-A Module that hides convention (defaults, drift handling, secret wiring) behind a small input surface. Canonical examples: `ingress_factory`, `nfs_volume`, `k8s_app`, `helm_app`, `postgres_app`.
-_Avoid_: "wrapper".
+A shared **Module** that hides convention (defaults, drift handling, secret wiring) behind a small input surface. The four in live use: `ingress_factory` (103 Stacks), `setup_tls_secret` (93), `nfs_volume` (41), `anubis_instance` (8) — every current shared module is a factory.
+_Avoid_: "wrapper"; citing `k8s_app` / `helm_app` / `postgres_app` (these never existed in the repo, though `docs/architecture/overview.md` still names them).
+
+**Stack-local module**:
+A single Stack's implementation factored into a nested `stacks/<name>/modules/<name>/`, sourced by that one Stack only — organisation, not reuse. ~31 Stacks (authentik, kyverno, dbaas, mailserver, metallb, cloudflared, technitium, …). The alternative to a **flat** Stack.
+_Avoid_: calling it a "Module" unqualified (it isn't reusable); "submodule".
 
 **State tier**:
 Terraform state-backend partition. **Tier 0** = bootstrap Stacks (`infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`) on local SOPS-encrypted state. **Tier 1** = every other Stack, on PG-backed state.
@@ -29,7 +33,7 @@ _Avoid_: "phase", "bootstrap stack" — say Tier 0 explicitly.
 ### Cluster
 
 **Node**:
-A K8s worker VM (`k8s-master`, `k8s-node1..4`). Default reading of the bare word "node" in this repo.
+A K8s cluster VM — `k8s-master` (control plane) plus `k8s-node1..6` (workers). Default reading of the bare word "node" in this repo.
 _Avoid_: "k8s node" (redundant), "host" (ambiguous).
 
 **PVE node** / **PVE host**:
@@ -62,9 +66,9 @@ _Avoid_: "external", "outside".
 `viktorbarzin.lan`, served by Technitium DNS. Resolves only inside the homelab network.
 _Avoid_: bare "lan", "private", "intranet".
 
-**Ingress auth tier**:
-The `auth = "..."` parameter on `ingress_factory`, one of `required` (Authentik forward-auth gates every request), `app` (the backend owns its login), `public` (anonymous Authentik binding for audit only), or `none` (Anubis-fronted content, or native-client API).
-_Avoid_: "auth mode" — the canonical key is `auth`.
+**Ingress auth**:
+The `auth = "..."` parameter on `ingress_factory` — a discrete *mode*, not a ranked tier — one of `required` (Authentik forward-auth gates every request), `app` (the backend owns its login), `public` (anonymous Authentik binding for audit only), or `none` (Anubis-fronted content, or native-client API). Default `required` (fail-closed).
+_Avoid_: "auth tier" / "auth mode" — refer to it by the canonical key, `auth` (e.g. `auth = "required"`). "tier" is reserved for State tier and Namespace tier.
 
 **Authentik outpost**:
 A standalone Authentik deployment that terminates the proxy/auth flow for a specific binding model. The repo runs two distinct ones: the default outpost (used by `auth = "required"`) and the `public` outpost (anonymous binding, used by `auth = "public"`).
@@ -75,8 +79,16 @@ The channel by which non-proxied **public domain** traffic reaches the cluster, 
 _Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale).
 
 **Ingress chain**:
-The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth tier**) → anti-AI scraping (default-on when no Authentik is in the path) → CrowdSec bouncer (fail-open) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
+The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → CrowdSec bouncer (fail-open) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
 _Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it.
+
+**MetalLB / LB IP**:
+The bare-metal load-balancer that assigns external IPs to `type=LoadBalancer` Services. Two IPs matter: the **shared LB IP** `10.0.20.200` (~10 services — PG state-backend, headscale, wireguard, coturn, xray… — all `externalTrafficPolicy: Cluster`) and **Traefik's dedicated LB IP** `10.0.20.203` (`externalTrafficPolicy: Local`). Traefik runs on its own IP because ETP:Local preserves the **real client IP** (for CrowdSec) and enables QUIC, and MetalLB forbids mixed ETP on one shared IP.
+_Avoid_: calling `.200` "the cluster IP" or assuming all ingress shares one LB IP.
+
+**Calico**:
+The cluster CNI and **NetworkPolicy** engine (also GlobalNetworkPolicy + flow logs). Egress lockdown follows an **observe-then-enforce** rollout — flow logs build an empirical allowlist, then default-deny egress is enforced per-namespace, tier by tier (wave 1 began at `recruiter-responder`; Tier 0/1/2 deferred).
+_Avoid_: "firewall" (it's pod-level policy, not a perimeter); conflating a Calico **NetworkPolicy** (enforced in the data path) with a **Kyverno policy** (enforced at admission) — different layers.
 
 ### Storage
 
@@ -95,9 +107,19 @@ _Avoid_: "shared storage" (ambiguous).
 A historical SC name retained only because StorageClass strings are immutable on bound PVs. The underlying server is the **PVE host**, not TrueNAS; TrueNAS is decommissioned.
 _Avoid_: assuming this means TrueNAS.
 
+**local-path**:
+The cluster's Kubernetes default StorageClass (`rancher.io/local-path`) — node-local hostpath, **non-replicated**, no CSI snapshots, outside the backup pipeline. A PVC that omits `storageClassName` silently binds here, pinned to one Node's disk. Always set an explicit `storageClassName`; reach for local-path only for genuinely throwaway, node-pinned data.
+_Avoid_: relying on the default. Note the two senses of "default": local-path is the *cluster default SC* (what an unspecified PVC gets); proxmox-lvm-encrypted is the *default choice* for sensitive data. Different things.
+
 **3-2-1 backup**:
 The named posture of where data lives: **Copy 1** = live on the PVE thin pool (sdc), **Copy 2** = sda backup disk (`/mnt/backup`), **Copy 3** = offsite Synology NAS. Per-PVC file-level rsync from LVM thin snapshots; databases additionally dump to NFS for per-DB restore.
 _Avoid_: bare "backup" without saying which copy you mean (a service is "backed up" only once it's on Copy 2; Copy 3 is the disaster floor).
+
+### Data
+
+**CNPG** / **pg-cluster**:
+**CNPG** is the CloudNativePG operator; **`pg-cluster`** is the Postgres cluster it manages — the shared Postgres substrate. Backs Tier-1 Terraform state (`pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`) and ~12 application databases, reached through **PgBouncer** (a **critical-path Service**) for connection pooling; app credentials rotate via the `vault-database` ClusterSecretStore.
+_Avoid_: "the database" (many DBs share one cluster); the legacy `postgresql.dbaas` Service (no endpoints — dead); conflating the CNPG operator with the `pg-cluster` it manages.
 
 ### Secrets
 
@@ -120,17 +142,27 @@ A user-managed secret committed to a Stack directory as `sealed-*.yaml`. Distinc
 The split where Docker images are built+pushed by GitHub Actions and Woodpecker only runs `kubectl set image` on a deploy-only pipeline. Repos that can't fit GHA limits stay on Woodpecker for build too.
 _Avoid_: bare "Woodpecker pipeline" — say "build" or "deploy".
 
+**Keel**:
+The **poll-driven** rollout orchestrator — watches registries for new image tags and rolls the matching Deployments automatically. The actor behind "auto-upgrade" for upstream images, and a redundant net for owned apps (already rolled on push by **Woodpecker deploy**).
+_Avoid_: conflating with **Woodpecker deploy** (push-driven, fires on commit) or **Diun** (watches but only notifies). Never point Keel / `set image` at operator-managed StatefulSets.
+
+**Diun**:
+**Notify-only** image-update monitoring — reports that a newer image exists, never rolls anything (contrast **Keel**, which acts). Disabled on pinned images (MySQL, PostgreSQL, Redis) so version pins aren't nagged.
+_Avoid_: expecting Diun to deploy; conflating with **Keel**.
+
 **Anubis**:
 A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW).
 
 ## Relationships
 
-- A **Service** is defined by exactly one **Stack**, which declares zero or more **Modules** and resolves to one or more K8s workloads.
+- A **Service** is defined by exactly one **Stack** — **flat** or wrapping a **Stack-local module** — which sources zero or more shared **Factory modules** and resolves to one or more K8s workloads.
 - A **Namespace-owner** owns one or more namespaces and one or more public subdomains.
 - A **Service** owns its **Vault path** at `secret/<service>`, surfaces values through **ExternalSecrets**, and reads them at plan time via **plan-time secrets**.
-- An **Ingress** picks exactly one **Ingress auth tier**; the choice defines how strangers reach the backend.
+- An **Ingress** picks exactly one **Ingress auth** mode; the choice defines how strangers reach the backend.
 - A **proxmox-lvm-encrypted** PVC binds to one Node at a time (RWO) and requires a Service-level backup CronJob; an **NFS volume** is RWX and is backed up at the host level via rsync.
 - **State tier** and **Namespace tier** are orthogonal — a Tier 0 Stack can deploy a Service into any Namespace tier and vice versa.
+- A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit) or **Keel** (poll-driven, on a new registry tag); **Diun** only notifies. Operator-managed StatefulSets are rolled by neither.
+- Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
 
 ## Example dialogue
 
@@ -143,8 +175,9 @@ A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content
 
 ## Flagged ambiguities
 
-- **"tier"** is overloaded — *Namespace tier* (`0-core`..`4-aux`, scheduling priority) is distinct from *State tier* (Tier 0 / Tier 1, Terraform backend partition). Always qualify which axis.
+- **"tier"** has exactly two senses — always qualify which: *State tier* (Tier 0 / Tier 1, Terraform backend partition) and *Namespace tier* (`0-core`..`4-aux`, scheduling priority/quota). They are orthogonal axes. Do **not** coin new "tier"s: **Ingress auth** is a *mode* (not a tier), and storage speed (SSD vs HDD) is *not* a "tier" either.
 - **"node"** can mean a K8s Node (default) or a PVE node. For Proxmox-level statements, say **PVE node** explicitly.
 - **"service"** spans two distinct concepts: the deployed app (capitalised **Service**, this repo's domain noun) and the K8s `Service` object (in backticks or qualified "K8s Service"). Lowercase "service" in prose is fine when context disambiguates; flag it when it doesn't.
 - **"secret"** spans Vault entries, K8s Secret objects, **ExternalSecrets**, and **Sealed Secrets**. Always specify which.
 - **"proxied"** / **"non-proxied"** refer to Cloudflare's CDN posture for a DNS record, _not_ Anubis or forward-auth layering.
+- **"policy"** spans **Kyverno policy** (admission-time mutate/generate/validate), **Calico NetworkPolicy** (data-path ingress/egress), Vault policy (KV access), and K8s RBAC. Always qualify which engine.
