@@ -46,33 +46,16 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.insta2spotify]
 }
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  wait_until_bound = false
-  metadata {
-    name      = "insta2spotify-data-proxmox"
-    namespace = kubernetes_namespace.insta2spotify.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
-    resources {
-      requests = {
-        storage = "1Gi"
-      }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Data on NFS. Migrated off proxmox-lvm 2026-06-05 (Phase 1, LUN relief) —
+# insta2spotify is config-only, no embedded DB. See
+# docs/plans/2026-06-05-block-storage-harden-nfs-design.md
+module "nfs_insta2spotify" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "insta2spotify-data-nfs"
+  namespace  = kubernetes_namespace.insta2spotify.metadata[0].name
+  nfs_server = var.nfs_server
+  nfs_path   = "/srv/nfs/insta2spotify"
+  storage    = "5Gi"
 }
 
 resource "kubernetes_deployment" "insta2spotify" {
@@ -203,7 +186,7 @@ resource "kubernetes_deployment" "insta2spotify" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.data_proxmox.metadata[0].name
+            claim_name = module.nfs_insta2spotify.claim_name
           }
         }
       }
