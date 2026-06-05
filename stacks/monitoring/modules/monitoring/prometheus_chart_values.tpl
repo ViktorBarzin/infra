@@ -3148,8 +3148,12 @@ extraScrapeConfigs: |
           - "crowdsec-service.crowdsec.svc.cluster.local:6060"
     metrics_path: '/metrics'
   - job_name: 'snmp-idrac'
-    scrape_interval: 1m
-    scrape_timeout: 30s
+    # 30s (was 1m) so the HA dashboard iDRAC metrics (temps / fan RPM / power /
+    # voltage, read by ha-sofia's prometheus-query.lan REST sensors) refresh
+    # every 30s — matching the fan-control daemon's Pushgateway metrics. The
+    # SNMP scrape takes ~3-4s; snmp-ups also runs at 30s. (2026-06-05)
+    scrape_interval: 30s
+    scrape_timeout: 15s
     params:
       module: [dell_idrac]
       auth: [public_v2]
