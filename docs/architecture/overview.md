@@ -184,17 +184,17 @@ Kyverno policies automatically inject namespace labels, LimitRange, ResourceQuot
 | Path | Purpose |
 |------|---------|
 | `stacks/<service>/terragrunt.hcl` | Individual service configuration |
-| `modules/k8s_app/` | Reusable Kubernetes app module |
-| `modules/helm_app/` | Helm chart deployment module |
+| `modules/kubernetes/ingress_factory/` | Shared factory module: ingress + middleware chain + DNS + Uptime-Kuma monitor |
+| `modules/kubernetes/nfs_volume/` | Shared factory module: RWX NFS PV/PVC provisioning |
 | `base.hcl` | Global Terragrunt configuration |
 | `terraform.tfvars` | Global variables (git-ignored) |
 
 ### Terraform Organization
 
 Each service lives in `stacks/<service>/` with its own Terragrunt configuration. Common patterns:
-- Helm deployments use `modules/helm_app/`
-- Custom manifests use `modules/k8s_app/`
-- Databases use dedicated modules (`modules/postgres_app/`, `modules/mysql_app/`)
+- Most Stacks are **flat** — resources declared directly in the Stack's `.tf` files
+- Larger/older Stacks factor their implementation into a **stack-local module** at `stacks/<service>/modules/<service>/`
+- Shared, reused logic lives in **factory modules** under `modules/kubernetes/` — `ingress_factory`, `nfs_volume`, `anubis_instance`, `setup_tls_secret`
 - Shared dependencies via `dependency` blocks in terragrunt.hcl
 
 ### Vault Paths
