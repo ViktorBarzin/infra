@@ -10,6 +10,27 @@ CPU cool when the garage is empty, quiet when someone's in the garage. Design:
 - `fan-control.service` — systemd unit (`Type=simple`, restarts on failure).
 - `/etc/fan-control.env` — config incl. the ha-sofia token (chmod 600, not in git).
 
+## HA control (Home Assistant)
+
+The daemon polls two ha-sofia helpers each loop, so you can drive the fans from
+HA — **dashboard-it → "Server" view → Fans**:
+- `input_select.r730_fan_mode` — **auto** (garage-presence curve, default),
+  **cool** / **quiet** (force that curve), **manual** (hold a fixed %).
+- `input_number.r730_fan_manual_pct` — the % used in `manual` mode (slider).
+
+Any non-`auto` override **auto-reverts to `auto` after 60 min**
+(`automation.r730_fan_mode_auto_revert` on ha-sofia), so a forgotten override
+can't run the fans wrong indefinitely. `CEILING` (83 °C) still overrides
+everything → Dell auto. An HA change is applied within one daemon loop (~15 s).
+
+Monitoring sensors on the same view: `sensor.r730_fan_speed` (redfish exporter),
+`sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` (Pushgateway).
+
+The HA objects (helpers, the auto-revert automation, the REST sensors in
+`rest_resources/{idrac_redfish_exporter,fan_control}.yaml`, and the dashboard
+cards) live on **ha-sofia** and are auto-git-tracked there by the version-control
+add-on — they are NOT in this repo.
+
 ## Quick status
 
 ```bash
@@ -17,7 +38,8 @@ ssh root@192.168.1.127 systemctl status fan-control
 ssh root@192.168.1.127 'journalctl -u fan-control -n 30 --no-pager'
 ssh root@192.168.1.127 'ipmitool sdr type fan | grep ^Fan1; ipmitool sdr type temperature | grep "^Temp "'
 ```
-Log lines look like `temp=63C mode=cool fan=65% (was 45%)`.
+Log lines look like `temp=60C ha_mode=auto eff=cool fan=50% (was 70%)`
+(`ha_mode` = the HA setpoint; `eff` = the effective curve applied).
 
 ## Disable / roll back to stock firmware control
 
