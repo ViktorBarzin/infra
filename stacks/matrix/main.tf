@@ -98,6 +98,18 @@ resource "kubernetes_deployment" "matrix" {
       app  = "matrix"
       tier = local.tiers.aux
     }
+    annotations = {
+      # Synapse reads the DB password ONLY at startup: the inject-db-password
+      # initContainer seds matrix-db-creds into homeserver.yaml. That secret is
+      # rotated by Vault via the ESO above (15m refresh), so without an
+      # auto-reload the running pod keeps a stale password and Synapse's DB
+      # auth fails on every rotation until a manual `rollout restart` (observed
+      # 2026-06-05). Reloader watches the named secret and rolls the deployment
+      # when it changes. Explicit form (not auto/search) because the secret is
+      # referenced only in an initContainer env var, not a mount/envFrom, so
+      # Reloader's reference auto-discovery is unreliable here.
+      "secret.reloader.stakater.com/reload" = "matrix-db-creds"
+    }
   }
   spec {
     replicas = 1
