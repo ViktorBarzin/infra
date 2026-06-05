@@ -109,6 +109,12 @@ fc_pct_to_hex() { printf '0x%02x' "$1"; }
 # fc_clamp <pct> -> 0..100
 fc_clamp() { local p="$1"; (( p < 0 )) && p=0; (( p > 100 )) && p=100; echo "$p"; }
 
+# fc_fan_watts <rpm> -> estimated TOTAL fan power (W). The iDRAC reports only
+# total DCMI watts + RPM (no per-fan power), so this is a MODEL: fan power ∝ RPM³
+# (fan affinity law), calibrated to the 2026-06-05 power sweep — fits within ~3W
+# (~2W @4800rpm · ~17W @9360 · ~42W @12720 · ~99W @16920). Integer: 0.0205·(rpm/1e3)³.
+fc_fan_watts() { echo $(( $1 * $1 * $1 * 205 / 10000000000000 )); }
+
 # fc_resolve <ha_mode> <temp> <manual_pct> <presence> <current> <deadband> -> pct
 # HA mode resolution (the hard ceiling is handled by the caller):
 #   manual      -> clamp(manual_pct), no hysteresis
@@ -145,6 +151,10 @@ read_cpu_temp() {
   fc_parse_temp "$("$IPMITOOL" sdr type temperature 2>/dev/null | grep -E '^Temp ' | head -1)"
 }
 
+read_fan_rpm() {  # Fan1 RPM — representative (all 6 fans are set together)
+  "$IPMITOOL" sdr type fan 2>/dev/null | awk -F'|' '/^Fan1/{gsub(/[^0-9]/,"",$5); print $5+0; exit}'
+}
+
 presence_cache="cool"; presence_ts=0
 get_presence() {
   local now; now="$(date +%s)"
@@ -171,7 +181,7 @@ ha_entity_state() {
   fc_json_str_field "$resp" state
 }
 
-push_metrics() {  # <temp> <pct> <mode> <ha_ok> <fallback>
+push_metrics() {  # <temp> <pct> <mode> <ha_ok> <fallback> [fan_rpm] [fan_watts_est]
   [[ -z "$PUSHGATEWAY_URL" ]] && return 0
   local mode_num; case "$3" in quiet) mode_num=1;; cool) mode_num=2;; manual) mode_num=3;; *) mode_num=0;; esac
   curl -fsS --max-time 5 --data-binary @- \
@@ -186,6 +196,10 @@ pve_fan_control_mode $mode_num
 pve_fan_control_ha_reachable $4
 # TYPE pve_fan_control_fallback gauge
 pve_fan_control_fallback $5
+# TYPE pve_fan_control_fan_rpm gauge
+pve_fan_control_fan_rpm ${6:-0}
+# TYPE pve_fan_control_fan_watts_est gauge
+pve_fan_control_fan_watts_est ${7:-0}
 EOF
 }
 
@@ -239,7 +253,8 @@ main() {
       if set_manual "$pct"; then log "temp=${temp}C ha_mode=${ha_mode} eff=${eff} fan=${pct}% (was ${current}%)"; current="$pct"
       else log "WARN set_manual ${pct}% failed"; fi
     fi
-    push_metrics "$temp" "$current" "$eff" "$ha_ok" 0
+    local rpm fan_w; rpm="$(read_fan_rpm)"; rpm="${rpm:-0}"; fan_w="$(fc_fan_watts "$rpm")"
+    push_metrics "$temp" "$current" "$eff" "$ha_ok" 0 "$rpm" "$fan_w"
     (( RUN_ONCE == 1 )) && break || sleep "$LOOP_INTERVAL"
   done
 }

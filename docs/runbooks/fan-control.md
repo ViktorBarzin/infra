@@ -24,7 +24,10 @@ can't run the fans wrong indefinitely. `CEILING` (83 °C) still overrides
 everything → Dell auto. An HA change is applied within one daemon loop (~15 s).
 
 Monitoring sensors on the same view: `sensor.r730_fan_speed` (redfish exporter),
-`sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` (Pushgateway).
+`sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` +
+`sensor.r730_fan_power_est` (Pushgateway). `r730_fan_power_est` is an ESTIMATE of
+total fan power (the iDRAC reports no per-fan power) — modelled from RPM via the
+fan affinity law (∝ RPM³), calibrated to the power sweep (~2 W floor → ~99 W full).
 
 The HA objects (helpers, the auto-revert automation, the REST sensors in
 `rest_resources/{idrac_redfish_exporter,fan_control}.yaml`, and the dashboard
