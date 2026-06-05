@@ -43,7 +43,12 @@ is applied within one daemon loop (~15 s).
 
 Monitoring sensors on the same view: `sensor.r730_fan_speed` (redfish exporter),
 `sensor.r730_fan_control_target` + `sensor.r730_fan_control_mode` +
-`sensor.r730_fan_power_est` (Pushgateway). `r730_fan_power_est` is an ESTIMATE of
+`sensor.r730_fan_power_est` (Pushgateway). Fan **% and RPM are merged into one
+"Fan speed" card** (the two had identical trend shapes) — the % trend comes from
+the stable Pushgateway sensor, while RPM reads `sensor.r730_fan_speed` but **falls
+back to a calibrated estimate (shown with a `~` prefix) whenever the Redfish
+sensor is `unavailable`** (it blips out intermittently), so the readout never goes
+blank. `r730_fan_power_est` is an ESTIMATE of
 total fan power (the iDRAC reports no per-fan power) — modelled from RPM via the
 fan affinity law (∝ RPM³), calibrated to the power sweep (~2 W floor → ~99 W full).
 
