@@ -28,6 +28,31 @@ At a comparable CPU load (~45–53 % busy):
 Best °C-per-RPM is the first step; beyond ~70 % it is mostly noise. ~16°C of
 swing is available.
 
+## Power characterization (sweep 2026-06-05)
+
+Averaged wall power (iDRAC DCMI) + temp at each fan setting:
+
+| Fan | RPM | Power | CPU | load |
+|-----|-----|-------|-----|------|
+| auto | 7,080 | 296 W | 68°C | 21 |
+| 20 % | 4,800 | 281 W | 73°C | 20 |
+| 30 % | 6,360 | 288 W | 72°C | 19 |
+| 50 % | 9,360 | 299 W | 65°C | 18 |
+| 60 % | 11,040 | 303 W | 61°C | 17 |
+| 70 % | 12,720 | 324 W | 59°C | 16 |
+| 100 % | 16,920 | 378 W | 59°C | 17 |
+
+**The cooling-per-watt knee is ~60 %.** Fan power follows ~RPM³: 60→70 % costs
++21 W for −2°C; 70→100 % costs **+54 W for 0°C** (the CPU floors ~59°C at cluster
+load — more airflow does nothing). Full speed draws ~97 W (~850 kWh/yr) over the
+floor and buys nothing past 60 %.
+
+**Decision (2026-06-05):** the COOL curve caps its normal band at 60 % (~303 W,
+~61°C) — capturing essentially all achievable cooling while avoiding the wasteful
+80–100 % zone, now reserved as a high-load safety ramp (≥73/79°C) before the 83°C
+ceiling. QUIET is unchanged (already at the low-power floor: 20 % / 4,800 RPM /
+281 W). Verified live after re-tune: 63°C, 60 %, ~267 W.
+
 ## Decisions
 
 1. **Custom bash daemon + systemd service**, deployed to the PVE host the same
@@ -45,15 +70,16 @@ swing is available.
    `HOLD_SECS` (15 min) ⇒ someone's around ⇒ QUIET; otherwise COOL.
    `house_mode` was rejected — it tracks *apartment* occupancy, irrelevant to
    garage noise.
-4. **Two curves**, picked by presence:
+4. **Two curves**, picked by presence (COOL power-tuned 2026-06-05 — see
+   "Power characterization" below):
 
    | CPU °C | COOL % (empty) | CPU °C | QUIET % (occupied) |
    |--------|----------------|--------|--------------------|
-   | ≤52    | 25 | ≤72 | 20 (≈silent floor) |
-   | 53–60  | 45 | 73–77 | 40 |
-   | 61–67  | 65 | 78–81 | 65 |
-   | 68–73  | 85 | ≥82 | 100 |
-   | ≥74    | 100 | | |
+   | ≤54    | 30 | ≤72 | 20 (≈silent floor) |
+   | 55–63  | 50 | 73–77 | 40 |
+   | 64–72  | 60 (knee) | 78–81 | 65 |
+   | 73–78  | 80 | ≥82 | 100 |
+   | ≥79    | 100 | | |
 
    3°C downward hysteresis prevents flapping at band edges (ramp up immediately,
    step down only once the curve still wants lower 3°C hotter).
