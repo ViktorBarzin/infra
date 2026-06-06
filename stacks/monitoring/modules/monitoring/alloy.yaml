@@ -149,6 +149,20 @@ alloy:
           }
         }
 
+        // Drop the cosmetic k8s deprecation warning calico-typha emits because
+        // it still WATCHes the core v1 Endpoints API (~342 lines/hr across 3
+        // typha pods). The v1 Endpoints API will essentially never be removed
+        // (KEP-4974), so this is pure log noise — Calico is healthy and no
+        // Calico release has moved typha's watch to EndpointSlice. Real
+        // calico-system warnings/errors are KEPT. Reversible — delete to ship.
+        stage.match {
+          selector = `{namespace="calico-system"}`
+          stage.drop {
+            expression          = `.*v1 Endpoints is deprecated in v1\.33\+; use discovery\.k8s\.io/v1 EndpointSlice.*`
+            drop_counter_reason = "calico_endpoints_deprecation_warning"
+          }
+        }
+
         stage.static_labels {
             values = {
               cluster = "default",
