@@ -8,8 +8,11 @@ smtp_sasl_password_maps = hash:/etc/postfix/sasl/passwd
 smtp_sasl_security_options = noanonymous
 smtp_sasl_tls_security_options = noanonymous
 smtp_tls_security_level = encrypt
-smtpd_tls_cert_file=/tmp/ssl/tls.crt
-smtpd_tls_key_file=/tmp/ssl/tls.key
+# TLS cert/key come from docker-mailserver's SSL_TYPE=manual flow, which writes
+# the authoritative `smtpd_tls_chain_files` into main.cf at boot. Setting the
+# legacy smtpd_tls_cert_file/smtpd_tls_key_file here too makes postfix warn
+# ("Both smtpd_tls_chain_files and one or more of the legacy ...") and ignore
+# them. Dropped to silence the warning — functionally a no-op (chain_files wins).
 smtpd_use_tls=yes
 # Require STARTTLS before any AUTH command on the SMTPD listener.
 # Without this, a misconfigured client that skips STARTTLS would send

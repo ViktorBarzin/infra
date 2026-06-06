@@ -135,6 +135,20 @@ alloy:
         // line. All cluster nodes run containerd, so a bare stage.cri is correct.
         stage.cri { }
 
+        // Drop benign public-SMTP scanner noise from the mailserver pod only:
+        // unknown[unknown] probes that never complete TLS/PROXY + postscreen
+        // half-open drops (~9k lines/hr, the cluster's #1 Loki error source).
+        // Real delivery logs and real-IP SASL failures are KEPT; CrowdSec bans
+        // these scanner IPs independently, so security posture is unchanged.
+        // Reversible — delete this stage to ship the lines again.
+        stage.match {
+          selector = `{namespace="mailserver"}`
+          stage.drop {
+            expression          = `.*(getpeername: Transport endpoint is not connected -- dropping|SSL_accept error from unknown\[unknown\]|Connection rate limit exceeded: [0-9]+ from unknown\[unknown\]).*`
+            drop_counter_reason = "mailserver_scanner_noise"
+          }
+        }
+
         stage.static_labels {
             values = {
               cluster = "default",
