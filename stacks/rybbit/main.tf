@@ -312,7 +312,63 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
   }
 }
 
+# Ensure the rybbit Postgres database exists before the app starts. The rybbit
+# ROLE is managed elsewhere (Vault/ESO) and has CREATEDB; the DATABASE itself
+# was missing after a past CNPG rebuild (role survived, db did not), so
+# rybbit's node-cron logged 'database "rybbit" does not exist' every minute
+# (found via Loki 2026-06-06). Idempotent: connect as rybbit to the default
+# 'postgres' db and CREATE DATABASE only if absent. Self-contained — uses the
+# rybbit password from rybbit-secrets (no root creds needed).
+resource "kubernetes_job" "db_init" {
+  metadata {
+    name      = "rybbit-db-init"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+  }
+  spec {
+    template {
+      metadata {}
+      spec {
+        container {
+          name  = "db-init"
+          image = "postgres:16-alpine"
+          command = [
+            "sh", "-c",
+            <<-EOT
+              set -e
+              psql -h ${var.postgresql_host} -U rybbit -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='rybbit'" | grep -q 1 || \
+                psql -h ${var.postgresql_host} -U rybbit -d postgres -c "CREATE DATABASE rybbit OWNER rybbit"
+              echo "rybbit database ensured"
+            EOT
+          ]
+          env {
+            name = "PGPASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "rybbit-secrets"
+                key  = "postgres_password"
+              }
+            }
+          }
+        }
+        restart_policy = "Never"
+      }
+    }
+    backoff_limit = 3
+  }
+  wait_for_completion = true
+  timeouts {
+    create = "2m"
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission; ignore it so a completed job doesn't show perpetual drift.
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [kubernetes_manifest.external_secret]
+}
+
 resource "kubernetes_deployment" "rybbit" {
+  depends_on = [kubernetes_job.db_init]
   metadata {
     name      = "rybbit"
     namespace = kubernetes_namespace.rybbit.metadata[0].name
