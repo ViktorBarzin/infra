@@ -222,11 +222,14 @@ alloy:
         forward_to = [loki.write.default.receiver]
       }
 
-      // Kubernetes audit log collection from /var/log/kubernetes/audit.log
-      // Requires alloy.mounts.varlog=true to mount /var/log from the host
+      // Kubernetes audit log collection from /var/log/kubernetes/audit/audit.log
+      // (kube-apiserver --audit-log-path on k8s-master; rotated siblings stay in
+      // the audit/ subdir). Requires alloy.mounts.varlog=true to mount /var/log
+      // from the host. Enabled 2026-06-06 once apiserver audit actually started
+      // writing — see infra/scripts/k8s-apiserver-audit-policy.yaml.
       local.file_match "audit_logs" {
         path_targets = [{
-          __path__ = "/var/log/kubernetes/audit.log",
+          __path__ = "/var/log/kubernetes/audit/audit.log",
           job      = "kubernetes-audit",
           node     = env("HOSTNAME"),
         }]
