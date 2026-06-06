@@ -89,12 +89,18 @@ resource "kubernetes_deployment" "novelapp" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      # Override the Kyverno-stamped default (`patch`) with `all` so Keel picks
-      # up any new tag from mghee/novelapp. The `+()` anchor in the Kyverno
-      # ClusterPolicy preserves this explicit value; not in ignore_changes
-      # below so TF re-asserts it on every apply (otherwise the injector
-      # default would drift back in).
-      "keel.sh/policy"       = "all"
+      # Track the :latest tag BY DIGEST (force + match-tag), NOT by semver.
+      # Upstream mghee/novelapp tags its newest releases as `v.1.1.1` (note the
+      # dot after `v`) which is NOT valid semver, so a semver policy (patch/all)
+      # can't see past the highest *parseable* tag `v1.0.3` and gets stuck there.
+      # `:latest` does correctly point at the newest release (v.1.1.1), so we
+      # pin the image to :latest and let Keel watch its digest: force =
+      # "update when the current tag's digest changes", match-tag=true keeps it
+      # locked to the :latest tag (never rewrites the tag). The `+()` anchor in
+      # the Kyverno inject-keel-annotations policy preserves these explicit
+      # values; Kyverno does NOT manage match-tag, so it sticks.
+      "keel.sh/policy"       = "force"
+      "keel.sh/match-tag"    = "true"
       "keel.sh/trigger"      = "poll"
       "keel.sh/pollSchedule" = "@every 1h"
     }
@@ -103,7 +109,6 @@ resource "kubernetes_deployment" "novelapp" {
     ignore_changes = [
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["keel.sh/match-tag"],   # Kyverno actively strips this legacy annotation
       metadata[0].annotations["kubernetes.io/change-cause"],         # Keel writes this on each auto-upgrade
       metadata[0].annotations["deployment.kubernetes.io/revision"],  # K8s increments this on every rollout
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 — Keel writes on update
