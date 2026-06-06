@@ -1,0 +1,57 @@
+# kube-apiserver audit policy -- k8s-master (10.0.20.100), single control-plane.
+#
+# Goal: a durable "who/when/what" trail for MUTATIONS (create/update/patch/
+# delete) so resource deletions can be attributed even though direct
+# kubectl-to-apiserver calls otherwise leave no trace (see the 2026-06-06
+# novelapp incident: a dashboard delete was attributable, a direct-kubectl
+# recreate was not). Deployed OUTSIDE Terraform (the k8s VMs are not TF-managed,
+# see memory id=1575); this file is the source of truth, scp'd to
+# /etc/kubernetes/audit-policy.yaml and wired into the apiserver static-pod
+# manifest + the kubeadm-config ConfigMap (so "kubeadm upgrade" preserves it).
+#
+# Tuned for LOW WRITE VOLUME (the cluster's sdc HDD is write-sensitive, see
+# memory id=559): reads are dropped entirely, high-churn resources and probe
+# endpoints are dropped, and the verbose RequestReceived stage is omitted, so
+# only one Metadata-level line is written per mutating request.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+# Only emit the post-execution stage -- halves volume vs logging both stages.
+omitStages:
+  - RequestReceived
+rules:
+  # 1. Never log read-only verbs -- the overwhelming majority of traffic and
+  #    irrelevant to "who changed/deleted X".
+  - level: None
+    verbs: ["get", "list", "watch"]
+
+  # 2. Drop high-churn / low-value resources even on writes.
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events", "endpoints", "nodes/status", "pods/status"]
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+      - group: "discovery.k8s.io"
+        resources: ["endpointslices"]
+      - group: "metrics.k8s.io"
+      - group: "authentication.k8s.io"
+        resources: ["tokenreviews"]
+      - group: "authorization.k8s.io"
+        resources: ["subjectaccessreviews", "selfsubjectaccessreviews"]
+
+  # 3. Drop noisy non-resource probe / discovery URLs.
+  - level: None
+    nonResourceURLs:
+      - "/healthz*"
+      - "/readyz*"
+      - "/livez*"
+      - "/version"
+      - "/metrics"
+      - "/openapi/*"
+      - "/swagger*"
+
+  # 4. Everything else (every create/update/patch/delete on real resources):
+  #    record WHO (user + sourceIP + userAgent), WHAT (resource/namespace/name),
+  #    WHEN, and the verb -- at Metadata level (no request/response bodies, so
+  #    each entry stays small).
+  - level: Metadata
