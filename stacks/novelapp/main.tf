@@ -89,18 +89,17 @@ resource "kubernetes_deployment" "novelapp" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      # Track the :latest tag BY DIGEST (force + match-tag), NOT by semver.
-      # Upstream mghee/novelapp tags its newest releases as `v.1.1.1` (note the
-      # dot after `v`) which is NOT valid semver, so a semver policy (patch/all)
-      # can't see past the highest *parseable* tag `v1.0.3` and gets stuck there.
-      # `:latest` does correctly point at the newest release (v.1.1.1), so we
-      # pin the image to :latest and let Keel watch its digest: force =
-      # "update when the current tag's digest changes", match-tag=true keeps it
-      # locked to the :latest tag (never rewrites the tag). The `+()` anchor in
-      # the Kyverno inject-keel-annotations policy preserves these explicit
-      # values; Kyverno does NOT manage match-tag, so it sticks.
-      "keel.sh/policy"       = "force"
-      "keel.sh/match-tag"    = "true"
+      # Track upstream SEMVER. Gheorghe fixed his tag format 2026-06-06
+      # (v.1.1.1 -> valid v1.1.1 / v1.1.3), so Keel can parse versions again.
+      # policy=major = take ALL upgrades (major+minor+patch, cumulative) --
+      # Viktor wants novelapp always on Gheorghe's newest release. NO match-tag:
+      # semver policies must be free to climb to higher semver tags (match-tag
+      # would pin to a single tag's digest and freeze it). Keel only considers
+      # PARSEABLE semver tags, so the leftover malformed `v.1.x.x` / SHA / `test`
+      # tags are ignored. The image below is a floor; Keel manages the live tag
+      # (KEEL_IGNORE_IMAGE in lifecycle). If Gheorghe ever regresses to the
+      # `v.` format again, Keel silently stops upgrading -- revisit then.
+      "keel.sh/policy"       = "major"
       "keel.sh/trigger"      = "poll"
       "keel.sh/pollSchedule" = "@every 1h"
     }
@@ -138,9 +137,12 @@ resource "kubernetes_deployment" "novelapp" {
           }
         }
         container {
-          image             = "mghee/novelapp:latest"
+          image             = "mghee/novelapp:v1.1.3"
           name              = "novelapp"
-          image_pull_policy = "Always"
+          # IfNotPresent is correct now that the tag is a pinned semver (Keel
+          # bumps the tag string on upgrade -> a new tag always pulls fresh).
+          # Always was only needed back when this tracked the mutable :latest.
+          image_pull_policy = "IfNotPresent"
           env {
             name  = "NODE_ENV"
             value = "production"
