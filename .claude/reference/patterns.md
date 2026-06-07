@@ -23,6 +23,15 @@ module "nfs_data" {
 3. Reload exports: `ssh root@192.168.1.127 "exportfs -ra"`
 4. Verify: `showmount -e 192.168.1.127`
 
+## Static Site Hosting
+Two patterns for serving a folder of static files (HTML/CSS/JS/media):
+
+1. **Image-baked** (default for git-native content): bake files into an `nginx:*-alpine` image at build time, deploy like any owned app (CI builds + pushes, Keel/Woodpecker rolls out). Reference: `stacks/blog` (Hugo → nginx, `Website/Dockerfile`). Use when content lives in git and changes via commits.
+
+2. **NFS-backed** (for externally-authored / large / non-git content): a stock `nginx:1.28-alpine` Deployment mounts an `nfs_volume` PVC **read-only** at `/usr/share/nginx/html`; a tiny ConfigMap supplies `/etc/nginx/conf.d/default.conf` (just `root` + `index <entry>.html`). Files are dropped on `/srv/nfs/<site>` out-of-band (Nextcloud "PVE NFS Pool" or rsync) — no rebuild, auto-backed-up by `nfs-mirror`. Reference: `stacks/stem95su` (established 2026-06-07). Use when content is authored outside git (e.g. exported tools), is large (avoids git/image bloat), or a non-dev updates it. **The export subdir on the PVE host must exist before the pod mounts** — the `nfs_volume` module does NOT create it (see "Adding NFS Exports"; a subdir under the already-exported `/srv/nfs` needs no new `/etc/exports` line).
+
+Both front with `ingress_factory` (`auth="none"` for open public content → CrowdSec + ai-bot-block still apply; or chain `anubis_instance` for a PoW gate, as `blog` does).
+
 ## ~~iSCSI Storage~~ (REMOVED — replaced by proxmox-lvm)
 > iSCSI via democratic-csi and TrueNAS has been fully removed (2026-04). All database storage now uses `StorageClass: proxmox-lvm` (Proxmox CSI, LVM-thin hotplug). TrueNAS has been decommissioned.
 
