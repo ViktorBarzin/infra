@@ -20,11 +20,11 @@ locals {
     app = "tripit"
   }
 
-  # Env shared by the Deployment app container and the three worker CronJobs.
-  # Providers are pinned to fakes/no-op until the real integrations are wired:
-  #   FLIGHT_PROVIDER=fake, WEATHER_PROVIDER=openmeteo,
-  #   GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush,
-  #   LLM_MODE=fake, MAIL_INGEST_ENABLED=false.
+  # Env shared by the Deployment app container and the worker CronJobs.
+  # Real integrations: FLIGHT_PROVIDER=aerodatabox + RAIL_PROVIDER=realtimetrains
+  # (keys via the tripit-secrets ExternalSecret), WEATHER_PROVIDER=openmeteo,
+  # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=fake and
+  # MAIL_INGEST_ENABLED=false here (the ingest-plans CronJob overrides both).
   # AUTH_MODE=forwardauth: the backend trusts the Authentik-injected
   # X-authentik-email header (forward-auth at the ingress). STORAGE_DIR points
   # at the RWX NFS PVC — the app's default ./var is not writable by the
@@ -34,14 +34,23 @@ locals {
     SERVE_FRONTEND_DIR   = "/app/frontend_build"
     STORAGE_DIR          = "/data/documents"
     PERSONAL_STORAGE_DIR = "/data/personal-documents"
-    FLIGHT_PROVIDER      = "fake"
-    WEATHER_PROVIDER     = "openmeteo"
+    # Live flight status via AeroDataBox (RapidAPI). Free BASIC plan = 600
+    # units/month, 1 unit per flight-by-number call, gate/terminal included.
+    # AERODATABOX_API_KEY arrives via the tripit-secrets ExternalSecret;
+    # AERODATABOX_BASE_URL defaults to the RapidAPI host in config.
+    FLIGHT_PROVIDER = "aerodatabox"
+    # UK rail status via Realtime Trains (data.rtt.io). RTT_API_TOKEN (a
+    # long-life refresh token, already in Vault) arrives via tripit-secrets; the
+    # adapter exchanges it for short-life access tokens. On-demand only — no
+    # rail poller CronJob, so rail status is fetched when a segment is opened.
+    RAIL_PROVIDER    = "realtimetrains"
+    WEATHER_PROVIDER = "openmeteo"
     # Geocodes lodging addresses -> coords for the per-city itinerary weather
     # (Open-Meteo keyless geocoding API; results cached in the geocode_cache table).
-    GEOCODER_PROVIDER    = "openmeteo"
-    PUSH_PROVIDER        = "webpush"
-    LLM_MODE             = "fake"
-    MAIL_INGEST_ENABLED  = "false"
+    GEOCODER_PROVIDER   = "openmeteo"
+    PUSH_PROVIDER       = "webpush"
+    LLM_MODE            = "fake"
+    MAIL_INGEST_ENABLED = "false"
     # Outbound mail (linked-email verification + trip-share invites) — submitted
     # via the cluster mailserver authenticated as spam@ (SMTP_USER), but sent
     # From: plans@viktorbarzin.me (SMTP_FROM). docker-mailserver SPOOF_PROTECTION
@@ -129,6 +138,11 @@ resource "kubernetes_manifest" "external_secret" {
         # Linked-email verification submits SMTP as spam@; reuse its existing
         # password (no new secret) as SMTP_PASSWORD.
         { secretKey = "SMTP_PASSWORD", remoteRef = { key = "tripit", property = "PLANS_IMAP_PASSWORD" } },
+        # Live flight status — AeroDataBox key (RapidAPI free BASIC plan, 600
+        # units/month). Seed secret/tripit AERODATABOX_API_KEY before applying.
+        { secretKey = "AERODATABOX_API_KEY", remoteRef = { key = "tripit", property = "AERODATABOX_API_KEY" } },
+        # UK rail status — Realtime Trains (data.rtt.io) long-life refresh token.
+        { secretKey = "RTT_API_TOKEN", remoteRef = { key = "tripit", property = "RTT_API_TOKEN" } },
       ]
     }
   }
@@ -396,8 +410,12 @@ resource "kubernetes_deployment" "tripit" {
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
+    # Hourly (not */30) to stay within AeroDataBox's free 600-unit/month quota:
+    # the sweep spends 1 unit per soon-departing flight per run. On-demand reads
+    # (the segment status endpoint) still refresh on a 30-min staleness window
+    # when the user opens the app, so this only paces background change-detection.
     poll-flights = {
-      schedule  = "*/30 * * * *"
+      schedule  = "0 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
       suspend   = false
       extra_env = {}
