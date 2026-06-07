@@ -80,7 +80,7 @@
 | paperless-ngx | Document management | paperless-ngx |
 | jsoncrack | JSON visualizer | jsoncrack |
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
-| aiostreams | Stremio stream aggregator (Real-Debrid + Torrentio/Comet/MediaFusion/StremThru/Knaben). `auth=app` (own UUID+password); canary stream-probe + 3 alerts; weekly NFS config + Stremio-account-collection backups to `/srv/nfs/aiostreams-backup/`. PG-backed user config. | servarr/aiostreams |
+| aiostreams | Stremio stream aggregator (Real-Debrid + Torrentio/Comet/StremThru Torz/Knaben; **MediaFusion removed 2026-06-07** — broken upstream `500`). `auth=app` (own UUID+password); stream-probe tests **both series+movie paths** with per-source breakdown (`aiostreams_streams_{comet,torrentio,stremthru_torz,knaben}`) + `aiostreams_error_streams` + `aiostreams_movie_stream_count`, success gated on Comet (workhorse) being alive; weekly NFS config + Stremio-account-collection backups to `/srv/nfs/aiostreams-backup/`. PG-backed user config (Comet timeout bumped 5s→10s 2026-06-07). | servarr/aiostreams |
 | ntfy | Push notifications | ntfy |
 | cyberchef | Data transformation | cyberchef |
 | diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |

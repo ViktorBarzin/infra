@@ -106,7 +106,7 @@ resource "kubernetes_deployment" "aiostreams" {
           env {
             # Whitelisted regex sync URLs. Vidhin's regexes.json contains release-group
             # patterns (TRaSH Guides-aligned).
-            name  = "WHITELISTED_REGEX_PATTERNS_URLS"
+            name = "WHITELISTED_REGEX_PATTERNS_URLS"
             value = jsonencode([
               "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/regexes.json",
             ])
@@ -116,7 +116,7 @@ resource "kubernetes_deployment" "aiostreams" {
             # files (Vidhin's ranked expressions + Tamtaro's ISE/PSE/ESE) go here, NOT
             # in WHITELISTED_REGEX_PATTERNS_URLS — AIOStreams validates each field
             # against the correct whitelist.
-            name  = "WHITELISTED_SEL_URLS"
+            name = "WHITELISTED_SEL_URLS"
             value = jsonencode([
               "https://raw.githubusercontent.com/Vidhin05/Releases-Regex/main/English/expressions.json",
               "https://raw.githubusercontent.com/Tam-Taro/SEL-Filtering-and-Sorting/main/AIOStreams-SyncedURLs/Tamtaro-synced-ISEs.json",
@@ -230,37 +230,60 @@ resource "kubernetes_cron_job_v1" "stream_probe" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "probe"
-              image   = "docker.io/library/python:3.12-alpine"
+              name  = "probe"
+              image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check requests && python3 -c '
-import requests, os, time, urllib.parse, sys
+import requests, os, time, urllib.parse, sys, re
 
 BASE = "http://aiostreams.aiostreams.svc.cluster.local"
 PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/aiostreams-stream-probe"
 UUID = os.environ["AIOSTREAMS_UUID"]
 PW = os.environ["AIOSTREAMS_PASSWORD"]
-TEST_ID = "tt0903747:1:1"  # Breaking Bad S01E01 - stable, always has many streams
+SERIES_ID = "tt0903747:1:1"  # Breaking Bad S01E01 - stable, BluRay-rich series path
+MOVIE_ID = "tt0133093"       # The Matrix - stable, BluRay-rich movie path (symptom was films)
 THRESHOLD = 50
 
-count = 0
+series_count = 0
+movie_count = 0
+comet = torrentio = torz = knaben = errors = 0
 success = 0
 duration = 0
 start = time.time()
+
+def fetch(enc_url, kind, sid):
+    r = requests.get(
+        f"{BASE}/stremio/{UUID}/{enc_url}/stream/{kind}/{sid}.json",
+        headers={"User-Agent": "AIOStreams/probe"}, timeout=60,
+    )
+    r.raise_for_status()
+    return r.json().get("streams", [])
 
 try:
     r = requests.get(f"{BASE}/api/v1/user/", params={"uuid": UUID, "password": PW}, timeout=10)
     r.raise_for_status()
     enc = r.json()["data"]["encryptedPassword"]
     enc_url = urllib.parse.quote(enc, safe="")
-    r2 = requests.get(
-        f"{BASE}/stremio/{UUID}/{enc_url}/stream/series/{TEST_ID}.json",
-        headers={"User-Agent": "AIOStreams/probe"}, timeout=60,
-    )
-    r2.raise_for_status()
-    count = len(r2.json().get("streams", []))
-    success = 1 if count >= THRESHOLD else 0
-    print(f"streams={count} success={success}")
+
+    # Series path + per-source breakdown (so a dying source is visible, not masked by a healthy total)
+    series = fetch(enc_url, "series", SERIES_ID)
+    series_count = len(series)
+    for s in series:
+        name = s.get("name", "") or ""
+        desc = (s.get("description", "") or "") + (s.get("title", "") or "")
+        if "Comet" in name: comet += 1
+        elif "Torrentio" in name: torrentio += 1
+        elif "StremThru" in name: torz += 1
+        elif "Knaben" in name: knaben += 1
+        if re.search("Invalid|Internal Server Error|451|infring|Legal Reasons", desc, re.I):
+            errors += 1
+
+    # Movie path (the reported symptom was films, not series)
+    movie_count = len(fetch(enc_url, "movie", MOVIE_ID))
+
+    # Healthy = both paths return plenty AND the workhorse source (Comet) is alive
+    success = 1 if (series_count >= THRESHOLD and movie_count >= THRESHOLD and comet > 0) else 0
+    print(f"series={series_count} movie={movie_count} comet={comet} torz={torz} knaben={knaben} errors={errors} success={success}")
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)
     success = 0
@@ -269,9 +292,21 @@ duration = time.time() - start
 
 body = (
     "# TYPE aiostreams_stream_count gauge\n"
-    f"aiostreams_stream_count {count}\n"
+    f"aiostreams_stream_count {series_count}\n"
+    "# TYPE aiostreams_movie_stream_count gauge\n"
+    f"aiostreams_movie_stream_count {movie_count}\n"
     "# TYPE aiostreams_probe_success gauge\n"
     f"aiostreams_probe_success {success}\n"
+    "# TYPE aiostreams_error_streams gauge\n"
+    f"aiostreams_error_streams {errors}\n"
+    "# TYPE aiostreams_streams_comet gauge\n"
+    f"aiostreams_streams_comet {comet}\n"
+    "# TYPE aiostreams_streams_torrentio gauge\n"
+    f"aiostreams_streams_torrentio {torrentio}\n"
+    "# TYPE aiostreams_streams_stremthru_torz gauge\n"
+    f"aiostreams_streams_stremthru_torz {torz}\n"
+    "# TYPE aiostreams_streams_knaben gauge\n"
+    f"aiostreams_streams_knaben {knaben}\n"
     "# TYPE aiostreams_probe_duration_seconds gauge\n"
     f"aiostreams_probe_duration_seconds {duration:.3f}\n"
     "# TYPE aiostreams_probe_last_run_timestamp gauge\n"
@@ -335,8 +370,8 @@ resource "kubernetes_cron_job_v1" "config_backup" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "backup"
-              image   = "docker.io/library/python:3.12-alpine"
+              name  = "backup"
+              image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check requests && python3 -c '
 import requests, os, time, json, sys, datetime, glob
@@ -451,8 +486,8 @@ resource "kubernetes_cron_job_v1" "stremio_account_backup" {
           spec {
             restart_policy = "Never"
             container {
-              name    = "backup"
-              image   = "docker.io/library/python:3.12-alpine"
+              name  = "backup"
+              image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check requests && python3 -c '
 import requests, os, time, json, sys, datetime, glob
