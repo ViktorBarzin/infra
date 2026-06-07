@@ -116,6 +116,7 @@
 | status-page | Status page | status-page |
 | plotting-book | Book plotting/world-building app | plotting-book |
 | tripit | Self-hosted TripIt-clone travel-itinerary PWA (FastAPI + SvelteKit SPA, same-origin). CNPG (`tripit` db, Vault static role `pg-tripit`) + RWX NFS trip-doc vault (`/srv/nfs/tripit-documents`) + RWO `proxmox-lvm-encrypted` personal-document vault `tripit-personal-documents` (passports/IDs — AES-256-GCM app-layer envelope, master key `DOCUMENT_ENCRYPTION_KEY` in `secret/tripit`). `auth=required` (Authentik forward-auth, reads `X-authentik-email`); second `auth=none` ingress on `/api/calendar` for HMAC-token-gated `.ics` feed. Email-ingest CronJob `tripit-ingest-plans` (`*/15`) is the SOLE inbound path — forward a booking to plans@viktorbarzin.me (catch-all → spam@), polled read-only and routed ONLY to a registered user / verified linked address (no default-owner fallback; strangers ignored), parsed by local LLM (`qwen3vl-4b`), and the sender is emailed the outcome (Added to trip / Couldn't import). Plus `tripit-poll-flights`, `tripit-run-reminders`, `tripit-transport-nudge`, `tripit-weather-brief`. (The old Gmail-scrape `tripit-ingest-mail` CronJob was removed 2026-06-05.) App secrets in Vault `secret/tripit`. | tripit |
+| stem95su | STEM educational platform for **95. СУ „Проф. Иван Шишманов"** (Sofia school) at stem95su.viktorbarzin.me. Public **open** static site (`auth=none` — CrowdSec + ai-bot-block, no login). Stock `nginx:1.28-alpine` serving content **straight off PVE host NFS** `/srv/nfs/stem-site` (RWX `nfs_volume`, mounted read-only) — **NOT** image-baked, so the externally-authored (Gemini-exported) HTML/media is updated out-of-band (Nextcloud "PVE NFS Pool" or rsync) with no rebuild; auto-backed-up offsite by `nfs-mirror`. Dashboard `stem_board.html` served at `/` via a small nginx ConfigMap (`index`). No DB, no secrets. Reference impl for the NFS-backed static-site pattern (see patterns.md). | stem95su |
 | trek | **TRIAL (2026-06-05)** — self-hosted group-trip planner (upstream [TREK](https://github.com/mauriceboe/TREK), `mauriceboe/trek:3.0.22`, AGPL-3.0). Solo evaluation behind Authentik forward-auth (`auth=required`) before deciding build-vs-adopt; covers collaborative trip planning + accommodation records + activities + per-person budget splitting on free OpenStreetMap (no paid maps key). SQLite + uploads on `proxmox-lvm-encrypted` (`trek-data-encrypted` 2Gi, `trek-uploads-encrypted` 5Gi). For the trial only: `ENCRYPTION_KEY` is TREK-auto-generated onto the data PVC and the bootstrap admin (`admin@trek.local`) is printed to pod logs — NO Vault/ESO wiring (graduation TODO: move key to `secret/trek` + ESO, add an app-level SQLite backup CronJob since host file-backup can't read the LUKS PVC, wire TREK↔Authentik OIDC). Pinned image, TF-managed (no CI/Keel). Availability-poll companion (Rallly) deferred. Teardown: `tg destroy` in `stacks/trek`. | trek |
 
 ## Cloudflare Domains
@@ -125,7 +126,7 @@
 blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send,
 audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden,
 changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser,
-travel, netbox, phpipam, tripit, t3
+travel, netbox, phpipam, tripit, t3, stem95su
 ```
 
 ### Non-Proxied (Direct DNS)
