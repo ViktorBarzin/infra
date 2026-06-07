@@ -77,7 +77,7 @@ graph LR
 - Application configuration secrets
 - Encryption keys
 
-Authentication: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault Terraform provider.
+Authentication: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault Terraform provider. On `devvm`, `~/.vault-token` instead holds a long-lived **periodic** admin token auto-renewed daily by a systemd user timer (no weekly re-login) — see the [vault-token-renew-devvm runbook](../runbooks/vault-token-renew-devvm.md).
 
 ### External Secrets Operator (ESO)
 
@@ -260,7 +260,14 @@ spec:
 
 ### Terraform Provider Auth
 
-`~/.vault-token` created by `vault login -method=oidc`:
+The provider reads `VAULT_ADDR` from env and the token from `~/.vault-token`.
+That file is populated by `vault login -method=oidc` (humans, ad-hoc) — except
+on `devvm`, where it holds a long-lived **periodic** admin token (`display_name
+token-devvm-wizard`, `period=768h`, `explicit_max_ttl=0`, policies
+`default`+`sops-admin`+`vault-admin`) that a systemd user timer renews daily, so
+no weekly re-login is needed. A drift guard refuses to renew if a stray
+`vault login` clobbers the file with a foreign token. Deploy + recovery:
+[vault-token-renew-devvm runbook](../runbooks/vault-token-renew-devvm.md).
 
 ```hcl
 provider "vault" {
