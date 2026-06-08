@@ -20,6 +20,9 @@ MAP=/etc/ttyd-user-map
 DRY_RUN="${DRY_RUN:-0}"
 # Public infra repo for the locked clone (no auth; the monorepo has no remote).
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
+# Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
+OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
+ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -40,6 +43,56 @@ install_locked_clone() {
   runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.clean cat
   runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.required false
   runuser -u "$user" -- git -C "$home/code" checkout --quiet master
+}
+
+# Per-user OIDC kubeconfig (kubelogin/PKCE — the `kubernetes` Authentik client is
+# public, no secret). Identical for all users: identity comes from each user's own
+# interactive OIDC login, which the apiserver maps (email claim) to their RBAC.
+# Cluster server + CA are copied from the admin kubeconfig. If-absent, never clobber.
+install_user_kubeconfig() {
+  local user="$1" home kc server ca
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  kc="$home/.kube/config"
+  [[ -f "$kc" ]] && return 0
+  [[ -r "$ADMIN_KUBECONFIG" ]] || { log "WARN: $ADMIN_KUBECONFIG unreadable -> skip kubeconfig for $user"; return 0; }
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] OIDC kubeconfig -> $user:$kc"; return 0; fi
+  server="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
+  ca="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+  [[ -n "$server" && -n "$ca" ]] || { log "WARN: could not read cluster server/CA -> skip kubeconfig for $user"; return 0; }
+  install -d -o "$user" -g "$user" -m 0700 "$home/.kube"
+  cat > "$kc" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: homelab
+  cluster:
+    server: $server
+    certificate-authority-data: $ca
+contexts:
+- name: oidc@homelab
+  context:
+    cluster: homelab
+    user: oidc
+current-context: oidc@homelab
+users:
+- name: oidc
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: kubectl
+      args:
+      - oidc-login
+      - get-token
+      - --oidc-issuer-url=$OIDC_ISSUER
+      - --oidc-client-id=kubernetes
+      - --oidc-extra-scope=email
+      - --oidc-extra-scope=profile
+      - --oidc-extra-scope=groups
+      interactiveMode: IfAvailable
+EOF
+  chown "$user:$user" "$kc"; chmod 0600 "$kc"
+  log "wrote OIDC kubeconfig -> $user:~/.kube/config"
 }
 
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
@@ -91,7 +144,10 @@ while IFS=$'\t' read -r os_user tier shell groups_csv; do
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
-  [[ "$tier" != admin ]] && install_locked_clone "$os_user"   # non-admins: writable locked ~/code
+  if [[ "$tier" != admin ]]; then            # non-admins: locked ~/code clone + OIDC kubeconfig
+    install_locked_clone "$os_user"
+    install_user_kubeconfig "$os_user"
+  fi
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@

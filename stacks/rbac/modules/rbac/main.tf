@@ -40,8 +40,10 @@ resource "kubernetes_cluster_role_binding" "admin_users" {
   }
 }
 
-# --- Power-user role ---
-# Can manage workloads cluster-wide but cannot modify RBAC, nodes, or persistent volumes
+# --- Power-user role (read+write+secrets) — RETAINED BUT UNBOUND ---
+# Superseded by oidc-power-user-readonly (below) per ADR-0005: power-users are bound
+# to the read-only role, NOT this one. Kept defined for reference/rollback; do NOT
+# bind it without a deliberate decision (it grants cluster-wide write + secrets).
 
 resource "kubernetes_cluster_role" "power_user" {
   metadata {
@@ -109,17 +111,70 @@ resource "kubernetes_cluster_role" "power_user" {
   }
 }
 
+# --- Power-user READ-ONLY role (ADR-0005) ---
+# Cluster-wide get/list/watch, explicitly NO secrets and NO pods/exec. This is the
+# role power-users are actually bound to (workstation tier: "cluster-wide read,
+# no Secrets"). Mirrors power_user's resource breadth minus writes/secrets/exec.
+resource "kubernetes_cluster_role" "power_user_readonly" {
+  metadata {
+    name = "oidc-power-user-readonly"
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods", "pods/log", "services", "endpoints", "configmaps", "persistentvolumeclaims", "events", "namespaces", "nodes"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs", "cronjobs"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses", "networkpolicies"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["autoscaling"]
+    resources  = ["horizontalpodautoscalers"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["storage.k8s.io"]
+    resources  = ["storageclasses"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["rbac.authorization.k8s.io"]
+    resources  = ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+
+# Power-users are bound to the READ-ONLY role above (NOT the read+write+secrets one).
 resource "kubernetes_cluster_role_binding" "power_users" {
   for_each = nonsensitive({ for name, user in var.k8s_users : name => user if user.role == "power-user" })
 
   metadata {
-    name = "oidc-power-user-${each.key}"
+    name = "oidc-power-user-readonly-${each.key}"
   }
 
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.power_user.metadata[0].name
+    name      = kubernetes_cluster_role.power_user_readonly.metadata[0].name
   }
 
   subject {
