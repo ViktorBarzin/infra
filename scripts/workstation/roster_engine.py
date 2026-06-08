@@ -117,26 +117,49 @@ def load_roster_file(path: str) -> Roster:
 # --------------------------------------------------------------------------
 
 
-def validate_tiers(roster: Roster, k8s_user_tiers: dict[str, str]) -> list[str]:
-    """Return one error string per roster user whose tier disagrees with the
-    live `k8s_users` map. Admins are exempt (cluster-admin is granted out of
-    band). An empty list means the roster is consistent with the cluster."""
-    errors = []
+@dataclass(frozen=True)
+class ValidationIssue:
+    os_user: str
+    severity: str  # "error" = tier conflict (abort) | "warn" = absent (grant pending)
+    message: str
+
+
+def validate_tiers(
+    roster: Roster, k8s_user_tiers: dict[str, str]
+) -> list[ValidationIssue]:
+    """Compare each roster user's tier against the live `k8s_users` map. A real
+    conflict (roster tier != cluster tier) is an "error" (abort). A net-new user
+    not yet in `k8s_users` is a "warn" (onboarding proceeds; the kubectl grant is
+    pending). Admins are exempt (cluster-admin is granted out of band). An empty
+    list means the roster is consistent with the cluster."""
+    issues = []
     for user in roster.users.values():
         if user.tier == "admin":
             continue
         actual = k8s_user_tiers.get(user.k8s_user)
         if actual is None:
-            errors.append(
-                f"{user.os_user}: tier {user.tier} but k8s_user {user.k8s_user!r} "
-                f"absent from k8s_users (add the entry first)"
+            issues.append(
+                ValidationIssue(
+                    user.os_user,
+                    "warn",
+                    f"{user.os_user}: tier {user.tier} but k8s_user {user.k8s_user!r} "
+                    f"absent from k8s_users (kubectl grant pending — add the entry)",
+                )
             )
         elif actual != user.tier:
-            errors.append(
-                f"{user.os_user}: roster tier {user.tier} != k8s_users tier "
-                f"{actual} for {user.k8s_user!r}"
+            issues.append(
+                ValidationIssue(
+                    user.os_user,
+                    "error",
+                    f"{user.os_user}: roster tier {user.tier} != k8s_users tier "
+                    f"{actual} for {user.k8s_user!r}",
+                )
             )
-    return errors
+    return issues
+
+
+def has_blocking_errors(issues: list[ValidationIssue]) -> bool:
+    return any(issue.severity == "error" for issue in issues)
 
 
 # --------------------------------------------------------------------------
@@ -261,10 +284,10 @@ def _main(argv: list[str]) -> int:
     roster = load_roster_file(args.roster)
     if args.cmd == "validate":
         with open(args.k8s_users_json, encoding="utf-8") as fh:
-            errors = validate_tiers(roster, json.load(fh))
-        for err in errors:
-            print(err, file=sys.stderr)
-        return 1 if errors else 0
+            issues = validate_tiers(roster, json.load(fh))
+        for issue in issues:
+            print(f"{issue.severity.upper()}: {issue.message}", file=sys.stderr)
+        return 1 if has_blocking_errors(issues) else 0
     with open(args.ports_json, encoding="utf-8") as fh:
         desired = derive_desired_state(roster, json.load(fh))
     json.dump(_desired_state_to_dict(desired), sys.stdout, indent=2, sort_keys=True)
