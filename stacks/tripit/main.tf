@@ -143,6 +143,12 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "AERODATABOX_API_KEY", remoteRef = { key = "tripit", property = "AERODATABOX_API_KEY" } },
         # UK rail status — Realtime Trains (data.rtt.io) long-life refresh token.
         { secretKey = "RTT_API_TOKEN", remoteRef = { key = "tripit", property = "RTT_API_TOKEN" } },
+        # Planner subsystem (merged trip-planner): Slack v0-signature secret + TREK
+        # creds + claude-agent token. SLACK_BOT_TOKEN above is reused (nudges + planner).
+        { secretKey = "SLACK_SIGNING_SECRET", remoteRef = { key = "tripit", property = "SLACK_SIGNING_SECRET" } },
+        { secretKey = "TREK_USER", remoteRef = { key = "tripit", property = "TREK_USER" } },
+        { secretKey = "TREK_PASSWORD", remoteRef = { key = "tripit", property = "TREK_PASSWORD" } },
+        { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "tripit", property = "CLAUDE_AGENT_TOKEN" } },
       ]
     }
   }
@@ -673,6 +679,25 @@ module "ingress_emails_confirm" {
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/emails/confirm"]
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
+}
+
+# Planner Slack webhook carve-out: POST /api/planner/slack/{events,interactions,commands}
+# is gated by Slack v0 HMAC signature verification (SLACK_SIGNING_SECRET) in-app, not
+# Authentik — Slack posts events server-to-server and can't do the forward-auth dance.
+module "ingress_planner_slack" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Slack Events/Interactivity webhooks are gated by Slack v0
+  # signature verification in-app (SLACK_SIGNING_SECRET), not Authentik.
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "none" # main `module.ingress` owns the DNS record for this host
+  namespace        = kubernetes_namespace.tripit.metadata[0].name
+  name             = "tripit-planner-slack"
+  service_name     = "tripit"
+  full_host        = "tripit.viktorbarzin.me"
+  ingress_path     = ["/api/planner/slack"]
   port             = 8080
   tls_secret_name  = var.tls_secret_name
 }
