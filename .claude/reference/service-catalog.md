@@ -86,7 +86,7 @@
 | diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |
 | meshcentral | Remote management | meshcentral |
 | homepage | Dashboard/startpage | homepage |
-| matrix | Matrix chat server | matrix |
+| matrix | Matrix homeserver (tuwunel — Rust, RocksDB; native password auth) | matrix |
 | linkwarden | Bookmark manager | linkwarden |
 | changedetection | Web change detection | changedetection |
 | tandoor | Recipe manager | tandoor |
