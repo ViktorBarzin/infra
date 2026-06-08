@@ -156,20 +156,19 @@ resource "kubernetes_deployment" "matrix" {
             name  = "TUWUNEL_TRUSTED_SERVERS"
             value = jsonencode(["matrix.org"])
           }
-          # Registration disabled. To add a user later: set "true", apply,
-          # register with the Vault token (secret/matrix), then set back to "false".
+          # Registration OPEN (tokenless) — user-chosen 2026-06-08. tuwunel demands
+          # this explicit flag for tokenless open registration. Bot mitigations:
+          # the Traefik rate-limit on /register (register_ratelimit + ingress_register
+          # below) + CrowdSec + a Loki->#security alert on every signup (monitoring
+          # stack). To revert to token-gated: drop the YES_I_AM_VERY... flag and
+          # re-add the TUWUNEL_REGISTRATION_TOKEN env (secret/matrix still holds it).
           env {
             name  = "TUWUNEL_ALLOW_REGISTRATION"
-            value = "false"
+            value = "true"
           }
           env {
-            name = "TUWUNEL_REGISTRATION_TOKEN"
-            value_from {
-              secret_key_ref {
-                name = "matrix-secrets"
-                key  = "registration_token"
-              }
-            }
+            name  = "TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_REGISTRATION_SERVER_PRONE_TO_ABUSE"
+            value = "true"
           }
           # 50 MiB — kept under Cloudflare's 100 MB proxied-request ceiling.
           env {
@@ -274,4 +273,55 @@ module "ingress" {
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }
+}
+
+# Open registration is bot-exposed, so rate-limit the register endpoint. Keyed on
+# the request HOST (a GLOBAL /register cap), NOT the source IP — this host is
+# reachable BOTH via Cloudflare-IPv4 (CF-Connecting-IP header) AND IPv6-direct (HE
+# tunnel → pfSense HAProxy → Traefik, no CF header), so a per-source-IP key would
+# let IPv6 bots bypass entirely. 10/min sustained, burst 20, PER Traefik replica
+# (×3 ≈ 30/min, burst ~60 effective). Legit signups are rare so this only bites
+# mass-signup; CrowdSec is the hard backstop (bans abusive IPs on both paths). A
+# Loki rule (stacks/monitoring) alerts #security on each successful signup.
+resource "kubernetes_manifest" "register_ratelimit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "register-ratelimit"
+      namespace = kubernetes_namespace.matrix.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 10
+        period  = "1m"
+        burst   = 20
+        sourceCriterion = {
+          requestHost = true
+        }
+      }
+    }
+  }
+}
+
+# Path-scoped ingress for the register endpoints only (longer prefix → Traefik
+# matches it ahead of the catch-all matrix ingress) with the rate-limit middleware
+# attached. Same auth="none" as the main ingress (Matrix register is a UIA/bearer
+# API, not a browser session); anti-AI off (API endpoint, native clients).
+module "ingress_register" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Matrix client registration API (UIA), not a browser session.
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "none" # main module.ingress owns the DNS record for this host
+  namespace        = kubernetes_namespace.matrix.metadata[0].name
+  name             = "matrix-register"
+  service_name     = "matrix"
+  full_host        = "matrix.viktorbarzin.me"
+  ingress_path     = ["/_matrix/client/v3/register", "/_matrix/client/r0/register"]
+  port             = 80
+  tls_secret_name  = var.tls_secret_name
+  homepage_enabled = false # path carve-out, not its own dashboard tile
+
+  extra_middlewares = ["matrix-register-ratelimit@kubernetescrd"]
 }
