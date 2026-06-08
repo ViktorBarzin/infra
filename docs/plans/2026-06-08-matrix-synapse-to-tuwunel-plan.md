@@ -48,9 +48,10 @@ RocksDB dir.
 
 ## Residual / follow-up items (flagged to user)
 
-- **Authentik Matrix OAuth2 app is now orphaned** — tuwunel uses native password
-  auth (OIDC SSO not wired). Harmless; can be removed from the authentik stack
-  later if desired.
+- **Authentik Matrix OAuth2 app — REMOVED 2026-06-08** (user-confirmed). It was
+  UI-managed (NOT in the authentik TF stack), so it was deleted via the Authentik
+  API: application `matrix` + OAuth2 provider `pk=6`. tuwunel uses native password
+  auth, so nothing consumed it.
 - **Pre-existing drift in `stacks/vault`**: `vault_jwt_auth_backend.oidc` shows a
   `tune` diff (explicit `768h` default/max lease TTLs being dropped). This
   predates this migration and was **not** applied. Resolve separately.

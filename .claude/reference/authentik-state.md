@@ -14,7 +14,6 @@
 | Kubernetes | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | explicit consent |
-| Matrix | OAuth2/OIDC | ⚠️ orphaned — Matrix migrated to tuwunel 2026-06-08 (native password auth); this OAuth app is unused |
 | wrongmove | OAuth2/OIDC | implicit consent |
 
 > **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
