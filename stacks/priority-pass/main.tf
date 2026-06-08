@@ -35,31 +35,16 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-resource "kubernetes_persistent_volume_claim" "uploads" {
-  wait_until_bound = false
-  metadata {
-    name      = "priority-pass-uploads"
-    namespace = kubernetes_namespace.priority-pass.metadata[0].name
-    annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "10Gi"
-    }
-  }
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm-encrypted"
-    resources {
-      requests = { storage = "1Gi" }
-    }
-  }
-  lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
-    ignore_changes = [spec[0].resources[0].requests]
-  }
+# Uploads on NFS. Migrated off proxmox-lvm-encrypted 2026-06-05 (Phase 1) —
+# boarding-pass images, no embedded DB; drops LUKS-at-rest (low-sensitivity, accepted).
+# See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
+module "nfs_priority_pass" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "priority-pass-uploads-nfs"
+  namespace  = kubernetes_namespace.priority-pass.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/priority-pass"
+  storage    = "10Gi"
 }
 
 resource "kubernetes_deployment" "priority-pass" {
@@ -94,7 +79,7 @@ resource "kubernetes_deployment" "priority-pass" {
         volume {
           name = "uploads"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.uploads.metadata[0].name
+            claim_name = module.nfs_priority_pass.claim_name
           }
         }
         container {
