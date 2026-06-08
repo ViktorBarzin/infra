@@ -545,7 +545,7 @@ Separate from the in-cluster namespace-owner model above, the **devvm** (`10.0.1
 
 **Infra access:** non-admins get their own **writable, git-crypt-LOCKED** clone of the (public) infra repo at `~/code` — code/docs plaintext, secret files (`*.tfvars`, `secrets/**`) stay ciphertext. Changes are ungated (push ≠ apply); the real boundary is apply-time (`scripts/tg apply` needs an admin Vault token + cluster RBAC).
 
-**Status (2026-06-08):** built + verified on the live host — capacity (8 GiB swap), config inheritance, roster-driven provisioner, per-user locked clone. **Gated / pending:** per-user OIDC kubeconfig + the `oidc-power-user-readonly` ClusterRole + emo's `k8s_users` entry, the Authentik `T3 Users` edge gate, the emo cutover (Phase 5), and the offboarding apply-side (Phase 7). See `../runbooks/offboard-user.md` for deprovisioning.
+**Status (2026-06-08):** built + verified on the live host — capacity (8 GiB swap), config inheritance, roster-driven provisioner, per-user locked clone, **per-user OIDC kubeconfig + the `oidc-power-user-readonly` ClusterRole + emo's `k8s_users` entry (applied + impersonation-verified), and the Authentik `T3 Users` edge gate (applied + verified)**. **Remaining (held / future):** the emo cutover to his own locked clone (Phase 5), the offboarding apply-side (Phase 7), per-user MCP/auth injection, and roster-reconciled `T3 Users` membership. See `../runbooks/offboard-user.md` for deprovisioning.
 
 ## Related
 
