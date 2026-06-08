@@ -385,6 +385,26 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
           ]
+        },
+        {
+          # Matrix (tuwunel) — open registration is ON, so notify on every new
+          # signup. tuwunel logs `... New user "@x:..." registered on this server`
+          # only on SUCCESS (the disabled-path logs "Rejecting ... registration is
+          # disabled"), so this matcher never false-fires on rejected attempts.
+          # lane=security routes it to the existing #security Slack receiver.
+          name = "Matrix"
+          rules = [
+            {
+              alert  = "MatrixNewUserRegistered"
+              expr   = "sum(count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" [10m])) > 0"
+              for    = "0m"
+              labels = { severity = "info", lane = "security" }
+              annotations = {
+                summary     = "New user registered on Matrix (tuwunel) — open registration is ON"
+                description = "A new account was created on matrix.viktorbarzin.me. See who with: kubectl -n matrix logs deploy/matrix | grep 'New user'. If unexpected/abuse, revert to token-gated registration in stacks/matrix."
+              }
+            },
+          ]
         }
       ]
     })
