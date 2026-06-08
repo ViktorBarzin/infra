@@ -49,6 +49,12 @@ resource "authentik_policy_expression" "admin_services_restriction" {
 
     host = request.context.get("host", "")
 
+    # t3 Workstation edge gate: only members of "T3 Users" may reach t3.
+    # Placed BEFORE the ADMIN_ONLY_HOSTS early-return (t3 is intentionally not in
+    # that set — it must not require Home-Server-Admins, just T3 Users membership).
+    if host == "t3.viktorbarzin.me":
+        return ak_is_group_member(request.user, name="T3 Users")
+
     # Not an admin-only host: allow any authenticated user.
     if host not in ADMIN_ONLY_HOSTS:
         return True
