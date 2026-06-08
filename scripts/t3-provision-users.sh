@@ -18,9 +18,29 @@ ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
 MAP=/etc/ttyd-user-map
 DRY_RUN="${DRY_RUN:-0}"
+# Public infra repo for the locked clone (no auth; the monorepo has no remote).
+INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
+
+# Per-non-admin writable, git-crypt-LOCKED infra clone at ~/code. Keyless +
+# filter=cat ⇒ code/docs are plaintext, git-crypt'd secret files stay ciphertext.
+# Writable + ungated (push != apply; applies are admin-only). NEVER touches an
+# existing ~/code (so emo's symlink survives until the gated cutover).
+install_locked_clone() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  [[ -e "$home/code" || -L "$home/code" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] locked infra clone -> $user:$home/code"; return 0; fi
+  log "clone locked infra -> $user:~/code"
+  runuser -u "$user" -- git clone --quiet --no-checkout "$INFRA_REMOTE" "$home/code"
+  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.smudge cat
+  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.clean cat
+  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.required false
+  runuser -u "$user" -- git -C "$home/code" checkout --quiet master
+}
 
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
@@ -54,23 +74,25 @@ desired_file="$(mktemp)"
 python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" > "$desired_file"
 jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced invalid JSON" >&2; exit 1; }
 
-# 4) per-account: create-if-absent + ADDITIVE tier groups (never strip)
-while IFS=$'\t' read -r os_user shell groups_csv; do
+# 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
+while IFS=$'\t' read -r os_user tier shell groups_csv; do
   if ! id "$os_user" >/dev/null 2>&1; then
     log "create account: $os_user (shell $shell)"
     run useradd -m -s "$shell" "$os_user"
     run passwd -l "$os_user"           # SSO/t3 only — no local password
     run chmod 700 "/home/$os_user"
   fi
-  [[ -z "$groups_csv" ]] && continue
-  current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
-  IFS=',' read -ra want <<< "$groups_csv"
-  for g in "${want[@]}"; do
-    grep -qx "$g" <<< "$current" && continue          # already a member -> skip
-    getent group "$g" >/dev/null 2>&1 || continue      # group must exist
-    log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
-  done
-done < <(jq -r '.accounts[] | [.os_user, .shell, (.groups|join(","))] | @tsv' "$desired_file")
+  if [[ -n "$groups_csv" ]]; then
+    current="$(id -nG "$os_user" 2>/dev/null | tr ' ' '\n')"
+    IFS=',' read -ra want <<< "$groups_csv"
+    for g in "${want[@]}"; do
+      grep -qx "$g" <<< "$current" && continue         # already a member -> skip
+      getent group "$g" >/dev/null 2>&1 || continue     # group must exist
+      log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
+    done
+  fi
+  [[ "$tier" != admin ]] && install_locked_clone "$os_user"   # non-admins: writable locked ~/code
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
