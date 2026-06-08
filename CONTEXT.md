@@ -53,8 +53,38 @@ One of {Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared} — replicas 
 _Avoid_: "core service" (collides with the `0-core-*` Namespace tier name).
 
 **Namespace-owner**:
-A non-admin identity declared in `secret/platform → k8s_users` (JSON map). Owns one or more namespaces and one or more public subdomains.
+A non-admin identity declared in `secret/platform → k8s_users` (JSON map). Owns one or more namespaces and one or more public subdomains. Also drives a **Workstation profile** (an identity has both a cluster facet and a workstation facet).
 _Avoid_: bare "user", "tenant".
+
+### Workstation (multi-user devvm)
+
+**devvm**:
+The dev VM (`10.0.10.10`), a non-cluster VM on the **PVE host** that hosts each person's Claude Code coding environment (the `t3-serve@<user>` and terminal-lobby sessions). Not a **Node** (it isn't in the cluster).
+_Avoid_: calling it a "Node"; "host" (reserved for the PVE host).
+
+**Workstation**:
+A person's identity-scoped Claude Code environment on the **devvm** — one OS account, their session runs as that uid. The same human may also be a **Namespace-owner**; the cluster identity and the Workstation are two facets of one person.
+_Avoid_: "t3 instance" (only one surface of a Workstation); bare "user".
+
+**RBAC tier**:
+The role band that governs a person everywhere — `kubernetes-admins` (Viktor; cluster-admin, secrets, apply), `kubernetes-power-users` (infra-aware, broad read, no destructive change), `kubernetes-namespace-owners` (own-namespace app dev). The single axis that keys both cluster RBAC **and** the **Workstation profile**.
+_Avoid_: inventing per-service roles; conflating with **Namespace tier** / **State tier** (those are not identity).
+
+**Workstation profile**:
+The **RBAC tier**-keyed bundle a **Workstation** receives: **Config inheritance** (identical for everyone) plus the person's **Infra visibility** and cluster scope (varies by tier). Never hand-tuned per person — one identity decision (Authentik group + `k8s_users`) provisions the cluster facet and the Workstation together.
+_Avoid_: per-person bespoke setup (the rejected "stitched-together" status quo).
+
+**Config inheritance**:
+The universal half of every **Workstation profile** — Viktor's *static* Claude config (skills, rules, agents, commands, `CLAUDE.md`, hooks) **live-extends** from a **Config base**, it is NOT copied: each person's `~/.claude` draws these from the shared base, so an edit Viktor makes appears in every Workstation immediately, with no seed/copy/sync step. Users may layer their own items on top (rarely do). **RBAC tier**-independent. Per-user *mutable* state (`~/.claude.json`, `.credentials.json`, `projects/`, sessions) is never shared — local only.
+_Avoid_: a periodic copy/seed/sync of `~/.claude` (rejected — inheritance must be live); sharing `~/.claude.json` / `.credentials.json` (per-user, secret-bearing, corrupts under concurrent writes — see emo's multi-session profile).
+
+**Config base**:
+The shared, secret-free, version-controlled source of truth for the *static* Claude config that every **Workstation** live-extends (see **Config inheritance**). Viktor's authoring surface — when he edits a skill/rule, he edits the base; the chezmoi dotfiles repo is its versioned form (commit = audit/rollback, NOT a push to users). Holds only skills/rules/agents/commands/`CLAUDE.md`/hooks — never secrets or per-user mutable state.
+_Avoid_: treating it as a per-user seed target (it is a live shared source, not a copy); putting secrets in it.
+
+**Infra visibility**:
+What a non-admin **Workstation** may SEE of the infra: the public repo **code** and the person's own **RBAC**-scoped view of the live cluster (kubectl / dashboard within their namespaces). Explicitly excludes the **git-crypt** secrets (`terraform.tfvars`, `secrets/`) and any out-of-scope mutation. The boundary that "respect their permissions" enforces — violated today because `~/code` is one git-crypt-*unlocked* tree shared via the `code-shared` group.
+_Avoid_: reading "see the infra" as access to secrets or apply rights.
 
 ### Networking
 
