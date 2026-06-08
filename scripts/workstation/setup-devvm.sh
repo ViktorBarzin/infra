@@ -68,4 +68,13 @@ log "skel: launcher + tmux + inheritance symlinks (base=$CONFIG_BASE)"
 install -m 0755 "$HERE/../t3-provision-users.sh" /usr/local/bin/t3-provision-users
 log "t3-provision-users -> /usr/local/bin/ (roster-driven)"
 
+# 7) harden the admin's unlocked tree: it holds git-crypt-DECRYPTED secrets, so it
+#    must NOT be world-readable — only the admin + code-shared. Without this, ANY
+#    devvm user (even outside code-shared) could read decrypted secrets by path.
+ADMIN_CODE="${ADMIN_CODE:-/home/wizard/code}"
+if [[ -d "$ADMIN_CODE" ]]; then
+  chmod o-rx "$ADMIN_CODE"
+  log "hardened $ADMIN_CODE (o-rx — not world-readable)"
+fi
+
 log "OK (idempotent)"
