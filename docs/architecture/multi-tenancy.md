@@ -533,6 +533,20 @@ cd stacks/actualbudget/factory
 terragrunt apply
 ```
 
+## DevVM Workstation (Claude Code multi-user)
+
+Separate from the in-cluster namespace-owner model above, the **devvm** (`10.0.10.10`, VMID 102) hosts per-user **Claude Code Workstations** behind `t3.viktorbarzin.me`. It reuses the same identity backbone — the Vault `k8s_users` map and Authentik — but adds a devvm-side layer. Authoritative design + phased plan: `docs/plans/2026-06-07-multi-user-workstation-{design,plan}.md` (PRD: ViktorBarzin/infra#9).
+
+**Single source of truth:** `infra/scripts/workstation/roster.yaml` (`os_user → authentik_user / k8s_user / tier / namespaces`). `roster_engine.py` (pytest-covered pure core) derives desired state; `t3-provision-users` (hourly timer) applies it — **additive-only** for existing users (never strips a group, replaces a home, or re-locks an account). `/etc/ttyd-user-map` + `dispatch.json` are **generated** from the roster (do not hand-edit).
+
+**RBAC tiers:** `admin` (Viktor — cluster-admin, unlocked tree, secrets) · `power-user` (cluster-wide read-only, NO Secrets, via a dedicated `oidc-power-user-readonly` ClusterRole) · `namespace-owner` (admin in own namespace only). Each session acts as the user's **own** OIDC identity (kubelogin), never the admin's.
+
+**Config inheritance (live):** wizard authors the base (his chezmoi-versioned `~/.claude`). Two native layers carry it to every user — the enforced org `claudeMd` in `/etc/claude-code/managed-settings.json` (top precedence, all sessions) and per-user `~/.claude/{skills,rules,…}` **symlinks** to the base (seeded via `/etc/skel`; edits propagate live). Secrets stay per-user at mode 600, never symlinked.
+
+**Infra access:** non-admins get their own **writable, git-crypt-LOCKED** clone of the (public) infra repo at `~/code` — code/docs plaintext, secret files (`*.tfvars`, `secrets/**`) stay ciphertext. Changes are ungated (push ≠ apply); the real boundary is apply-time (`scripts/tg apply` needs an admin Vault token + cluster RBAC).
+
+**Status (2026-06-08):** built + verified on the live host — capacity (8 GiB swap), config inheritance, roster-driven provisioner, per-user locked clone. **Gated / pending:** per-user OIDC kubeconfig + the `oidc-power-user-readonly` ClusterRole + emo's `k8s_users` entry, the Authentik `T3 Users` edge gate, the emo cutover (Phase 5), and the offboarding apply-side (Phase 7). See `../runbooks/offboard-user.md` for deprovisioning.
+
 ## Related
 
 - [CI/CD Pipeline](./ci-cd.md) — Per-user Woodpecker pipelines
