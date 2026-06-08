@@ -63,4 +63,9 @@ for d in skills rules agents commands; do
 done
 log "skel: launcher + tmux + inheritance symlinks (base=$CONFIG_BASE)"
 
+# 6) deploy the roster-driven provisioner to /usr/local/bin (run hourly by
+#    t3-provision-users.timer). Re-deployed here so its logic is reproducible.
+install -m 0755 "$HERE/../t3-provision-users.sh" /usr/local/bin/t3-provision-users
+log "t3-provision-users -> /usr/local/bin/ (roster-driven)"
+
 log "OK (idempotent)"

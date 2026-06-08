@@ -99,24 +99,26 @@ def test_validate_ok_when_tiers_match():
     assert eng.validate_tiers(r, {"anca": "namespace-owner"}) == []
 
 
-def test_validate_flags_tier_mismatch():
+def test_validate_flags_tier_mismatch_as_error():
+    # roster says power-user, cluster says namespace-owner -> a real conflict -> ERROR (abort).
     r = _roster(
         "users: {ancamilea: {authentik_user: a, k8s_user: anca, tier: power-user}}"
     )
-    errs = eng.validate_tiers(r, {"anca": "namespace-owner"})
-    assert len(errs) == 1
-    assert (
-        "anca" in errs[0] and "power-user" in errs[0] and "namespace-owner" in errs[0]
-    )
+    issues = eng.validate_tiers(r, {"anca": "namespace-owner"})
+    assert len(issues) == 1
+    assert issues[0].severity == "error"
+    assert issues[0].os_user == "ancamilea"
+    assert "power-user" in issues[0].message and "namespace-owner" in issues[0].message
 
 
-def test_validate_flags_netnew_user_absent_from_k8s_users():
-    # emo is power-user in the roster but has no k8s_users entry yet -> the OIDC
-    # RBAC binding can't exist, so this must fail loud (add the entry first).
+def test_validate_flags_netnew_absent_as_warn():
+    # emo is power-user in the roster but has no k8s_users entry yet. Onboarding the
+    # workstation should still proceed; the kubectl grant is pending -> WARN, not error.
     r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
-    errs = eng.validate_tiers(r, {})
-    assert len(errs) == 1
-    assert "emo" in errs[0] and "k8s_users" in errs[0]
+    issues = eng.validate_tiers(r, {})
+    assert len(issues) == 1
+    assert issues[0].severity == "warn"
+    assert "emo" in issues[0].message and "k8s_users" in issues[0].message
 
 
 def test_validate_skips_admin_tier():
@@ -125,6 +127,22 @@ def test_validate_skips_admin_tier():
         "users: {wizard: {authentik_user: vbarzin, k8s_user: wizard, tier: admin}}"
     )
     assert eng.validate_tiers(r, {}) == []
+
+
+def test_has_blocking_errors_distinguishes_mismatch_from_absent():
+    mismatch = _roster(
+        "users: {ancamilea: {authentik_user: a, k8s_user: anca, tier: power-user}}"
+    )
+    absent = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}"
+    )
+    assert (
+        eng.has_blocking_errors(
+            eng.validate_tiers(mismatch, {"anca": "namespace-owner"})
+        )
+        is True
+    )
+    assert eng.has_blocking_errors(eng.validate_tiers(absent, {})) is False
 
 
 # --------------------------------------------------------------------------
