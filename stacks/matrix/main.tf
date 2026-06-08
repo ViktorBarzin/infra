@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "matrix" {
     name = "matrix"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -20,34 +20,30 @@ resource "kubernetes_namespace" "matrix" {
   }
 }
 
-# DB credentials from Vault database engine (rotated every 24h)
-resource "kubernetes_manifest" "db_external_secret" {
+# Registration token from Vault KV (secret/matrix). Token-gated registration:
+# enabled transiently to register the admin account, then allow_registration is
+# flipped to false. The token stays in Vault so registration can be re-opened
+# later (e.g. to add family) without regenerating it.
+resource "kubernetes_manifest" "secrets_external_secret" {
   manifest = {
     apiVersion = "external-secrets.io/v1beta1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "matrix-db-creds"
+      name      = "matrix-secrets"
       namespace = "matrix"
     }
     spec = {
       refreshInterval = "15m"
       secretStoreRef = {
-        name = "vault-database"
+        name = "vault-kv"
         kind = "ClusterSecretStore"
       }
       target = {
-        name = "matrix-db-creds"
-        template = {
-          data = {
-            DB_PASSWORD = "{{ .password }}"
-          }
-        }
+        name = "matrix-secrets"
       }
-      data = [{
-        secretKey = "password"
-        remoteRef = {
-          key      = "static-creds/pg-matrix"
-          property = "password"
+      dataFrom = [{
+        extract = {
+          key = "matrix"
         }
       }]
     }
@@ -61,6 +57,8 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# RocksDB lives here. proxmox-lvm-encrypted (local SSD, LUKS2) suits the
+# homeserver DB's many small writes; NFS would be the wrong backend.
 resource "kubernetes_persistent_volume_claim" "data_encrypted" {
   wait_until_bound = false
   metadata {
@@ -98,18 +96,6 @@ resource "kubernetes_deployment" "matrix" {
       app  = "matrix"
       tier = local.tiers.aux
     }
-    annotations = {
-      # Synapse reads the DB password ONLY at startup: the inject-db-password
-      # initContainer seds matrix-db-creds into homeserver.yaml. That secret is
-      # rotated by Vault via the ESO above (15m refresh), so without an
-      # auto-reload the running pod keeps a stale password and Synapse's DB
-      # auth fails on every rotation until a manual `rollout restart` (observed
-      # 2026-06-05). Reloader watches the named secret and rolls the deployment
-      # when it changes. Explicit form (not auto/search) because the secret is
-      # referenced only in an initContainer env var, not a mount/envFrom, so
-      # Reloader's reference auto-discovery is unreliable here.
-      "secret.reloader.stakater.com/reload" = "matrix-db-creds"
-    }
   }
   spec {
     replicas = 1
@@ -127,79 +113,99 @@ resource "kubernetes_deployment" "matrix" {
           app = "matrix"
         }
         annotations = {
-          "diun.enable"                    = "true"
-          "diun.include_tags"              = "^v\\d+\\.\\d+\\.\\d+$"
-          "dependency.kyverno.io/wait-for" = "pg-cluster-rw.dbaas:5432"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^v\\d+\\.\\d+\\.\\d+$"
         }
       }
       spec {
-        init_container {
-          name    = "install-psycopg2"
-          image   = "matrixdotorg/synapse:v1.151.0"
-          command = ["/bin/sh", "-c", "pip install --target=/extra-packages psycopg2-binary 2>/dev/null"]
-          volume_mount {
-            name       = "extra-packages"
-            mount_path = "/extra-packages"
-          }
-        }
-        init_container {
-          name  = "inject-db-password"
-          image = "busybox:1.37"
-          command = ["/bin/sh", "-c", <<-EOF
-            # Update database config in homeserver.yaml with current Vault-managed password
-            sed -i "s|host: .*dbaas.*|host: pg-cluster-rw.dbaas.svc.cluster.local|" /data/homeserver.yaml
-            sed -i "s|user: .*|user: matrix|" /data/homeserver.yaml
-            sed -i "s|password: .*|password: $DB_PASSWORD|" /data/homeserver.yaml
-            echo "DB password injected"
-          EOF
-          ]
-          env {
-            name = "DB_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = "matrix-db-creds"
-                key  = "DB_PASSWORD"
-              }
-            }
-          }
-          volume_mount {
-            name       = "data"
-            mount_path = "/data"
-          }
+        # tuwunel runs as an unprivileged static binary; fsGroup makes the
+        # encrypted RocksDB volume group-writable so uid 1000 can write it
+        # (avoids the init-chown/fsGroup mismatch that parked hermes-agent).
+        security_context {
+          run_as_user  = 1000
+          run_as_group = 1000
+          fs_group     = 1000
         }
         container {
-          image = "matrixdotorg/synapse:v1.151.0"
+          image = "ghcr.io/matrix-construct/tuwunel:v1.7.1"
           name  = "matrix"
           port {
             container_port = 8008
           }
           env {
-            name  = "SYNAPSE_SERVER_NAME"
+            name  = "TUWUNEL_SERVER_NAME"
             value = "matrix.viktorbarzin.me"
           }
           env {
-            name  = "SYNAPSE_REPORT_STATS"
-            value = "yes"
+            name  = "TUWUNEL_DATABASE_PATH"
+            value = "/var/lib/tuwunel"
           }
           env {
-            name  = "PYTHONPATH"
-            value = "/extra-packages"
+            name  = "TUWUNEL_PORT"
+            value = "8008"
+          }
+          env {
+            name  = "TUWUNEL_ADDRESS"
+            value = "0.0.0.0"
+          }
+          env {
+            name  = "TUWUNEL_ALLOW_FEDERATION"
+            value = "true"
+          }
+          env {
+            name  = "TUWUNEL_TRUSTED_SERVERS"
+            value = jsonencode(["matrix.org"])
+          }
+          # Registration disabled. To add a user later: set "true", apply,
+          # register with the Vault token (secret/matrix), then set back to "false".
+          env {
+            name  = "TUWUNEL_ALLOW_REGISTRATION"
+            value = "false"
+          }
+          env {
+            name = "TUWUNEL_REGISTRATION_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "matrix-secrets"
+                key  = "registration_token"
+              }
+            }
+          }
+          # 50 MiB — kept under Cloudflare's 100 MB proxied-request ceiling.
+          env {
+            name  = "TUWUNEL_MAX_REQUEST_SIZE"
+            value = "52428800"
+          }
+          # tuwunel serves its own .well-known so federation resolves to 443
+          # (Cloudflare-proxied) without a separate 8448 / SRV record.
+          env {
+            name  = "TUWUNEL_WELL_KNOWN__CLIENT"
+            value = "https://matrix.viktorbarzin.me"
+          }
+          env {
+            name  = "TUWUNEL_WELL_KNOWN__SERVER"
+            value = "matrix.viktorbarzin.me:443"
+          }
+          # Real client IP for rate-limiting: behind Cloudflare's CF-Connecting-IP.
+          env {
+            name  = "TUWUNEL_IP_SOURCE"
+            value = "cf_connecting_ip"
+          }
+          env {
+            name  = "TUWUNEL_LOG"
+            value = "warn,tuwunel=info"
           }
           volume_mount {
             name       = "data"
-            mount_path = "/data"
-          }
-          volume_mount {
-            name       = "extra-packages"
-            mount_path = "/extra-packages"
+            mount_path = "/var/lib/tuwunel"
           }
           resources {
             requests = {
-              cpu    = "25m"
+              cpu    = "100m"
               memory = "256Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
         }
@@ -208,10 +214,6 @@ resource "kubernetes_deployment" "matrix" {
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim.data_encrypted.metadata[0].name
           }
-        }
-        volume {
-          name = "extra-packages"
-          empty_dir {}
         }
       }
     }
@@ -224,8 +226,6 @@ resource "kubernetes_deployment" "matrix" {
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].init_container[0].image,
-      spec[0].template[0].spec[0].init_container[1].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
@@ -269,12 +269,9 @@ module "ingress" {
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Matrix"
-    "gethomepage.dev/description"  = "Secure messaging"
+    "gethomepage.dev/description"  = "Secure messaging (tuwunel)"
     "gethomepage.dev/icon"         = "matrix.png"
     "gethomepage.dev/group"        = "Other"
     "gethomepage.dev/pod-selector" = ""
   }
 }
-
-# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
-# CI retrigger v2 2026-05-16T13:46:35+00:00

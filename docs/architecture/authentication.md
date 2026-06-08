@@ -102,7 +102,7 @@ Authentik provides OIDC for 10 applications:
 | Kubernetes | OIDC (public client) | K8s API authentication (kubectl / kubelogin CLI) |
 | Kubernetes Dashboard | OIDC (confidential) | Built for dashboard SSO — currently **idle** (apiserver OIDC blocked; dashboard uses forward-auth + token-paste) |
 | Linkwarden | OIDC | Bookmark manager SSO |
-| Matrix | OIDC | Matrix homeserver SSO |
+| Matrix | OIDC | ⚠️ Legacy/orphaned — Synapse→tuwunel migration 2026-06-08; tuwunel uses native password auth, OIDC SSO not wired |
 | Wrongmove | OIDC | Real estate app SSO |
 
 ### Kubernetes API authentication (OIDC) — CURRENTLY NON-FUNCTIONAL
