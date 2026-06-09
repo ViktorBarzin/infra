@@ -117,6 +117,8 @@ func fakeInstance(authenticated bool, bootstrapCalled *bool) *httptest.Server {
 			}
 			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "fresh", Path: "/"})
 			_, _ = w.Write([]byte(`{"authenticated":true}`))
+		case "/api/auth/browser-session":
+			http.NotFound(w, r) // models a 0.0.24 instance: the 0.0.25 endpoint is absent
 		default:
 			_, _ = w.Write([]byte("APP"))
 		}
@@ -196,5 +198,63 @@ func TestHandlerProxiesXHREvenIfCookieInvalid(t *testing.T) {
 	}
 	if w.Code != http.StatusOK || w.Body.String() != "APP" {
 		t.Fatalf("XHR should proxy through, got %d %q", w.Code, w.Body.String())
+	}
+}
+
+// pairInstance simulates a t3 instance that exposes pairing at exactly one path
+// (200 + t3_session) and 404s the other known path — modeling the 0.0.25 rename of
+// /api/auth/bootstrap -> /api/auth/browser-session. records which path was hit.
+func pairInstance(pairPath string, hit *string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/browser-session", "/api/auth/bootstrap":
+			if r.URL.Path != pairPath {
+				http.NotFound(w, r) // endpoint absent in this t3 version
+				return
+			}
+			if hit != nil {
+				*hit = r.URL.Path
+			}
+			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"authenticated":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+// TestAutoPairAcrossVersions: one dispatch binary must pair against BOTH the
+// 0.0.24 endpoint (/api/auth/bootstrap) and the 0.0.25 one (/api/auth/browser-session),
+// so the pin can move forward (and survive rolling-restart skew) without a 502 storm.
+func TestAutoPairAcrossVersions(t *testing.T) {
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) { return []byte(`{"credential":"tok"}`), nil }
+	defer func() { mintToken = orig }()
+
+	for _, tc := range []struct{ name, pairPath string }{
+		{"0.0.25 browser-session", "/api/auth/browser-session"},
+		{"0.0.24 bootstrap", "/api/auth/bootstrap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit string
+			ts := pairInstance(tc.pairPath, &hit)
+			defer ts.Close()
+			setTable(portOf(t, ts))
+
+			r := httptest.NewRequest("GET", "/", nil)
+			r.Header.Set("X-authentik-username", "vbarzin@gmail.com") // no cookie -> autoPair
+			w := httptest.NewRecorder()
+			handler(w, r)
+
+			if w.Code != http.StatusFound {
+				t.Fatalf("want 302 re-pair, got %d body=%q", w.Code, w.Body.String())
+			}
+			if hit != tc.pairPath {
+				t.Fatalf("want pairing via %s, hit=%q", tc.pairPath, hit)
+			}
+			if cs := w.Result().Cookies(); len(cs) == 0 || cs[0].Value != "fresh" {
+				t.Fatalf("want fresh t3_session relayed, got %+v", cs)
+			}
+		})
 	}
 }
