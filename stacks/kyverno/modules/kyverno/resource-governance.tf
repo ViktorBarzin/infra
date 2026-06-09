@@ -15,6 +15,15 @@
 locals {
   governance_tiers    = ["0-core", "1-cluster", "2-gpu", "3-edge", "4-aux"]
   excluded_namespaces = ["kube-system", "metallb-system", "kyverno", "calico-system", "calico-apiserver"]
+
+  # GPU-priority injection exclude list. Adds `tts` to the base set so the
+  # `inject-gpu-workload-priority` policy does NOT stamp the immich-equal
+  # gpu-workload (1,200,000) priority on Chatterbox-TTS pods. Chatterbox is a
+  # best-effort off-peak batch tenant on the shared T4: it must keep its
+  # tier-2-gpu (600,000) priority so it is ALWAYS the pod evicted under GPU-node
+  # pressure, never immich-ml/frigate/llama-swap. See the tts stack
+  # (stacks/tts/) + docs/plans/2026-06-08-chatterbox-tts-infra.md §3.
+  gpu_priority_excluded_namespaces = concat(local.excluded_namespaces, ["tts"])
 }
 
 # -----------------------------------------------------------------------------
@@ -905,7 +914,10 @@ resource "kubectl_manifest" "mutate_gpu_priority" {
             any = [
               {
                 resources = {
-                  namespaces = local.excluded_namespaces
+                  # tts added so Chatterbox-TTS keeps tier-2-gpu priority (it's a
+                  # best-effort off-peak batch tenant — must be evicted first,
+                  # not promoted to immich-equal gpu-workload). See locals above.
+                  namespaces = local.gpu_priority_excluded_namespaces
                 }
               }
             ]
