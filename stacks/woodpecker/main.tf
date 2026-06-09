@@ -1,0 +1,404 @@
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
+variable "woodpecker_forgejo_url" { type = string }
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "woodpecker"
+}
+
+data "vault_kv_secret_v2" "platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
+locals {
+  k8s_users = jsondecode(data.vault_kv_secret_v2.platform.data["k8s_users"])
+
+  # Build admin list: existing admin + all namespace-owner usernames
+  woodpecker_admins = join(",", concat(
+    ["ViktorBarzin"],
+    [for name, user in local.k8s_users : name if user.role == "namespace-owner"]
+  ))
+}
+
+resource "kubernetes_namespace" "woodpecker" {
+  metadata {
+    name = "woodpecker"
+    labels = {
+      "resource-governance/custom-quota" = "true"
+      tier                               = local.tiers.edge
+      "keel.sh/enrolled"                 = "true"
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+resource "kubernetes_resource_quota" "woodpecker" {
+  metadata {
+    name      = "tier-quota"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "16"
+      "requests.memory" = "16Gi"
+      "limits.memory"   = "32Gi"
+      pods              = "60"
+    }
+  }
+}
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.woodpecker.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "woodpecker-secrets"
+      namespace = "woodpecker"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "woodpecker-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "woodpecker"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.woodpecker]
+}
+
+# DB credentials from Vault database engine (rotated every 7 days — static
+# role pg-woodpecker, rotation_period 604800 in stacks/vault). ExternalSecret
+# provides WOODPECKER_DATABASE_DATASOURCE injected via
+# server.extraSecretNamesForEnvFrom. envFrom does NOT hot-reload a running pod,
+# so the target secret carries reloader.stakater.com/match="true" and the
+# server sets reloader.stakater.com/search="true" (values.yaml); together they
+# make Stakater Reloader restart the server when the rotated password lands —
+# without it the pod kept using the revoked password until an unrelated restart
+# (latent weekly rotation outage, fixed 2026-06-05).
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "woodpecker-db-creds"
+      namespace = "woodpecker"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "woodpecker-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            WOODPECKER_DATABASE_DATASOURCE = "postgres://woodpecker:{{ .password }}@${var.postgresql_host}:5432/woodpecker?sslmode=disable"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-woodpecker"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.woodpecker]
+}
+
+resource "kubernetes_config_map" "git_crypt_key" {
+  metadata {
+    name      = "git-crypt-key"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+
+  data = {
+    "key" = filebase64("${path.root}/../../.git/git-crypt/keys/default")
+  }
+}
+
+# Database init job - REMOVED: database and user already exist.
+# The job used -U root which doesn't work with CNPG (superuser is 'postgres').
+# Vault DB engine manages the woodpecker credentials via rotation.
+
+# Woodpecker server data is on local-path (node-local storage), NOT NFS.
+# The old NFS PV was unused — PVC was already bound to local-path PV.
+# No PV management needed here.
+
+# Helm release for Woodpecker CI
+# Database datasource is now injected from ExternalSecret via envFrom
+resource "helm_release" "woodpecker" {
+  name       = "woodpecker"
+  namespace  = kubernetes_namespace.woodpecker.metadata[0].name
+  repository = "oci://ghcr.io/woodpecker-ci/helm"
+  chart      = "woodpecker"
+  version    = "3.5.1"
+
+  values = [
+    templatefile("${path.module}/values.yaml", {
+      github_client_id      = data.vault_kv_secret_v2.secrets.data["github_client_id"]
+      github_client_secret  = data.vault_kv_secret_v2.secrets.data["github_client_secret"]
+      agent_secret          = data.vault_kv_secret_v2.secrets.data["agent_secret"]
+      forgejo_client_id     = data.vault_kv_secret_v2.secrets.data["forgejo_client_id"]
+      forgejo_client_secret = data.vault_kv_secret_v2.secrets.data["forgejo_client_secret"]
+      forgejo_url           = var.woodpecker_forgejo_url
+      woodpecker_admins     = local.woodpecker_admins
+    })
+  ]
+
+  timeout    = 600
+  depends_on = [kubernetes_manifest.db_external_secret]
+}
+
+# Patch hostAliases onto the woodpecker-server StatefulSet — the chart 3.5.1
+# does NOT expose this field, so we have to do it after the helm release.
+# Keeps the OAuth/forge-API path off the WAN gateway (forgejo.viktorbarzin.me
+# resolves to the public IP via DNS, which round-trips through Cloudflare
+# and routinely tripped 30s context-deadline timeouts when fetching pipeline
+# config). We pin forgejo.viktorbarzin.me to the in-cluster Traefik Service
+# ClusterIP (read dynamically below); Traefik serves the *.viktorbarzin.me
+# wildcard so SNI verification still passes. ClusterIP (not the LB IP) avoids
+# two traps: (1) the Traefik LB IP is ETP=Local and not reliably hairpin-
+# reachable from an arbitrary pod's node; (2) a hard-coded LB IP rots on every
+# Traefik renumber — this previously pinned 10.0.20.200, which went dead when
+# Traefik moved to its dedicated .203 (2026-05-30), the same failure class the
+# cloudflared origin hit (also fixed by targeting the in-cluster Service).
+data "kubernetes_service" "traefik" {
+  metadata {
+    name      = "traefik"
+    namespace = "traefik"
+  }
+}
+
+resource "null_resource" "woodpecker_server_host_alias" {
+  triggers = {
+    # Re-run on helm version/values change, and when the Traefik ClusterIP
+    # changes (e.g. the Service is recreated) so the alias self-heals.
+    helm_version       = helm_release.woodpecker.version
+    helm_values        = sha256(join("", helm_release.woodpecker.values))
+    traefik_cluster_ip = data.kubernetes_service.traefik.spec[0].cluster_ip
+  }
+
+  provisioner "local-exec" {
+    command     = <<-BASH
+      set -euo pipefail
+      kubectl -n woodpecker patch statefulset/woodpecker-server --type=strategic --patch '{"spec":{"template":{"spec":{"hostAliases":[{"ip":"${data.kubernetes_service.traefik.spec[0].cluster_ip}","hostnames":["forgejo.viktorbarzin.me"]}]}}}}'
+      kubectl -n woodpecker rollout status statefulset/woodpecker-server --timeout=120s
+    BASH
+    interpreter = ["/bin/bash", "-c"]
+  }
+
+  depends_on = [helm_release.woodpecker]
+}
+
+# ClusterRoleBinding - build pods need cluster-admin to PATCH deployments across namespaces
+resource "kubernetes_cluster_role_binding" "woodpecker" {
+  metadata {
+    name = "woodpecker"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "woodpecker-agent"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  role_ref {
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+# Also bind the default SA (pipeline pods run as default)
+resource "kubernetes_cluster_role_binding" "woodpecker_default" {
+  metadata {
+    name = "woodpecker-default"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "default"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  role_ref {
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+# --- Vault → Woodpecker Secret Sync ---
+# Syncs secrets from Vault KV (secret/ci/global) to Woodpecker global secrets via API.
+# Runs every 6 hours. Secrets are created/updated via Woodpecker REST API.
+
+resource "kubernetes_config_map" "vault_woodpecker_sync" {
+  metadata {
+    name      = "vault-woodpecker-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+
+  data = {
+    "sync.sh" = <<-SCRIPT
+      #!/bin/sh
+      set -e
+      VAULT_ADDR="http://vault-active.vault.svc.cluster.local:8200"
+      WP_API="http://woodpecker-server.woodpecker.svc.cluster.local/api"
+
+      # Authenticate to Vault via K8s SA
+      SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+      VAULT_TOKEN=$(curl -sf -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+        -d "{\"role\":\"woodpecker-sync\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+
+      if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+        echo "ERROR: Failed to authenticate to Vault"
+        exit 1
+      fi
+
+      # Get Woodpecker API token from Vault
+      WP_TOKEN=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data.woodpecker_api_token // empty')
+
+      if [ -z "$WP_TOKEN" ]; then
+        echo "ERROR: No woodpecker_api_token in secret/ci/global"
+        exit 1
+      fi
+
+      # Sync global secrets
+      SECRETS=$(curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/ci/global" | jq -r '.data.data | to_entries[] | select(.key != "woodpecker_api_token") | @base64')
+
+      synced=0
+      for entry in $SECRETS; do
+        NAME=$(echo "$entry" | base64 -d | jq -r .key)
+        VALUE=$(echo "$entry" | base64 -d | jq -r .value)
+
+        # Try PATCH first (update), fall back to POST (create)
+        # Include all event types so secrets work for manual/cron-triggered pipelines too
+        STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" -X PATCH "$WP_API/secrets/$NAME" \
+          -H "Authorization: Bearer $WP_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" 2>/dev/null || echo "000")
+
+        if [ "$STATUS" != "200" ]; then
+          curl -sf -X POST "$WP_API/secrets" \
+            -H "Authorization: Bearer $WP_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"$NAME\",\"value\":\"$VALUE\",\"events\":[\"cron\",\"deployment\",\"manual\",\"push\",\"tag\"]}" > /dev/null
+        fi
+        synced=$((synced + 1))
+      done
+      echo "Synced $synced global secrets from Vault to Woodpecker"
+    SCRIPT
+  }
+}
+
+resource "kubernetes_cron_job_v1" "vault_secret_sync" {
+  metadata {
+    name      = "vault-woodpecker-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 */6 * * *"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            container {
+              name    = "sync"
+              image   = "alpine"
+              command = ["/bin/sh", "-c", "apk add --no-cache curl jq && /bin/sh /scripts/sync.sh"]
+              volume_mount {
+                name       = "sync-script"
+                mount_path = "/scripts"
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+            volume {
+              name = "sync-script"
+              config_map {
+                name = kubernetes_config_map.vault_woodpecker_sync.metadata[0].name
+              }
+            }
+            restart_policy = "OnFailure"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+module "ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # Forgejo webhooks + webhook_handler POSTs hit ci.viktorbarzin.me to trigger
+  # pipelines; the Woodpecker API + OAuth flows also live here. Forward-auth
+  # would block every machine-driven call. Woodpecker has its own OAuth login.
+  # auth = "none": Forgejo webhooks + API calls trigger pipelines; Woodpecker OAuth handles login; forward-auth blocks webhook deliveries.
+  auth            = "none"
+  dns_type        = "non-proxied"
+  namespace       = kubernetes_namespace.woodpecker.metadata[0].name
+  name            = "ci"
+  service_name    = "woodpecker-server"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Woodpecker CI"
+    "gethomepage.dev/description"  = "CI/CD pipelines"
+    "gethomepage.dev/icon"         = "woodpecker-ci.png"
+    "gethomepage.dev/group"        = "Development & CI"
+    "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
+# CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# CI retrigger v3 2026-05-16T14:06:39Z

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily offsite sync: sda + NFS changes to Synology
+After=network-online.target daily-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/offsite-sync-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=offsite-sync-backup
+TimeoutStartSec=7200

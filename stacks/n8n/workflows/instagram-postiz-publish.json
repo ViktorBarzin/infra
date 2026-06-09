@@ -1,0 +1,64 @@
+{
+  "name": "Postiz Publish Notify",
+  "active": true,
+  "id": "9c1b3d76-4e2a-4f8b-b1d5-2a9c4e3d7f01",
+  "versionId": "9c1b3d76-4e2a-4f8b-b1d5-2a9c4e3d7f01",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "postiz-publish",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "postiz-webhook",
+      "name": "Postiz webhook (publish)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "9c1b3d76-postiz-publish",
+      "notes": "Postiz fires this webhook AFTER a successful publish (post.workflow.v1.0.2.js -> sendWebhooks). Body = full post JSON. Register URL in Postiz UI → Settings → Webhooks → https://n8n.viktorbarzin.me/webhook/postiz-publish"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Postiz webhook payload is the full post object.\nconst raw = $input.first().json;\nconst body = raw.body || raw;\nconst integ = body.integration || {};\nconst providerName = integ.name || 'unknown';\nconst providerIdentifier = integ.providerIdentifier || 'unknown';\nconst content = (body.content || '').slice(0, 200);\nconst releaseURL = body.releaseURL || '';\nconst publishDate = body.publishDate || '';\nconst state = body.state || '';\nconst integrationPicture = integ.picture || '';\n\nconst when = publishDate ? new Date(publishDate).toLocaleString('en-GB', { timeZone: 'Europe/Sofia' }) : 'just now';\n\nconst lines = [\n  '<b>📤 Posted to ' + providerName + '</b> (' + providerIdentifier + ')',\n  '',\n];\nif (releaseURL) lines.push('<a href=\"' + releaseURL + '\">View on Instagram</a>');\nif (content) lines.push('', '<i>' + content + '</i>');\nlines.push('', 'state=' + state + ' · published ' + when);\n\nreturn [{ json: {\n  text: lines.join('\\n'),\n  release_url: releaseURL,\n  post_id: body.id,\n  integration_id: integ.id,\n}}];"
+      },
+      "id": "format-message",
+      "name": "Format Telegram message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "notes": "Build the HTML-formatted Telegram message from Postiz's post JSON. Defensive for missing fields — Postiz only fires on success, but webhooks elsewhere might send partial data."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, text: $json.text, parse_mode: 'HTML', disable_web_page_preview: false }) }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "telegram-notify",
+      "name": "Telegram sendMessage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "notes": "Send the formatted notification to the user's Telegram chat. parse_mode=HTML so the link is clickable; preview enabled so the IG card renders inline."
+    }
+  ],
+  "connections": {
+    "Postiz webhook (publish)": {"main": [[{"node": "Format Telegram message", "type": "main", "index": 0}]]},
+    "Format Telegram message": {"main": [[{"node": "Telegram sendMessage", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1", "saveExecutionProgress": false, "saveManualExecutions": true},
+  "staticData": null,
+  "meta": {"templateCredsSetupCompleted": false},
+  "pinData": {}
+}

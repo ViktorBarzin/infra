@@ -1,0 +1,264 @@
+# values from - https://github.com/crowdsecurity/helm-charts/blob/main/charts/crowdsec/values.yaml
+container_runtime: containerd
+
+# Pin the image tag to v1.7.8 — the chart 0.21.0 defaults appVersion to
+# v1.7.3 but Keel had auto-bumped the running pods to v1.7.8 on 2026-05-16
+# and they ran fine with CAPI working for ~8 days. The 2026-05-24 TF apply
+# re-rendered the deployment from chart defaults (v1.7.3) and CAPI auth
+# started returning 403 on every fresh replica. Pinning here makes the
+# image survive future TF applies independently of the chart's appVersion.
+image:
+  tag: "v1.7.8"
+
+agent:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  priorityClassName: "tier-1-cluster"
+  # To specify each pod you want to process it logs (pods present in the node)
+  acquisition:
+    # The namespace where the pod is located
+    - namespace: traefik
+      # The pod name
+      podName: traefik-*
+      # as in crowdsec configuration, we need to specify the program name so the parser will match and parse logs
+      program: traefik
+    # Mailserver logs for SMTP/IMAP brute-force detection
+    - namespace: mailserver
+      podName: mailserver-*
+      program: postfix
+    - namespace: mailserver
+      podName: mailserver-*
+      program: dovecot
+  # Those are ENV variables
+  env:
+    # As it's a test, we don't want to share signals with CrowdSec so disable the Online API.
+    # - name: DISABLE_ONLINE_API
+    #   value: "true"
+    # As we are running Traefik, we want to install the Traefik collection
+    - name: COLLECTIONS
+      value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/http-cve crowdsecurity/pfsense firewallservices/pf crowdsecurity/postfix crowdsecurity/dovecot crowdsecurity/sshd"
+    - name: SCENARIOS
+      value: ""
+      # value: "crowdsecurity/http-crawl-aggressive"
+  # Mount custom scenarios into /etc/crowdsec/scenarios
+  extraVolumeMounts:
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-403-abuse.yaml
+      subPath: "http-403-abuse.yaml"
+      readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
+      subPath: "http-429-abuse.yaml"
+      readonly: true
+    - name: whitelist
+      mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
+      subPath: "whitelist.yaml"
+      readonly: true
+    - name: syslog-acquisition
+      mountPath: /etc/crowdsec/acquis.d/syslog.yaml
+      subPath: "syslog.yaml"
+      readonly: true
+  extraVolumes:
+    - name: custom-scenarios
+      configMap:
+        name: crowdsec-custom-scenarios
+    - name: whitelist
+      configMap:
+        name: crowdsec-whitelist
+    - name: syslog-acquisition
+      configMap:
+        name: crowdsec-syslog-acquisition
+lapi:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 1Gi
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    failureThreshold: 30
+    periodSeconds: 10
+  priorityClassName: "tier-1-cluster"
+  replicas: 3
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: crowdsec
+          type: lapi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  extraSecrets:
+    dbPassword: "${DB_PASSWORD}"
+  storeCAPICredentialsInSecret: true
+  persistentVolume:
+    config:
+      enabled: false
+    data:
+      enabled: false
+  env:
+    # CAPI re-enabled 2026-05-24 with image.tag pin to v1.7.8 (see top of
+    # file). The crashloop earlier today was triggered when TF apply
+    # reverted the running image v1.7.8 → v1.7.3 (chart 0.21.0 default
+    # appVersion); v1.7.3 has a CAPI watcher-auth bug against the
+    # current api.crowdsec.net behaviour. v1.7.8 ran cleanly for 8 days
+    # (May 16 → May 24) before the revert and authenticates fine.
+    #
+    # ENROLL_KEY env intentionally not set — the existing key
+    # `cmey5e636…` was already consumed (single-shot per replica) and
+    # subsequent replicas hit 403 Forbidden on `cscli console enroll`.
+    # CAPI works WITHOUT console enroll — they're separate flows. To
+    # restore console reporting at app.crowdsec.net: generate a fresh
+    # enroll key there (Settings → Engines → Enroll), put it in
+    # var.enroll_key, restore the ENROLL_KEY/INSTANCE_NAME/TAGS env block.
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-lapi-secrets
+          key: dbPassword
+  dashboard:
+    enabled: true
+    env:
+    - name: MB_DB_TYPE
+      value: "postgres"
+    - name: MB_DB_DBNAME
+      value: crowdsec_metabase
+    - name: MB_DB_USER
+      value: "crowdsec"
+    - name: MB_DB_PASS
+      value: "${DB_PASSWORD}"
+    - name: MB_DB_HOST
+      value: "${postgresql_host}"
+    - name: MB_DB_PORT
+      value: "5432"
+
+    - name: MB_EMAIL_SMTP_USERNAME
+      value: "info@viktorbarzin.me"
+    - name: MB_EMAIL_FROM_ADDRESS
+      value: "info@viktorbarzin.me"
+    - name: MB_EMAIL_SMTP_HOST
+      value: "mailserver.mailserver.svc.cluster.local"
+    - name: MB_EMAIL_SMTP_PASSWORD
+      value: "" # Ignore for now as it's unclear what notifications we can get
+    - name: MB_EMAIL_SMTP_PORT
+      value: "587"
+    - name: MB_EMAIL_SMTP_SECURITY
+      value: "starttls"
+    ingress:
+      enabled: true
+      annotations:
+        nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+        #nginx.ingress.kubernetes.io/auth-url: "https://oauth2.viktorbarzin.me/oauth2/auth"
+        nginx.ingress.kubernetes.io/auth-url: "http://ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/nginx"
+        # nginx.ingress.kubernetes.io/auth-signin: "https://oauth2.viktorbarzin.me/oauth2/start?rd=/redirect/$http_host$escaped_request_uri"
+        nginx.ingress.kubernetes.io/auth-signin: "https://authentik.viktorbarzin.me/outpost.goauthentik.io/start?rd=$scheme%3A%2F%2F$host$escaped_request_uri"
+        nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
+        nginx.ingress.kubernetes.io/auth-snippet: "proxy_set_header X-Forwarded-Host $http_host;"
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/description: "Web Application Firewall"
+        gethomepage.dev/icon: "crowdsec.png"
+        gethomepage.dev/name: "CrowdSec"
+        gethomepage.dev/group: "Identity & Security"
+        gethomepage.dev/widget.type: "crowdsec"
+        gethomepage.dev/widget.url: "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
+        gethomepage.dev/widget.username: "${homepage_username}"
+        gethomepage.dev/widget.password: "${homepage_password}"
+        gethomepage.dev/pod-selector: ""
+      ingressClassName: "nginx"
+      host: "crowdsec.viktorbarzin.me"
+      tls:
+        - hosts:
+            - crowdsec.viktorbarzin.me
+          secretName: "tls-secret"
+  metrics:
+    enabled: true
+  strategy:
+    type: RollingUpdate
+  
+config:
+  # Custom profiles: captcha for rate limiting, ban for attacks
+  profiles.yaml: |
+    # Captcha for rate limiting and 403 abuse (user can unblock themselves)
+    name: captcha_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() in ["crowdsecurity/http-429-abuse", "crowdsecurity/http-403-abuse", "crowdsecurity/http-crawl-non_statics", "crowdsecurity/http-sensitive-files"]
+    decisions:
+      - type: captcha
+        duration: 4h
+    notifications:
+      - slack_alerts
+    on_success: break
+    ---
+    # Default: Ban for serious attacks (CVE exploits, scanners, brute force)
+    name: default_ip_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Ip"
+    decisions:
+      - type: ban
+        duration: 4h
+    notifications:
+      - slack_alerts
+    on_success: break
+    ---
+    name: default_range_remediation
+    filters:
+      - Alert.Remediation == true && Alert.GetScope() == "Range"
+    decisions:
+      - type: ban
+        duration: 4h
+    notifications:
+      - slack_alerts
+    on_success: break
+
+  config.yaml.local: |
+    db_config:
+      type:     postgres
+      user:     crowdsec
+      password: ${DB_PASSWORD}
+      db_name:  crowdsec
+      host:     ${postgresql_host}
+      port:     5432
+      flush:
+        max_items: 10000
+        max_age: "7d"
+        bouncers_autodelete:
+          api_key: "30d"
+        agents_autodelete:
+          login_password: "30d"
+      decision_bulk_size: 2000
+    api:
+      server:
+        auto_registration: # Activate if not using TLS for authentication
+          enabled: true
+          token: "$${REGISTRATION_TOKEN}"  # /!\ do not change
+          allowed_ranges: # /!\ adapt to the pod IP ranges used by your cluster
+            - "127.0.0.1/32"
+            - "192.168.0.0/16"
+            - "10.0.0.0/8"
+            - "172.16.0.0/12"
+
+  notifications:
+    slack.yaml: |
+      type: slack
+      name: slack_alerts
+      log_level: info
+      format: |
+        :rotating_light: *CrowdSec Alert*
+        {{range .}}
+        *Scenario:* {{.Alert.Scenario}}
+        *Source IP:* {{.Alert.Source.IP}} ({{.Alert.Source.Cn}})
+        *Decisions:*
+        {{range .Alert.Decisions}}  - {{.Type}} for {{.Duration}} (scope: {{.Scope}}, value: {{.Value}})
+        {{end}}
+        {{end}}
+      webhook: ${SLACK_WEBHOOK_URL}

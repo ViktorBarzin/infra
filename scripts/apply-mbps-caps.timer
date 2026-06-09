@@ -1,0 +1,18 @@
+[Unit]
+Description=Re-apply per-VM I/O caps periodically + after PVE boot
+
+[Timer]
+# After every PVE host reboot — caps survive in /etc/pve/qemu-server/<vmid>.conf
+# normally, but a config restore from backup can drop them (see 2026-05-26
+# incident where we restored 202.conf + 203.conf from /mnt/backup/pve-config/).
+OnBootSec=5min
+
+# Hourly during normal operation — catches manual `qm set` drift or fresh
+# VM clones that haven't had caps applied yet.
+OnCalendar=hourly
+
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

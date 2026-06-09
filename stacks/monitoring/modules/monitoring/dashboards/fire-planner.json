@@ -1,0 +1,226 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "datasource", "uid": "grafana"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "FIRE Retirement Planner — risk-adjusted, tax-minimised Monte Carlo over jurisdictions, withdrawal strategies, and UK-departure years. Backed by fire_planner schema on pg-cluster-rw.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "id": null,
+  "templating": {
+    "list": [
+      {
+        "name": "scenario",
+        "type": "query",
+        "label": "Scenario",
+        "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+        "query": "SELECT external_id FROM fire_planner.scenario ORDER BY external_id",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {"selected": false, "text": "cyprus-vpw-leave-y3-glide-rising", "value": "cyprus-vpw-leave-y3-glide-rising"}
+      }
+    ]
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Net worth over time (real + nominal)",
+      "type": "timeseries",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {"unit": "currencyGBP", "decimals": 0},
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT snapshot_date AS time, account_name AS metric, SUM(market_value_gbp) AS value FROM fire_planner.account_snapshot WHERE snapshot_date >= NOW() - INTERVAL '10 years' GROUP BY snapshot_date, account_name ORDER BY snapshot_date"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Monte Carlo fan chart — selected scenario",
+      "type": "timeseries",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 8},
+      "description": "P10/p25/p50/p75/p90 portfolio value across MC paths, for the scenario picked in the selector at the top.",
+      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT (DATE_TRUNC('year', NOW()) + (year_idx || ' years')::interval) AS time, 'p10' AS metric, p10_portfolio_gbp AS value FROM fire_planner.projection_yearly p JOIN fire_planner.mc_run r ON r.id = p.mc_run_id JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE s.external_id = '$scenario' UNION ALL SELECT (DATE_TRUNC('year', NOW()) + (year_idx || ' years')::interval), 'p25', p25_portfolio_gbp FROM fire_planner.projection_yearly p JOIN fire_planner.mc_run r ON r.id = p.mc_run_id JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE s.external_id = '$scenario' UNION ALL SELECT (DATE_TRUNC('year', NOW()) + (year_idx || ' years')::interval), 'p50', p50_portfolio_gbp FROM fire_planner.projection_yearly p JOIN fire_planner.mc_run r ON r.id = p.mc_run_id JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE s.external_id = '$scenario' UNION ALL SELECT (DATE_TRUNC('year', NOW()) + (year_idx || ' years')::interval), 'p75', p75_portfolio_gbp FROM fire_planner.projection_yearly p JOIN fire_planner.mc_run r ON r.id = p.mc_run_id JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE s.external_id = '$scenario' UNION ALL SELECT (DATE_TRUNC('year', NOW()) + (year_idx || ' years')::interval), 'p90', p90_portfolio_gbp FROM fire_planner.projection_yearly p JOIN fire_planner.mc_run r ON r.id = p.mc_run_id JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE s.external_id = '$scenario' ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Confidence heatmap — jurisdiction × strategy",
+      "type": "table",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "description": "Median success rate by (jurisdiction, strategy), averaged across leave-UK years and glide paths.",
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "left", "displayMode": "auto"}, "unit": "percentunit", "decimals": 2},
+        "overrides": []
+      },
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT jurisdiction, strategy, AVG(success_rate) AS avg_success FROM fire_planner.scenario_summary GROUP BY jurisdiction, strategy ORDER BY jurisdiction, strategy"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Median lifetime tax — by jurisdiction",
+      "type": "barchart",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
+      "options": {"orientation": "horizontal", "showValue": "auto", "stacking": "none", "legend": {"displayMode": "list"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT jurisdiction, AVG(median_lifetime_tax_gbp) AS lifetime_tax FROM fire_planner.scenario_summary GROUP BY jurisdiction ORDER BY lifetime_tax DESC"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Withdrawal runway — years to ruin (failing paths)",
+      "type": "table",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+      "description": "Among scenarios where some MC paths failed, the median year-to-ruin. Empty where every path survives.",
+      "fieldConfig": {"defaults": {"unit": "y", "decimals": 1}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT jurisdiction, strategy, leave_uk_year, glide_path, median_years_to_ruin FROM fire_planner.scenario_summary WHERE median_years_to_ruin IS NOT NULL ORDER BY median_years_to_ruin ASC LIMIT 20"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Optimal leave-UK year",
+      "type": "stat",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 26},
+      "description": "leave_uk_year that maximises success_rate − lifetime_tax (tax in £M; small weighting).",
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"colorMode": "value", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT leave_uk_year FROM fire_planner.scenario_summary WHERE jurisdiction <> 'uk' ORDER BY (success_rate - median_lifetime_tax_gbp / 1000000.0) DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Median ending wealth — selected scenario",
+      "type": "stat",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 26},
+      "fieldConfig": {"defaults": {"unit": "currencyGBP", "decimals": 0}, "overrides": []},
+      "options": {"colorMode": "value", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT p50_ending_gbp FROM fire_planner.scenario_summary WHERE scenario_id = (SELECT id FROM fire_planner.scenario WHERE external_id = '$scenario')"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Success rate vs spend (UK-stay)",
+      "type": "barchart",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30},
+      "description": "Sanity gauge — UK success rate by strategy, helps anchor expectations against published cFIREsim numbers.",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2}, "overrides": []},
+      "options": {"orientation": "horizontal", "showValue": "auto", "legend": {"displayMode": "list"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT strategy, AVG(success_rate) AS success FROM fire_planner.scenario_summary WHERE jurisdiction = 'uk' GROUP BY strategy ORDER BY success DESC"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Sequence-of-returns sensitivity (top failing scenarios)",
+      "type": "table",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30},
+      "description": "Pearson correlation between year-1 portfolio drawdown and overall success — strongly negative ⇒ scenario is sequence-of-returns sensitive (case for the rising-equity glide).",
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 4}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "fire-planner-pg"},
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT s.external_id, r.sequence_risk_correlation, r.success_rate FROM fire_planner.mc_run r JOIN fire_planner.scenario s ON s.id = r.scenario_id WHERE r.id IN (SELECT MAX(id) FROM fire_planner.mc_run GROUP BY scenario_id) ORDER BY r.sequence_risk_correlation ASC LIMIT 15"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["finance", "fire", "retirement", "monte-carlo"],
+  "title": "FIRE Planner",
+  "uid": "fire-planner",
+  "version": 1,
+  "weekStart": ""
+}

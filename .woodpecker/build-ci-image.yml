@@ -1,0 +1,88 @@
+# Build the CI tools Docker image used by all infra pipelines.
+# Triggers on push that touches ci/Dockerfile, or manual (API/UI) so
+# rebuilds after a registry incident don't need a cosmetic Dockerfile edit.
+
+when:
+  - event: push
+    branch: master
+    path:
+      include:
+        - 'ci/Dockerfile'
+  - event: manual
+
+steps:
+  - name: build-and-push
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      # Phase 4 of forgejo-registry-consolidation 2026-05-07 —
+      # registry.viktorbarzin.me dropped, Forgejo is the only target.
+      repo:
+        - forgejo.viktorbarzin.me/viktor/infra-ci
+      dockerfile: ci/Dockerfile
+      context: ci/
+      tags:
+        - latest
+        - "${CI_COMMIT_SHA:0:8}"
+      platforms: linux/amd64
+      logins:
+        - registry: forgejo.viktorbarzin.me
+          username:
+            from_secret: forgejo_user
+          password:
+            from_secret: forgejo_push_token
+
+  # Post-push integrity check is now redundant with the every-15min
+  # forgejo-integrity-probe in stacks/monitoring/, which walks
+  # /v2/_catalog + HEADs every blob across the entire Forgejo registry.
+  # If a corruption pattern emerges that the periodic probe misses,
+  # restore a verify step similar to the pre-Phase-4 version (see
+  # commit 49f4956f) but pointed at forgejo.viktorbarzin.me.
+
+  # Break-glass tarball: save the just-pushed infra-ci image to disk on the
+  # registry VM (10.0.20.10) so we can `docker load` it back into a node
+  # when Forgejo is unreachable. Pulls from Forgejo (the only registry now).
+  # Best-effort — failure here doesn't fail the pipeline.
+  # Recovery procedure: docs/runbooks/forgejo-registry-breakglass.md.
+  - name: breakglass-tarball
+    image: alpine:3.20
+    failure: ignore
+    environment:
+      REGISTRY_SSH_KEY:
+        from_secret: registry_ssh_key
+      FORGEJO_USER:
+        from_secret: forgejo_user
+      FORGEJO_PASS:
+        from_secret: forgejo_push_token
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$REGISTRY_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keyscan -t ed25519 10.0.20.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - SHA=${CI_COMMIT_SHA:0:8}
+      - |
+        ssh -n -o BatchMode=yes root@10.0.20.10 "
+          set -e
+          mkdir -p /opt/registry/data/private/_breakglass
+          IMAGE=forgejo.viktorbarzin.me/viktor/infra-ci:$SHA
+          echo \$FORGEJO_PASS | docker login forgejo.viktorbarzin.me -u \$FORGEJO_USER --password-stdin
+          docker pull \$IMAGE
+          docker save \$IMAGE | gzip > /opt/registry/data/private/_breakglass/infra-ci-$SHA.tar.gz
+          ln -sfn infra-ci-$SHA.tar.gz /opt/registry/data/private/_breakglass/infra-ci-latest.tar.gz
+          ls -t /opt/registry/data/private/_breakglass/infra-ci-*.tar.gz \
+            | grep -v 'latest' | tail -n +6 | xargs -r rm -v
+          ls -lh /opt/registry/data/private/_breakglass/
+        "
+
+  - name: slack
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"CI image built: forgejo.viktorbarzin.me/viktor/infra-ci:${CI_COMMIT_SHA:0:8} (and registry-private mirror)\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [success]

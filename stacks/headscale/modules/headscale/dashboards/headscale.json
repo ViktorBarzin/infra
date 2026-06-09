@@ -1,0 +1,78 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Online Nodes",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "headscale_nodestore_nodes_total", "legendFormat": "Nodes" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "red", "value": 0 }, { "color": "green", "value": 1 }] } } }
+    },
+    {
+      "title": "Map Responses / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "rate(headscale_mapresponse_sent_total[5m])", "legendFormat": "sent" },
+        { "expr": "rate(headscale_mapresponse_generated_total[5m])", "legendFormat": "generated" },
+        { "expr": "rate(headscale_mapresponse_ended_total[5m])", "legendFormat": "ended" }
+      ]
+    },
+    {
+      "title": "Endpoint Updates / sec",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "targets": [{ "expr": "rate(headscale_mapresponse_endpoint_updates_total[5m])", "legendFormat": "updates/s" }],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "title": "HTTP Request Rate by Path",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
+      "targets": [{ "expr": "sum by (path) (rate(headscale_http_requests_total[5m]))", "legendFormat": "{{ path }}" }]
+    },
+    {
+      "title": "HTTP p95 Latency by Path",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (path, le) (rate(headscale_http_duration_seconds_bucket[5m])))", "legendFormat": "{{ path }}" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "NodeStore Operations / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rate(headscale_nodestore_operations_total[5m])", "legendFormat": "operations" },
+        { "expr": "headscale_nodestore_queue_depth", "legendFormat": "queue depth" }
+      ]
+    },
+    {
+      "title": "NodeStore Batch Duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [{ "expr": "histogram_quantile(0.95, rate(headscale_nodestore_batch_duration_seconds_bucket[5m]))", "legendFormat": "p95" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "go_memstats_alloc_bytes{job=\"kubernetes-service-endpoints\", namespace=\"headscale\"}", "legendFormat": "alloc" },
+        { "expr": "go_memstats_sys_bytes{job=\"kubernetes-service-endpoints\", namespace=\"headscale\"}", "legendFormat": "sys" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["headscale", "vpn"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Headscale VPN",
+  "uid": "headscale-vpn"
+}

@@ -1,0 +1,49 @@
+{
+  "name": "Job Hunter Weekly Digest",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "weeks", "triggerAtDay": [1], "triggerAtHour": 7, "triggerAtMinute": 0}]
+        }
+      },
+      "id": "cron-weekly",
+      "name": "Weekly Monday 07:00 London",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://job-hunter.job-hunter.svc.cluster.local:8080/digest/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{ $env.JOB_HUNTER_WEBHOOK_TOKEN }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"window_days\":7,\"limit\":50,\"dry_run\":false}",
+        "options": {"timeout": 120000}
+      },
+      "id": "digest-generate",
+      "name": "Call /digest/generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Weekly Monday 07:00 London": {
+      "main": [[{"node": "Call /digest/generate", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1", "saveExecutionProgress": false, "saveManualExecutions": true},
+  "staticData": null,
+  "meta": {"templateCredsSetupCompleted": false},
+  "pinData": {}
+}

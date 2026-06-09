@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_DIR="$REPO_ROOT/state/stacks"
+VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+
+cmd="${1:-help}"
+stack="${2:-}"  # optional: operate on single stack
+
+# Check if Vault token is valid
+vault_available() {
+  VAULT_ADDR="$VAULT_ADDR" vault token lookup &>/dev/null 2>&1
+}
+
+# Per-stack Transit key URI
+transit_uri() {
+  local stack_name="$1"
+  echo "${VAULT_ADDR}/v1/transit/keys/sops-state-${stack_name}"
+}
+
+# Extract stack name from directory path
+stack_name_from_dir() {
+  basename "$1"
+}
+
+# Tier 0 stacks keep SOPS-encrypted local state; Tier 1 uses PG backend
+TIER0_STACKS="infra platform cnpg vault dbaas external-secrets"
+is_tier0() {
+  echo "$TIER0_STACKS" | tr ' ' '\n' | grep -qx "$1"
+}
+
+# Read age recipients from .sops.yaml
+AGE_RECIPIENTS="$(python3 -c "
+import yaml, sys
+with open('$REPO_ROOT/.sops.yaml') as f: c = yaml.safe_load(f)
+for r in c.get('creation_rules', []):
+    age = r.get('age', '')
+    if age:
+        print(age.replace('\n', '').strip())
+        break
+" 2>/dev/null || echo "")"
+
+encrypt_state() {
+  local dir="$1"
+  local src="$dir/terraform.tfstate"
+  local dst="$dir/terraform.tfstate.enc"
+  local name
+  name="$(stack_name_from_dir "$dir")"
+  [ -f "$src" ] || return 0
+  # Only re-encrypt if state is newer than encrypted version
+  if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
+    sops -e --input-type json --output-type json \
+      --hc-vault-transit "$(transit_uri "$name")" \
+      --age "$AGE_RECIPIENTS" \
+      "$src" > "$dst"
+  fi
+}
+
+decrypt_state() {
+  local dir="$1"
+  local src="$dir/terraform.tfstate.enc"
+  local dst="$dir/terraform.tfstate"
+  [ -f "$src" ] || return 0
+
+  if vault_available; then
+    # Vault Transit — per-stack key, no local key needed
+    sops -d --input-type json --output-type json "$src" > "$dst"
+  elif [ -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" ]; then
+    # Fallback: age key on disk (bootstrap / Vault down)
+    echo "state-sync: Vault unavailable, falling back to age key" >&2
+    SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" \
+      sops -d --input-type json --output-type json "$src" > "$dst"
+  else
+    echo "state-sync: ERROR — no Vault token and no age key at ~/.config/sops/age/keys.txt" >&2
+    return 1
+  fi
+}
+
+case "$cmd" in
+  encrypt)
+    if [ -n "$stack" ]; then
+      if is_tier0 "$stack"; then
+        encrypt_state "$STATE_DIR/$stack"
+      else
+        echo "state-sync: skipping Tier 1 stack '$stack' (PG backend)" >&2
+      fi
+    else
+      for dir in "$STATE_DIR"/*/; do
+        _name="$(stack_name_from_dir "$dir")"
+        if is_tier0 "$_name"; then
+          encrypt_state "$dir"
+        fi
+      done
+    fi
+    ;;
+  decrypt)
+    if [ -n "$stack" ]; then
+      if is_tier0 "$stack"; then
+        decrypt_state "$STATE_DIR/$stack"
+      else
+        echo "state-sync: skipping Tier 1 stack '$stack' (PG backend)" >&2
+      fi
+    else
+      for dir in "$STATE_DIR"/*/; do
+        _name="$(stack_name_from_dir "$dir")"
+        if is_tier0 "$_name"; then
+          decrypt_state "$dir"
+        fi
+      done
+    fi
+    ;;
+  commit)
+    # Only Tier 0 stacks have encrypted state in git
+    "$0" encrypt
+    cd "$REPO_ROOT"
+    git add state/stacks/*/terraform.tfstate.enc
+    if ! git diff --cached --quiet; then
+      git commit -m "state: update encrypted terraform state"
+    fi
+    ;;
+  help)
+    echo "Usage: state-sync {encrypt|decrypt|commit} [stack-name]"
+    echo "Operates on Tier 0 stacks only (infra, platform, cnpg, vault, dbaas, external-secrets)."
+    echo "Tier 1 stacks use the PG backend and don't need local state sync."
+    echo "Encrypt uses per-stack Vault Transit key (transit/keys/sops-state-<stack>)."
+    echo "Decrypt uses Vault Transit if logged in, falls back to age key."
+    ;;
+esac
