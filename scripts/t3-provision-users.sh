@@ -95,6 +95,26 @@ EOF
   log "wrote OIDC kubeconfig -> $user:~/.kube/config"
 }
 
+# Share the admin's Claude subscription with a non-admin: inject CLAUDE_CODE_OAUTH_TOKEN
+# (the staged long-lived token) into their t3-serve env — ONLY if they have neither their
+# own ~/.claude/.credentials.json (own login) nor an existing token. Never clobbers. The
+# agent picks it up when its t3-serve@ instance (re)starts.
+install_user_claude_token() {
+  local user="$1" home envf tok
+  local token_file="${CLAUDE_TOKEN_FILE:-/etc/t3-serve/claude-oauth-token}"
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  [[ -f "$home/.claude/.credentials.json" ]] && return 0      # has own login -> leave it
+  [[ -r "$token_file" ]] || return 0
+  envf="${ENVDIR:-/etc/t3-serve}/$user.env"
+  grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$envf" 2>/dev/null && return 0   # already shared
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] share Claude token -> $envf"; return 0; fi
+  tok="$(cat "$token_file")"
+  printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$tok" >> "$envf"
+  chmod 600 "$envf"
+  log "shared Claude token -> $user (t3-serve env; restart needed to take effect)"
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -144,9 +164,10 @@ while IFS=$'\t' read -r os_user tier shell groups_csv; do
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
-  if [[ "$tier" != admin ]]; then            # non-admins: locked ~/code clone + OIDC kubeconfig
+  if [[ "$tier" != admin ]]; then            # non-admins: locked clone + kubeconfig + shared Claude token
     install_locked_clone "$os_user"
     install_user_kubeconfig "$os_user"
+    install_user_claude_token "$os_user"
   fi
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @tsv' "$desired_file")
 
