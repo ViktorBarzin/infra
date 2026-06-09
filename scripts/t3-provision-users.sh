@@ -95,6 +95,20 @@ EOF
   log "wrote OIDC kubeconfig -> $user:~/.kube/config"
 }
 
+# Idempotently set KEY=VALUE in a t3-serve env file, PRESERVING other lines — so writing
+# T3_PORT never clobbers an injected CLAUDE_CODE_OAUTH_TOKEN, and vice-versa. Mode 0600.
+env_set() {
+  local file="$1" key="$2" val="$3"
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] set $key -> $file"; return 0; fi
+  install -d -m 0755 "$(dirname "$file")"
+  if [[ -f "$file" ]] && grep -q "^${key}=" "$file"; then
+    grep -qx "${key}=${val}" "$file" || sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+  chmod 600 "$file"
+}
+
 # Share the admin's Claude subscription with a non-admin: inject CLAUDE_CODE_OAUTH_TOKEN
 # (the staged long-lived token) into their t3-serve env — ONLY if they have neither their
 # own ~/.claude/.credentials.json (own login) nor an existing token. Never clobbers. The
@@ -110,8 +124,7 @@ install_user_claude_token() {
   grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$envf" 2>/dev/null && return 0   # already shared
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] share Claude token -> $envf"; return 0; fi
   tok="$(cat "$token_file")"
-  printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$tok" >> "$envf"
-  chmod 600 "$envf"
+  env_set "$envf" CLAUDE_CODE_OAUTH_TOKEN "$tok"
   log "shared Claude token -> $user (t3-serve env; restart needed to take effect)"
 }
 
@@ -174,9 +187,7 @@ done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
   envf="$ENVDIR/$os_user.env"
-  if [[ ! -f "$envf" ]] || ! grep -qx "T3_PORT=$port" "$envf"; then
-    run bash -c "printf 'T3_PORT=%s\n' '$port' > '$envf'"
-  fi
+  env_set "$envf" T3_PORT "$port"   # update-or-append; preserves CLAUDE_CODE_OAUTH_TOKEN
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
