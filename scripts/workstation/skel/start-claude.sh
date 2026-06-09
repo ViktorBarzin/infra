@@ -31,7 +31,9 @@ launch() {
 # Deliberately not `exec` so we can branch on the exit code: clean quit ends the
 # pane (ttyd closes the terminal); a crash drops to a shell so the tmux session
 # isn't destroyed-and-recreated in a ttyd auto-reconnect loop.
-launch --dangerously-skip-permissions --model claude-opus-4-8 "${name_args[@]}"
+# No --model flag: inherit the org-wide default from /etc/claude-code/managed-settings.json
+# (an explicit --model would override that managed default for every launched session).
+launch --dangerously-skip-permissions "${name_args[@]}"
 code=$?
 [ "$code" -eq 0 ] && exit 0
 
