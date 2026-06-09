@@ -1,0 +1,56 @@
+name: Issue Automation
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  process-issue:
+    if: |
+      contains(github.event.issue.labels.*.name, 'user-report') ||
+      contains(github.event.issue.labels.*.name, 'feature-request')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if author is collaborator
+        id: check-collab
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/collaborators/${{ github.event.issue.user.login }}")
+          echo "is_collab=$([[ $RESPONSE == '204' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "Author: ${{ github.event.issue.user.login }}, Collaborator: $RESPONSE"
+
+      - name: Queue for review (non-collaborator)
+        if: steps.check-collab.outputs.is_collab == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d '{"body": "Thanks for reporting! This has been queued for review by the infra team."}'
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/labels" \
+            -d '{"labels": ["needs-human"]}'
+
+      - name: Trigger Woodpecker pipeline (collaborator)
+        if: steps.check-collab.outputs.is_collab == 'true'
+        run: |
+          # Extract labels as comma-separated string
+          LABELS=$(echo '${{ toJSON(github.event.issue.labels.*.name) }}' | python3 -c "import sys,json; print(','.join(json.load(sys.stdin)))" 2>/dev/null || echo "unknown")
+
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}" \
+            "https://ci.viktorbarzin.me/api/repos/1/pipelines" \
+            -d "{
+              \"branch\": \"master\",
+              \"variables\": {
+                \"ISSUE_NUMBER\": \"${{ github.event.issue.number }}\",
+                \"ISSUE_TITLE\": $(echo '${{ github.event.issue.title }}' | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))'),
+                \"ISSUE_AUTHOR\": \"${{ github.event.issue.user.login }}\",
+                \"ISSUE_LABELS\": \"$LABELS\",
+                \"ISSUE_URL\": \"${{ github.event.issue.html_url }}\"
+              }
+            }"

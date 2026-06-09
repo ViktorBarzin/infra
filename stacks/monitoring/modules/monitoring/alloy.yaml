@@ -1,0 +1,289 @@
+alloy:
+  # Resource limits for the alloy container itself.
+  # Must be under `alloy.resources` (NOT `controller.resources`) — the chart
+  # only maps THIS key onto the alloy container. Without it, the container gets
+  # `resources: {}` and inherits Kyverno LimitRange `tier-defaults` (256Mi),
+  # which is below Alloy's 400-450Mi steady state and caused page-cache
+  # thrashing → 185 MB/s sdc reads → host IO saturation (2026-05-26).
+  # Burstable QoS (request < limit) — workers are at 97-99% memory-request
+  # saturation; a 1Gi request blocks scheduling on node2/node3.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  configMap:
+    content: |-
+      // Write your Alloy config here:
+      logging {
+        level = "info"
+        format = "logfmt"
+      }
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+      // discovery.kubernetes allows you to find scrape targets from Kubernetes resources.
+      // It watches cluster state and ensures targets are continually synced with what is currently running in your cluster.
+      discovery.kubernetes "pod" {
+        role = "pod"
+      }
+
+      // discovery.relabel rewrites the label set of the input targets by applying one or more relabeling rules.
+      // If no rules are defined, then the input targets are exported as-is.
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pod.targets
+
+        // Drop high-volume, low-value producers from Loki to cut sdc write wear
+        // (the log PVC is on the contended sdc HDD). goflow2 emits one JSON line
+        // per NetFlow record to stdout (~8 GB/day, ~64% of all cluster logs) but
+        // we only use its Prometheus aggregate metrics, not the per-flow logs;
+        // vpa = Goldilocks/VPA recommender chatter (~1.3 GB/day). Both reversible
+        // — remove this rule to ship them again. (Added 2026-06-05.)
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_name"]
+          separator     = "/"
+          regex         = "monitoring/goflow2-.*|vpa/.*"
+          action        = "drop"
+        }
+
+        // Label creation - "namespace" field from "__meta_kubernetes_namespace"
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action = "replace"
+          target_label = "namespace"
+        }
+
+        // Label creation - "pod" field from "__meta_kubernetes_pod_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          action = "replace"
+          target_label = "pod"
+        }
+
+        // Label creation - "container" field from "__meta_kubernetes_pod_container_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "container"
+        }
+
+        // Label creation -  "app" field from "__meta_kubernetes_pod_label_app_kubernetes_io_name"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          action = "replace"
+          target_label = "app"
+        }
+
+        // Label creation -  "job" field from "__meta_kubernetes_namespace" and "__meta_kubernetes_pod_container_name"
+        // Concatenate values __meta_kubernetes_namespace/__meta_kubernetes_pod_container_name
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "job"
+          separator = "/"
+          replacement = "$1"
+        }
+
+        // Label creation - "container" field from "__meta_kubernetes_pod_uid" and "__meta_kubernetes_pod_container_name"
+        // Concatenate values __meta_kubernetes_pod_uid/__meta_kubernetes_pod_container_name.log
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          action = "replace"
+          target_label = "__path__"
+          separator = "/"
+          replacement = "/var/log/pods/*$1/*.log"
+        }
+
+        // Label creation -  "container_runtime" field from "__meta_kubernetes_pod_container_id"
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_id"]
+          action = "replace"
+          target_label = "container_runtime"
+          regex = "^(\\S+):\\/\\/.+$"
+          replacement = "$1"
+        }
+      }
+
+      // local.file_match expands the /var/log/pods/*<uid>/<container>/*.log globs
+      // that discovery.relabel.pod_logs writes into __path__ (doublestar) into
+      // concrete file targets. loki.source.file does NOT expand globs itself, so
+      // feeding it the glob directly makes it stat() the literal `*` path and ship
+      // ZERO pod logs (regression found 2026-06-05 — this component was missing;
+      // only node/Pi journals were reaching Loki). See Grafana Alloy docs
+      // "local.file_match > Send Kubernetes Pod logs to Loki".
+      local.file_match "pod_logs" {
+        path_targets = discovery.relabel.pod_logs.output
+      }
+
+      // loki.source.file tails pod logs from /var/log/pods/* on the host filesystem.
+      // Previously used loki.source.kubernetes (apiserver streaming) which drove
+      // kube-apiserver `CONNECT pods/log` to ~13 req/s + ~2200 sec/s of streams.
+      loki.source.file "pod_logs" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      // loki.process receives log entries from other Loki components, applies one or more processing stages,
+      // and forwards the results to the list of receivers in the component's arguments.
+      loki.process "pod_logs" {
+        // Parse the containerd CRI wrapper ("<ts> <stream> <flags> <msg>") so Loki
+        // stores the clean message + the real timestamp instead of the raw prefixed
+        // line. All cluster nodes run containerd, so a bare stage.cri is correct.
+        stage.cri { }
+
+        // Drop benign public-SMTP scanner noise from the mailserver pod only:
+        // unknown[unknown] probes that never complete TLS/PROXY + postscreen
+        // half-open drops (~9k lines/hr, the cluster's #1 Loki error source).
+        // Real delivery logs and real-IP SASL failures are KEPT; CrowdSec bans
+        // these scanner IPs independently, so security posture is unchanged.
+        // Reversible — delete this stage to ship the lines again.
+        stage.match {
+          selector = `{namespace="mailserver"}`
+          stage.drop {
+            expression          = `.*(getpeername: Transport endpoint is not connected -- dropping|SSL_accept error from unknown\[unknown\]|Connection rate limit exceeded: [0-9]+ from unknown\[unknown\]).*`
+            drop_counter_reason = "mailserver_scanner_noise"
+          }
+        }
+
+        // Drop the cosmetic k8s deprecation warning calico-typha emits because
+        // it still WATCHes the core v1 Endpoints API (~342 lines/hr across 3
+        // typha pods). The v1 Endpoints API will essentially never be removed
+        // (KEP-4974), so this is pure log noise — Calico is healthy and no
+        // Calico release has moved typha's watch to EndpointSlice. Real
+        // calico-system warnings/errors are KEPT. Reversible — delete to ship.
+        stage.match {
+          selector = `{namespace="calico-system"}`
+          stage.drop {
+            expression          = `.*v1 Endpoints is deprecated in v1\.33\+; use discovery\.k8s\.io/v1 EndpointSlice.*`
+            drop_counter_reason = "calico_endpoints_deprecation_warning"
+          }
+        }
+
+        stage.static_labels {
+            values = {
+              cluster = "default",
+            }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // Node-level journal log collection for kernel panics, OOMs, hung tasks, etc.
+      // Ships system logs off-node so they survive hard resets.
+      loki.source.journal "node_journal" {
+        forward_to = [loki.process.journal.receiver]
+        relabel_rules = loki.relabel.journal.rules
+        labels = {
+          job = "node-journal",
+        }
+        max_age = "12h"
+      }
+
+      loki.relabel "journal" {
+        forward_to = []
+
+        rule {
+          source_labels = ["__journal__hostname"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__journal__systemd_unit"]
+          target_label  = "unit"
+        }
+        rule {
+          source_labels = ["__journal_priority_keyword"]
+          target_label  = "level"
+        }
+        rule {
+          source_labels = ["__journal__transport"]
+          target_label  = "transport"
+        }
+      }
+
+      // Forward warning+ journal entries (priority 0-4: emerg, alert, crit, err, warning)
+      // Also forwards kernel transport entries regardless of priority for OOM/panic detection.
+      loki.process "journal" {
+        stage.static_labels {
+          values = {
+            cluster = "default",
+          }
+        }
+
+        // Drop info/debug/notice entries that aren't from the kernel transport
+        stage.match {
+          selector = "{job=\"node-journal\", level=~\"info|notice|debug\", transport!=\"kernel\"}"
+          action   = "drop"
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // Kubernetes audit log collection from /var/log/kubernetes/audit/audit.log
+      // (kube-apiserver --audit-log-path on k8s-master; rotated siblings stay in
+      // the audit/ subdir). Requires alloy.mounts.varlog=true to mount /var/log
+      // from the host. Enabled 2026-06-06 once apiserver audit actually started
+      // writing — see infra/scripts/k8s-apiserver-audit-policy.yaml.
+      local.file_match "audit_logs" {
+        path_targets = [{
+          __path__ = "/var/log/kubernetes/audit/audit.log",
+          job      = "kubernetes-audit",
+          node     = env("HOSTNAME"),
+        }]
+      }
+
+      loki.source.file "audit_logs" {
+        targets    = local.file_match.audit_logs.targets
+        forward_to = [loki.write.default.receiver]
+      }
+
+  # Mount /var/log from the host for file-based log collection (audit logs)
+  mounts:
+    varlog: true
+    # Mount journal directories for loki.source.journal
+    extra:
+      - name: journal-run
+        mountPath: /run/log/journal
+        readOnly: true
+      - name: journal-var
+        mountPath: /var/log/journal
+        readOnly: true
+      - name: machine-id
+        mountPath: /etc/machine-id
+        readOnly: true
+
+controller:
+  # Bump maxUnavailable above the chart default (1) so a 5-node DS finishes its
+  # rolling update inside the helm_release timeout. Log shipper tolerates the
+  # brief gap.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 50%
+
+  volumes:
+    extra:
+      - name: journal-run
+        hostPath:
+          path: /run/log/journal
+          type: DirectoryOrCreate
+      - name: journal-var
+        hostPath:
+          path: /var/log/journal
+          type: DirectoryOrCreate
+      - name: machine-id
+        hostPath:
+          path: /etc/machine-id
+          type: File
+
+  # Schedule on control-plane node too so we can tail /var/log/kubernetes/audit.log
+  # from kube-apiserver. Without this, K8s audit log shipping (wave 1 K2-K9 alert
+  # rules) has no source. control-plane has the standard NoSchedule taint.
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+

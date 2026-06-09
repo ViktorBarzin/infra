@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily renewal of the periodic Vault token in ~/.vault-token
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,156 @@
+# Sync modules/docker-registry/* → /opt/registry/ on docker-registry VM
+# (10.0.20.10) on change, and bounce containers + nginx when needed.
+#
+# Replaces the manual "ssh + scp + docker compose up -d" that was required
+# after the 2026-04-19 `registry:2 → registry:2.8.3` pin landed. The deploy
+# flow is now: edit a file in modules/docker-registry/ → git push → this
+# pipeline runs → registry VM picks up the change.
+#
+# Trigger: push to master that touches any managed file (see `when.path`),
+# or a manual run via Woodpecker UI / API.
+#
+# Credentials:
+#   - registry_ssh_key: Woodpecker repo-secret (ed25519 keypair provisioned
+#     2026-04-19 as `woodpecker-registry-config-sync`). Public key lives in
+#     /root/.ssh/authorized_keys on 10.0.20.10. Private key mirrored in
+#     Vault `secret/woodpecker/registry_ssh_key` (subkeys private_key /
+#     public_key / known_hosts_entry) for recovery.
+#
+# Why bounce nginx every time: nginx caches upstream DNS at startup, so if
+# any registry-* container gets recreated (new IP on the docker bridge),
+# nginx keeps forwarding to a stale address. Always restart nginx as the
+# last step — see docs/runbooks/registry-vm.md § "Bouncing registry
+# containers — the nginx DNS trap".
+
+when:
+  - event: push
+    branch: master
+    path:
+      include:
+        - 'modules/docker-registry/docker-compose.yml'
+        - 'modules/docker-registry/fix-broken-blobs.sh'
+        - 'modules/docker-registry/cleanup-tags.sh'
+        - 'modules/docker-registry/nginx_registry.conf'
+        - 'modules/docker-registry/config-private.yml'
+  - event: manual
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: deploy
+    image: alpine:3.20
+    environment:
+      REGISTRY_SSH_KEY:
+        from_secret: registry_ssh_key
+    commands:
+      - apk add --no-cache openssh-client rsync
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$REGISTRY_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      # Pin host key — CI's ~/.ssh/known_hosts is ephemeral, so accept-new on first pull.
+      - ssh-keyscan -t ed25519 10.0.20.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - echo '---detecting changed files---'
+      - |
+        # Mirror the remote state of each file so we can diff and decide what bounces.
+        CHANGED=""
+        for f in docker-compose.yml fix-broken-blobs.sh cleanup-tags.sh nginx_registry.conf config-private.yml; do
+          LOCAL="modules/docker-registry/$f"
+          REMOTE="/opt/registry/$f"
+          if [ ! -f "$LOCAL" ]; then
+            echo "skip $f (not in repo)"
+            continue
+          fi
+          # Pull the remote copy into /tmp for a diff. ssh -n avoids stdin-hogging.
+          REMOTE_CONTENT=$(ssh -n -o BatchMode=yes root@10.0.20.10 "cat $REMOTE 2>/dev/null || true")
+          LOCAL_CONTENT=$(cat "$LOCAL")
+          if [ "$LOCAL_CONTENT" = "$REMOTE_CONTENT" ]; then
+            echo "unchanged: $f"
+          else
+            echo "---diff: $f ---"
+            echo "$REMOTE_CONTENT" > /tmp/remote.txt
+            diff -u /tmp/remote.txt "$LOCAL" | head -40 || true
+            CHANGED="$CHANGED $f"
+          fi
+        done
+        echo "CHANGED_FILES=$CHANGED"
+        printf '%s' "$CHANGED" > /tmp/changed
+      - echo '---applying---'
+      - |
+        CHANGED=$(cat /tmp/changed)
+        if [ -z "$CHANGED" ]; then
+          echo "No files changed — exiting cleanly (manual run with no drift)."
+          exit 0
+        fi
+        # Ship every managed file unconditionally — scp is cheap, idempotency is safe.
+        scp -o BatchMode=yes \
+          modules/docker-registry/docker-compose.yml \
+          modules/docker-registry/fix-broken-blobs.sh \
+          modules/docker-registry/cleanup-tags.sh \
+          modules/docker-registry/nginx_registry.conf \
+          modules/docker-registry/config-private.yml \
+          root@10.0.20.10:/opt/registry/
+        ssh -n -o BatchMode=yes root@10.0.20.10 '
+          chmod +x /opt/registry/fix-broken-blobs.sh /opt/registry/cleanup-tags.sh
+        '
+      - echo '---bouncing containers + nginx---'
+      - |
+        CHANGED=$(cat /tmp/changed)
+        # Compose-visible files: docker-compose.yml (image tag, mounts) and
+        # config-private.yml (registry config → needs registry-private reload).
+        BOUNCE_COMPOSE=0
+        BOUNCE_NGINX=0
+        echo "$CHANGED" | grep -q "docker-compose.yml" && BOUNCE_COMPOSE=1
+        echo "$CHANGED" | grep -q "config-private.yml" && BOUNCE_COMPOSE=1
+        echo "$CHANGED" | grep -q "nginx_registry.conf" && BOUNCE_NGINX=1
+
+        if [ "$BOUNCE_COMPOSE" = "1" ]; then
+          echo "compose-visible change → pull + up -d"
+          ssh -n -o BatchMode=yes root@10.0.20.10 '
+            cd /opt/registry
+            docker compose pull 2>&1 | tail -5
+            docker compose up -d 2>&1 | tail -20
+          '
+          # Any compose recreate requires nginx DNS refresh too.
+          BOUNCE_NGINX=1
+        fi
+
+        if [ "$BOUNCE_NGINX" = "1" ]; then
+          echo "bouncing nginx to flush upstream DNS cache"
+          ssh -n -o BatchMode=yes root@10.0.20.10 '
+            docker restart registry-nginx
+            sleep 3
+            docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}" | grep -E "registry-"
+          '
+        fi
+
+        if [ "$BOUNCE_COMPOSE" = "0" ] && [ "$BOUNCE_NGINX" = "0" ]; then
+          echo "only script files changed (cron-picks-up semantics) — no bounce needed"
+        fi
+      - echo '---verify---'
+      - |
+        ssh -n -o BatchMode=yes root@10.0.20.10 '
+          echo "=== catalog ==="
+          # Prove auth + routing survived.
+          curl -sk -o /dev/null -w "catalog (unauth → 401 expected): HTTP %{http_code}\n" \
+            https://127.0.0.1:5050/v2/
+          echo "=== integrity scan (dry-run) ==="
+          python3 /opt/registry/fix-broken-blobs.sh --dry-run 2>&1 | tail -5
+        '
+
+  - name: slack
+    image: curlimages/curl:8.11.0
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\"Registry config sync on 10.0.20.10: ${CI_PIPELINE_STATUS}\"}" \
+          "$SLACK_WEBHOOK" || true
+    when:
+      status: [success, failure]

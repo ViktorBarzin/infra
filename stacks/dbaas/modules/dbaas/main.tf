@@ -1,0 +1,1797 @@
+# DB as a service. Installs MySQL operator
+variable "tls_secret_name" {}
+variable "tier" { type = string }
+variable "dbaas_root_password" {}
+variable "cluster_master_service" {
+  default = "mysql"
+}
+variable "postgresql_root_password" {}
+variable "pgadmin_password" {}
+variable "prod" {
+  default = false
+  type    = bool
+}
+variable "nfs_server" { type = string }
+variable "kube_config_path" {
+  type      = string
+  sensitive = true
+}
+
+# MySQL static application users (not rotated by Vault DB engine; baked into
+# each app's config). Codified here so future MySQL rebuilds cannot silently
+# drop them.
+variable "mysql_forgejo_password" {
+  type      = string
+  sensitive = true
+}
+variable "mysql_roundcubemail_password" {
+  type      = string
+  sensitive = true
+}
+
+resource "kubernetes_namespace" "dbaas" {
+  metadata {
+    name = "dbaas"
+    labels = {
+      tier                               = var.tier
+      "resource-governance/custom-quota" = "true"
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Override Kyverno tier-1-cluster LimitRange (max 4Gi) to allow MySQL 6Gi limit
+resource "kubernetes_limit_range" "dbaas" {
+  metadata {
+    name      = "tier-defaults"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "50m"
+        memory = "256Mi"
+      }
+      max = {
+        memory = "8Gi"
+      }
+    }
+  }
+}
+
+resource "kubernetes_resource_quota" "dbaas" {
+  metadata {
+    name      = "dbaas-quota"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "8"
+      "requests.memory" = "40Gi"
+      "limits.memory"   = "40Gi"
+      pods              = "30"
+    }
+  }
+}
+
+module "tls_secret" {
+  source          = "../../../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+#### MYSQL — Standalone (migration target)
+#
+# Standalone MySQL without Group Replication. Eliminates ~95 GB/day of GR
+# write overhead (binlog, relay log, XCom cache) for databases totaling ~35 MB.
+# Binary logging disabled entirely (skip-log-bin) since no replication needed.
+# Uses official mysql:8.4 image (Bitnami images deprecated by Broadcom Aug 2025).
+
+resource "kubernetes_config_map" "mysql_standalone_cnf" {
+  metadata {
+    name      = "mysql-standalone-cnf"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  data = {
+    "standalone.cnf" = <<-EOT
+      [mysqld]
+      skip-name-resolve
+      mysql-native-password=ON
+      skip-log-bin
+      max_connections=80
+      innodb_log_buffer_size=16777216
+      innodb_flush_log_at_trx_commit=2
+      innodb_io_capacity=100
+      innodb_io_capacity_max=200
+      innodb_redo_log_capacity=1073741824
+      innodb_buffer_pool_size=1073741824
+      innodb_flush_neighbors=1
+      innodb_lru_scan_depth=256
+      innodb_page_cleaners=1
+      innodb_adaptive_flushing_lwm=10
+      innodb_max_dirty_pages_pct=90
+      innodb_max_dirty_pages_pct_lwm=10
+    EOT
+  }
+}
+
+resource "kubernetes_stateful_set_v1" "mysql_standalone" {
+  metadata {
+    name      = "mysql-standalone"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name"      = "mysql"
+      "app.kubernetes.io/instance"  = "mysql-standalone"
+      "app.kubernetes.io/component" = "primary"
+      # 2026-05-26: defense-in-depth on top of the annotation below. The
+      # Kyverno `inject-keel-annotations` ClusterPolicy reads this LABEL
+      # via its `exclude.any[].resources.selector.matchLabels` rule, so
+      # even if the dbaas namespace exclude were lost the label still
+      # bypasses the mutation. Without the label, a Kyverno reconcile
+      # had silently overwritten our annotation=never → patch this turn
+      # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
+      "keel.sh/policy" = "never"
+    }
+    # Explicit Keel opt-out. The dbaas namespace is already excluded
+    # from the `inject-keel-annotations` Kyverno ClusterPolicy, but the
+    # StatefulSet historically picked up Keel annotations anyway (from
+    # an earlier version of that policy that didn't have the exclusion
+    # list). `keel.sh/policy: never` makes Keel skip this resource even
+    # if those legacy annotations are still present, so we cannot be
+    # silently bumped to a new MySQL version again.
+    #
+    # Lifting this MUST go through docs/plans/2026-05-19-mysql-8.4.9-upgrade-*.
+    annotations = {
+      "keel.sh/policy" = "never"
+    }
+  }
+  spec {
+    service_name = "mysql-standalone"
+    replicas     = 1
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/instance"  = "mysql-standalone"
+        "app.kubernetes.io/component" = "primary"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          "app.kubernetes.io/name"      = "mysql"
+          "app.kubernetes.io/instance"  = "mysql-standalone"
+          "app.kubernetes.io/component" = "primary"
+        }
+      }
+      spec {
+        affinity {
+          node_affinity {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
+                match_expressions {
+                  key      = "nvidia.com/gpu.present"
+                  operator = "NotIn"
+                  values   = ["true"]
+                }
+              }
+            }
+          }
+        }
+
+        container {
+          name = "mysql"
+          # ─────────────────────────────────────────────────────────────
+          # ⚠️  DO NOT BUMP THIS IMAGE WITHOUT FOLLOWING THE PLAN  ⚠️
+          # ─────────────────────────────────────────────────────────────
+          # Pinned to mysql:8.4.8 EXACTLY. The in-server DD upgrade from
+          # 80408 → 80409 stalls reliably on this hardware (24s of writes
+          # then no progress, no CPU, never completes). The 2026-05-18
+          # recovery from the failed auto-bump took ~25 min of full
+          # MySQL downtime + Forgejo/registry/7 apps cascade.
+          #
+          # To go to 8.4.9 (or any later version), follow:
+          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-design.md
+          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-plan.md
+          #   Beads: code-963q
+          #
+          # The upgrade path is wipe + re-init (NOT in-place DD upgrade).
+          # Requires: maintenance window, fresh dump, Vault user reset.
+          #
+          # History: code-eme8 (initial outage), code-k40p (recovery).
+          # See also: docs/runbooks/restore-mysql.md.
+          # ─────────────────────────────────────────────────────────────
+          image = "mysql:8.4.8"
+
+          port {
+            container_port = 3306
+            name           = "mysql"
+          }
+
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.cluster-password.metadata[0].name
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "250m"
+              memory = "3Gi"
+            }
+            limits = {
+              memory = "4Gi"
+            }
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/var/lib/mysql"
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/etc/mysql/conf.d"
+            read_only  = true
+          }
+
+          liveness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          readiness_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map.mysql_standalone_cnf.metadata[0].name
+          }
+        }
+      }
+    }
+
+    volume_claim_template {
+      metadata {
+        name = "data"
+        annotations = {
+          "resize.topolvm.io/threshold"     = "10%"
+          "resize.topolvm.io/increase"      = "100%"
+          "resize.topolvm.io/storage_limit" = "50Gi"
+        }
+      }
+      spec {
+        access_modes       = ["ReadWriteOnce"]
+        storage_class_name = "proxmox-lvm-encrypted"
+        resources {
+          requests = {
+            storage = "5Gi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+# Compatibility service: mysql.dbaas.svc.cluster.local:3306
+# Points at standalone MySQL (migrated from InnoDB Cluster 2026-04-16)
+resource "kubernetes_service" "mysql" {
+  metadata {
+    name      = var.cluster_master_service
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app.kubernetes.io/instance"  = "mysql-standalone"
+      "app.kubernetes.io/component" = "primary"
+    }
+    port {
+      port        = 3306
+      target_port = 3306
+    }
+  }
+
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+}
+
+# MySQL static application users — not rotated by Vault DB engine.
+# Each app stores its password in its own config (forgejo app.ini, roundcube
+# ROUNDCUBEMAIL_DB_PASSWORD env). During the 2026-04-16 InnoDB Cluster →
+# standalone migration these users were accidentally dropped and recreated with
+# mismatched passwords; this block codifies them so a future rebuild cannot
+# silently break the apps.
+#
+# Pattern matches `null_resource.pg_terraform_state_db` below (local-exec into
+# the DB pod). We CREATE IF NOT EXISTS + ALTER USER on every apply so a
+# password rotation in Vault is re-synced on the next `scripts/tg apply`. The
+# `password_hash` trigger re-runs the provisioner when the Vault password
+# changes; the namespace/user triggers re-run if identifiers change.
+locals {
+  mysql_static_users = {
+    forgejo = {
+      database = "forgejo"
+      password = var.mysql_forgejo_password
+    }
+    roundcubemail = {
+      database = "roundcubemail"
+      password = var.mysql_roundcubemail_password
+    }
+  }
+}
+
+resource "null_resource" "mysql_static_user" {
+  for_each = local.mysql_static_users
+
+  depends_on = [kubernetes_stateful_set_v1.mysql_standalone]
+
+  triggers = {
+    username      = each.key
+    database      = each.value.database
+    password_hash = sha256(each.value.password)
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+kubectl --kubeconfig ${var.kube_config_path} exec -i -n dbaas mysql-standalone-0 -c mysql -- sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' <<'SQL'
+CREATE DATABASE IF NOT EXISTS `${each.value.database}`;
+CREATE USER IF NOT EXISTS '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
+ALTER USER '${each.key}'@'%' IDENTIFIED WITH caching_sha2_password BY '${each.value.password}';
+GRANT ALL PRIVILEGES ON `${each.value.database}`.* TO '${each.key}'@'%';
+FLUSH PRIVILEGES;
+SQL
+EOT
+  }
+}
+
+module "nfs_mysql_backup_host" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-mysql-backup-host"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/mysql-backup"
+}
+
+resource "kubernetes_persistent_volume_claim" "pgadmin_encrypted" {
+  wait_until_bound = false
+  metadata {
+    name      = "dbaas-pgadmin-encrypted"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "5Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this, every TF apply tries to revert
+    # to the spec value, K8s rejects the shrink, and the PVC ends up
+    # in Terminating-but-in-use limbo.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+module "nfs_postgresql_backup_host" {
+  source     = "../../../../modules/kubernetes/nfs_volume"
+  name       = "dbaas-postgresql-backup-host"
+  namespace  = kubernetes_namespace.dbaas.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/postgresql-backup"
+}
+
+resource "kubernetes_cron_job_v1" "mysql-backup" {
+  metadata {
+    name      = "mysql-backup"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "30 0 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "mysql-backup"
+              image = "docker.io/library/mysql:8.0"
+              env {
+                name = "MYSQL_PWD"
+                value_from {
+                  secret_key_ref {
+                    name = "cluster-secret"
+                    key  = "ROOT_PASSWORD"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                mysqldump --all-databases -u root --host mysql.dbaas.svc.cluster.local | gzip -9 > /backup/dump_$now.sql.gz
+
+                # Rotate — 14 day retention
+                cd /backup
+                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
+
+                _out_bytes=$(stat -c%s /backup/dump_$now.sql.gz)
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              # To restore (from outside of the cluster):
+              # run kubectl port-forward to pod e.g.:
+              # > kb port-forward mysql-647cfd4969-46rmw --address 0.0.0.0 3307:3306
+              # run mysql import (and specify non-localhost address to avoid using unix socket): (password is in tfvars)
+              # > mysql -u root -p --host 10.0.10.10 --port 3307 < /mnt/nfs/2024_01_06_13_54.sql
+              volume_mount {
+                name       = "mysql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "mysql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_mysql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# Per-database MySQL backups (enables single-database restore without affecting others)
+resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
+  metadata {
+    name      = "mysql-backup-per-db"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "45 0 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "mysql-backup-per-db"
+              image = "docker.io/library/mysql:8.0"
+              env {
+                name = "MYSQL_PWD"
+                value_from {
+                  secret_key_ref {
+                    name = "cluster-secret"
+                    key  = "ROOT_PASSWORD"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
+                _t0=$(date +%s)
+                now=$(date +"%Y_%m_%d_%H_%M")
+                MYSQL_HOST=mysql.dbaas.svc.cluster.local
+                failed=0
+                total=0
+                ok=0
+
+                # Discover all user databases
+                dbs=$(mysql -u root --host $MYSQL_HOST -N -e \
+                  "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys','mysql_innodb_cluster_metadata');")
+
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p /backup/per-db/$db
+                  echo "=== Backing up $db ==="
+                  if mysqldump -u root --host $MYSQL_HOST --single-transaction --set-gtid-purged=OFF "$db" | gzip -9 > "/backup/per-db/$db/dump_$now.sql.gz"; then
+                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.sql.gz")
+                    echo "  OK — $(( _size / 1024 )) KiB"
+                    ok=$((ok + 1))
+                  else
+                    echo "  FAILED"
+                    rm -f "/backup/per-db/$db/dump_$now.sql.gz"
+                    failed=$((failed + 1))
+                  fi
+                done
+
+                # Rotate — 14 day retention per database
+                find /backup/per-db -name "dump_*.sql.gz" -type f -mtime +14 -delete
+
+                _dur=$(($(date +%s) - _t0))
+                echo "=== Per-DB Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
+                echo "duration: $${_dur}s"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/mysql-backup-per-db" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_databases_total $total
+                backup_databases_ok $ok
+                backup_databases_failed $failed
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              volume_mount {
+                name       = "mysql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "mysql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_mysql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# resource "kubernetes_persistent_volume" "mysql" {
+#   metadata {
+#     name = "mysql-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "10Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:mysql"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+
+
+# resource "helm_release" "mysql" {
+#  namespace = kubernetes_namespace.dbaas.metadata[0].name
+#   create_namespace = false
+#   name             = "mysql"
+
+#   repository = "https://presslabs.github.io/charts"
+#   chart      = "mysql-operator"
+#   # version    = "v0.5.0-rc.3"
+
+#   values = [templatefile("${path.module}/mysql_chart_values.yaml", { secretName = var.tls_secret_name })]
+#   atomic = true
+
+#   depends_on = [kubernetes_namespace.dbaas]
+# }
+
+# # resource "helm_release" "mysql" {
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
+# #   create_namespace = false
+# #   name             = "mysql-operator"
+
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-operator"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# # }
+
+# # resource "helm_release" "innodb-cluster" {
+# #  namespace = kubernetes_namespace.dbaas.metadata[0].name
+# #   create_namespace = false
+# #   name             = var.cluster_master_service
+
+# #   repository = "https://mysql.github.io/mysql-operator/"
+# #   chart      = "mysql-innodbcluster"
+# #   atomic     = true
+# #   depends_on = [kubernetes_namespace.dbaas]
+# #   values     = [templatefile("${path.module}/chart_values.tpl", { root_password = var.dbaas_root_password })]
+# # }
+
+# resource "kubernetes_persistent_volume" "mysql-operator" {
+#   metadata {
+#     name = "mysql-operator-pv"
+#   }
+#   spec {
+#     capacity = {
+#       "storage" = "1Gi"
+#     }
+#     access_modes = ["ReadWriteOnce"]
+#     persistent_volume_source {
+#       iscsi {
+#         target_portal = "iscsi.viktorbarzin.lan:3260"
+#         iqn           = "iqn.2020-12.lan.viktorbarzin:storage:dbaas:operator"
+#         lun           = 0
+#         fs_type       = "ext4"
+#       }
+#     }
+#   }
+# }
+
+resource "kubernetes_secret" "cluster-password" {
+  metadata {
+    name      = "cluster-secret"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/match" = "true"
+    }
+  }
+  type = "Opaque"
+  data = {
+    "ROOT_PASSWORD" = var.dbaas_root_password
+  }
+}
+
+# resource "kubernetes_ingress_v1" "dbaas" {
+#   metadata {
+#     name      = "orchestrator-ingress"
+#    namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     annotations = {
+#       "kubernetes.io/ingress.class"                        = "nginx"
+#       "nginx.ingress.kubernetes.io/auth-tls-verify-client" = "on"
+#       "nginx.ingress.kubernetes.io/auth-tls-secret"        = "default/ca-secret"
+#     }
+#   }
+
+#   spec {
+#     tls {
+#       hosts       = ["db.viktorbarzin.me"]
+#       secret_name = var.tls_secret_name
+#     }
+#     rule {
+#       host = "db.viktorbarzin.me"
+#       http {
+#         path {
+#           path = "/"
+#           backend {
+#             service {
+#               name = "mysql-mysql-operator"
+#               port {
+#                 number = 80
+#               }
+#             }
+#           }
+#         }
+#       }
+#     }
+#   }
+# }
+
+
+# PHPMyAdmin instance
+resource "kubernetes_deployment" "phpmyadmin" {
+  metadata {
+    name      = "phpmyadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    labels = {
+      "app" = "phpmyadmin"
+      tier  = var.tier
+
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+  spec {
+    replicas = "1"
+    selector {
+      match_labels = {
+        "app" = "phpmyadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          "app" = "phpmyadmin"
+        }
+      }
+      spec {
+        container {
+          name  = "phpmyadmin"
+          image = "phpmyadmin/phpmyadmin:5.2.3"
+          port {
+            container_port = 80
+          }
+          env {
+            name  = "PMA_HOST"
+            value = var.cluster_master_service
+          }
+          env {
+            name  = "PMA_PORT"
+            value = "3306"
+          }
+          env {
+            name = "MYSQL_ROOT_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "cluster-secret"
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+          env {
+            name  = "UPLOAD_LIMIT"
+            value = "300M"
+          }
+          resources {
+            requests = {
+              cpu    = "15m"
+              memory = "100Mi"
+            }
+            limits = {
+              memory = "100Mi"
+            }
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_service" "phpmyadmin" {
+  metadata {
+    name      = "pma"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app" = "phpmyadmin"
+    }
+    port {
+      name = "web"
+      port = 80
+    }
+  }
+}
+module "ingress" {
+  source            = "../../../../modules/kubernetes/ingress_factory"
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.dbaas.metadata[0].name
+  name              = "pma"
+  tls_secret_name   = var.tls_secret_name
+  auth              = "required"
+  extra_annotations = {}
+}
+
+
+# resource "kubectl_manifest" "mysql-cluster" {
+#   yaml_body  = <<-YAML
+#     apiVersion: mysql.presslabs.org/v1alpha1
+#     kind: MysqlCluster
+#     metadata:
+#       name: mysql-cluster
+#      namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     spec:
+#       mysqlVersion: "5.7"
+#       replicas: 1
+#       secretName: cluster-secret
+#       mysqlConf:
+#         # read_only: 0                          # mysql forms a single transaction for each sql statement, autocommit for each statement
+#         # automatic_sp_privileges: "ON"         # automatically grants the EXECUTE and ALTER ROUTINE privileges to the creator of a stored routine
+#         # auto_generate_certs: "ON"             # Auto Generation of Certificate
+#         # auto_increment_increment: 1           # Auto Incrementing value from +1
+#         # auto_increment_offset: 1              # Auto Increment Offset
+#         # binlog-format: "STATEMENT"            # contains various options such ROW(SLOW,SAFE) STATEMENT(FAST,UNSAFE), MIXED(combination of both)
+#         # wait_timeout: 31536000                # 28800 number of seconds the server waits for activity on a non-interactive connection before closing it, You might encounter MySQL server has gone away error, you then tweak this value acccordingly
+#         # interactive_timeout: 28800            # The number of seconds the server waits for activity on an interactive connection before closing it.
+#         # max_allowed_packet: "512M"            # Maximum size of MYSQL Network protocol packet that the server can create or read 4MB, 8MB, 16MB, 32MB
+#         # max-binlog-size: 1073741824           # binary logs contains the events that describe database changes, this parameter describe size for the bin_log file.
+#         # log_output: "TABLE"                   # Format in which the logout will be dumped
+#         # master-info-repository: "TABLE"       # Format in which the master info will be dumped
+#         # relay_log_info_repository: "TABLE"    # Format in which the relay info will be dumped
+#       volumeSpec:
+#         persistentVolumeClaim:
+#           accessModes:
+#           - ReadWriteOnce
+#           resources:
+#             requests:
+#               storage: 10Gi
+#   YAML
+#   depends_on = [helm_release.mysql]
+#   # manifest = {
+#   #   apiVersion = "mysql.presslabs.org/v1alpha1"
+#   #   kind       = "MysqlCluster"
+#   #   metadata = {
+#   #     name      = "mysql-cluster"
+#   #    namespace = kubernetes_namespace.dbaas.metadata[0].name
+#   #   }
+#   #   spec = {
+#   #     mysqlVersion = "5.7"
+#   #     replicas     = 1
+#   #     secretName   = "cluster-secret"
+#   #     mysqlConf = {
+#   #       read_only = 0
+#   #     }
+#   #     volumeSpec = {
+#   #       persistentVolumeClaim = {
+#   #         resources = {
+#   #           requests = {
+#   #             storage = "10Gi"
+#   #           }
+#   #         }
+#   #       }
+#   #     }
+#   #   }
+#   # }
+# }
+
+
+# For some unknwown reason not all CRDs are installed. Add them manually
+# resource "kubectl_manifest" "mysql-user" {
+#   yaml_body = <<-EOF
+#     apiVersion: apiextensions.k8s.io/v1
+#     kind: CustomResourceDefinition
+#     metadata:
+#       annotations:
+#         controller-gen.kubebuilder.io/version: v0.5.0
+#         helm.sh/hook: crd-install
+#       name: mysqlusers.mysql.presslabs.org
+#       labels:
+#         app: mysql-operator
+#     spec:
+#       group: mysql.presslabs.org
+#       names:
+#         kind: MysqlUser
+#         listKind: MysqlUserList
+#         plural: mysqlusers
+#         singular: mysqluser
+#       scope:namespace = kubernetes_namespace.dbaas.metadata[0].name
+#       versions:
+#         - additionalPrinterColumns:
+#             - description: The user status
+#               jsonPath: .status.conditions[?(@.type == 'Ready')].status
+#               name: Ready
+#               type: string
+#             - jsonPath: .spec.clusterRef.name
+#               name: Cluster
+#               type: string
+#             - jsonPath: .spec.user
+#               name: UserName
+#               type: string
+#             - jsonPath: .metadata.creationTimestamp
+#               name: Age
+#               type: date
+#           name: v1alpha1
+#           schema:
+#             openAPIV3Schema:
+#               description: MysqlUser is the Schema for the MySQL User API
+#               properties:
+#                 apiVersion:
+#                   description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+#                   type: string
+#                 kind:
+#                   description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+#                   type: string
+#                 metadata:
+#                   type: object
+#                 spec:
+#                   description: MysqlUserSpec defines the desired state of MysqlUserSpec
+#                   properties:
+#                     allowedHosts:
+#                       description: AllowedHosts is the allowed host to connect from.
+#                       items:
+#                         type: string
+#                       type: array
+#                     clusterRef:
+#                       description: ClusterRef represents a reference to the MySQL cluster. This field should be immutable.
+#                       properties:
+#                         name:
+#                           description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. apiVersion, kind, uid?'
+#                           type: string
+#                        namespace = kubernetes_namespace.dbaas.metadata[0].name
+#                           description:namespace = kubernetes_namespace.dbaas.metadata[0].name
+#                           type: string
+#                       type: object
+#                     password:
+#                       description: Password is the password for the user.
+#                       properties:
+#                         key:
+#                           description: The key of the secret to select from.  Must be a valid secret key.
+#                           type: string
+#                         name:
+#                           description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names TODO: Add other useful fields. apiVersion, kind, uid?'
+#                           type: string
+#                         optional:
+#                           description: Specify whether the Secret or its key must be defined
+#                           type: boolean
+#                       required:
+#                         - key
+#                       type: object
+#                     permissions:
+#                       description: Permissions is the list of roles that user has in the specified database.
+#                       items:
+#                         description: MysqlPermission defines a MySQL schema permission
+#                         properties:
+#                           permissions:
+#                             description: Permissions represents the permissions granted on the schema/tables
+#                             items:
+#                               type: string
+#                             type: array
+#                           schema:
+#                             description: Schema represents the schema to which the permission applies
+#                             type: string
+#                           tables:
+#                             description: Tables represents the tables inside the schema to which the permission applies
+#                             items:
+#                               type: string
+#                             type: array
+#                         required:
+#                           - permissions
+#                           - schema
+#                           - tables
+#                         type: object
+#                       type: array
+#                     resourceLimits:
+#                       additionalProperties:
+#                         anyOf:
+#                           - type: integer
+#                           - type: string
+#                         pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+#                         x-kubernetes-int-or-string: true
+#                       description: 'ResourceLimits allow settings limit per mysql user as defined here: https://dev.mysql.com/doc/refman/5.7/en/user-resources.html'
+#                       type: object
+#                     user:
+#                       description: User is the name of the user that will be created with will access the specified database. This field should be immutable.
+#                       type: string
+#                   required:
+#                     - allowedHosts
+#                     - clusterRef
+#                     - password
+#                     - user
+#                   type: object
+#                 status:
+#                   description: MysqlUserStatus defines the observed state of MysqlUser
+#                   properties:
+#                     allowedHosts:
+#                       description: AllowedHosts contains the list of hosts that the user is allowed to connect from.
+#                       items:
+#                         type: string
+#                       type: array
+#                     conditions:
+#                       description: Conditions represents the MysqlUser resource conditions list.
+#                       items:
+#                         description: MySQLUserCondition defines the condition struct for a MysqlUser resource
+#                         properties:
+#                           lastTransitionTime:
+#                             description: Last time the condition transitioned from one status to another.
+#                             format: date-time
+#                             type: string
+#                           lastUpdateTime:
+#                             description: The last time this condition was updated.
+#                             format: date-time
+#                             type: string
+#                           message:
+#                             description: A human readable message indicating details about the transition.
+#                             type: string
+#                           reason:
+#                             description: The reason for the condition's last transition.
+#                             type: string
+#                           status:
+#                             description: Status of the condition, one of True, False, Unknown.
+#                             type: string
+#                           type:
+#                             description: Type of MysqlUser condition.
+#                             type: string
+#                         required:
+#                           - lastTransitionTime
+#                           - message
+#                           - reason
+#                           - status
+#                           - type
+#                         type: object
+#                       type: array
+#                   type: object
+#               type: object
+#           served: true
+#           storage: true
+#           subresources:
+#             status: {}
+#   EOF
+# }
+
+#### POSTGRESQL — CloudNativePG Cluster
+#
+# Migrated from single NFS-backed pod to CNPG on local-path storage.
+# CNPG Cluster is managed via kubectl apply (not kubernetes_manifest)
+# because the CNPG webhook mutates the spec on apply, causing
+# Terraform provider "inconsistent result" errors.
+#
+# Rollback: apply old deployment yaml, revert service selector to app=postgresql.
+
+# Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
+resource "null_resource" "pg_cluster" {
+  triggers = {
+    instances     = "3"
+    image         = "ghcr.io/cloudnative-pg/postgis:16"
+    storage_size  = "20Gi"
+    storage_class = "proxmox-lvm-encrypted"
+    memory_limit  = "3Gi"
+    pg_params     = "v3-shared1024-walcomp-workmem16-max200"
+    affinity      = "required-hostname-v1"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      kubectl --kubeconfig ${var.kube_config_path} apply -f - <<'EOF'
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: pg-cluster
+        namespace: dbaas
+      spec:
+        # 3 instances (1 primary + 2 replicas) so a single-node drain (e.g.
+        # kured's weekly OS-reboot wave) still leaves a primary candidate
+        # immediately available for switchover. Previously 2; CNPG would
+        # still failover with 2 but only if the lone replica was caught up
+        # — during a long WAL backlog the failover would stall the drain.
+        # Bumped 2026-05-16 ahead of Monday's first post-fix kured cycle.
+        instances: 3
+        # Hard anti-affinity: force one PG instance per node. Default is
+        # `preferred` which let all 3 pods collapse onto k8s-node1 during
+        # the 2026-05-26 node4 outage — losing node1 would have killed the
+        # whole cluster (no quorum). With 3 instances + 4 worker nodes,
+        # `required` is safe under 1-node drain.
+        affinity:
+          enablePodAntiAffinity: true
+          podAntiAffinityType: required
+          topologyKey: kubernetes.io/hostname
+        imageName: ghcr.io/cloudnative-pg/postgis:16
+        postgresql:
+          parameters:
+            search_path: '"$user", public'
+            # Cluster grew past the 100-conn default ceiling (~90/100 idle
+            # steady-state in May 2026; authentik+matrix alone hold ~55).
+            # Bumped to 200 with shared_buffers/effective_cache_size/memory
+            # scaled proportionally. work_mem stays at 16MB — that's per
+            # sort/hash op, not per connection, so 16MB * 200 isn't the
+            # worst case.
+            max_connections: "200"
+            shared_buffers: "1024MB"
+            effective_cache_size: "2560MB"
+            work_mem: "16MB"
+            wal_compression: "on"
+            random_page_cost: "4"
+            checkpoint_completion_target: "0.9"
+          enableAlterSystem: true
+        enableSuperuserAccess: true
+        inheritedMetadata:
+          annotations:
+            # threshold = free-space % below which autoresizer expands.
+            # 10% means "expand when 90% used" (the conventional knob).
+            resize.topolvm.io/threshold: "10%"
+            resize.topolvm.io/increase: "20%"
+            resize.topolvm.io/storage_limit: "100Gi"
+        storage:
+          size: 20Gi
+          storageClass: proxmox-lvm-encrypted
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "3Gi"
+          limits:
+            memory: "3Gi"
+      EOF
+    EOT
+  }
+}
+
+# Service that maintains the original postgresql.dbaas endpoint,
+# now pointing at the CNPG primary pod instead of the old deployment.
+resource "kubernetes_service" "postgresql" {
+  metadata {
+    name      = "postgresql"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/instanceRole" = "primary"
+    }
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+}
+
+# LoadBalancer service for PG primary — accessible from DevVM (10.0.20.200:5432).
+# Shares MetalLB IP with other non-conflicting services (Traefik, Dolt, etc.).
+resource "kubernetes_service" "postgresql_lb" {
+  metadata {
+    name      = "postgresql-lb"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip"          = "shared"
+    }
+  }
+  spec {
+    type = "LoadBalancer"
+    selector = {
+      "cnpg.io/cluster"      = "pg-cluster"
+      "cnpg.io/instanceRole" = "primary"
+    }
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = 5432
+    }
+  }
+}
+
+# Create terraform_state database for remote TF state backend (pg backend).
+# User password is managed by Vault Database Secrets Engine (static role rotation).
+resource "null_resource" "pg_terraform_state_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "terraform_state"
+    username = "terraform_state"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'terraform_state'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE terraform_state WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'terraform_state'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE terraform_state OWNER terraform_state"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE terraform_state TO terraform_state"
+        '
+    EOT
+  }
+}
+
+# Create payslip_ingest database for the payslip-ingest webhook service.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-payslip-ingest`, 7d rotation).
+resource "null_resource" "pg_payslip_ingest_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "payslip_ingest"
+    username = "payslip_ingest"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE payslip_ingest WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'payslip_ingest'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE payslip_ingest OWNER payslip_ingest"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE payslip_ingest TO payslip_ingest"
+        '
+    EOT
+  }
+}
+
+# Create job_hunter database for the job-hunter scraper service.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-job-hunter`, 7d rotation).
+resource "null_resource" "pg_job_hunter_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "job_hunter"
+    username = "job_hunter"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'job_hunter'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE job_hunter WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'job_hunter'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE job_hunter OWNER job_hunter"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE job_hunter TO job_hunter"
+        '
+    EOT
+  }
+}
+
+# Create tripit database for the TripIt travel app (FastAPI + SvelteKit SPA).
+# Role password is managed by Vault Database Secrets Engine (static role
+# `pg-tripit`, 7d rotation). Tables live in schema `tripit` (alembic creates
+# them on the app's first migrate).
+resource "null_resource" "pg_tripit_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "tripit"
+    username = "tripit"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tripit'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE tripit WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'tripit'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE tripit OWNER tripit"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE tripit TO tripit"
+        '
+    EOT
+  }
+}
+
+# Create nextcloud_todos database + role for the nextcloud-todos service
+# (FastAPI; watches the Nextcloud Personal task list). Role password is
+# managed by the Vault Database Secrets Engine (static role
+# `pg-nextcloud-todos`, 7d rotation). Tables live in schema `nextcloud_todos`
+# (alembic creates them on the app's first migrate). Unlike most app DBs we
+# also create the schema explicitly + pin the role's search_path to it, so the
+# unqualified tables alembic generates land in `nextcloud_todos` rather than
+# `public`.
+resource "null_resource" "pg_nextcloud_todos_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "nextcloud_todos"
+    username = "nextcloud_todos"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'nextcloud_todos'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE nextcloud_todos WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'nextcloud_todos'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE nextcloud_todos OWNER nextcloud_todos"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE nextcloud_todos TO nextcloud_todos"
+          psql -U postgres -c "ALTER ROLE nextcloud_todos SET search_path TO nextcloud_todos"
+          psql -U postgres -d nextcloud_todos -c "CREATE SCHEMA IF NOT EXISTS nextcloud_todos AUTHORIZATION nextcloud_todos"
+        '
+    EOT
+  }
+}
+
+# Postiz: 3 databases (postiz, temporal, temporal_visibility) all owned by the
+# `postiz` role. Bundled bitnami PostgreSQL was retired 2026-05-09 in favour of
+# this CNPG cluster — covered by postgresql-backup-per-db automatically.
+# Role password placeholder; Vault static role `pg-postiz` rotates 7d.
+resource "null_resource" "pg_postiz_dbs" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    role = "postiz"
+    dbs  = "postiz,temporal,temporal_visibility"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'postiz'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE postiz WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          for db in postiz temporal temporal_visibility; do
+            psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'$db'"'"'" | grep -q 1 || \
+              psql -U postgres -c "CREATE DATABASE $db OWNER postiz"
+            psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE $db TO postiz"
+          done
+        '
+    EOT
+  }
+}
+
+# Create wealthfolio_sync database for the SQLite→PG ETL sidecar that mirrors
+# Wealthfolio's daily_account_valuation/accounts/activities into PG so Grafana
+# can chart net worth, contributions, and growth.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-wealthfolio-sync`, 7d rotation).
+resource "null_resource" "pg_wealthfolio_sync_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "wealthfolio_sync"
+    username = "wealthfolio_sync"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'wealthfolio_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE wealthfolio_sync WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'wealthfolio_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE wealthfolio_sync OWNER wealthfolio_sync"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE wealthfolio_sync TO wealthfolio_sync"
+        '
+    EOT
+  }
+}
+
+# Create fire_planner database for the FIRE retirement-planning service.
+# Role password is managed by Vault Database Secrets Engine
+# (static role `pg-fire-planner`, 7d rotation).
+# fire_planner reads from payslip_ingest + wealthfolio_sync (read-only)
+# and writes its own MC results into schema fire_planner.
+resource "null_resource" "pg_fire_planner_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "fire_planner"
+    username = "fire_planner"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'fire_planner'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE fire_planner WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'fire_planner'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE fire_planner OWNER fire_planner"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE fire_planner TO fire_planner"
+        '
+    EOT
+  }
+}
+
+# Create instagram_poster database for the IG-curation pipeline. Initial use:
+# benchmark_score table written by `instagram_poster.benchmark` CLI (vision-LLM
+# scoring per Immich asset). Future: migrate story_queue/decision/ig_posted_media
+# off the pod's sqlite PVC into this DB so the pod is fully stateless.
+# Role password is managed by Vault Database Secrets Engine
+# (static role `pg-instagram-poster`, 7d rotation).
+resource "null_resource" "pg_instagram_poster_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "instagram_poster"
+    username = "instagram_poster"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'instagram_poster'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE instagram_poster WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'instagram_poster'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE instagram_poster OWNER instagram_poster"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE instagram_poster TO instagram_poster"
+        '
+    EOT
+  }
+}
+
+# Old PostgreSQL deployment — kept commented for rollback reference
+# resource "kubernetes_deployment" "postgres" {
+#   metadata {
+#     name      = "postgresql"
+#     namespace = kubernetes_namespace.dbaas.metadata[0].name
+#     labels    = { tier = var.tier }
+#   }
+#   spec {
+#     replicas = 0  # scaled to 0 during CNPG migration
+#     selector { match_labels = { app = "postgresql" } }
+#     strategy { type = "Recreate" }
+#     template {
+#       metadata { labels = { app = "postgresql" } }
+#       spec {
+#         container {
+#           image = "viktorbarzin/postgres:16-master"
+#           name  = "postgresql"
+#           env { name = "POSTGRES_PASSWORD"; value = var.postgresql_root_password }
+#           env { name = "POSTGRES_USER"; value = "root" }
+#           port { container_port = 5432; protocol = "TCP"; name = "postgresql" }
+#           volume_mount { name = "postgresql-persistent-storage"; mount_path = "/var/lib/postgresql/data" }
+#         }
+#         volume {
+#           name = "postgresql-persistent-storage"
+#           nfs { path = "/mnt/main/postgresql/data"; server = var.nfs_server }
+#         }
+#       }
+#     }
+#   }
+# }
+
+#### PGADMIN
+
+resource "kubernetes_deployment" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+    labels = {
+      tier = var.tier
+    }
+  }
+  spec {
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "pgadmin"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "pgadmin"
+        }
+      }
+      spec {
+        container {
+          image = "dpage/pgadmin4"
+          name  = "pgadmin"
+          env {
+            name  = "PGADMIN_DEFAULT_EMAIL"
+            value = "me@viktorbarzin.me"
+          }
+          env {
+            name = "PGADMIN_DEFAULT_PASSWORD"
+            # Changed at startup
+            value = var.pgadmin_password
+          }
+          port {
+            container_port = 80
+            name           = "web"
+          }
+          volume_mount {
+            name       = "pgadmin"
+            mount_path = "/var/lib/pgadmin/"
+          }
+
+          resources {
+            requests = {
+              cpu    = "25m"
+              memory = "450Mi"
+            }
+            limits = {
+              memory = "450Mi"
+            }
+          }
+
+        }
+        volume {
+          name = "pgadmin"
+          # config_map {
+          #   name = "pgadmin-config"
+          # }
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.pgadmin_encrypted.metadata[0].name
+          }
+        }
+        dns_config {
+          option {
+            name  = "ndots"
+            value = "2"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+resource "kubernetes_service" "pgadmin" {
+  metadata {
+    name      = "pgadmin"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    selector = {
+      "app" = "pgadmin"
+    }
+    port {
+      name = "pgadmin"
+      port = 80
+    }
+  }
+}
+module "ingress-pgadmin" {
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
+  name            = "pgadmin"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+}
+
+
+resource "kubernetes_cron_job_v1" "postgresql-backup" {
+  metadata {
+    name      = "postgresql-backup"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy        = "Replace"
+    failed_jobs_history_limit = 5
+    schedule                  = "0 0 * * *"
+    # schedule                      = "* * * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 10
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup"
+              image = "docker.io/library/postgres:16.4-bullseye"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "pg-cluster-superuser"
+                    key  = "password"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euxo pipefail
+                apt-get update -qq && apt-get install -yqq curl >/dev/null 2>&1 || true
+                _t0=$(date +%s)
+                _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+
+                export now=$(date +"%Y_%m_%d_%H_%M")
+                PGPASSWORD=$PGPASSWORD pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
+
+                # Rotate — 14 day retention
+                cd /backup
+                find . -name "dump_*.sql.gz" -type f -mtime +14 -delete
+                find . -name "dump_*.sql" -type f -mtime +14 -delete  # clean up old uncompressed
+
+                _dur=$(($(date +%s) - _t0))
+                _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                _wb1=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
+                echo "=== Backup IO Stats ==="
+                echo "duration: $${_dur}s"
+                echo "read:    $(( (_rb1 - _rb0) / 1048576 )) MiB"
+                echo "written: $(( (_wb1 - _wb0) / 1048576 )) MiB"
+                echo "output:  $(ls -lh /backup/dump_$now.sql.gz | awk '{print $5}')"
+
+                _out_bytes=$(stat -c%s /backup/dump_$now.sql.gz)
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_read_bytes $(( _rb1 - _rb0 ))
+                backup_written_bytes $(( _wb1 - _wb0 ))
+                backup_output_bytes $${_out_bytes}
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# Per-database PostgreSQL backups (enables single-database restore without affecting others)
+resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
+  metadata {
+    name      = "postgresql-backup-per-db"
+    namespace = kubernetes_namespace.dbaas.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Replace"
+    failed_jobs_history_limit     = 3
+    schedule                      = "15 0 * * *"
+    starting_deadline_seconds     = 10
+    successful_jobs_history_limit = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 3
+        ttl_seconds_after_finished = 10
+        template {
+          metadata {}
+          spec {
+            container {
+              name  = "postgresql-backup-per-db"
+              image = "docker.io/library/postgres:16.4-bullseye"
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "pg-cluster-superuser"
+                    key  = "password"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -euo pipefail
+                apt-get update -qq && apt-get install -yqq curl >/dev/null 2>&1 || true
+
+                _t0=$(date +%s)
+                now=$(date +"%Y_%m_%d_%H_%M")
+                PGHOST=pg-cluster-rw.dbaas
+                PGUSER=postgres
+                failed=0
+                total=0
+                ok=0
+
+                # Discover all user databases
+                dbs=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -U $PGUSER -t -A -c \
+                  "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
+
+                for db in $dbs; do
+                  total=$((total + 1))
+                  mkdir -p /backup/per-db/$db
+                  echo "=== Backing up $db ==="
+                  if PGPASSWORD=$PGPASSWORD pg_dump -Fc -h $PGHOST -U $PGUSER "$db" > "/backup/per-db/$db/dump_$now.dump"; then
+                    _size=$(stat -c%s "/backup/per-db/$db/dump_$now.dump")
+                    echo "  OK — $(( _size / 1024 )) KiB"
+                    ok=$((ok + 1))
+                  else
+                    echo "  FAILED"
+                    rm -f "/backup/per-db/$db/dump_$now.dump"
+                    failed=$((failed + 1))
+                  fi
+                done
+
+                # Rotate — 14 day retention per database
+                find /backup/per-db -name "dump_*.dump" -type f -mtime +14 -delete
+
+                _dur=$(($(date +%s) - _t0))
+                echo "=== Per-DB Backup Summary ==="
+                echo "databases: $total (ok: $ok, failed: $failed)"
+                echo "duration: $${_dur}s"
+
+                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/postgresql-backup-per-db" <<PGEOF || true
+                backup_duration_seconds $${_dur}
+                backup_databases_total $total
+                backup_databases_ok $ok
+                backup_databases_failed $failed
+                backup_last_success_timestamp $(date +%s)
+                PGEOF
+              EOT
+              ]
+              volume_mount {
+                name       = "postgresql-backup"
+                mount_path = "/backup"
+              }
+              resources {
+                requests = {
+                  memory = "256Mi"
+                  cpu    = "50m"
+                }
+                limits = {
+                  memory = "512Mi"
+                }
+              }
+            }
+            volume {
+              name = "postgresql-backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_postgresql_backup_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}

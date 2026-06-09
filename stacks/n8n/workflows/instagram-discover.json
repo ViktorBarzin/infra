@@ -1,0 +1,106 @@
+{
+  "name": "Instagram Discover",
+  "active": true,
+  "id": "3bae241e-c693-49aa-b271-51af0ec811dc",
+  "versionId": "3bae241e-c693-49aa-b271-51af0ec811dc",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{
+            "field": "cronExpression",
+            "expression": "0 9 * * *"
+          }]
+        }
+      },
+      "id": "cron-daily-9",
+      "name": "Daily 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "notes": "Once a day kickstart. Sends 1 candidate so the user can start a training session by tapping. The approval workflow's chain takes over from there — every approve/reject sends the next candidate immediately. Daily cadence avoids spamming Telegram if the user is actively training; the loop is user-paced."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.INSTAGRAM_POSTER_INTERNAL_URL }}/candidates?limit=1",
+        "options": {"timeout": 60000}
+      },
+      "id": "candidates",
+      "name": "Get top-3 ranked candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "notes": "GET /candidates?limit=3 returns assets ranked by CLIP similarity to approved/rejected centroids. Cold-start (no decision history) falls back to recency. Endpoint also auto-adds returned items to story_queue as pending so /enqueue can transition them on approve."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "candidates",
+        "options": {}
+      },
+      "id": "split-items",
+      "name": "Split candidates",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "notes": "One Telegram message per candidate."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "batch-loop",
+      "name": "Loop one at a time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [970, 300],
+      "notes": "Process one asset at a time so a single Telegram error doesn't stop the others."
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\nconst score = (typeof c.score === 'number') ? c.score.toFixed(2) : '–';\nconst takenDate = c.taken_at ? c.taken_at.slice(0, 10) : '';\nconst lines = [\n  '<b>📸 New candidate</b>',\n  '',\n  '<b>File:</b> ' + (c.filename || c.asset_id),\n];\nif (takenDate) lines.push('<b>Taken:</b> ' + takenDate);\nlines.push('<b>Score:</b> ' + score + (c.has_embedding ? '' : ' (no embedding yet)'));\nlines.push('', 'Approve to queue for posting, reject to mark seen.');\nreturn [{ json: { asset_id: c.asset_id, caption: lines.join('\\n') } }];"
+      },
+      "id": "build-caption",
+      "name": "Build caption",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1190, 300],
+      "notes": "Format the Telegram caption with the CLIP-similarity score, taken date, filename. Score is approve_centroid_cos − reject_centroid_cos; nulls show as –."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendPhoto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, photo: $env.PUBLIC_INSTAGRAM_POSTER_URL + '/image/' + $json.asset_id, caption: $json.caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[ { text: '✅ Approve', callback_data: 'approve:' + $json.asset_id }, { text: '❌ Reject', callback_data: 'reject:' + $json.asset_id } ]] } }) }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "telegram-send-photo",
+      "name": "Telegram sendPhoto with buttons",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1410, 300],
+      "notes": "Telegram fetches the 9:16 derivative from instagram-poster.viktorbarzin.me/image/<id>. Inline keyboard wires the action:asset_id format consumed by instagram-approval workflow."
+    }
+  ],
+  "connections": {
+    "Daily 09:00": {"main": [[{"node": "Get top-3 ranked candidates", "type": "main", "index": 0}]]},
+    "Get top-3 ranked candidates": {"main": [[{"node": "Split candidates", "type": "main", "index": 0}]]},
+    "Split candidates": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]},
+    "Loop one at a time": {"main": [[{"node": "Build caption", "type": "main", "index": 0}]]},
+    "Build caption": {"main": [[{"node": "Telegram sendPhoto with buttons", "type": "main", "index": 0}]]},
+    "Telegram sendPhoto with buttons": {"main": [[{"node": "Loop one at a time", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1", "saveExecutionProgress": false, "saveManualExecutions": true},
+  "staticData": null,
+  "meta": {"templateCredsSetupCompleted": false},
+  "pinData": {}
+}

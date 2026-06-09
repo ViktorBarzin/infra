@@ -1,0 +1,517 @@
+# Security & L7 Protection
+
+## Overview
+
+The homelab implements defense-in-depth security at the application layer (L7) using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 3-layer anti-AI scraping defense (reduced from 5 in April 2026 after removing the rewrite-body plugin). All security components operate in graceful degradation mode (fail-open) to prevent cascading failures. Security policies are deployed in audit mode first, then selectively enforced after validation.
+
+## Architecture Diagram
+
+```mermaid
+graph LR
+    Internet[Internet]
+    CF[Cloudflare WAF]
+    Tunnel[Cloudflared Tunnel]
+    CrowdSec[CrowdSec Bouncer<br/>Traefik Plugin]
+    AntiAI[Anti-AI Check<br/>poison-fountain]
+    ForwardAuth[Authentik ForwardAuth]
+    RateLimit[Rate Limit Middleware]
+    Retry[Retry Middleware<br/>2 attempts, 100ms]
+    Backend[Backend Service]
+
+    LAPI[CrowdSec LAPI<br/>3 replicas]
+    Agent[CrowdSec Agent]
+
+    Internet -->|1| CF
+    CF -->|2| Tunnel
+    Tunnel -->|3| CrowdSec
+    CrowdSec -.->|Query| LAPI
+    Agent -.->|Report| LAPI
+    CrowdSec -->|4. Pass/Block| AntiAI
+    AntiAI -->|5. Human/Bot| ForwardAuth
+    ForwardAuth -->|6. Authenticated| RateLimit
+    RateLimit -->|7. Under Limit| Retry
+    Retry -->|8. Success/Retry| Backend
+
+    style CrowdSec fill:#f9f,stroke:#333
+    style AntiAI fill:#ff9,stroke:#333
+    style ForwardAuth fill:#9f9,stroke:#333
+    style RateLimit fill:#99f,stroke:#333
+```
+
+## Components
+
+| Component | Version | Location | Purpose |
+|-----------|---------|----------|---------|
+| CrowdSec LAPI | Pinned | `stacks/crowdsec/` | Local API, threat intelligence aggregation (3 replicas) |
+| CrowdSec Agent | Pinned | `stacks/crowdsec/` | Log parser, scenario detection |
+| CrowdSec Traefik Bouncer | Plugin | Traefik config | Plugin-based IP reputation check |
+| Kyverno | Pinned chart | `stacks/kyverno/` | Policy engine for K8s admission control |
+| poison-fountain | Latest | `stacks/poison-fountain/` | Anti-AI bot detection and tarpit service |
+| cert-manager/certbot | - | `stacks/cert-manager/` | TLS certificate management |
+| Traefik | Latest | `stacks/platform/` | Ingress controller with HTTP/3 (QUIC) |
+
+## How It Works
+
+### Request Security Layers
+
+Every incoming request passes through 6 security layers:
+
+1. **Cloudflare WAF** - DDoS protection, bot detection, firewall rules (external)
+2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP
+3. **CrowdSec Bouncer** - IP reputation check against LAPI (fail-open on error)
+4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
+5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
+6. **Rate Limiting** - Per-source IP rate limits (returns 429 on breach)
+7. **Retry Middleware** - Auto-retry on transient errors (2 attempts, 100ms delay)
+
+### CrowdSec Threat Intelligence
+
+CrowdSec operates in a hub-and-agent model:
+
+**LAPI (Local API)**:
+- 3 replicas for high availability
+- Aggregates threat intelligence from agent + community
+- Maintains ban list (IP reputation database)
+- Version pinned to prevent breaking changes
+
+**Agent**:
+- Parses Traefik access logs
+- Detects attack scenarios (SQL injection, directory traversal, brute force)
+- Reports malicious IPs to LAPI
+- Shares threat intel with CrowdSec community (anonymized)
+
+**Traefik Bouncer Plugin**:
+- Integrated as Traefik middleware
+- Queries LAPI for IP reputation on each request
+- **Fail-open mode**: If LAPI unreachable, allows traffic (graceful degradation)
+- Blocks IPs on ban list, allows others
+
+**Metabase** (disabled by default):
+- Dashboard for CrowdSec analytics
+- CPU-intensive, only enable when investigating incidents
+
+### Kyverno Policy Engine
+
+Kyverno enforces cluster-wide policies via admission webhooks. All policies use `failurePolicy=Ignore` to prevent blocking cluster operations.
+
+#### 5-Tier Resource Governance
+
+Namespaces are labeled with a tier (`tier: 0` through `tier: 4`). Kyverno auto-generates:
+
+- **LimitRange** - Per-container CPU/memory limits
+- **ResourceQuota** - Namespace-wide resource caps
+
+| Tier | CPU Limit/Container | Memory Limit/Container | Namespace CPU Quota | Namespace Memory Quota |
+|------|---------------------|------------------------|---------------------|------------------------|
+| 0 | 100m | 128Mi | 500m | 512Mi |
+| 1 | 250m | 256Mi | 1000m | 1Gi |
+| 2 | 500m | 512Mi | 2000m | 2Gi |
+| 3 | 1000m | 1Gi | 4000m | 4Gi |
+| 4 | 2000m | 2Gi | 8000m | 8Gi |
+
+This prevents resource exhaustion and enforces governance without manual quota management.
+
+#### Security Policies
+
+**Why audit mode first?** Gradual rollout without breaking existing workloads. Policies collect violations, then selectively enforced after cleanup.
+
+**Wave 1 plan (locked 2026-05-18, see beads `code-8ywc`):** all four below flip from Audit → Enforce with `failurePolicy: Ignore` preserved and an exclude list covering the 31 critical namespaces (keel, calico-system, authentik, vault, cnpg-system, dbaas, monitoring, traefik, technitium, mailserver, kyverno, metallb-system, external-secrets, proxmox-csi, nfs-csi, nvidia, kube-system, cloudflared, crowdsec, reverse-proxy, reloader, descheduler, vpa, redis, sealed-secrets, headscale, wireguard, xray, infra-maintenance, metrics-server, tigera-operator). Phased: one policy per day with PolicyReport observation.
+
+| Policy | Purpose | Current | Planned (wave 1) |
+|--------|---------|---------|------------------|
+| `deny-privileged-containers` | Block privileged pods | Audit | **Enforce** |
+| `deny-host-namespaces` | Block hostNetwork/hostPID/hostIPC | Audit | **Enforce** |
+| `restrict-sys-admin` | Block CAP_SYS_ADMIN | Audit | **Enforce** |
+| `require-trusted-registries` | Only allow approved image registries (forgejo.viktorbarzin.me, docker.io, ghcr.io, quay.io, registry.k8s.io, gcr.io, oci://ghcr.io/sergelogvinov) | Audit | **Enforce** |
+
+Cosign `verify-images` is **deferred** beyond wave 1 — needs image-signing infrastructure (Sigstore / cosign + KMS) before it can enforce meaningfully.
+
+#### Operational Policies
+
+| Policy | Purpose | Mode |
+|--------|---------|------|
+| `inject-priority-class-from-tier` | Set pod priorityClass based on namespace tier | Enforce (CREATE only) |
+| `inject-ndots` | Set DNS `ndots:2` for faster lookups | Enforce |
+| `sync-tier-label` | Propagate tier label to child resources | Enforce |
+| `goldilocks-vpa-auto-mode` | Disable VPA globally (VPA off) | Enforce |
+
+### Anti-AI Scraping (3 Active Layers) (Updated 2026-04-17)
+
+Enabled by default via `ingress_factory` module. Disable per-service with `anti_ai_scraping = false`.
+
+Active middleware chain: `ai-bot-block` (ForwardAuth) + `anti-ai-headers` (X-Robots-Tag). The `strip-accept-encoding` and `anti-ai-trap-links` middlewares were removed in April 2026 due to Traefik v3.6.12 Yaegi plugin incompatibility with the rewrite-body plugin.
+
+#### Layer 1: Bot Blocking (ForwardAuth)
+
+- `ai-bot-block` middleware forward-auths to the `bot-block-proxy` openresty
+  service (`stacks/traefik/modules/traefik/main.tf`) — the bot-check hop before
+  the backend.
+- **Currently a no-op (allow-all).** `poison-fountain` is intentionally scaled
+  to 0 (clears the ExternalAccessDivergence alert), so `bot-block-proxy`
+  short-circuits `/auth` to `return 200 "allowed"` instead of proxying to an
+  absent upstream. Same effective behaviour as the previous `proxy_pass` +
+  `error_page 5xx=200` fail-open, minus the ~51k/hr upstream-connect error logs
+  and per-request connect latency it generated (cleaned up 2026-06-05, found via
+  Loki). The Deployment carries `configmap.reloader.stakater.com/reload` so
+  config changes actually reload openresty (it does not hot-reload on its own).
+- **To re-enable real bot-blocking**: restore the `upstream poison_fountain` +
+  `proxy_pass http://poison_fountain;` block in the `bot-block-proxy-config`
+  ConfigMap (git history) and scale `poison-fountain` up. It then forward-auths
+  bot checks (User-Agent / patterns) and tarpits known AI scrapers, fail-open if
+  poison-fountain is down.
+
+#### Layer 2: X-Robots-Tag Header
+
+- HTTP response header: `X-Robots-Tag: noai, noindex, nofollow`
+- Instructs compliant bots to skip content
+- Lightweight, no performance impact
+
+#### ~~Layer 3: Trap Links~~ (REMOVED)
+
+Removed April 2026. The rewrite-body Traefik plugin used to inject hidden trap links broke on Traefik v3.6.12 due to Yaegi runtime bugs. The companion `strip-accept-encoding` middleware was also removed.
+
+#### Layer 3 (formerly 4): Tarpit / Poison Content
+
+- `poison-fountain` exists as a standalone service at `poison.viktorbarzin.me` but the serving Deployment is **scaled to 0** (replicas=0); only its 6-hourly content-fetch CronJob runs. The tarpit is therefore dormant until re-enabled.
+- When running: serves AI bots extremely slowly (~50 bytes / 0.5s tarpit drip)
+- CronJob every 6 hours generates fake content
+- Trap links are no longer injected into real pages, but bots that discover `poison.viktorbarzin.me` directly would get tarpitted and poisoned
+
+**Implementation**: See `stacks/poison-fountain/` and `stacks/traefik/modules/traefik/{middleware.tf,main.tf}` (traefik moved from the platform stack to its own `traefik` stack)
+
+### Audit Logging & Anomaly Detection (Wave 1)
+
+Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
+
+| Item | State |
+|---|---|
+| W1.2 Vault `file` audit device | **LIVE** — `vault_audit.file` in `stacks/vault/main.tf:287`, writing to `/vault/audit/vault-audit.log` on `proxmox-lvm-encrypted` PVC |
+| W1.2 Vault `x_forwarded_for_authorized_addrs = 10.10.0.0/16` | **LIVE** — applied via `tg apply -target=helm_release.vault` on 2026-05-18; all 3 vault pods restarted cleanly |
+| W1.2 Vault audit log shipping to Loki | **LIVE** — `audit-tail` sidecar in vault pods + Alloy DaemonSet ships to Loki with `container="audit-tail"`. Verified via `{namespace="vault",container="audit-tail"}` LogQL query. |
+| W1.1 K8s API audit policy + shipping | **LIVE** — kube-apiserver audit policy was already configured (Metadata level, `/var/log/kubernetes/audit.log`, 7d retention). Alloy DaemonSet now tolerates control-plane taint, scrapes the audit log file, ships to Loki with `job=kubernetes-audit`. K2-K9 alert rules in Loki ruler. |
+| W1.3 Source-IP anomaly rules (K9, V7, S1) | **LIVE** (K9, V7); **S1 PENDING** — fires once promtail/Alloy on PVE host ships sshd journal with `job=sshd-pve`. |
+| W1.4 Kyverno security policies → Enforce | **LIVE** — 3 policies in Enforce mode with 35-namespace exclude list. |
+| W1.5 Kyverno trusted-registries → Enforce | **LIVE** — explicit allowlist (15 registries + 6 DockerHub library bare names + 56 DockerHub user repos). Verified by admission dry-run: `evilcorp.example/malware:v1` BLOCKED, `alpine:3.20` and `docker.io/library/alpine:3.20` ALLOWED. |
+| W1.6 Calico observe-phase (pilot: recruiter-responder) | **LIVE** (2026-05-19) — GlobalNetworkPolicy `wave1-egress-observe-recruiter-responder` with rules `[action:Log, action:Allow]`. FelixConfiguration.flowLogsFileEnabled approach abandoned (Calico Enterprise-only field, rejected by OSS v3.26). Log action emits iptables LOG with prefix `calico-packet: ` → kernel → journald → Alloy → Loki. Verified: `{job="node-journal"} \|~ "calico-packet"` returns real packet metadata (SRC/DST/PROTO). Expand to more namespaces by adding to `namespaceSelector`. |
+| W1.7 NetworkPolicy phased enforce | **PARTIAL ANALYSIS** — first observation snapshot at `docs/architecture/wave1-egress-observation-2026-05-22.md` (36 source namespaces seen so far, 29 thin-profile candidates). Recommend continuing observation through 2026-05-29 (full week) before any enforce flip. Pilot enforce target: `recruiter-responder` (2 destinations only). `servarr` stays in Log+Allow indefinitely (BitTorrent P2P incompatible with static enforce). |
+
+The block below documents the locked design.
+
+Response model: **(I) Slack-only, daily skim.** All security alerts land in a new `#security` Slack channel via Alertmanager. No paging. Mean detection time accepted as ~12-24h; the design weight sits on prevention (Kyverno enforce, NetworkPolicy default-deny egress) rather than runtime detection.
+
+#### Detection sources
+
+| Source | Mechanism | Ships via | Loki job label |
+|---|---|---|---|
+| K8s API audit log | Custom audit policy on kube-apiserver: drop `get`/`list`/`watch` at `None` for most resources, log writes at `Metadata`, secret reads at `Metadata`, `exec`/`portforward` at `RequestResponse`, exclude kubelet+controller-manager noise. Codified in `stacks/infra` kubeadm config templating. | Alloy DaemonSet tails `/var/log/kubernetes/audit/*.log` | `job=kube-audit` |
+| Vault audit log | `file` audit device on existing Vault PVC. Vault listener config sets `x_forwarded_for_authorized_addrs` trusting Traefik pod CIDR so `remote_addr` is the real client IP, not Traefik's. | Alloy tails audit log file | `job=vault-audit` |
+| PVE sshd auth log | journald `_SYSTEMD_UNIT=ssh.service` | promtail systemd unit on Proxmox host (192.168.1.127) | `job=sshd-pve` |
+| Calico flow log | `flowLogsFileEnabled: true` in Calico Felix config | Alloy (cluster-wide) | `job=calico-flow` (W1.6 only) |
+
+#### Alert rules (16 total)
+
+Routed via **Loki ruler → Alertmanager → `#security` Slack receiver**. Same handling path as existing infra alerts — silenceable in Alertmanager UI, history queryable, severity labels (critical/warning/info) inside the single `#security` channel.
+
+**K8s API audit (K2-K9, 8 rules — K1 cluster-admin-grant intentionally skipped):**
+
+| # | Event | Severity |
+|---|---|---|
+| K2 | ServiceAccount token used from outside cluster (sourceIPs not in pod CIDR or trusted LAN) | critical |
+| K3 | Secret READ in `vault`, `sealed-secrets`, `external-secrets` namespaces by a non-allowlisted ServiceAccount | critical |
+| K4 | Exec into a pod in `vault`, `kube-system`, `dbaas`, `cnpg-system` (excluding `me@viktorbarzin.me` + 1 break-glass SA) | warning |
+| K5 | >5 deletes of `Pod`, `Secret`, or `ConfigMap` in 60s by any single actor | critical |
+| K6 | `audit-log-path` flag or audit policy modified on kube-apiserver | critical |
+| K7 | New ClusterRole created with `verbs: ["*"]` and `resources: ["*"]` | warning |
+| K8 | Anonymous binding granted (any RoleBinding/CRB referencing `system:anonymous` or `system:unauthenticated`) | critical |
+| K9 | Authenticated request where `user.username == "me@viktorbarzin.me"` AND `sourceIPs[0]` NOT in allowlist CIDRs | critical |
+
+**Vault audit (V1-V7):**
+
+| # | Event | Severity |
+|---|---|---|
+| V1 | Root token created | critical |
+| V2 | Audit device disabled or modified | critical |
+| V3 | Seal status changed (`sys/seal` write) | critical |
+| V4 | Policy written or modified (allowlist Terraform-driven writes by source IP / token role) | warning |
+| V5 | Authentication failure spike >10/min on any auth method | warning |
+| V6 | Token created with policies different from parent (privilege escalation) | critical |
+| V7 | Vault audit event where `auth.entity_id == <viktor-entity-id>` AND `remote_addr` NOT in allowlist CIDRs | critical |
+
+**Host (S1):**
+
+| # | Event | Severity |
+|---|---|---|
+| S1 | PVE sshd auth success from source IP NOT in allowlist | critical |
+
+#### Allowlist — "expected source IPs" for K2, K9, V7, S1
+
+| CIDR | Source |
+|---|---|
+| `10.0.20.0/22` | VLAN 20 (K8s cluster + main LAN) |
+| `192.168.1.0/24` | Proxmox host LAN + Sofia LAN (same RFC1918 block in both physical locations; cross-site traffic transits Headscale so the CIDR matches only on-LAN clients in either location) |
+| K8s pod CIDR (verify at implementation time) | In-cluster pods talking to apiserver |
+| K8s service CIDR | Service-to-apiserver traffic |
+| Headscale tailnet | VPN-connected devices |
+
+**Policy: no public-IP access ever.** Vault, kube-apiserver, PVE sshd must transit a trusted LAN or Headscale. Anything else fires an alert.
+
+#### Why no canary tokens
+
+Original plan included canary tokens (fake K8s Secret, Vault KV path, PVE file, sinkhole hostname). Rejected because Viktor routinely greps `secret/viktor` (135 keys) and lists `kubectl get secret -A` — any read-trigger canary self-fires. Use-based canaries (zero-RBAC SA tokens with audit alerts on use) were also considered but rejected in favor of cleaner source-IP anomaly detection (K9, V7) on REAL tokens — same threat model, no fake-token operational burden.
+
+#### Why no K1 (cluster-admin grant detection)
+
+Viktor opted out. Gap covered indirectly by K7 (new `*,*` ClusterRole created), K8 (anonymous binding), and K3 (secret read on Vault namespace) — most attacker progressions toward cluster-admin trigger one of these.
+
+#### IOPS / disk-wear
+
+Custom audit policy reduces volume ~80-90% vs default Metadata-everywhere. Loki tuned for fewer larger chunks: `chunk_target_size: 1.5MB`, `chunk_idle_period: 30m`, snappy compression. Retention 90d for security streams (matches Technitium DNS query log precedent). Net estimate: ~1-2 GB/day additional disk writes after tuning.
+
+### NetworkPolicy Default-Deny Egress (Wave 1 — observe-then-enforce, tier 3+4)
+
+Beads: `code-8ywc` W1.6 + W1.7. **Status: planned.**
+
+**Approach (γ): cluster-wide observe-then-enforce.**
+
+1. **Week 0:** Enable Calico flow logs cluster-wide. Apply a GlobalNetworkPolicy with selector `tier in {tier-3, tier-4}`, `action: Log` (no Deny). Ship flow logs to Loki.
+2. **Week 1:** Build per-namespace egress allowlist from observed traffic. Common allowlist module `tier3_egress_baseline` covers DNS, NTP, internal Vault/ESO/Authentik, Brevo SMTP, Cloudflare API, OAuth providers. Per-namespace add-ons for service-specific external destinations.
+3. **Week 2-3:** Apply default-deny + allowlist per-namespace, starting `recruiter-responder` (smallest egress footprint — local llama-cpp). Watch 24-48h per namespace, iterate. Roll out 3-5 namespaces/day.
+
+**Scope exclusions:** tier 0/1/2 namespaces (defer to wave 2), 31 critical infra namespaces (same exclude list as Kyverno).
+
+**DNS handling:** Calico GlobalNetworkPolicy supports domain-based rules via the `domains:` selector which queries CoreDNS internally. Static IPs reserved for fixed-IP services (Brevo SMTP relay).
+
+**Known risks:**
+- Rare-event misses: a Sunday-only CronJob's egress won't appear in 7 days of flow logs. Mitigation: extend observation to 2 weeks for namespaces with weekly CronJobs.
+- Mass-rollout cascade: the 26h March 2026 outage (memory id=390) was a mass-change cascade. Mitigation: phased per-namespace with health-check pauses, similar to the 2026-05-17 Keel phased rollout (memory id=1972).
+
+### TLS & HTTP/3
+
+**Traefik** handles TLS termination:
+- HTTP/3 (QUIC) enabled for performance
+- Automatic HTTP → HTTPS redirect
+- cert-manager/certbot manages certificate lifecycle
+- Let's Encrypt integration for automatic renewal
+
+### Rate Limiting
+
+**Per-source IP limits**:
+- Default: 100 requests/minute
+- Returns **429 Too Many Requests** (not 503)
+- Higher limits for upload-heavy services:
+  - Immich: 500 req/min (photo uploads)
+  - Nextcloud: 300 req/min (file sync)
+
+**Retry Middleware**:
+- 2 attempts max
+- 100ms delay between retries
+- Applied after rate limiting
+- Handles transient backend errors
+
+### Fallback Proxies
+
+**Authentik Fallback**:
+- If Authentik down, falls back to basicAuth
+- Prevents total service outage during IdP maintenance
+- Temporary credentials stored in Vault
+
+**Poison-Fountain Fallback**:
+- If anti-AI service down, allows all traffic
+- Fail-open prevents blocking legitimate users
+- Monitors for service health, auto-recovers
+
+## Configuration
+
+### Key Config Files
+
+| Path | Purpose |
+|------|---------|
+| `stacks/crowdsec/` | CrowdSec LAPI, agent, bouncer config |
+| `stacks/kyverno/` | Kyverno deployment + policies |
+| `stacks/poison-fountain/` | Anti-AI service + CronJob |
+| `stacks/platform/modules/traefik/middleware.tf` | Security middleware definitions |
+| `stacks/platform/modules/ingress_factory/` | Per-service security toggles |
+
+### Vault Paths
+
+- **CrowdSec API key**: `secret/crowdsec/api-key` - LAPI authentication
+- **BasicAuth fallback**: `secret/authentik/fallback-creds` - Emergency auth
+- **TLS certificates**: `secret/tls/` - Certificate private keys
+
+### Terraform Stacks
+
+- `stacks/crowdsec/` - CrowdSec infrastructure
+- `stacks/kyverno/` - Policy engine
+- `stacks/poison-fountain/` - Anti-AI defense
+- `stacks/platform/` - Traefik + middleware
+
+### Per-Service Security Config
+
+```hcl
+module "myapp_ingress" {
+  source = "./modules/ingress_factory"
+
+  name      = "myapp"
+  host      = "myapp.viktorbarzin.me"
+
+  # Security toggles
+  protected         = true   # Enable ForwardAuth
+  anti_ai_scraping  = false  # Disable anti-AI (e.g., for public API)
+  rate_limit        = 200    # Custom rate limit (req/min)
+}
+```
+
+### Kyverno Policy Example
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: inject-ndots
+spec:
+  background: false
+  rules:
+  - name: inject-ndots
+    match:
+      resources:
+        kinds:
+        - Pod
+    mutate:
+      patchStrategicMerge:
+        spec:
+          dnsConfig:
+            options:
+            - name: ndots
+              value: "2"
+```
+
+## Decisions & Rationale
+
+### Why CrowdSec over ModSecurity?
+
+- **Community threat intelligence**: Shared ban lists, crowdsourced attack detection
+- **Easier management**: YAML scenarios vs complex ModSecurity rules
+- **Better performance**: Lightweight Go agent vs resource-heavy Apache module
+- **Active development**: More frequent updates, responsive community
+
+### Why Audit-Only Security Policies?
+
+- **Gradual rollout**: Identify violations without breaking existing workloads
+- **Risk reduction**: Prevents policy bugs from blocking critical deployments
+- **Better observability**: Collect violation metrics before enforcing
+- **Selective enforcement**: Move to enforce mode per-policy after validation
+
+### Why Multi-Layer Anti-AI Defense? (Updated 2026-04-17)
+
+- **Defense in depth**: Each layer catches different bot types
+- **Compliant bots**: Layer 2 (X-Robots-Tag) handles respectful crawlers
+- **Persistent bots**: Tarpit makes scraping uneconomical
+- **Poison content**: Degrades training data for bots that reach poison-fountain
+- Layer 3 (trap links via rewrite-body) was removed due to Traefik v3 plugin incompatibility
+
+### Why Fail-Open Mode?
+
+- **Availability over security**: Homelab prioritizes uptime
+- **Graceful degradation**: Single component failure doesn't cascade
+- **Manual intervention**: Security incidents are rare, can handle manually
+- **Layer redundancy**: If one layer fails, others still protect
+
+### Why Pin CrowdSec/Kyverno Versions?
+
+- **Breaking changes**: Both projects had breaking config changes in past
+- **Controlled upgrades**: Test in staging before upgrading production
+- **Stability**: Prevents auto-upgrade during outages
+- **Rollback**: Easy to revert if upgrade causes issues
+
+### Why HTTP/3 (QUIC)?
+
+- **Performance**: Lower latency, better mobile performance
+- **Connection migration**: Survives IP changes (mobile networks)
+- **0-RTT**: Faster TLS handshake for repeat visitors
+- **Future-proof**: Industry moving to HTTP/3
+
+## Troubleshooting
+
+### CrowdSec Blocking Legitimate IP
+
+**Problem**: Legitimate user IP on ban list.
+
+**Fix**:
+1. Check LAPI decisions: `kubectl exec -it crowdsec-lapi-0 -- cscli decisions list`
+2. Remove ban: `kubectl exec -it crowdsec-lapi-0 -- cscli decisions delete --ip <IP>`
+3. Whitelist if needed: Add to `stacks/crowdsec/whitelist.yaml`
+
+### Kyverno Policy Blocking Deployment
+
+**Problem**: Pod creation fails with policy violation.
+
+**Fix**:
+1. Check policy reports: `kubectl get policyreport -A`
+2. Verify `failurePolicy=Ignore` is set (should never block)
+3. If blocking, temporarily disable policy: `kubectl annotate clusterpolicy <policy> kyverno.io/exclude=true`
+4. Investigate root cause, fix workload or update policy
+
+### Anti-AI Service Down, Traffic Blocked
+
+**Problem**: anti-AI ForwardAuth (`ai-bot-block`) blocks traffic. With `bot-block-proxy` as a no-op `return 200` (poison-fountain scaled to 0) this should not happen; if it does, `bot-block-proxy` itself is unreachable (Traefik ForwardAuth fails **closed** when the auth server is down).
+
+**Fix**:
+1. Check `bot-block-proxy` pods are Ready: `kubectl get pods -n traefik -l app=bot-block-proxy` (2 replicas; critical-path forward-auth target).
+2. Inspect/restart: `kubectl rollout restart deployment/bot-block-proxy -n traefik`. Config lives in the `bot-block-proxy-config` ConfigMap (`stacks/traefik/modules/traefik/main.tf`); changes auto-reload via the `configmap.reloader.stakater.com/reload` annotation.
+3. Temporary disable: Set `anti_ai_scraping = false` in `ingress_factory` for affected services.
+
+### Rate Limit Too Aggressive
+
+**Problem**: Legitimate users getting 429 errors.
+
+**Fix**:
+1. Check Traefik logs for rate limit hits: `kubectl logs -n traefik -l app=traefik | grep 429`
+2. Increase limit in `ingress_factory`: `rate_limit = 300`
+3. Apply: `terraform apply`
+
+### HTTP/3 Not Working
+
+**Problem**: Browser shows HTTP/2, not HTTP/3.
+
+**Fix**:
+1. Verify Traefik HTTP/3 enabled: `kubectl get cm traefik-config -o yaml | grep http3`
+2. Check UDP port 443 accessible: `nc -u <public-ip> 443`
+3. Browser support: Use Chrome/Firefox dev tools, check Protocol column
+
+### TLS Certificate Expired
+
+**Problem**: Browser shows certificate expired.
+
+**Fix**:
+1. Check cert-manager: `kubectl get certificate -A`
+2. Force renewal: `kubectl delete secret <tls-secret> -n <namespace>`
+3. cert-manager will auto-renew within 5 minutes
+4. If fails, check Let's Encrypt rate limits
+
+### Traefik Retry Loop
+
+**Problem**: Backend logs show duplicate requests.
+
+**Fix**:
+1. Check retry middleware config: Should be 2 attempts max
+2. Verify backend isn't returning transient errors: Check for 5xx responses
+3. Disable retry for specific service: Remove retry middleware from `ingress_factory`
+
+### Poison Content Not Serving (Updated 2026-04-17)
+
+**Problem**: Bots not receiving poisoned content on `poison.viktorbarzin.me`.
+
+**Note**: Poison content is no longer injected into real pages (rewrite-body removed). It is only served directly via the `poison.viktorbarzin.me` subdomain.
+
+**Fix**:
+1. Verify CronJob running: `kubectl get cronjob -n poison-fountain`
+2. Check logs: `kubectl logs -n poison-fountain -l app=poison-fountain`
+3. Manually trigger: `kubectl create job --from=cronjob/poison-content manual-poison`
+
+## Related
+
+- [Authentication & Authorization](./authentication.md) - Authentik, OIDC, ForwardAuth
+- [Networking](./networking.md) - Ingress, DNS, load balancing
+- [Monitoring](./monitoring.md) - Prometheus, Grafana, alerting
+- [CrowdSec Runbook](../runbooks/crowdsec.md) - CrowdSec operations
+- [Kyverno Policy Management](../runbooks/kyverno.md) - Policy authoring and troubleshooting

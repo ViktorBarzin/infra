@@ -1,0 +1,214 @@
+resource "kubernetes_namespace" "tuya-bridge" {
+  metadata {
+    name = "tuya-bridge"
+    labels = {
+      "istio-injection" : "disabled"
+      tier = local.tiers.cluster
+      "keel.sh/enrolled" = "true"
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "tuya-bridge-secrets"
+      namespace = "tuya-bridge"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "tuya-bridge-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "tuya-bridge"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.tuya-bridge]
+}
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_deployment" "tuya-bridge" {
+  metadata {
+    name      = "tuya-bridge"
+    namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
+    labels = {
+      app  = "tuya-bridge"
+      tier = local.tiers.cluster
+    }
+    annotations = {
+      "reloader.stakater.com/auto" = "true"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "tuya-bridge"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "tuya-bridge"
+        }
+      }
+      spec {
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        container {
+          image             = "forgejo.viktorbarzin.me/viktor/tuya_bridge:${var.image_tag}"
+          image_pull_policy = "IfNotPresent"
+          name              = "tuya-bridge"
+          port {
+            container_port = 8080
+          }
+          env {
+            name = "TINYTUYA_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "api_key"
+              }
+            }
+          }
+          env {
+            name = "TINYTUYA_API_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "api_secret"
+              }
+            }
+          }
+          env {
+            name = "SERVICE_API_KEY" # used for auth the API endpoint
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "service_secret"
+              }
+            }
+          }
+          env {
+            name = "SLACK_URL"
+            value_from {
+              secret_key_ref {
+                name = "tuya-bridge-secrets"
+                key  = "slack_url"
+              }
+            }
+          }
+          liveness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 60
+            period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 6
+          }
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 15
+            timeout_seconds       = 5
+            failure_threshold     = 2
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "tuya-bridge" {
+  metadata {
+    name      = "tuya-bridge"
+    namespace = kubernetes_namespace.tuya-bridge.metadata[0].name
+    labels = {
+      "app" = "tuya-bridge"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "tuya-bridge"
+    }
+    port {
+      name        = "http"
+      port        = "80"
+      target_port = "8080"
+    }
+  }
+}
+
+module "ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # Smart-home automation HTTP API — Home Assistant and other automations
+  # call this with SERVICE_API_KEY in headers. Programmatic clients can't
+  # follow Authentik 302s.
+  # auth = "none": Smart-home automation API — SERVICE_API_KEY in headers; programmatic clients cannot follow Authentik redirects.
+  auth            = "none"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.tuya-bridge.metadata[0].name
+  name            = "tuya-bridge"
+  tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Tuya Bridge"
+    "gethomepage.dev/description"  = "Smart device bridge"
+    "gethomepage.dev/icon"         = "mdi-home-automation"
+    "gethomepage.dev/group"        = "Smart Home"
+    "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
+# CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# CI retrigger v3 2026-05-16T14:06:39Z

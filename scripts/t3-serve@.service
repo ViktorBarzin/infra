@@ -1,0 +1,20 @@
+[Unit]
+Description=T3 Code server for %i (t3 serve, per-user)
+Documentation=https://github.com/pingdotgg/t3code
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+Environment=HOME=/home/%i
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/t3-serve/%i.env
+WorkingDirectory=/home/%i
+ExecStart=/usr/bin/t3 serve --host 0.0.0.0 --port ${T3_PORT} --base-dir /home/%i/.t3
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

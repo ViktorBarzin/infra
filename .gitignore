@@ -1,0 +1,105 @@
+
+# Created by https://www.toptal.com/developers/gitignore/api/terraform
+# Edit at https://www.toptal.com/developers/gitignore?templates=terraform
+
+### Terraform ###
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.backup
+
+# Crash log files
+crash.log
+
+# Ignore any .tfvars files that are generated automatically for each Terraform run. Most
+# .tfvars files are managed as part of configuration and so should be included in
+# version control.
+#
+# example.tfvars
+#*.tfvars
+
+# Ignore override files as they are usually used to override resources locally and so
+# are not checked in
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Include override files you do wish to add to version control using negated pattern
+# !example_override.tf
+
+# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
+# example: *tfplan*
+
+git_crypt.key
+
+# SOPS — decrypted secrets (temporary, never commit)
+/secrets.auto.tfvars.json
+/secrets.auto.tfvars.json.*
+
+# Claude Code - temporary/sensitive files
+.claude/cmd_input.txt
+.claude/cmd_output.txt
+.claude/cmd_status.txt
+.claude/settings.local.json
+.claude/._*
+
+._*
+
+# Terragrunt
+.terragrunt-cache/
+
+# Terraform state — plaintext is ignored, encrypted is committed
+state/stacks/*/terraform.tfstate
+state/stacks/*/terraform.tfstate.backup
+state/stacks/*/*.backup
+state/backups/
+state/terraform.tfstate
+state/infra/
+# Allow encrypted state
+!state/stacks/*/terraform.tfstate.enc
+
+# Terragrunt-generated files (providers, backend config)
+backend.tf
+providers.tf
+.terraform.lock.hcl
+cloudflare_provider.tf
+tiers.tf
+stacks/*/cloudflare_provider.tf
+stacks/*/tiers.tf
+stacks/*/terragrunt_rendered.json
+
+# Kubernetes config (sensitive)
+config
+
+# Node.js (not part of infra)
+node_modules/
+package-lock.json
+package.json
+
+# Archived - secrets now in SOPS (secrets.auto.tfvars.json)
+terraform.tfvars
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+
+# Build artifacts — binaries should be built by CI, not committed
+cli/cli
+cli/infra_cli
+stacks/terminal/clipboard-upload/clipboard-upload
+*.zip
+*.tar.gz
+*.tgz
+*.iso
+*.img
+*.bin
+*.exe
+*.dmg
+
+# Plaintext terraform state — NEVER commit (use SOPS-encrypted .tfstate.enc only)
+terraform.tfstate
+terraform.tfstate.backup

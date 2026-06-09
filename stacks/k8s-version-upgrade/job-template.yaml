@@ -1,0 +1,88 @@
+# k8s-upgrade-chain Job template.
+#
+# Rendered by `envsubst` inside upgrade-step.sh (and the detection CronJob)
+# before `kubectl apply`. All ${VAR} placeholders are envsubst-side; this file
+# is NOT processed by Terraform.
+#
+# Required environment for envsubst:
+#   JOB_NAME            unique-per-(phase, target_version[, target_node])
+#   PHASE_NEXT          phase the Job runs (preflight|master|worker|postflight)
+#   TARGET_NODE_NEXT    node the Job operates on (empty for preflight/postflight)
+#   TARGET_VERSION      X.Y.Z
+#   TARGET_VERSION_LABEL  X-Y-Z (label-safe)
+#   KIND                patch | minor
+#   IMAGE               container image to run upgrade-step.sh
+#   SCHEDULING_BLOCK    YAML fragment with nodeSelector/tolerations (may be empty)
+#
+# Idempotency: name is deterministic per (phase, target_version[, target_node])
+# so `kubectl apply` reconciles to a single Job per run.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: k8s-upgrade
+  labels:
+    app: k8s-upgrade-chain
+    phase: ${PHASE_NEXT}
+    target-version: "${TARGET_VERSION_LABEL}"
+spec:
+  ttlSecondsAfterFinished: 604800   # 7 days for postmortem review
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: k8s-upgrade-chain
+        phase: ${PHASE_NEXT}
+    spec:
+      serviceAccountName: k8s-upgrade-job
+      restartPolicy: Never
+${SCHEDULING_BLOCK}
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: upgrade-step
+          image: ${IMAGE}
+          env:
+            - name: PHASE
+              value: "${PHASE_NEXT}"
+            - name: TARGET_NODE
+              value: "${TARGET_NODE_NEXT}"
+            - name: TARGET_VERSION
+              value: "${TARGET_VERSION}"
+            - name: KIND
+              value: "${KIND}"
+            - name: IMAGE
+              value: "${IMAGE}"
+            - name: HOME
+              value: "/tmp"
+          command: ["/bin/bash", "/scripts/upgrade-step.sh"]
+          volumeMounts:
+            - name: creds
+              mountPath: /secrets/k8s-upgrade
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: template
+              mountPath: /template
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+      volumes:
+        - name: creds
+          secret:
+            secretName: k8s-upgrade-creds
+            # 0444 so the non-root container can read; upgrade-step.sh copies
+            # the SSH key to /tmp/ssh_key with mode 0400 for openssh.
+            defaultMode: 0444
+        - name: scripts
+          configMap:
+            name: k8s-upgrade-scripts
+            defaultMode: 0755
+        - name: template
+          configMap:
+            name: k8s-upgrade-job-template

@@ -1,0 +1,26 @@
+# /etc/exports — NFS export configuration for Proxmox VE host
+# Managed in git: infra/scripts/pve-nfs-exports
+# Deploy: scp scripts/pve-nfs-exports root@192.168.1.127:/etc/exports && ssh root@192.168.1.127 exportfs -ra
+#
+# CRITICAL NOTES (learned from 2026-04-14 outage [PM-2026-04-14]):
+#   - NEVER add fsid=0 to /srv/nfs or /srv/nfs-ssd exports. fsid=0 designates the
+#     NFSv4 pseudo-root which changes path resolution for ALL subdirectory mounts.
+#     When CSI mounts use paths like /srv/nfs/technitium, fsid=0 makes them resolve
+#     as the root itself, causing ENOENT on all subdirectory mounts.
+#   - fsid=1 is acceptable on /srv/nfs-ssd (unique ID, not root).
+#   - The NFS CSI driver mounts subdirectories — never use fsid=0 on any export
+#     that serves dynamic path mounts.
+#   - NFSv3 is disabled on this host (vers3=n in /etc/nfs.conf) — all k8s mounts
+#     must use nfsvers=4 mount option.
+#
+# Mount options explanation:
+#   rw           — read/write access (required for PVCs)
+#   async        — async writes safe: UPS protects host + Vault Raft replication +
+#                  databases on block storage. Only NFS metadata at risk.
+#   no_subtree_check — disable subtree checking for performance and reliability
+#   no_root_squash   — k8s CSI driver runs as root; squashing breaks PVC writes
+#   insecure         — allow source ports >1024 (required: pfSense VLAN NAT uses
+#                      unprivileged ports for VLAN 10 → 192.168.1.x traffic)
+#
+/srv/nfs *(rw,async,no_subtree_check,no_root_squash,insecure)
+/srv/nfs-ssd *(rw,sync,no_subtree_check,no_root_squash,insecure,fsid=1)

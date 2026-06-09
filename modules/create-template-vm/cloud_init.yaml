@@ -1,0 +1,185 @@
+#cloud-config
+# Hostname intentionally NOT set here — cloud-init reads it from
+# Proxmox's auto-generated meta-data (which uses `qm set --name <X>`),
+# so a single shared snippet works for every node.
+manage_etc_hosts: true
+users:
+  - name: wizard
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${authorized_ssh_key}
+    passwd: ${passwd}
+    lock_passwd: false # enable passwd login
+    shell: /bin/bash
+package_update: true
+package_upgrade: true
+packages:
+  - htop
+  - vim
+  - curl
+  - jq
+  - tcpdump
+  - tree
+  - tmux
+  - wget
+  - net-tools
+  - zsh
+  - apt-transport-https
+  - ca-certificates
+  - gpg
+  - isc-dhcp-client
+  - cloud-guest-utils # to enable resizing of disk via growpart
+  - qemu-guest-agent
+  - nginx
+  # docker
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  %{if is_k8s_template}
+  # kubernetes
+  - kubeadm
+  - kubelet
+  # iSCSI client for CSI-backed database storage
+  - open-iscsi
+  %{endif}
+
+apt:
+  sources:
+  %{if is_k8s_template}
+    kubernetes:
+      source: "deb https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /"
+      keyid: "DE15B14486CD377B9E876E1A234654DA9A296436"
+      filename: kubernetes.list
+  %{endif}
+    docker:
+      source: "deb https://download.docker.com/linux/ubuntu noble stable"
+      keyid: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+      filename: docker.list
+
+%{if is_k8s_template}
+# Setup script is base64-encoded by the module so YAML whitespace
+# handling never touches the heredoc bodies inside it. Replaces an
+# earlier `indent(6, …)` approach that put `[plugins.*]` TOML
+# sections at col 6 inside `cat >> /etc/containerd/config.toml`
+# heredocs — containerd refused to parse the result and the node5 v1
+# boot failed there (2026-05-26). Source: modules/create-template-vm/k8s-node-containerd-setup.sh
+write_files:
+  - path: /usr/local/bin/k8s-node-containerd-setup.sh
+    permissions: '0755'
+    owner: root:root
+    encoding: b64
+    content: ${k8s_node_setup_script_b64}
+  - path: /usr/local/bin/k8s-node-post-join-tune.sh
+    permissions: '0755'
+    owner: root:root
+    encoding: b64
+    content: ${k8s_node_post_join_script_b64}
+%{endif}
+
+runcmd:
+  # Enable weekly TRIM/discard to reclaim freed blocks in LVM thin pool
+  - systemctl enable --now fstrim.timer
+  # Enable persistent journald logging for crash forensics, with size limits to reduce disk wear
+  - mkdir -p /var/log/journal
+  - sed -i 's/#Storage=auto/Storage=persistent/' /etc/systemd/journald.conf
+  - sed -i 's/#SystemMaxUse=/SystemMaxUse=500M/' /etc/systemd/journald.conf
+  - sed -i 's/#MaxRetentionSec=/MaxRetentionSec=7day/' /etc/systemd/journald.conf
+  - sed -i 's/#MaxFileSec=/MaxFileSec=1day/' /etc/systemd/journald.conf
+  - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
+  - systemctl restart systemd-journald
+  %{if is_k8s_template}
+  # systemd-resolved global DNS fallback. Without this, only the
+  # link-level DNS from Proxmox's `qm set --nameserver` (Technitium,
+  # 10.0.20.201) is consulted — and Technitium returns NXDOMAIN for
+  # forgejo.viktorbarzin.me, so kubelet image pulls from the Forgejo
+  # registry break. Public DNS upstream + Technitium fallback matches
+  # the pre-existing manual setup on k8s-node1..4.
+  - mkdir -p /etc/systemd/resolved.conf.d
+  - |
+    cat > /etc/systemd/resolved.conf.d/global-dns.conf <<'EOF'
+    [Resolve]
+    DNS=8.8.8.8 1.1.1.1
+    FallbackDNS=10.0.20.201
+    EOF
+  - systemctl restart systemd-resolved
+  # Re-enabled 2026-05-10: unattended-upgrades is back on, but with a tight
+  # Allowed-Origins list, a Package-Blacklist for k8s/containerd/runc/calico,
+  # and Automatic-Reboot disabled (kured + sentinel-gate handles reboots in a
+  # 24h-soaked rolling window, gated by Prometheus alerts).
+  # Original outage (March 2026) was kernel update → containerd overlayfs corruption.
+  # Mitigations: 24h cool-down between node reboots, Prometheus halt-on-alert,
+  # apt-mark hold on k8s components, Package-Blacklist for runtime components.
+  - apt-get install -y unattended-upgrades update-notifier-common
+  - |
+    cat > /etc/apt/apt.conf.d/52unattended-upgrades-k8s <<'EOF'
+    Unattended-Upgrade::Allowed-Origins {
+        "$${distro_id}:$${distro_codename}";
+        "$${distro_id}:$${distro_codename}-security";
+        "$${distro_id}:$${distro_codename}-updates";
+        "$${distro_id}ESMApps:$${distro_codename}-apps-security";
+        "$${distro_id}ESM:$${distro_codename}-infra-security";
+    };
+    Unattended-Upgrade::Package-Blacklist {
+        "^containerd(\.io)?$$";
+        "^runc$$";
+        "^cri-tools$$";
+        "^kubernetes-cni$$";
+        "^calico-.*";
+        "^cni-plugins-.*";
+        "^docker-ce$$";
+    };
+    Unattended-Upgrade::DevRelease "false";
+    Unattended-Upgrade::Automatic-Reboot "false";
+    EOF
+  - |
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::Unattended-Upgrade "1";
+    EOF
+  - systemctl unmask unattended-upgrades 2>/dev/null || true
+  - systemctl enable --now unattended-upgrades
+  - apt-mark hold kubelet kubeadm kubectl
+  - apt-mark hold containerd containerd.io runc 2>/dev/null || true
+  - systemctl stop kubelet
+  - containerd config default | sudo tee /etc/containerd/config.toml
+  # The containerd/kubelet setup is delivered as /usr/local/bin/k8s-node-containerd-setup.sh
+  # via the write_files: block at the top of this file. We run it as a single
+  # bash invocation here so cloud-init only sees a one-line runcmd item.
+  # (Previous inline `- $${containerd_config_update_command}` broke YAML parsing
+  # because the heredoc contains mixed-indent inner shell heredocs.)
+  - bash /usr/local/bin/k8s-node-containerd-setup.sh
+  - systemctl restart containerd
+  - systemctl enable --now iscsid
+  # Harden iSCSI: increase recovery timeout (300s vs 120s default) and enable
+  # CRC32C data/header digests to detect bit flips over the network.
+  # Prevents SQLite corruption from transient iSCSI session drops.
+  - sed -i 's/^node.session.timeo.replacement_timeout = .*/node.session.timeo.replacement_timeout = 300/' /etc/iscsi/iscsid.conf
+  - sed -i 's/^node.conn\[0\].timeo.noop_out_interval = .*/node.conn[0].timeo.noop_out_interval = 10/' /etc/iscsi/iscsid.conf
+  - sed -i 's/^node.conn\[0\].timeo.noop_out_timeout = .*/node.conn[0].timeo.noop_out_timeout = 15/' /etc/iscsi/iscsid.conf
+  - |
+    if ! grep -q '^node.conn\[0\].iscsi.HeaderDigest' /etc/iscsi/iscsid.conf; then
+      echo 'node.conn[0].iscsi.HeaderDigest = CRC32C,None' >> /etc/iscsi/iscsid.conf
+      echo 'node.conn[0].iscsi.DataDigest = CRC32C,None' >> /etc/iscsi/iscsid.conf
+    fi
+  - systemctl restart iscsid
+  # Create /sentinel directory for kured reboot gating (sentinel gate DaemonSet)
+  - mkdir -p /sentinel
+  # Disable swap — kubelet defaults to failSwapOn=true and won't start otherwise.
+  # (Previously this snippet created a 4G swapfile for "memory pressure relief"
+  # but never set failSwapOn=false / memorySwap.swapBehavior together, so the
+  # join consistently bricked kubelet — observed on node6 boot v3 2026-05-26.)
+  - swapoff -a
+  - sed -i '/ swap / s/^/#/' /etc/fstab
+  - ${k8s_join_command}
+  - systemctl enable kubelet
+  - systemctl start kubelet
+  # Kubelet tuning runs AFTER kubeadm join — that's when
+  # /var/lib/kubelet/config.yaml gets written. Restarts kubelet at the
+  # end to pick up the patched config.
+  - bash /usr/local/bin/k8s-node-post-join-tune.sh
+  %{ endif }
+  %{ for provision_cmd in provision_cmds ~}
+  - ${provision_cmd}
+  %{ endfor ~}

@@ -1,0 +1,15 @@
+[Unit]
+Description=t3 per-user dispatch + auto-pair (X-authentik-username -> user instance)
+After=network.target
+
+[Service]
+Type=simple
+# Unprivileged dedicated user; the only privileged action is `sudo t3-mint`
+# (scoped in /etc/sudoers.d/t3-autopair). Compromise => mint tokens at most.
+User=t3-dispatch
+ExecStart=/usr/local/bin/t3-dispatch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,191 @@
+# image.tag is rendered dynamically (templatefile var `image_tag`) from the
+# CURRENT live Deployment tag, falling back to var.nextcloud_image_tag_floor
+# (32.0.9) on fresh install / DR — see stacks/nextcloud/main.tf
+# `data.kubernetes_resource.nextcloud_live` + locals. This makes helm upgrades
+# image-no-ops in steady state and means a re-render can NEVER downgrade below
+# the Keel-bumped live tag (the 2026-06-01 CrashLoop: a pinned 32.0.3 lost to
+# live 32.0.9 and Nextcloud refused the downgrade). Keel (keel.sh/policy=minor)
+# bumps the live tag upward within major 32; the next apply just follows it.
+# flavor=apache renders the bare apache-default tag (live image is
+# `nextcloud:<tag>`, no -apache suffix).
+image:
+  flavor: apache
+  tag: "${image_tag}"
+
+nextcloud:
+  host: nextcloud.viktorbarzin.me
+  trustedDomains:
+    - nextcloud.viktorbarzin.me
+  # mail:
+  #   enabled: true
+  #   # the user we send email as
+  #   fromAddress: nextcloud@viktorbarzin.me
+  #   # the domain we send email from
+  #   domain: viktorbarzin.me
+  #   smtp:
+  #     host: mail.viktorbarzin.me
+  #     secure: starttls
+  #     port: 587
+  #     authtype: LOGIN
+  #     name: nextcloud@viktorbarzin.me
+  #     password:
+  extraEnv:
+    - name: TRUSTED_PROXIES
+      value: "10.0.0.0/8"
+    - name: PHP_MEMORY_LIMIT
+      value: "512M"
+    - name: PHP_UPLOAD_LIMIT
+      value: "16G"
+    # - name: mail_smtpdebug
+    #   value: "true"
+    # - name: loglevel
+    #   value: "0"
+  configs:
+    zzz-redis.config.php: |
+      <?php
+      // Redis via HAProxy master-only service. HAProxy (3 replicas, PDB
+      // minAvailable=2) health-checks all v2 pods via `INFO replication` and
+      // routes to the current role:master. Sentinel failover takes <30s, and
+      // HAProxy detects the new master via its 1s tcp-check interval and
+      // starts routing within ~3s of detection. Removed the old in-process
+      // sentinel-query loop on 2026-04-19 after the Redis rework — see
+      // beads code-v2b and infra/docs/architecture/databases.md.
+      $CONFIG = array(
+        'memcache.distributed' => '\\OC\\Memcache\\Redis',
+        'memcache.locking' => '\\OC\\Memcache\\Redis',
+        'redis' => array(
+          'host' => 'redis-master.redis.svc.cluster.local',
+          'port' => 6379,
+          'password' => '',
+          'timeout' => 1.5,
+          'read_timeout' => 1.5,
+        ),
+      );
+    performance.config.php: |
+      <?php
+      $CONFIG = array(
+        'loglevel' => 2,
+        // Cap + rotate nextcloud.log. Without this it grew unbounded to
+        // 10GB+ and bloated every backup (2026-06-01 space incident).
+        // At 10MB the log rotates to nextcloud.log.1 (1 kept) → ~20MB max.
+        'log_rotate_size' => 10485760,
+        'mail_smtpdebug' => false,
+      );
+    zzz-mysql.config.php: |
+      <?php
+      $CONFIG = array(
+        'mysql.utf8mb4' => true,
+      );
+  phpConfigs:
+    zzz-custom.ini: |
+      max_execution_time = 300
+      max_input_time = 300
+      default_socket_timeout = 300
+      opcache.enable_file_override = 1
+      apc.shm_size = 128M
+  extraVolumes:
+    - name: apache-tuning
+      configMap:
+        name: nextcloud-apache-tuning
+    - name: db-password-sync
+      configMap:
+        name: nextcloud-db-password-sync
+        defaultMode: 0755
+    - name: pve-nfs
+      persistentVolumeClaim:
+        claimName: nextcloud-pve-nfs-root
+    - name: pve-nfs-ssd
+      persistentVolumeClaim:
+        claimName: nextcloud-pve-nfs-ssd-root
+  extraVolumeMounts:
+    - name: apache-tuning
+      mountPath: /etc/apache2/mods-available/mpm_prefork.conf
+      subPath: mpm_prefork.conf
+    - name: db-password-sync
+      mountPath: /docker-entrypoint-hooks.d/before-starting
+    - name: pve-nfs
+      mountPath: /mnt/pve-nfs
+    - name: pve-nfs-ssd
+      mountPath: /mnt/pve-nfs-ssd
+
+internalDatabase:
+  enabled: false
+
+externalRedis:
+  enabled: false
+
+externalDatabase:
+  enabled: true
+  type: mysql
+  host: ${mysql_host}
+  user: nextcloud
+  database: nextcloud
+  existingSecret:
+    secretName: nextcloud-db-creds
+    usernameKey: db-username
+    passwordKey: DB_PASSWORD
+
+persistence:
+  enabled: true
+  existingClaim: nextcloud-data-encrypted
+
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 30
+  failureThreshold: 60
+  successThreshold: 1
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 30
+  failureThreshold: 10
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 30
+  failureThreshold: 5
+  successThreshold: 1
+
+podAnnotations:
+  diun.enable: "true"
+  diun.include_tags: "^[0-9]+(?:.[0-9]+)?(?:.[0-9]+)?.*"
+  dependency.kyverno.io/wait-for: "mysql.dbaas:3306,redis-master.redis:6379"
+  secret.reloader.stakater.com/reload: "nextcloud-db-creds"
+
+# OnRootMismatch: kubelet only recursively chowns the volume to fsGroup if the
+# root dir's GID doesn't already match. Without this, every pod restart triggers
+# a ~30-min recursive chown of /srv/nfs and /srv/nfs-ssd (600k+ files) — the
+# default policy "Always" recurses every time. Locks fsGroup=33 explicitly so
+# this block fully replaces the chart's default {fsGroup: 33}.
+securityContext:
+  fsGroup: 33
+  fsGroupChangePolicy: OnRootMismatch
+
+collabora:
+  enabled: false # Using onlyoffice instead
+
+resources:
+  limits:
+    memory: 8Gi
+  requests:
+    cpu: 50m
+    memory: 256Mi
+
+cronjob:
+  enabled: true
+  resources:
+    limits:
+      memory: 384Mi
+    requests:
+      cpu: 25m
+      memory: 384Mi

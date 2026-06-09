@@ -1,0 +1,729 @@
+variable "tls_secret_name" {
+  type      = string
+  sensitive = true
+}
+variable "nfs_server" { type = string }
+variable "redis_host" { type = string }
+variable "mysql_host" { type = string }
+
+# FLOOR only — Keel bumps the LIVE image tag upward (minor policy); the
+# data source below renders the current live tag so a helm apply never
+# downgrades below what Keel installed. This floor only wins on a fresh
+# install / DR (no live Deployment) or after deliberately restoring an
+# OLDER DB snapshot (bump this to match — see comment on the data source).
+variable "nextcloud_image_tag_floor" {
+  type    = string
+  default = "32.0.9"
+}
+
+data "vault_kv_secret_v2" "secrets" {
+  mount = "secret"
+  name  = "nextcloud"
+}
+
+# Render the CURRENT live image tag so helm upgrades are image-no-ops and
+# can NEVER downgrade below the Keel-bumped live tag (failure mode F2: the
+# 2026-06-01 CrashLoop where a pinned 32.0.3 re-render lost to live 32.0.9).
+# Helm-managed workloads can't use the raw-Deployment KEEL_IGNORE_IMAGE
+# `lifecycle.ignore_changes` trick (immich/freshrss main.tf), so we feed the
+# live tag back into the chart instead.
+#
+# Use the PLURAL `kubernetes_resources` (field-selected to name=nextcloud), NOT
+# the singular `kubernetes_resource`: in kubernetes provider 3.1.0 the singular
+# data source ERRORS ("Provider produced null object") when the target is
+# absent, and try() can't rescue it (the failure is at the provider read, not
+# the expression). The plural returns an empty `objects` list on no match, so
+# objects[0] + try() cleanly falls back to var.nextcloud_image_tag_floor on
+# fresh install / DR. (Verified empirically against provider 3.1.0.)
+#
+# namespace is the LITERAL "nextcloud", NOT
+# kubernetes_namespace.nextcloud.metadata[0].name, on purpose: referencing the
+# namespace resource makes Terraform defer this data read to apply time
+# whenever the namespace has a pending change (e.g. the keel.sh/enrolled label
+# add) — "(depends on a resource ... with changes pending)" — which leaves the
+# tag unknown at plan, turning every helm plan into an unverifiable
+# (known after apply) values churn. A static namespace decouples the read so it
+# resolves at plan time.
+data "kubernetes_resources" "nextcloud_live" {
+  api_version    = "apps/v1"
+  kind           = "Deployment"
+  namespace      = "nextcloud"
+  field_selector = "metadata.name=nextcloud"
+}
+
+locals {
+  homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+
+  _live_image = try(data.kubernetes_resources.nextcloud_live.objects[0].spec.template.spec.containers[0].image, "")
+  # Last colon-segment is the tag (handles registry:port/repo:tag); strip the
+  # optional `-apache` flavor suffix so it round-trips through the chart's
+  # `image.flavor=apache` (which renders the bare apache-default tag).
+  _live_tag           = try(replace(element(split(":", local._live_image), length(split(":", local._live_image)) - 1), "-apache", ""), "")
+  nextcloud_image_tag = local._live_tag != "" ? local._live_tag : var.nextcloud_image_tag_floor
+}
+
+
+module "tls_secret" {
+  source          = "../../modules/kubernetes/setup_tls_secret"
+  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
+
+resource "kubernetes_namespace" "nextcloud" {
+  metadata {
+    name = "nextcloud"
+    labels = {
+      "istio-injection" : "disabled"
+      tier                                    = local.tiers.edge
+      "resource-governance/custom-limitrange" = "true"
+      "resource-governance/custom-quota"      = "true"
+      # Keel re-enabled 2026-06-01 (was disabled after the 2026-05-26 bump
+      # 32.0.3→32.0.9 stuck the pod in maintenance mode for ~22h). Two
+      # safeguards make auto-upgrade safe, engineered around BOTH failure modes:
+      #   F1 — interrupted `occ upgrade` (entrypoint copies version.php before
+      #        occ upgrade finishes, so a probe-restart mid-upgrade leaves the
+      #        DB half-migrated → 503): the nextcloud-watchdog CronJob below
+      #        self-heals by running `occ upgrade` when occ reports
+      #        needsDbUpgrade=true.
+      #   F2 — helm re-renders a tag BELOW the Keel-bumped live image →
+      #        Nextcloud refuses the downgrade → CrashLoop (the 2026-06-01
+      #        incident): chart_values renders the live tag with a floor, so a
+      #        re-render is never below live.
+      # Scope: the shared Kyverno `inject-keel-annotations` policy stamps
+      # keel.sh/policy=patch (+ trigger=poll + pollSchedule) on enrolled
+      # workloads. For Nextcloud patch == minor in practice — it only ships
+      # 32.0.x maintenance releases (never 32.1.x), and major 33 needs `major`
+      # policy and stays manual (the entrypoint's +1-major limit enforces that
+      # anyway). We deliberately do NOT override the policy per-workload — see
+      # the note where the old override resources used to live, below.
+      "keel.sh/enrolled" = "true"
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
+    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# No per-workload Keel override resources here, on purpose. Nextcloud is
+# enrolled via the namespace label above; the shared Kyverno
+# `inject-keel-annotations` policy then stamps keel.sh/policy=patch +
+# trigger=poll + pollSchedule, and Keel auto-upgrades within 32.0.x.
+#
+# This stack used to carry kubernetes_labels + kubernetes_annotations
+# resources forcing keel.sh/policy=minor (and before that =never, for the
+# opt-out). Both were removed 2026-06-01 after re-enabling Keel because each
+# produced perpetual drift:
+#   - Kyverno's background-controller overwrites a TF-set policy back to
+#     `patch` despite the policy's `+(keel.sh/policy)` add-if-missing anchor
+#     (observed live: the annotation's field manager was background-controller
+#     with value patch right after a Keel-bump admission).
+#   - The helm release strips the deployment's keel.sh/policy LABEL on every
+#     roll, so TF re-added it on every apply.
+# patch == minor for Nextcloud (32.0.x only; major 33 needs `major` and stays
+# manual), so letting Kyverno own the keel annotations — exactly like every
+# other enrolled workload (immich, freshrss) — is both correct and drift-free.
+
+resource "kubernetes_manifest" "external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "nextcloud-secrets"
+      namespace = "nextcloud"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "nextcloud-secrets"
+      }
+      dataFrom = [{
+        extract = {
+          key = "nextcloud"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.nextcloud]
+}
+
+# DB credentials from Vault database engine (rotated every 24h)
+# Nextcloud Helm chart reads password at runtime via existingSecret reference
+resource "kubernetes_manifest" "db_external_secret" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1beta1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "nextcloud-db-creds"
+      namespace = "nextcloud"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "nextcloud-db-creds"
+        template = {
+          data = {
+            DB_PASSWORD = "{{ .password }}"
+            db-username = "nextcloud"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/mysql-nextcloud"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.nextcloud]
+}
+
+resource "kubernetes_resource_quota" "nextcloud" {
+  metadata {
+    name      = "nextcloud-quota"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "8Gi"
+      "limits.memory"   = "16Gi"
+      pods              = "10"
+    }
+  }
+}
+
+resource "kubernetes_limit_range" "nextcloud" {
+  metadata {
+    name      = "nextcloud-limits"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "25m"
+        memory = "64Mi"
+      }
+      max = {
+        memory = "8Gi"
+      }
+    }
+  }
+}
+
+resource "helm_release" "nextcloud" {
+  namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  name      = "nextcloud"
+
+  repository = "https://nextcloud.github.io/helm/"
+  chart      = "nextcloud"
+  atomic     = true
+  version    = "8.8.1"
+
+  values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = local.nextcloud_image_tag })]
+  timeout    = 6000
+  depends_on = [kubernetes_manifest.db_external_secret]
+}
+
+resource "kubernetes_config_map" "apache_tuning" {
+  metadata {
+    name      = "nextcloud-apache-tuning"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  data = {
+    "mpm_prefork.conf" = <<-EOF
+      # Tuned for Nextcloud on MySQL
+      # Capped MaxRequestWorkers to prevent runaway Apache consuming all node CPU
+      <IfModule mpm_prefork_module>
+        StartServers            5
+        MinSpareServers         3
+        MaxSpareServers         10
+        MaxRequestWorkers       30
+        MaxConnectionsPerChild  500
+      </IfModule>
+    EOF
+  }
+}
+
+# resource "kubernetes_config_map" "config" {
+#   metadata {
+#     name      = "config"
+#    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+
+#     annotations = {
+#       "reloader.stakater.com/match" = "true"
+#     }
+#   }
+
+#   data = {
+#     "conf.yml" = file("${path.module}/conf.yml")
+#   }
+# }
+
+resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
+  wait_until_bound = false
+  metadata {
+    name      = "nextcloud-data-encrypted"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "20%"
+      "resize.topolvm.io/storage_limit" = "100Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "20Gi"
+      }
+    }
+  }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and
+    # PVCs can't shrink. Without this, every TF apply tries to revert
+    # to the spec value, K8s rejects the shrink, and the PVC ends up
+    # in Terminating-but-in-use limbo.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+module "nfs_nextcloud_backup_host" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "nextcloud-backup-host"
+  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/nextcloud-backup"
+}
+
+module "nfs_pve_root_host" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "nextcloud-pve-nfs-root"
+  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs"
+  storage    = "3000Gi"
+}
+
+module "nfs_pve_ssd_root_host" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "nextcloud-pve-nfs-ssd-root"
+  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs-ssd"
+  storage    = "100Gi"
+}
+
+module "ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # Native WebDAV / CalDAV / CardDAV clients (Nextcloud desktop+mobile apps,
+  # calendar sync) use HTTP basic-auth + app passwords, not browser sessions.
+  # Nextcloud has strong app-layer auth of its own.
+  # auth = "app": Native WebDAV / CalDAV / CardDAV clients use HTTP Basic auth + app passwords; Nextcloud enforces app-layer authentication.
+  auth            = "app"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.nextcloud.metadata[0].name
+  name            = "nextcloud"
+  tls_secret_name = var.tls_secret_name
+  port            = 8080
+  extra_annotations = {
+    "gethomepage.dev/enabled"         = "true"
+    "gethomepage.dev/name"            = "Nextcloud"
+    "gethomepage.dev/description"     = "Cloud productivity suite"
+    "gethomepage.dev/icon"            = "nextcloud.png"
+    "gethomepage.dev/group"           = "Productivity"
+    "gethomepage.dev/pod-selector"    = ""
+    "gethomepage.dev/widget.type"     = "nextcloud"
+    "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
+    "gethomepage.dev/widget.username" = local.homepage_credentials["nextcloud"]["username"]
+    "gethomepage.dev/widget.password" = local.homepage_credentials["nextcloud"]["password"]
+  }
+}
+
+
+# Hook script: sync DB password from env var into config.php on every pod start.
+# Closes the Vault rotation gap: Vault rotates MySQL password → ESO syncs to K8s Secret →
+# Reloader restarts pod → this hook patches config.php with the current MYSQL_PASSWORD.
+resource "kubernetes_config_map" "db_password_sync_hook" {
+  metadata {
+    name      = "nextcloud-db-password-sync"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  data = {
+    "sync-db-password.sh" = <<-EOF
+      #!/bin/bash
+      set -e
+      CONFIG="/var/www/html/config/config.php"
+      if [ -z "$MYSQL_PASSWORD" ]; then
+        echo "MYSQL_PASSWORD not set, skipping config.php sync"
+        exit 0
+      fi
+      if [ ! -f "$CONFIG" ]; then
+        echo "config.php not found, skipping (first install)"
+        exit 0
+      fi
+      CURRENT_PW=$(php -r "include '$CONFIG'; echo \$CONFIG['dbpassword'] ?? '';")
+      if [ "$CURRENT_PW" = "$MYSQL_PASSWORD" ]; then
+        echo "DB password in config.php already matches MYSQL_PASSWORD"
+        exit 0
+      fi
+      echo "Updating DB password in config.php to match MYSQL_PASSWORD..."
+      php /docker-entrypoint-hooks.d/before-starting/patch-db-pw.php "$CONFIG" "$MYSQL_PASSWORD"
+      echo "DB password updated successfully"
+    EOF
+
+    "patch-db-pw.php" = <<-EOF
+      <?php
+      $file = $argv[1];
+      $newPw = $argv[2];
+      $content = file_get_contents($file);
+      $escaped = str_replace(["'", "\\"], ["\\'", "\\\\"], $newPw);
+      $content = preg_replace("/'dbpassword'\\s*=>\\s*'[^']*'/", "'dbpassword' => '" . $escaped . "'", $content);
+      file_put_contents($file, $content);
+    EOF
+  }
+}
+
+resource "kubernetes_config_map" "backup-script" {
+  metadata {
+    name      = "nextcloud-backup-script"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  data = {
+    "backup.sh" = <<-EOF
+      #!/bin/bash
+      set -e
+
+      BACKUP_DIR="/backup"
+      DATA_DIR="/nextcloud-data"
+      DATE=$(date +%Y%m%d_%H%M%S)
+      BACKUP_PATH="$BACKUP_DIR/$DATE"
+
+      echo "Starting Nextcloud backup at $(date)"
+
+      # Note: Maintenance mode is skipped because occ is not available in the NFS mount.
+      # For a proper backup with maintenance mode, exec into the nextcloud pod:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --on
+
+      # Create backup directory
+      mkdir -p "$BACKUP_PATH"
+
+      # Backup config/data/custom_apps. Exclusions (2026-06-01 space fix):
+      #  - nextcloud.log* — rotated at source via log_rotate_size; previously
+      #    grew to 10GB+ and bloated every dated copy (backups hit 20G each).
+      #  - preview cache — regenerable thumbnails, no need to back up.
+      # Backs up config/, data/, custom_apps/ (the irreplaceable bits). Skips:
+      #  - html/ — the Nextcloud app code, reproducible from the pinned image
+      #    (real config is at config/config.php; html/config/config.php is empty).
+      #  - nextcloud.log* — capped at source via log_rotate_size; was 10GB+.
+      #  - preview cache — regenerable thumbnails.
+      echo "Backing up Nextcloud installation..."
+      rsync -a \
+        --exclude='/html/' \
+        --exclude='nextcloud.log' \
+        --exclude='nextcloud.log.*' \
+        --exclude='data/appdata_*/preview/' \
+        "$DATA_DIR/" "$BACKUP_PATH/"
+
+      # Keep only the latest backup. The version history lives in daily-backup's
+      # pvc-data (4 weekly snapshot-consistent copies of this same encrypted PVC),
+      # so this browsable app-level copy only needs the most recent. Keeping the
+      # whole installation (incl. logs) x7 here was the bulk of the 87G that
+      # filled the offsite Synology.
+      #
+      # Sort by NAME, not mtime: dirs are YYYYMMDD_HHMMSS so lexical order is
+      # chronological. `rsync -a` stamps the backup dir with the SOURCE dir's
+      # mtime, which made the old `ls -dt | tail` delete the freshest backup and
+      # keep a stale one — keep the lexically-last (newest) instead.
+      echo "Cleaning old backups (keep latest)..."
+      cd "$BACKUP_DIR"
+      ls -d */ 2>/dev/null | sort | head -n -1 | xargs -r rm -rf
+
+      echo "Backup completed at $(date)"
+      echo "Backup stored at: $BACKUP_PATH"
+    EOF
+
+    "restore.sh" = <<-EOF
+      #!/bin/bash
+      # Restore script - run manually when needed
+      # Usage: ./restore.sh <backup_date>
+      # Example: ./restore.sh 20250117_030000
+      #
+      # Before restoring, enable maintenance mode:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --on
+      # After restoring, disable it:
+      #   kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --off
+
+      set -e
+
+      if [ -z "$1" ]; then
+        echo "Usage: $0 <backup_date>"
+        echo "Available backups:"
+        ls -1 /backup/
+        exit 1
+      fi
+
+      BACKUP_PATH="/backup/$1"
+      DATA_DIR="/nextcloud-data"
+
+      if [ ! -d "$BACKUP_PATH" ]; then
+        echo "Backup not found: $BACKUP_PATH"
+        exit 1
+      fi
+
+      echo "Restoring from $BACKUP_PATH"
+
+      # Restore everything
+      echo "Restoring Nextcloud installation..."
+      rsync -a "$BACKUP_PATH/" "$DATA_DIR/"
+
+      echo "Restore completed!"
+      echo "Remember to run: kubectl exec -n nextcloud deployment/nextcloud -- php occ maintenance:mode --off"
+    EOF
+  }
+}
+
+# Watchdog: runs every 5 minutes with two jobs:
+#  1. Apache runaway recovery — if >40 workers (normal 5-15), rollout-restart
+#     to recover node CPU.
+#  2. F1 Keel self-heal — if occ reports needsDbUpgrade=true (an interrupted
+#     `occ upgrade` after a Keel image bump left the app in maintenance mode),
+#     re-run `occ upgrade` and clear maintenance mode.
+resource "kubernetes_service_account" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments"]
+    verbs      = ["get", "patch"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list", "get"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.nextcloud_watchdog.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.nextcloud_watchdog.metadata[0].name
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
+  metadata {
+    name      = "nextcloud-watchdog"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  spec {
+    schedule                      = "*/5 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+
+    job_template {
+      metadata {}
+      spec {
+        # 600s (was 120s) so the F1 self-heal `occ upgrade` isn't killed
+        # mid-migration. concurrency_policy=Forbid prevents overlap.
+        active_deadline_seconds = 600
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.nextcloud_watchdog.metadata[0].name
+            restart_policy       = "Never"
+
+            container {
+              name  = "watchdog"
+              image = "bitnami/kubectl:latest"
+
+              command = ["/bin/bash", "-c", <<-EOF
+                set -e
+                # Find the nextcloud pod
+                POD=$(kubectl get pods -n nextcloud -l app.kubernetes.io/name=nextcloud -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                if [ -z "$POD" ]; then
+                  echo "No nextcloud pod found, skipping"
+                  exit 0
+                fi
+
+                # Count Apache worker processes (exclude grep itself and the parent apache2 process)
+                WORKERS=$(kubectl exec -n nextcloud "$POD" -c nextcloud -- pgrep -c apache2 2>/dev/null || echo "0")
+                echo "$(date): Apache worker count: $WORKERS"
+
+                # Normal operation: 5-15 workers. Runaway threshold: 40+
+                if [ "$WORKERS" -gt 40 ]; then
+                  echo "RUNAWAY DETECTED: $WORKERS Apache workers (threshold: 40)"
+                  echo "Restarting nextcloud deployment..."
+                  kubectl rollout restart deployment nextcloud -n nextcloud
+                  echo "Restart triggered at $(date)"
+                else
+                  echo "Apache workers within normal range ($WORKERS <= 40)"
+                fi
+
+                # F1 self-heal: a Keel image bump runs `occ upgrade` in the
+                # entrypoint, but if that's interrupted (e.g. a probe restart
+                # mid-upgrade) occ reports needsDbUpgrade=true and the app sits
+                # in maintenance mode (503). Re-run the upgrade and clear
+                # maintenance mode. Gated on needsDbUpgrade only, so a
+                # deliberate manual maintenance window is left untouched.
+                ST=$(kubectl exec -n nextcloud "$POD" -c nextcloud -- php occ status --output=json 2>/dev/null || true)
+                if echo "$ST" | grep -q '"needsDbUpgrade":true'; then
+                  echo "$(date): needsDbUpgrade=true → running occ upgrade"
+                  kubectl exec -n nextcloud "$POD" -c nextcloud -- php occ upgrade --no-interaction || true
+                  kubectl exec -n nextcloud "$POD" -c nextcloud -- php occ maintenance:mode --off || true
+                  echo "$(date): self-heal occ upgrade complete"
+                else
+                  echo "$(date): occ status healthy (no DB upgrade pending)"
+                fi
+              EOF
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+resource "kubernetes_cron_job_v1" "nextcloud-backup" {
+  metadata {
+    name      = "nextcloud-backup"
+    namespace = kubernetes_namespace.nextcloud.metadata[0].name
+  }
+
+  spec {
+    schedule                      = "0 3 * * 0" # Sunday at 3 AM
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+
+    job_template {
+      metadata {}
+      spec {
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+
+            # Backup mounts the same RWO PVC (proxmox-lvm-encrypted) as the
+            # main nextcloud pod, so it MUST schedule on the same node — the
+            # volume cannot attach to two nodes simultaneously. Without this
+            # the backup pod is stuck in ContainerCreating until cron retries.
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      "app.kubernetes.io/name"     = "nextcloud"
+                      "app.kubernetes.io/instance" = "nextcloud"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                  namespaces   = [kubernetes_namespace.nextcloud.metadata[0].name]
+                }
+              }
+            }
+
+            container {
+              name  = "backup"
+              image = "alpine:latest"
+
+              command = ["/bin/sh", "-c", "apk add --no-cache rsync bash && /scripts/backup.sh"]
+
+              volume_mount {
+                name       = "nextcloud-data"
+                mount_path = "/nextcloud-data"
+              }
+
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+
+              volume_mount {
+                name       = "scripts"
+                mount_path = "/scripts"
+              }
+            }
+
+            volume {
+              name = "nextcloud-data"
+              persistent_volume_claim {
+                claim_name = kubernetes_persistent_volume_claim.nextcloud_data_encrypted.metadata[0].name
+              }
+            }
+
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_nextcloud_backup_host.claim_name
+              }
+            }
+
+            volume {
+              name = "scripts"
+              config_map {
+                name         = kubernetes_config_map.backup-script.metadata[0].name
+                default_mode = "0755"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
+# CI retrigger v2 2026-05-16T13:46:35+00:00
