@@ -14,7 +14,7 @@
 # build that renames or breaks the pairing API fails the check and auto-rolls-back
 # (closes the 2026-06-09 miss, where a GET / probe passed a pairing-broken build).
 set -uo pipefail
-T3_PIN="${T3_PIN:-0.0.24}"   # known-good, t3-dispatch-compatible (2026-06-09 post-mortem)
+T3_PIN="${T3_PIN:-0.0.26}"   # known-good, t3-dispatch-compatible (2026-06-09 post-mortem)
 LOG() { logger -t t3-autoupdate "$*"; echo "t3-autoupdate: $*"; }
 
 ver() { t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
