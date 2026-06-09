@@ -4,9 +4,17 @@
 # it's per-user runtime state inside the Forgejo DB. Driving retention from
 # a CronJob hitting the public API keeps the policy versioned in this repo.
 #
-# Auth: a write:package PAT belonging to ci-pusher (same user that pushes
-# from CI). DELETE on packages requires write:package scope. PAT lives in
-# Vault at secret/viktor/forgejo_cleanup_token.
+# Auth: a write:package PAT belonging to VIKTOR (the package OWNER). PAT
+# lives in Vault at secret/viktor/forgejo_cleanup_token.
+#
+# CORRECTION 2026-06-09: this previously said the PAT belonged to ci-pusher.
+# That was wrong and silently broke retention — Forgejo container packages
+# are scoped per-user, so ci-pusher gets HTTP 403 on DELETE of viktor/*
+# (the dry-run only does GETs, which DO work, so the 403 stayed hidden until
+# the first live run). DELETE requires a write:package PAT owned by viktor.
+# forgejo_cleanup_token is therefore set to viktor's write:package PAT (today
+# the same value as secret/ci/global/forgejo_push_token). IF that push token
+# is ever regenerated, re-mirror it here or retention silently 403s again.
 
 data "vault_kv_secret_v2" "forgejo_viktor" {
   mount = "secret"
@@ -14,8 +22,12 @@ data "vault_kv_secret_v2" "forgejo_viktor" {
 }
 
 locals {
-  # Flip to false after first 7 days of dry-run logs look correct.
-  forgejo_cleanup_dry_run = true
+  # Activated 2026-06-09 after verifying a dry-run delete list against all
+  # running viktor/* images cluster-wide: 0 running images on the delete set
+  # (would prune 317 stale versions, keeping newest 10 + latest + cache tags).
+  # Live retention is what keeps the registry PVC from filling on the HDD
+  # (we deliberately did NOT move Forgejo to SSD — see beads code-oflt).
+  forgejo_cleanup_dry_run = false
 }
 
 resource "kubernetes_config_map" "forgejo_cleanup_script" {

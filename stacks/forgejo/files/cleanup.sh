@@ -2,8 +2,13 @@
 # Forgejo container-package retention.
 #
 # For each container package owned by ${FORGEJO_OWNER}, keep newest
-# ${KEEP_LAST_N} versions + always keep tag "latest". Deletes the rest via
+# ${KEEP_LAST_N} versions + always keep tag "latest" + always keep any
+# buildkit cache tag (matches "cache", e.g. tripit:cache — these back
+# --cache-from/--cache-to and must survive retention or every build is a
+# cold rebuild). Deletes the rest via
 # DELETE /api/v1/packages/{owner}/container/{name}/{version}.
+# (Note: an 8-char SHA tag is pure hex and cannot contain "cache" — 'h' is
+#  not a hex digit — so the cache match never catches a real image tag.)
 #
 # DRY_RUN=true logs what would be deleted but issues no DELETE calls.
 #
@@ -72,9 +77,11 @@ for NAME in $NAMES; do
   N_VERSIONS=$(jq 'length' "$TMPDIR/$NAME.json")
   echo "[$NAME] $N_VERSIONS version(s)"
 
-  # Build the keep set: top $KEEP + anything tagged 'latest'.
+  # Build the keep set: top $KEEP + always 'latest' + any buildkit cache tag.
   jq -r --argjson keep "$KEEP" '
-    [.[0:$keep][].version] + [.[] | select(.version == "latest") | .version]
+    [.[0:$keep][].version]
+    + [.[] | select(.version == "latest") | .version]
+    + [.[] | select(.version | test("cache"; "i")) | .version]
     | unique
     | .[]
   ' "$TMPDIR/$NAME.json" > "$TMPDIR/$NAME.keep"
