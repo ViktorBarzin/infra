@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
-# Track the latest t3 nightly — with a health-check + auto-rollback (lesson from
-# the Keel auto-update incidents: never blindly trust a new build) and idle-only
-# restarts (never kill an in-flight coding session). Runs as root via the unit.
+# Enforce the PINNED t3 version ($T3_PIN) across the box — NOT "latest/nightly".
+# t3 is pre-1.0 and ships breaking schema-migration + bootstrap-API changes between
+# builds that our t3-dispatch can't follow blind. 2026-06-09: a nightly auto-update
+# (0.0.25) migrated every ~/.t3 state.sqlite forward (auth_pairing_links/auth_sessions
+# role->scopes) AND changed the bootstrap API, breaking mint/pairing for ALL users.
+# So we PIN; this unit just re-asserts the pin (a no-op when already correct) with a
+# health-check + auto-rollback and idle-only restarts (never kill an in-flight session).
+# To move the pin: bump T3_PIN AND first verify t3-dispatch's bootstrap flow against the
+# new build (curl the dispatch -> expect 302 + Set-Cookie t3_session). See post-mortem
+# 2026-06-09-t3-nightly-autoupdate-auth-outage.md.
+# CAVEAT: the health-check below only probes GET / (200) — it does NOT exercise the
+# mint/bootstrap/pairing path, so it will NOT catch an auth regression on its own.
 set -uo pipefail
+T3_PIN="${T3_PIN:-0.0.24}"   # known-good, t3-dispatch-compatible (2026-06-09 post-mortem)
 LOG() { logger -t t3-autoupdate "$*"; echo "t3-autoupdate: $*"; }
 
 ver() { t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
 
-before=$(ver); LOG "current: ${before:-unknown}"
-npm i -g t3@nightly >/dev/null 2>&1 || { LOG "npm install failed; staying on ${before:-current}"; exit 0; }
+before=$(ver); LOG "current: ${before:-unknown}; pin: $T3_PIN"
+npm i -g "t3@$T3_PIN" >/dev/null 2>&1 || { LOG "npm install failed; staying on ${before:-current}"; exit 0; }
 after=$(ver)
 
 if [[ -z "$after" || "$after" == "$before" ]]; then
-  LOG "already latest (${before:-?}); nothing to do"; exit 0
+  LOG "already at pin $T3_PIN (${before:-?}); nothing to do"; exit 0
 fi
-LOG "installed $after (was $before); health-checking…"
+LOG "re-pinned to $after (was $before); health-checking…"
 
 # Health-check the NEW binary on a throwaway port/base-dir before trusting it.
 SMOKE_PORT=3799; SMOKE_DIR=$(mktemp -d)
