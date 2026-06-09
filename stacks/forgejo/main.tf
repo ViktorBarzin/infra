@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "forgejo" {
     name = "forgejo"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -94,7 +94,7 @@ resource "kubernetes_deployment" "forgejo" {
           fs_group = 1000
         }
         container {
-          name  = "forgejo"
+          name = "forgejo"
           # Pinned to 11.0.14 (latest 11.x as of 2026-05-12) — was on
           # floating `:11`. On 2026-05-24T15:35:37Z Keel force-policy
           # rewrote the tag from `11.0.14 → 1.18` (Gitea-era Forgejo
@@ -168,13 +168,19 @@ resource "kubernetes_deployment" "forgejo" {
             name       = "data"
             mount_path = "/data"
           }
+          # Bumped 1Gi -> 3Gi 2026-06-09: Forgejo was OOMKilled (exit 137)
+          # under registry-push load from in-cluster CI builds (tripit
+          # buildkit pushes large layers into the OCI registry). VPA
+          # upperBound reads ~1.5Gi, but that's suppressed by the 1Gi cap it
+          # kept OOMing against — size for the push spike, not steady-state.
+          # requests=limits (Guaranteed QoS) per the repo memory convention.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "1Gi"
+              memory = "3Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "3Gi"
             }
           }
           port {
@@ -202,7 +208,7 @@ resource "kubernetes_deployment" "forgejo" {
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
