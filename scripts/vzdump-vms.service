@@ -1,0 +1,16 @@
+[Unit]
+Description=vzdump image backup of hand-managed VMs (devvm, …) to /mnt/backup
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/main/docs/architecture/backup-dr.md
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vzdump-vms
+# Be gentle on the contended PVE IO domain (sdc) — backup must never starve etcd.
+Nice=10
+IOSchedulingClass=idle
+# Reading a ~77 GB disk + zstd can run long under IO contention; well above
+# normal (~15-30 min) but bounded so a hung run can't wedge the timer forever.
+TimeoutStartSec=4h
