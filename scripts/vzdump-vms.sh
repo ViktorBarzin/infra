@@ -55,7 +55,10 @@ push_metrics() {
 KILLED=""
 cleanup() {
     rm -f "${LOCKFILE}"
-    [ -n "${KILLED}" ] && push_metrics 2 0
+    # NB: must be `if…fi`, NOT `[ … ] && …` — a bash EXIT trap whose LAST command
+    # returns non-zero overrides the script's `exit 0`, so the `&&` short-circuit
+    # (when KILLED is empty) would falsely mark a successful backup as failed.
+    if [ -n "${KILLED}" ]; then push_metrics 2 0; fi
 }
 trap cleanup EXIT
 trap 'KILLED=1; exit 143' TERM INT
