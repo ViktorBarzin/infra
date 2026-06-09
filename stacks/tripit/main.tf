@@ -65,6 +65,15 @@ locals {
     SMTP_USER       = "spam@viktorbarzin.me"
     SMTP_FROM       = "plans@viktorbarzin.me"
     PUBLIC_BASE_URL = "https://tripit.viktorbarzin.me"
+    # Narrator audio (ADR-0004): Chatterbox via the in-cluster `tts` stack.
+    # OpenAI-compatible /v1/audio/speech; the bake POSTs best-effort synth
+    # requests, so a down/Pending Chatterbox is a clean skip (browser-TTS
+    # fallback), never a bake error. ClusterIP-only → no token. Note: the mode
+    # is `openai_compatible` (tripit renamed it from `chatterbox`); TTS_MODEL is
+    # still the `chatterbox` family string tripit sends as the OpenAI `model`.
+    TTS_MODE     = "openai_compatible"
+    TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
+    TTS_MODEL    = "chatterbox"
   }
 }
 
