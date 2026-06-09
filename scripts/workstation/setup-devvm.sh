@@ -31,7 +31,14 @@ if [[ $need_node -eq 1 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
   apt-get install -y nodejs >/dev/null
 fi
-command -v claude >/dev/null || { log "npm: installing @anthropic-ai/claude-code"; npm install -g @anthropic-ai/claude-code >/dev/null; }
+# Detect the GLOBAL npm package, NOT whatever `claude` resolves to on PATH: the admin's
+# personal ~/.local/bin/claude shadows it, so `command -v claude` silently skipped the
+# system-wide install — leaving /usr/lib/node_modules/@anthropic-ai empty and fresh
+# non-admins with no claude (they only worked because the admin's install was on PATH).
+if ! npm ls -g --depth=0 @anthropic-ai/claude-code >/dev/null 2>&1; then
+  log "npm: installing @anthropic-ai/claude-code (system-wide)"
+  npm install -g @anthropic-ai/claude-code >/dev/null
+fi
 
 # 2b) t3 (the per-user coding surface) — PINNED, never nightly/latest. t3 is pre-1.0 and
 #     ships breaking auth-schema + bootstrap-API changes our t3-dispatch can't follow blind
@@ -43,11 +50,13 @@ if [[ "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//')" != "$T3_P
   log "npm: installing pinned t3@$T3_PIN"; npm install -g "t3@$T3_PIN" >/dev/null
 fi
 
-# 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool)
+# 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool).
+#    PINNED (not 'latest/download') so two fresh boxes built weeks apart are byte-identical.
+KUBELOGIN_VER="${KUBELOGIN_VER:-v1.36.2}"
 if [[ ! -x /usr/local/bin/kubelogin ]]; then
-  log "kubelogin: installing int128/kubelogin"
+  log "kubelogin: installing int128/kubelogin $KUBELOGIN_VER"
   tmp="$(mktemp -d)"
-  curl -fsSL -o "$tmp/kl.zip" https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
+  curl -fsSL -o "$tmp/kl.zip" "https://github.com/int128/kubelogin/releases/download/${KUBELOGIN_VER}/kubelogin_linux_amd64.zip"
   ( cd "$tmp" && { unzip -o kl.zip kubelogin >/dev/null 2>&1 || python3 -m zipfile -e kl.zip .; } )
   install -m 0755 "$tmp/kubelogin" /usr/local/bin/kubelogin
   ln -sf /usr/local/bin/kubelogin /usr/local/bin/kubectl-oidc_login
@@ -87,20 +96,34 @@ if [[ -d "$ADMIN_CODE" ]]; then
   log "hardened $ADMIN_CODE (o-rx — not world-readable)"
 fi
 
-# 8) stage the shared Claude subscription OAuth token (long-lived sk-ant-oat01) to a
-#    root-readable file the provisioner injects into non-admins' t3-serve env, so they
-#    share the admin's Claude subscription (only those without their own ~/.claude login).
+# 8) /etc/t3-serve (per-user .env + dispatch config dir; also holds the staged tokens
+#    below) + shared service auth pulled from Vault. install -m alone does NOT create the
+#    parent dir, so a fresh box needs this mkdir before the token writes below.
+install -d -m 0755 /etc/t3-serve
 if command -v vault >/dev/null; then
   export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
   # setup-devvm runs as root (no ~/.vault-token); borrow the admin's token to read Vault.
   if [[ -z "${VAULT_TOKEN:-}" && -r /home/wizard/.vault-token ]]; then
     VAULT_TOKEN="$(cat /home/wizard/.vault-token)"; export VAULT_TOKEN
   fi
+  # 8a) Shared Claude subscription OAuth token (long-lived sk-ant-oat01) -> root file the
+  #     provisioner injects into non-admins' t3-serve env (only those without their own login).
   if claude_tok="$(vault kv get -field=claude_oauth_token secret/workstation 2>/dev/null)"; then
     install -m 0600 /dev/stdin /etc/t3-serve/claude-oauth-token <<<"$claude_tok"
     log "staged /etc/t3-serve/claude-oauth-token (shared Claude subscription)"
   else
     log "WARN: secret/workstation claude_oauth_token absent -> non-admins won't share Claude auth"
+  fi
+  # 8b) Shared Codex auth -> /opt/codex-shared/auth.json (the codex wrapper symlinks each
+  #     user's ~/.codex/auth.json here). Previously a manual host change that did NOT survive
+  #     a rebuild even though the Vault key existed — now reproducible from Vault.
+  if codex_auth="$(vault kv get -field=codex_shared_auth_json secret/workstation 2>/dev/null)"; then
+    getent group codex-shared >/dev/null || groupadd codex-shared
+    install -d -m 2770 -g codex-shared /opt/codex-shared
+    install -m 0660 -g codex-shared /dev/stdin /opt/codex-shared/auth.json <<<"$codex_auth"
+    log "staged /opt/codex-shared/auth.json (shared Codex auth)"
+  else
+    log "WARN: secret/workstation codex_shared_auth_json absent -> shared Codex auth not staged"
   fi
 fi
 
