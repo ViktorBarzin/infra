@@ -85,11 +85,13 @@ Replaces the in-cluster nginx `t3-dispatch` (the session-mint needs `sudo` + loc
 
 Per request (Authentik forward-auth has injected a trustworthy `X-authentik-username`):
 1. Resolve `X-authentik-username` → OS user via `/etc/ttyd-user-map`. No mapping → **403**.
-2. **Has a valid t3 session cookie?** → reverse-proxy (incl. WebSocket upgrade) to `127.0.0.1:<T3_PORT>`. (Steady state — the common path.)
-3. **No cookie** (first visit / expired) → auto-pair:
+2. **Has a valid t3 session cookie?** → reverse-proxy (incl. WebSocket upgrade) to `127.0.0.1:<T3_PORT>`. (Steady state — the common path.) Sub-requests (XHR/asset/WebSocket) take the cookie at face value; on a **top-level document navigation** the cookie is verified against the instance's `GET /api/auth/session` so a present-but-dead cookie doesn't slip through.
+3. **No cookie, or an invalid cookie on a document navigation** (first visit / expired / server-side session wiped) → auto-pair:
    - `sudo -u <os_user> t3 auth pairing create --base-dir /home/<os_user>/.t3 --ttl 5m --json` → one-time token.
    - exchange it at the instance's `POST /api/auth/bootstrap` → capture the returned `Set-Cookie`.
    - relay that `Set-Cookie` to the browser + `302 /`. Browser now holds the t3 session cookie → next request is the steady-state path. **Login → straight in.**
+
+> **As-built note (2026-06-09):** the first implementation re-paired only on an *absent* cookie. After an auth-schema rollback wiped every server-side session, browsers still held live-looking-but-dead 30-day `t3_session` cookies, which the dispatcher proxied straight through → t3 rendered its pair page (the "all users must pair again" incident). Fixed by validating a present cookie via `/api/auth/session` and re-pairing on `authenticated:false` — **gated to document navigations** (`isDocumentNav`: trust `Sec-Fetch-Dest: document`, else fall back to `Accept: text/html`) so XHR/asset/WebSocket sub-requests are never answered with a `302`, and **fail-open** (proxy through) on any validation error so no new failure mode is introduced. See `scripts/t3-dispatch/main.go` (`sessionValid`, `isDocumentNav`) + `main_test.go`.
 
 Implementation: a small reverse proxy that supports WebSocket upgrade (Go `httputil.ReverseProxy`, or Python aiohttp) — chosen at plan time.
 
