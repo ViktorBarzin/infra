@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily t3 nightly auto-update
+Description=Daily t3 pinned-version enforcer (re-asserts T3_PIN; no-op when correct)
 
 [Timer]
 OnCalendar=*-*-* 04:00:00
