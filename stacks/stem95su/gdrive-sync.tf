@@ -2,7 +2,7 @@
 # earlier on-demand-only model now that content is actively maintained).
 #
 # A CronJob mirrors the READ-ONLY Drive folder "claude" (servable content in
-# subfolder "stem claude/files/") onto the NFS content volume every 15 min via
+# subfolder "stem claude/files/") onto the NFS content volume every 10 min via
 # rclone. rclone is delta-aware: an unchanged run lists ~33 files' metadata and
 # transfers nothing, so the schedule is cheap (not a 24MB re-download). nginx
 # keeps serving the same volume read-only; updates appear within ~5s (actimeo).
@@ -49,7 +49,7 @@ resource "kubernetes_cron_job_v1" "gdrive_sync" {
     labels    = { run = "stem95su", component = "gdrive-sync" }
   }
   spec {
-    schedule                      = "*/15 * * * *"
+    schedule                      = "*/10 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 2
     failed_jobs_history_limit     = 3
