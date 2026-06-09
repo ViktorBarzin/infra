@@ -38,7 +38,7 @@ command -v claude >/dev/null || { log "npm: installing @anthropic-ai/claude-code
 #     (2026-06-09 outage: a nightly auto-update broke pairing for ALL users). The daily
 #     t3-autoupdate ENFORCER re-asserts this same pin; install it here so a fresh box has t3
 #     immediately. Keep T3_PIN in sync with t3-autoupdate.sh.
-T3_PIN="${T3_PIN:-0.0.24}"
+T3_PIN="${T3_PIN:-0.0.26}"
 if [[ "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//')" != "$T3_PIN" ]]; then
   log "npm: installing pinned t3@$T3_PIN"; npm install -g "t3@$T3_PIN" >/dev/null
 fi
