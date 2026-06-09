@@ -77,4 +77,21 @@ if [[ -d "$ADMIN_CODE" ]]; then
   log "hardened $ADMIN_CODE (o-rx — not world-readable)"
 fi
 
+# 8) stage the shared Claude subscription OAuth token (long-lived sk-ant-oat01) to a
+#    root-readable file the provisioner injects into non-admins' t3-serve env, so they
+#    share the admin's Claude subscription (only those without their own ~/.claude login).
+if command -v vault >/dev/null; then
+  export VAULT_ADDR="${VAULT_ADDR:-https://vault.viktorbarzin.me}"
+  # setup-devvm runs as root (no ~/.vault-token); borrow the admin's token to read Vault.
+  if [[ -z "${VAULT_TOKEN:-}" && -r /home/wizard/.vault-token ]]; then
+    VAULT_TOKEN="$(cat /home/wizard/.vault-token)"; export VAULT_TOKEN
+  fi
+  if claude_tok="$(vault kv get -field=claude_oauth_token secret/workstation 2>/dev/null)"; then
+    install -m 0600 /dev/stdin /etc/t3-serve/claude-oauth-token <<<"$claude_tok"
+    log "staged /etc/t3-serve/claude-oauth-token (shared Claude subscription)"
+  else
+    log "WARN: secret/workstation claude_oauth_token absent -> non-admins won't share Claude auth"
+  fi
+fi
+
 log "OK (idempotent)"
