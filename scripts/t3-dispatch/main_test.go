@@ -1,0 +1,200 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"testing"
+)
+
+func portOf(t *testing.T, ts *httptest.Server) int {
+	t.Helper()
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("parse %s: %v", ts.URL, err)
+	}
+	p, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("port %s: %v", u.Port(), err)
+	}
+	return p
+}
+
+func TestIsDocumentNav(t *testing.T) {
+	cases := []struct {
+		name    string
+		method  string
+		headers map[string]string
+		want    bool
+	}{
+		{"GET sec-fetch-dest document", "GET", map[string]string{"Sec-Fetch-Dest": "document"}, true},
+		{"GET accept html (no sec-fetch)", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml"}, true},
+		{"GET xhr empty dest beats accept", "GET", map[string]string{"Sec-Fetch-Dest": "empty", "Accept": "text/html"}, false},
+		{"GET json", "GET", map[string]string{"Accept": "application/json"}, false},
+		{"POST html", "POST", map[string]string{"Accept": "text/html"}, false},
+		{"GET no headers", "GET", map[string]string{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, _ := http.NewRequest(c.method, "/", nil)
+			for k, v := range c.headers {
+				r.Header.Set(k, v)
+			}
+			if got := isDocumentNav(r); got != c.want {
+				t.Errorf("isDocumentNav = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func sessionServer(status int, body string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/session" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+func TestSessionValid(t *testing.T) {
+	ck := &http.Cookie{Name: cookieName, Value: "x"}
+
+	t.Run("authenticated true -> valid", func(t *testing.T) {
+		ts := sessionServer(200, `{"authenticated":true}`)
+		defer ts.Close()
+		if !sessionValid(entry{Port: portOf(t, ts)}, ck) {
+			t.Fatal("want valid (true) for authenticated:true")
+		}
+	})
+	t.Run("authenticated false -> invalid", func(t *testing.T) {
+		ts := sessionServer(200, `{"authenticated":false}`)
+		defer ts.Close()
+		if sessionValid(entry{Port: portOf(t, ts)}, ck) {
+			t.Fatal("want invalid (false) for authenticated:false")
+		}
+	})
+	t.Run("500 -> fail-open valid", func(t *testing.T) {
+		ts := sessionServer(500, `boom`)
+		defer ts.Close()
+		if !sessionValid(entry{Port: portOf(t, ts)}, ck) {
+			t.Fatal("want fail-open true on 500")
+		}
+	})
+	t.Run("malformed json -> fail-open valid", func(t *testing.T) {
+		ts := sessionServer(200, `not json`)
+		defer ts.Close()
+		if !sessionValid(entry{Port: portOf(t, ts)}, ck) {
+			t.Fatal("want fail-open true on unparseable body")
+		}
+	})
+	t.Run("unreachable -> fail-open valid", func(t *testing.T) {
+		ts := sessionServer(200, `{"authenticated":false}`)
+		p := portOf(t, ts)
+		ts.Close() // nothing listening now
+		if !sessionValid(entry{Port: p}, ck) {
+			t.Fatal("want fail-open true on connection refused")
+		}
+	})
+}
+
+// fakeInstance serves the three endpoints the dispatcher touches: the session
+// check, the bootstrap exchange, and a catch-all standing in for the proxied app.
+func fakeInstance(authenticated bool, bootstrapCalled *bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/session":
+			if authenticated {
+				_, _ = w.Write([]byte(`{"authenticated":true}`))
+			} else {
+				_, _ = w.Write([]byte(`{"authenticated":false}`))
+			}
+		case "/api/auth/bootstrap":
+			if bootstrapCalled != nil {
+				*bootstrapCalled = true
+			}
+			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`{"authenticated":true}`))
+		default:
+			_, _ = w.Write([]byte("APP"))
+		}
+	}))
+}
+
+func setTable(port int) {
+	mu.Lock()
+	table = map[string]entry{"vbarzin": {OsUser: "wizard", Port: port}}
+	mu.Unlock()
+}
+
+func TestHandlerRepairsOnInvalidCookieDocNav(t *testing.T) {
+	called := false
+	ts := fakeInstance(false, &called)
+	defer ts.Close()
+	setTable(portOf(t, ts))
+
+	orig := mintToken
+	mintToken = func(string) ([]byte, error) { return []byte(`{"credential":"tok"}`), nil }
+	defer func() { mintToken = orig }()
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "stale"})
+	w := httptest.NewRecorder()
+
+	handler(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("stale cookie on doc-nav should re-pair (302), got %d body=%q", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatal("expected bootstrap to be called during re-pair")
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Value != "fresh" {
+		t.Fatalf("expected fresh t3_session relayed, got %+v", cookies)
+	}
+}
+
+func TestHandlerProxiesOnValidCookie(t *testing.T) {
+	ts := fakeInstance(true, nil)
+	defer ts.Close()
+	setTable(portOf(t, ts))
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "good"})
+	w := httptest.NewRecorder()
+
+	handler(w, r)
+
+	if w.Code != http.StatusOK || w.Body.String() != "APP" {
+		t.Fatalf("valid cookie should proxy (200 APP), got %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlerProxiesXHREvenIfCookieInvalid(t *testing.T) {
+	called := false
+	ts := fakeInstance(false, &called) // session would say invalid, but XHR must NOT be re-paired
+	defer ts.Close()
+	setTable(portOf(t, ts))
+
+	r := httptest.NewRequest("GET", "/api/threads", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "empty") // XHR/fetch, not a document nav
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "stale"})
+	w := httptest.NewRecorder()
+
+	handler(w, r)
+
+	if called {
+		t.Fatal("must NOT re-pair (302) a non-document sub-request — would corrupt the SPA fetch contract")
+	}
+	if w.Code != http.StatusOK || w.Body.String() != "APP" {
+		t.Fatalf("XHR should proxy through, got %d %q", w.Code, w.Body.String())
+	}
+}
