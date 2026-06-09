@@ -1,0 +1,6 @@
+[Unit]
+Description=Consistent backup of per-user t3 ~/.t3 state.sqlite (history + auth)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-backup-state

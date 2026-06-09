@@ -106,12 +106,29 @@ first run.
   live session and all projection history were untouched. Backup:
   `/home/wizard/.t3/userdata/auth-backup-*.sql`.
 
-### 5. End-to-end pairing health-check (DEFERRED)
+### 5. End-to-end pairing health-check (DONE — 2026-06-09 follow-up)
 
-The smoke test should exercise mint→bootstrap→cookie, not just `GET /`. Not
-done here (the pin makes it moot for the known-good build); needed before the
-enforcer is ever pointed at a new version. A blackbox probe on the dispatch
-auto-pair (expect 302 + `t3_session`) would have alerted within minutes.
+`t3-autoupdate.sh`'s smoke test now exercises the REAL handshake — mint →
+`POST` the credential (trying `browser-session` then `bootstrap`) → require
+`200` + a `t3_session` cookie — not just `GET / → 200`. A build that renames or
+breaks the pairing API now fails the check and **auto-rolls-back**, instead of
+shipping a pairing-broken binary to everyone.
+
+### 6. Version-agnostic dispatch + reversible bumps (DONE — "prepare for 0.0.25")
+
+So the pin can move without another outage:
+- **`t3-dispatch` is now version-agnostic** — `autoPair` tries
+  `/api/auth/browser-session` (0.0.25) and falls back to `/api/auth/bootstrap`
+  (0.0.24), so one binary pairs across the rename and through rolling-restart
+  skew. Covered by `TestAutoPairAcrossVersions`. Investigation confirmed the
+  0.0.25 break was *only* this endpoint rename — the rest of the contract
+  (credential payload, `t3_session` cookie, `/api/auth/session`) is byte-identical.
+- **`~/.t3` state is now backed up** — `t3-backup-state` (daily timer, online
+  `VACUUM INTO`, timeout-guarded) snapshots each user's `state.sqlite` (previously
+  the only copy, unbacked). This turns the one-way forward migration into a
+  *restore*, not sqlite surgery.
+- **Cutover is a checklist** — `docs/runbooks/t3-version-bump.md` (pre-flight
+  verify, pre-bump backup, enforcer install + auto-rollback, verify, restore).
 
 ## Lessons
 

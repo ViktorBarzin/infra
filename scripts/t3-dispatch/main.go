@@ -113,9 +113,42 @@ func isDocumentNav(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
+// pairEndpoints are the instance's session-bootstrap paths in preference order.
+// t3 renamed /api/auth/bootstrap -> /api/auth/browser-session in 0.0.25; trying the
+// new name first and falling back to the old lets ONE dispatch binary pair against
+// either version — so the t3 pin can move forward (and survive a rolling-restart
+// skew where some instances are already on the new version) without a 502 storm.
+var pairEndpoints = []string{"/api/auth/browser-session", "/api/auth/bootstrap"}
+
+// exchangeCredential POSTs the pairing credential to the user's instance, trying
+// each pairEndpoint in turn. A 404 means "absent in this t3 version" -> try the
+// next; any other status is that endpoint's verdict, returned as-is. Caller owns
+// resp.Body.
+func exchangeCredential(port int, credential string) (*http.Response, error) {
+	body, _ := json.Marshal(map[string]string{"credential": credential})
+	var lastErr error
+	for _, ep := range pairEndpoints {
+		resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d%s", port, ep),
+			"application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close() // endpoint absent in this t3 version — try the next
+			continue
+		}
+		return resp, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no pairing endpoint accepted the request (all returned 404)")
+}
+
 // autoPair mints a one-time pairing token for the user's instance (as that OS
-// user, via the scoped sudoers entry) and exchanges it at the instance's
-// /api/auth/bootstrap, relaying the returned t3_session Set-Cookie to the browser.
+// user, via the scoped sudoers entry) and exchanges it at the instance's pairing
+// endpoint, relaying the returned t3_session Set-Cookie to the browser.
 func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 	// t3-mint (root, via scoped sudoers) validates the OS user is in
 	// /etc/ttyd-user-map, then mints as that user. The dispatch service itself
@@ -133,16 +166,15 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unparseable pairing output", http.StatusInternalServerError)
 		return
 	}
-	body, _ := json.Marshal(map[string]string{"credential": pc.Credential})
-	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/auth/bootstrap", e.Port),
-		"application/json", bytes.NewReader(body))
+	resp, err := exchangeCredential(e.Port, pc.Credential)
 	if err != nil {
+		log.Printf("pairing exchange for %s failed: %v", e.OsUser, err)
 		http.Error(w, "bootstrap request failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("bootstrap for %s returned %d", e.OsUser, resp.StatusCode)
+		log.Printf("pairing for %s returned %d", e.OsUser, resp.StatusCode)
 		http.Error(w, "bootstrap rejected", http.StatusBadGateway)
 		return
 	}

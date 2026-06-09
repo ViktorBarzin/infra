@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily t3 state.sqlite backup (the only copy of ~/.t3; enables version-bump rollback)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
