@@ -191,9 +191,12 @@ while IFS=$'\t' read -r os_user port; do
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
-# 5b) machine-wide (once, not per-user): keep the t3 nightly auto-updater enabled so it
-#     self-heals hourly — a `disabled` timer silently freezes every instance on an old build.
-run systemctl enable --now t3-autoupdate.timer >/dev/null 2>&1 || true
+# 5b) machine-wide (once, not per-user): keep the t3 pinned-version ENFORCER enabled (it
+#     re-asserts T3_PIN daily; a no-op when already correct). NOT --now: with Persistent=true
+#     a `--now` enable fires the missed daily job IMMEDIATELY, which on 2026-06-09 pulled a
+#     breaking nightly mid-day and took out auth for everyone. `enable` (no --now) just arms
+#     the 04:00 schedule; fresh boxes get t3 from setup-devvm.sh's pinned install, not here.
+run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 
 # 6) regenerate /etc/ttyd-user-map + dispatch.json from the desired state (SSoT:
 #    a roster entry removed here DISAPPEARS, which is what the offboarding cut relies on)
