@@ -1,6 +1,0 @@
-# The t3-dispatch service (unprivileged user t3-dispatch) may run ONLY the
-# t3-mint wrapper, as root. t3-mint validates the target user against
-# /etc/ttyd-user-map and mints a one-time t3 pairing token as that user.
-# A compromise of the network-facing dispatch service can therefore mint
-# pairing tokens for already-mapped users at most — never arbitrary root.
-t3-dispatch ALL=(root) NOPASSWD: /usr/local/bin/t3-mint

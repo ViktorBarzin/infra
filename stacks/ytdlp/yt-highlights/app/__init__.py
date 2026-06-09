@@ -1,1 +1,0 @@
-# YouTube Highlights Extraction Service

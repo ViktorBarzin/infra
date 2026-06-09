@@ -1,9 +1,0 @@
-[Unit]
-Description=Renew the periodic Vault/OpenBao token in ~/.vault-token
-Documentation=https://github.com/ViktorBarzin/infra/blob/master/scripts/vault-token-renew.sh
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/vault-token-renew
