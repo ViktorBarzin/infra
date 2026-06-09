@@ -59,6 +59,60 @@ func lookup(ak string) (entry, bool) {
 	return e, ok
 }
 
+// mintToken mints a one-time pairing token for osUser via the scoped sudoers
+// entry (the dispatch service can invoke nothing else). Indirected through a var
+// so tests can stub the privileged exec.
+var mintToken = func(osUser string) ([]byte, error) {
+	return exec.Command("sudo", "-n", "/usr/local/bin/t3-mint", osUser).Output()
+}
+
+var sessionClient = &http.Client{Timeout: 5 * time.Second}
+
+// sessionValid asks the user's instance whether the presented t3_session cookie
+// is still valid. Server-side sessions can be wiped/expired independently of the
+// 30-day cookie (e.g. an auth-schema rollback drops every session row), leaving
+// the browser with a live-looking but dead cookie. Fails OPEN: any error/non-200/
+// parse failure returns true so the request still proxies — a re-pair is forced
+// only on a definitive authenticated:false.
+func sessionValid(e entry, c *http.Cookie) bool {
+	req, err := http.NewRequest(http.MethodGet,
+		fmt.Sprintf("http://127.0.0.1:%d/api/auth/session", e.Port), nil)
+	if err != nil {
+		return true
+	}
+	req.AddCookie(c)
+	resp, err := sessionClient.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return true
+	}
+	var s struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&s) != nil {
+		return true
+	}
+	return s.Authenticated
+}
+
+// isDocumentNav reports whether r is a top-level browser document navigation, as
+// opposed to an XHR/fetch/asset/WebSocket sub-request. Only such requests are
+// safe to answer with a re-pair 302 — redirecting a sub-resource would corrupt
+// the SPA's fetch/WebSocket contract. Trust Sec-Fetch-Dest when present (all
+// modern browsers send it); fall back to the Accept header otherwise.
+func isDocumentNav(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" {
+		return dest == "document"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
 // autoPair mints a one-time pairing token for the user's instance (as that OS
 // user, via the scoped sudoers entry) and exchanges it at the instance's
 // /api/auth/bootstrap, relaying the returned t3_session Set-Cookie to the browser.
@@ -66,7 +120,7 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 	// t3-mint (root, via scoped sudoers) validates the OS user is in
 	// /etc/ttyd-user-map, then mints as that user. The dispatch service itself
 	// runs unprivileged and can invoke nothing else.
-	out, err := exec.Command("sudo", "-n", "/usr/local/bin/t3-mint", e.OsUser).Output()
+	out, err := mintToken(e.OsUser)
 	if err != nil {
 		log.Printf("mint for %s failed: %v", e.OsUser, err)
 		http.Error(w, "pairing mint failed", http.StatusInternalServerError)
@@ -111,7 +165,16 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no t3 instance provisioned for this user", http.StatusForbidden)
 		return
 	}
-	if _, err := r.Cookie(cookieName); err != nil {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		autoPair(e, w, r)
+		return
+	}
+	// A present cookie can still be server-side-invalid (sessions wiped/expired
+	// while the 30-day cookie lingers). On a top-level navigation, verify it and
+	// re-pair if dead — otherwise the instance just renders its pair page. Gated
+	// to document navs so we never 302 an XHR/asset/WebSocket sub-request.
+	if isDocumentNav(r) && !sessionValid(e, c) {
 		autoPair(e, w, r)
 		return
 	}
