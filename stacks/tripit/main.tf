@@ -15,7 +15,12 @@ variable "tls_secret_name" {
 
 locals {
   namespace = "tripit"
-  image     = "forgejo.viktorbarzin.me/viktor/tripit:${var.image_tag}"
+  # Image now built OFF-INFRA by GitHub Actions, pushed to GHCR (private), 2026-06-09:
+  # Forgejo viktor/tripit push-mirrors -> private ViktorBarzin/tripit GitHub repo ->
+  # GHA builds + pushes ghcr.io/viktorbarzin/tripit. Removes both the build IO and the
+  # Forgejo/sdc registry push from the homelab. Running tag is set via `kubectl set
+  # image` (image is KEEL_IGNORE_IMAGE below); CronJobs track :latest.
+  image = "ghcr.io/viktorbarzin/tripit:${var.image_tag}"
   labels = {
     app = "tripit"
   }
@@ -65,6 +70,15 @@ locals {
     SMTP_USER       = "spam@viktorbarzin.me"
     SMTP_FROM       = "plans@viktorbarzin.me"
     PUBLIC_BASE_URL = "https://tripit.viktorbarzin.me"
+    # Narrator audio (ADR-0004): Chatterbox via the in-cluster `tts` stack.
+    # OpenAI-compatible /v1/audio/speech; the bake POSTs best-effort synth
+    # requests, so a down/Pending Chatterbox is a clean skip (browser-TTS
+    # fallback), never a bake error. ClusterIP-only → no token. Note: the mode
+    # is `openai_compatible` (tripit renamed it from `chatterbox`); TTS_MODEL is
+    # still the `chatterbox` family string tripit sends as the OpenAI `model`.
+    TTS_MODE     = "openai_compatible"
+    TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
+    TTS_MODEL    = "chatterbox"
   }
 }
 
@@ -81,6 +95,35 @@ resource "kubernetes_namespace" "tripit" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label.
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# GHCR pull secret (tripit ns only) for the private ghcr.io/viktorbarzin/tripit image
+# now built off-infra by GitHub Actions. Uses viktor's github_pat as the pull
+# credential — admin-scoped, accepted as an interim (rotate to a fine-grained
+# read:packages token later). Scoped to this namespace to limit the broad token's
+# blast radius (deliberately NOT folded into the cluster-wide registry-credentials).
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
+resource "kubernetes_secret" "ghcr_credentials" {
+  metadata {
+    name      = "ghcr-credentials"
+    namespace = kubernetes_namespace.tripit.metadata[0].name
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = jsonencode({
+      auths = {
+        "ghcr.io" = {
+          username = "ViktorBarzin"
+          password = data.vault_kv_secret_v2.viktor.data["github_pat"]
+          auth     = base64encode("ViktorBarzin:${data.vault_kv_secret_v2.viktor.data["github_pat"]}")
+        }
+      }
+    })
   }
 }
 
@@ -276,6 +319,9 @@ resource "kubernetes_deployment" "tripit" {
       spec {
         image_pull_secrets {
           name = "registry-credentials"
+        }
+        image_pull_secrets {
+          name = kubernetes_secret.ghcr_credentials.metadata[0].name
         }
 
         init_container {
@@ -532,6 +578,9 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
             restart_policy = "OnFailure"
             image_pull_secrets {
               name = "registry-credentials"
+            }
+            image_pull_secrets {
+              name = kubernetes_secret.ghcr_credentials.metadata[0].name
             }
             container {
               name    = "worker"
