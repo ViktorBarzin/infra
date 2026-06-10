@@ -64,6 +64,41 @@ refresh_locked_clone() {
     || log "WARN: $user master not fast-forwardable (local commits?) — left as-is"
 }
 
+# Machine-wide Claude managed config: the repo file (in the admin tree, like the
+# roster) is the authoring surface; deploying it here means a plain infra commit
+# propagates claudeMd/model edits to /etc — and thus every user's NEXT session —
+# within one reconcile cycle. No manual install step.
+sync_managed_config() {
+  local src="$WORKSTATION_DIR/managed-settings.json" dst=/etc/claude-code/managed-settings.json
+  [[ -r "$src" ]] || return 0
+  python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null \
+    || { log "WARN: $src is invalid JSON — managed-config sync skipped"; return 0; }
+  cmp -s "$src" "$dst" 2>/dev/null && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] managed-settings.json -> $dst"; return 0; fi
+  install -D -m 0644 "$src" "$dst"
+  log "deployed managed-settings.json -> /etc/claude-code (repo copy changed)"
+}
+
+# ~/.codex/AGENTS.md is a STATIC mirror of the managed claudeMd (codex has no
+# machine-wide managed layer). Regenerate stale mirrors so codex sessions inherit
+# claudeMd edits the same way Claude sessions do. Never clobbers a user-customized
+# file: only touches files carrying the mirror header (or creates absent ones).
+refresh_codex_mirror() {
+  local user="$1" home dst tmp
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  dst="$home/.codex/AGENTS.md"
+  [[ -n "$home" && -d "$home/.codex" ]] || return 0
+  if [[ -f "$dst" ]] && ! head -1 "$dst" | grep -q '^# Codex global instructions (devvm)'; then return 0; fi
+  tmp="$(mktemp)"
+  { printf '# Codex global instructions (devvm)\n\n_Mirrors the machine-wide Claude managed policy._\n\n---\n\n'
+    python3 -c 'import json; print(json.load(open("/etc/claude-code/managed-settings.json"))["claudeMd"])'
+  } > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  if cmp -s "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; return 0; fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] codex AGENTS.md mirror -> $user"; rm -f "$tmp"; return 0; fi
+  install -o "$user" -g "$user" -m 0644 "$tmp" "$dst"; rm -f "$tmp"
+  log "refreshed codex AGENTS.md mirror -> $user"
+}
+
 # Per-user OIDC kubeconfig (kubelogin/PKCE — the `kubernetes` Authentik client is
 # public, no secret). Identical for all users: identity comes from each user's own
 # interactive OIDC login, which the apiserver maps (email claim) to their RBAC.
@@ -179,6 +214,9 @@ desired_file="$(mktemp)"
 python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" > "$desired_file"
 jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced invalid JSON" >&2; exit 1; }
 
+# 3b) machine-wide Claude managed config (repo -> /etc; per-user codex mirrors in the loop below)
+sync_managed_config
+
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 while IFS=$'\t' read -r os_user tier shell groups_csv; do
   if ! id "$os_user" >/dev/null 2>&1; then
@@ -202,6 +240,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv; do
     install_user_kubeconfig "$os_user"
     install_user_claude_token "$os_user"
   fi
+  refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
