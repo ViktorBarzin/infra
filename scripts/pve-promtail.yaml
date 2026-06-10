@@ -1,0 +1,53 @@
+# Promtail config for the PVE host (192.168.1.127) — ships the systemd journal to cluster Loki.
+#
+# NOT Terraform-managed (the PVE host is the hypervisor, outside k8s). Deployed by hand,
+# same pattern as scripts/fan-control.* and the rpi-sofia promtail. This file is source-of-truth.
+#
+# Deploy:
+#   scp scripts/pve-promtail.yaml    root@192.168.1.127:/etc/promtail/config.yml
+#   scp scripts/pve-promtail.service root@192.168.1.127:/etc/systemd/system/promtail.service
+#   ssh root@192.168.1.127 'mkdir -p /var/lib/promtail && systemctl daemon-reload && systemctl enable --now promtail'
+#   # Binary: grafana/loki v3.5.1 promtail-linux-amd64 -> /usr/local/bin/promtail (chmod 0755).
+#   # Loki reach: /etc/hosts pin "10.0.20.203 loki.viktorbarzin.lan" (Traefik LB, ETP-Local).
+#   #   FOLLOW-UP: replace the pin with a Technitium CNAME loki.viktorbarzin.lan -> ingress.viktorbarzin.lan
+#   #   so it auto-tracks Traefik LB renumbers (also fixes the rpi-sofia pin — see docs/architecture/monitoring.md).
+#
+# Streams produced:
+#   {job="pve-journal"}                    — full host journal (filter identifier="snoopy" for the command audit)
+#   {job="sshd-pve"}                       — sshd auth lines; feeds the Loki S1 security rule (docs/architecture/security.md)
+#   {job="pve-journal", identifier="snoopy"} — snoopy command audit (every execve on the host; see scripts/pve-snoopy.ini)
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: https://loki.viktorbarzin.lan/loki/api/v1/push
+    tls_config:
+      insecure_skip_verify: true
+
+scrape_configs:
+  - job_name: journal
+    journal:
+      max_age: 12h
+      json: false
+      path: /var/log/journal
+      labels:
+        host: pve
+        job: pve-journal
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal_priority_keyword']
+        target_label: level
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: identifier
+      # sshd auth lines (identifier sshd / sshd-session) -> job=sshd-pve so the Loki S1
+      # security rule ({job="sshd-pve"}) matches. snoopy command lines stay job=pve-journal.
+      - source_labels: ['__journal_syslog_identifier']
+        regex: 'sshd.*'
+        target_label: job
+        replacement: 'sshd-pve'

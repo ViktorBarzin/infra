@@ -1,0 +1,17 @@
+# systemd unit for promtail on the PVE host (192.168.1.127). Install to
+# /etc/systemd/system/promtail.service. See scripts/pve-promtail.yaml for the full deploy.
+[Unit]
+Description=Promtail (ships PVE host journal -> cluster Loki)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

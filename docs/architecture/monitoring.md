@@ -122,9 +122,12 @@ view plus a Grafana-link button. Those sensors reach Loki via the Traefik LB IP
 `10.0.20.203` + a `Host: loki.viktorbarzin.lan` header (`verify_ssl: false`)
 because `loki.viktorbarzin.lan` has **no Technitium record yet** (the
 `technitium-ingress-dns-sync` CronJob only creates `.me` CNAMEs + pins
-`ingress.viktorbarzin.lan`). **Follow-up:** register `loki.viktorbarzin.lan` in
-Technitium (or fix the `*.viktorbarzin.lan` wildcard) so both this sensor and the
-Sofia-Pi promtail can resolve it by name instead of pinning the LB IP.
+`ingress.viktorbarzin.lan`). The **PVE host** promtail (see "External host: pve"
+below) reaches Loki the same way, via an `/etc/hosts` pin
+`10.0.20.203 loki.viktorbarzin.lan`. **Follow-up (now 3 consumers — this sensor,
+rpi-sofia, the PVE host):** register `loki.viktorbarzin.lan` in Technitium as a
+CNAME → `ingress.viktorbarzin.lan` (auto-tracks Traefik LB renumbers) so all
+three resolve it by name instead of pinning the LB IP.
 
 ### External host: rpi-sofia (Sofia Raspberry Pi)
 
@@ -145,6 +148,23 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 **Recovery** — a systemd hardware watchdog (`RuntimeWatchdogSec=14s`, bcm2835 max ~15s) auto-reboots the Pi on a hard hang instead of leaving it dead for hours.
 
 > The cluster side (scrape job, alerts, Loki ingress, dashboard) is Terraform-managed in `stacks/monitoring/`. The **Pi-side** pieces (node_exporter, the textfile collector + timer, promtail, the watchdog config, and the `server=/viktorbarzin.lan/192.168.1.2` dnsmasq split-horizon forward needed to resolve the Loki ingress) are configured by hand on the Pi — it is not under Terraform — and are backed up off-box at `/home/wizard/rpi-sofia-backup/`. The real reliability fix (reflash/replace the SD card) needs on-site access.
+
+### External host: pve (Proxmox hypervisor, 192.168.1.127)
+
+`pve` is the Proxmox VE host — the hypervisor running **every** VM (pfSense, the 5 k8s nodes, the devvm, HA, Windows). It is not in the cluster. Since 2026-06-10 its **full systemd journal ships to cluster Loki**, closing a gap (the most critical host previously had no central logging) and giving the Wave-1 **S1** security rule its data source (`docs/architecture/security.md`).
+
+**Why now:** emo's Claude agent was granted **root SSH** to the host (a dedicated shared-root key `emo-pve-agent@devvm`, fingerprint `SHA256:Wd+m0EABlm4RDDykDh85PIYSqe0Al8Hr9AZ+7Ksy4HQ`, reachable as `ssh pve` from the devvm) so he can manage the host (e.g. the R730 fan daemon) via his agent. To keep an audit trail, **snoopy** (enabled via `/etc/ld.so.preload` → `libsnoopy.so`; config `scripts/pve-snoopy.ini`) logs every `execve()` to journald under identifier `snoopy`, and promtail ships it to Loki.
+
+**Logs** — `promtail` v3.5.1 (amd64) at `/usr/local/bin/promtail`, config `scripts/pve-promtail.yaml`, unit `scripts/pve-promtail.service`. Ships `/var/log/journal` to `https://loki.viktorbarzin.lan/loki/api/v1/push` (`insecure_skip_verify`; LB-IP reached via the `/etc/hosts` pin noted above). Relabels: `unit`, `level`, `identifier`; sshd lines (`identifier=~"sshd.*"`) are re-jobbed to `sshd-pve` so the S1 rule matches. Streams:
+- `{job="pve-journal", host="pve"}` — full host journal (kernel, pvestatd, fan-control, NFS, etc.).
+- `{job="pve-journal", identifier="snoopy"}` — **command audit** (every execve: `uid login tty sid cwd cmdline`).
+- `{job="sshd-pve"}` — sshd auth; an `Accepted publickey ... SHA256:<fp>` line ties a session to a key (e.g. emo's fp above). Feeds S1.
+
+**Attribution caveat:** all SSH is shared-root, so snoopy `uid`/`login` are always `root`; attribute a command to a person by correlating its `sid`/timestamp with the matching `{job="sshd-pve"}` Accepted-publickey line (key fingerprint). emo's agent arrives SNAT'd as `192.168.1.2`, which is in the S1 allowlist, so legitimate access does not alert.
+
+Query examples (Grafana → Loki): `{host="pve"}`, `{job="pve-journal", identifier="snoopy"}` (command audit), `{job="sshd-pve"} |= "Accepted publickey"`.
+
+> Hand-managed (not Terraform), like the rpi-sofia and fan-control pieces: the promtail binary/config/unit, the snoopy enable (`/etc/ld.so.preload`), and the `/etc/hosts` Loki pin all live on the host. Source-of-truth files: `scripts/pve-promtail.{yaml,service}` + `scripts/pve-snoopy.ini`; deploy steps are in the `pve-promtail.yaml` header.
 
 ### Dell R730 iDRAC: SNMP-primary + Redfish remnant (migrated 2026-06-05)
 
