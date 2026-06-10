@@ -94,3 +94,118 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# === Drop-attribution probe surface ==========================================
+# /probe/* on the t3 host is dispatch's unauthenticated echo surface (see
+# scripts/t3-dispatch/probe.go) for the t3-probe below. Guarded against
+# Authentik re-walling by `authentik_walloff_targets` in stacks/monitoring.
+module "ingress_probe" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": WS echo + healthz for the in-cluster path-health probe; no
+  # user data, no t3 instance reachable — auth would break the synthetic client.
+  auth             = "none"
+  anti_ai_scraping = false  # the probe IS a bot; PoW/UA filtering would block it
+  dns_type         = "none" # main `module.ingress` owns the DNS record for this host
+  namespace        = kubernetes_namespace.t3code.metadata[0].name
+  name             = "t3-probe"
+  service_name     = kubernetes_service.t3code.metadata[0].name
+  full_host        = "t3.viktorbarzin.me"
+  ingress_path     = ["/probe"]
+  tls_secret_name  = var.tls_secret_name
+}
+
+# t3-probe: differential WS/HTTP prober (see probe.py docstring for the
+# attribution model). Runs in-cluster so it measures the shared path WITHOUT
+# any user's last mile; Prometheus scrapes it via the static `t3-probe` job
+# in stacks/monitoring.
+resource "kubernetes_config_map_v1" "t3_probe" {
+  metadata {
+    name      = "t3-probe"
+    namespace = kubernetes_namespace.t3code.metadata[0].name
+  }
+  data = {
+    "probe.py" = file("${path.module}/probe.py")
+  }
+}
+
+resource "kubernetes_deployment_v1" "t3_probe" {
+  metadata {
+    name      = "t3-probe"
+    namespace = kubernetes_namespace.t3code.metadata[0].name
+    labels    = { app = "t3-probe" }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = { app = "t3-probe" }
+    }
+    template {
+      metadata {
+        labels = { app = "t3-probe" }
+        annotations = {
+          "checksum/probe" = sha256(file("${path.module}/probe.py"))
+        }
+      }
+      spec {
+        container {
+          name  = "probe"
+          image = "python:3.12-alpine"
+          # Long-running pod, not a high-cadence CronJob: a one-time pinned
+          # pip install at start (with retries against transient DNS) is the
+          # lightweight alternative to owning a registry image for ~200 lines.
+          command = ["sh", "-c", <<-EOT
+            for i in 1 2 3 4 5; do
+              pip install --no-cache-dir --quiet aiohttp==3.9.5 prometheus-client==0.20.0 && break
+              echo "pip attempt $i failed; retrying" >&2; sleep 10
+            done
+            exec python /app/probe.py
+          EOT
+          ]
+          port {
+            container_port = 9108
+            name           = "metrics"
+          }
+          volume_mount {
+            name       = "app"
+            mount_path = "/app"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "192Mi"
+            }
+          }
+        }
+        volume {
+          name = "app"
+          config_map {
+            name = kubernetes_config_map_v1.t3_probe.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+resource "kubernetes_service" "t3_probe" {
+  metadata {
+    name      = "t3-probe"
+    namespace = kubernetes_namespace.t3code.metadata[0].name
+    labels    = { app = "t3-probe" }
+  }
+  spec {
+    selector = { app = "t3-probe" }
+    port {
+      name        = "metrics"
+      port        = 9108
+      target_port = 9108
+    }
+  }
+}

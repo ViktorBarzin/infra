@@ -228,6 +228,7 @@ func main() {
 	}()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+	registerProbe(mux)
 	mux.HandleFunc("/", handler)
 	log.Printf("t3-dispatch listening on %s", listenAddr)
 	log.Fatal(http.ListenAndServe(listenAddr, mux))

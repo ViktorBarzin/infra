@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func portOf(t *testing.T, ts *httptest.Server) int {
@@ -256,5 +259,45 @@ func TestAutoPairAcrossVersions(t *testing.T) {
 				t.Fatalf("want fresh t3_session relayed, got %+v", cs)
 			}
 		})
+	}
+}
+
+func TestProbeHealthz(t *testing.T) {
+	mux := http.NewServeMux()
+	registerProbe(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/probe/healthz")
+	if err != nil {
+		t.Fatalf("GET /probe/healthz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestProbeWSEcho(t *testing.T) {
+	mux := http.NewServeMux()
+	registerProbe(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/probe/ws"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial %s: %v", wsURL, err)
+	}
+	defer c.Close()
+	for _, msg := range []string{"ping 1718000000", "ping 1718000010"} {
+		if err := c.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_, got, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if string(got) != msg {
+			t.Errorf("echo = %q, want %q", got, msg)
+		}
 	}
 }
