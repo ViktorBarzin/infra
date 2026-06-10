@@ -100,8 +100,16 @@ save() {
 }
 
 restore() {
-  local u f sess cwd uuid cmd
+  local only="${1:-}" u f sess cwd uuid cmd
+  # Optional single-user restore: `tmux-persist restore <user>` limits the
+  # action to one terminal user (the web-UI restore button calls this via the
+  # tmux-restore-user wrapper). No arg => restore every user (the boot service).
+  if [[ -n "$only" ]] && ! users | grep -qxF "$only"; then
+    echo "[tmux-persist] restore: '$only' is not a known terminal user" >&2
+    return 2
+  fi
   for u in $(users); do
+    [[ -z "$only" || "$u" == "$only" ]] || continue
     f="$STATE_DIR/$u.tsv"
     [[ -s "$f" ]] || continue
     while IFS=$'\t' read -r sess cwd uuid; do
@@ -122,6 +130,6 @@ restore() {
 
 case "$MODE" in
   save) save ;;
-  restore) restore ;;
-  *) echo "usage: tmux-persist save|restore" >&2; exit 1 ;;
+  restore) restore "${2:-}" ;;
+  *) echo "usage: tmux-persist save | restore [user]" >&2; exit 1 ;;
 esac
