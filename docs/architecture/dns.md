@@ -277,6 +277,8 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
+**Superset rule for the internal `viktorbarzin.me` zone**: it is authoritative for every internal client (pods included since 2026-06-10), so it must carry every record type those clients consume — not just ingress A/CNAMEs. The `technitium-ingress-dns-sync` CronJob therefore also maintains the static **mail-auth records** (apex SPF + brevo-code TXT, MX → mail.viktorbarzin.me, `_dmarc`, `mail._domainkey` DKIM), mirrored from the public Cloudflare zone. Without them, rspamd on the mailserver saw `SPF=none` for inbound `@viktorbarzin.me` mail and quarantined it (broke the Brevo email-roundtrip probe, 2026-06-10). If these records change in Cloudflare, update the sync script too.
+
 ## NodeLocal DNSCache
 
 A DaemonSet in `kube-system` (`node-local-dns`, image `registry.k8s.io/dns/k8s-dns-node-cache:1.23.1`) runs on every node including the control plane. Each pod uses `hostNetwork: true` + `NET_ADMIN` and installs iptables NOTRACK rules so it transparently serves DNS on both:
