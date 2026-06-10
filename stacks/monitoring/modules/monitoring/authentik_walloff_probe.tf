@@ -57,6 +57,9 @@ locals {
     "instagram-poster-image" = "https://instagram-poster.viktorbarzin.me/image"
     # trading-bot app root (auth="app"): WebAuthn/JWT in-app; was walled, now 200.
     "trading-bot-app" = "https://trading.viktorbarzin.me/"
+    # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
+    # + healthz for the t3-probe drop-attribution client (stacks/t3code).
+    "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.

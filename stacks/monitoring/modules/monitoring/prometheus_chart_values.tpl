@@ -2541,6 +2541,22 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Email round-trip monitor never reported - check CronJob in mailserver namespace"
+          - alert: T3ProbeLegDown
+            expr: t3probe_connected{job="t3-probe"} == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "A t3 path-probe leg has been down >5m (leg label says which)"
+              description: "cloudflare-only = Cloudflare/WAN segment; cloudflare+internal = Traefik/dispatch/devvm; t3serve = the serve process. See docs/runbooks/t3-drop-attribution.md."
+          - alert: T3ProbeDropBurst
+            expr: increase(t3probe_disconnects_total{job="t3-probe"}[15m]) > 6
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "A t3 path-probe leg is dropping repeatedly (>6 in 15m; see leg/reason labels)"
+              description: "Users on the same segment are seeing 'disconnected, reconnecting' at this rate. Compare legs to attribute; correlate with devvm node_pressure_* metrics."
           - alert: ViktorBarzinApexDrift
             expr: viktorbarzin_apex_correct{job="viktorbarzin-apex-probe"} == 0
             for: 10m
@@ -3110,6 +3126,30 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'pve-node-r730' # Giving it a friendly name
+  # devvm: the shared workstation VM hosting per-user t3-serve + Claude agents.
+  # Its node_exporter ran unscraped until 2026-06-10 — the t3 disconnect
+  # root-cause work had NO memory/IO-pressure history for the very box whose
+  # stalls fire every t3 client's watchdog. Pressure/swap/load here is the
+  # primary correlate for t3probe drop events.
+  - job_name: 'devvm'
+    static_configs:
+      - targets:
+        - "10.0.10.10:9100"
+        labels:
+          node: 'devvm'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'devvm' # Giving it a friendly name
+  # t3-probe: differential t3 path-health prober (stacks/t3code). Legs:
+  # cloudflare (full public path), internal (Traefik only), t3serve (the
+  # serve process). See docs/runbooks/t3-drop-attribution.md.
+  - job_name: 't3-probe'
+    static_configs:
+      - targets:
+        - "t3-probe.t3code.svc.cluster.local:9108"
+    metrics_path: '/metrics'
   # rpi-sofia: external Raspberry Pi 3 at the Sofia home site (Frigate camera
   # DNAT passthrough + solar inverter path + HA MQTT sensors). node_exporter
   # installed via apt; the rpi_* metrics come from a vcgencmd textfile collector
