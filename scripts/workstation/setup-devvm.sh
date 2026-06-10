@@ -127,4 +127,45 @@ if command -v vault >/dev/null; then
   fi
 fi
 
+# 9) service layer: install + enable the machine-wide systemd units (sources in
+#    infra/scripts/) so a rebuild reproduces them — previously hand-scp'd, they would
+#    NOT survive a fresh box. Per-user t3-serve@ INSTANCES are enabled by the
+#    provisioner; the ttyd terminal-lobby chain ships from its own repo
+#    (forgejo viktor/terminal-lobby, scripts/deploy.sh) — not duplicated here.
+SCRIPTS="$HERE/.."
+# 9a) scripts the units exec (t3-provision-users already deployed in section 6)
+install -m 0755 "$SCRIPTS/t3-autoupdate.sh"   /usr/local/bin/t3-autoupdate
+install -m 0755 "$SCRIPTS/t3-backup-state.sh" /usr/local/bin/t3-backup-state
+install -m 0755 "$SCRIPTS/t3-mint"            /usr/local/bin/t3-mint
+# 9b) t3-dispatch: unprivileged system account + compiled Go binary (build-if-absent)
+id -u t3-dispatch >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin t3-dispatch
+if [[ ! -x /usr/local/bin/t3-dispatch ]]; then
+  if command -v go >/dev/null; then
+    log "building t3-dispatch (Go)"; ( cd "$SCRIPTS/t3-dispatch" && go build -o /usr/local/bin/t3-dispatch . )
+  else
+    log "WARN: go absent -> cannot build t3-dispatch; install golang-go or deploy the binary"
+  fi
+fi
+# 9c) sudoers: t3-dispatch may run ONLY t3-mint as root. A malformed file in
+#     /etc/sudoers.d breaks ALL sudo, so validate with visudo when available.
+if ! command -v visudo >/dev/null || visudo -cf "$SCRIPTS/sudoers-t3-autopair" >/dev/null; then
+  install -m 0440 "$SCRIPTS/sudoers-t3-autopair" /etc/sudoers.d/t3-autopair
+else
+  log "WARN: sudoers-t3-autopair failed visudo validation -> NOT installed"
+fi
+# 9d) unit files + enablement. Timers self-heal; t3-dispatch is long-running.
+#     t3-serve@ is a TEMPLATE (enabled per-user by the provisioner, not here).
+for u in t3-serve@.service \
+         t3-autoupdate.service t3-autoupdate.timer \
+         t3-backup-state.service t3-backup-state.timer \
+         t3-provision-users.service t3-provision-users.timer \
+         t3-dispatch.service; do
+  install -m 0644 "$SCRIPTS/$u" "/etc/systemd/system/$u"
+done
+systemctl daemon-reload
+systemctl enable --now t3-dispatch.service \
+  t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer >/dev/null 2>&1 || \
+  log "WARN: some units failed to enable (check: systemctl status t3-dispatch t3-*.timer)"
+log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-user)"
+
 log "OK (idempotent)"
