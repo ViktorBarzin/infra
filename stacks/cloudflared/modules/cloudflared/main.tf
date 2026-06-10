@@ -64,9 +64,13 @@ resource "kubernetes_deployment" "cloudflared" {
         }
         container {
           # image = "wisdomsky/cloudflared-web:latest"
-          image   = "cloudflare/cloudflared"
-          name    = "cloudflared"
-          command = ["cloudflared", "tunnel", "run"]
+          image = "cloudflare/cloudflared"
+          name  = "cloudflared"
+          # --no-autoupdate: without it cloudflared self-updates in place and
+          # exits (code 11) when CF ships a release, severing every WebSocket
+          # riding the tunnel (observed as t3/terminal drops, 2026-06-09/10).
+          # Image updates are handled by pod rollouts, not in-place binaries.
+          command = ["cloudflared", "tunnel", "--no-autoupdate", "run"]
           env {
             name  = "TUNNEL_TOKEN"
             value = var.cloudflare_tunnel_token
