@@ -226,6 +226,33 @@ Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment me
 4. Viktor reviews → CI applies → Slack notification
 5. Portal: `https://k8s-portal.viktorbarzin.me/onboarding` for full guide
 
+### Non-admin workstation users — the AGENT does the git work
+
+Non-admin devvm users (power-user / namespace-owner tiers) may not know git at
+all. Their agent handles every version-control step silently — never ask them
+to commit, push, pull, or open a PR, and never surface git jargon at them.
+Their `~/code` clone arrives preconfigured: git identity, a `forgejo` remote
+authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
+(auto-freshened hourly and at session launch, fast-forward only).
+
+To land a finished change from such a clone:
+
+1. `git checkout -b <os-user>/<short-topic> master` — always branch off fresh master
+2. Commit with a clear message (identity is preconfigured)
+3. `git push forgejo <os-user>/<short-topic>`
+4. Open the PR with the user's own PAT (`write:repository` suffices — verified 2026-06-10):
+   ```bash
+   TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
+   curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
+     https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
+     -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
+   ```
+5. `git checkout master` — leave the clone clean so auto-refresh keeps working
+6. Tell the user in plain language that the change is submitted for Viktor's review
+
+Direct pushes to `master` are rejected by branch protection; merging (and the
+CI apply a master push triggers) is admin-only.
+
 ## Common Operations
 - **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
