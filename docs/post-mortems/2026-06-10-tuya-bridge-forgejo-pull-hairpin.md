@@ -59,28 +59,55 @@ CoreDNS forgejo rewrite (2026-06-04) covers pods only, not kubelet.
 
 ## Fix
 
-`/etc/hosts` pin on every k8s node (hot, no drain, no containerd restart):
+**Initial mitigation (same morning):** `/etc/hosts` pin
+`10.0.20.203 forgejo.viktorbarzin.me` on every node — restored service
+immediately (resolve + token + blob legs all internal with correct SNI).
+
+**Superseded same day (Viktor: "no hardcoded IPs in nodes") by a DNS-based
+fix.** Discovery: Technitium's split-horizon zone *already* resolves
+`forgejo.viktorbarzin.me → CNAME viktorbarzin.me → A <live Traefik IP>` —
+the `technitium-ingress-dns-sync` CronJob auto-CNAMEs every ingress host
+hourly, the apex A record tracks the live Traefik LB IP, and the
+`viktorbarzin-apex-probe` canary alerts on drift. The nodes simply never
+queried Technitium (resolv chain: pfSense + public AdGuard fallback). The
+devvm already solved this with a systemd-resolved **routing domain**
+drop-in; the same was rolled to all 7 nodes:
 
 ```
-10.0.20.203 forgejo.viktorbarzin.me # forgejo-internal-pin (managed: setup-forgejo-containerd-mirror.sh)
+# /etc/systemd/resolved.conf.d/viktorbarzin.conf
+[Resolve]
+DNS=10.0.20.201
+Domains=~viktorbarzin.me
 ```
 
-Go's resolver (containerd) consults `/etc/hosts` first, so resolve + token
-+ blob legs all go to internal Traefik with correct SNI and a valid
-wildcard cert (no `skip_verify` needed on this path). Applied live to all
-7 nodes; persisted in `modules/create-template-vm/k8s-node-containerd-setup.sh`
-(new nodes) and `scripts/setup-forgejo-containerd-mirror.sh` (existing-node
-rollout). hosts.toml mirror left in place (harmless, uniform config).
+The `/etc/hosts` pins were then removed (verified `getent` still returns
+the Traefik IP via DNS, and `crictl pull` succeeds). On node5/6 the
+cloud-init `global-dns.conf` (`DNS=8.8.8.8 1.1.1.1`) was demoted to
+`FallbackDNS=` only — public servers in the global set merge with and
+race the routing domain. That file's original justification ("Technitium
+NXDOMAINs forgejo.viktorbarzin.me") was obsolete: the ingress-dns-sync
+has since added forgejo to the zone — a stale comment that actively
+pointed new nodes at the hairpin.
 
-**Renumber hazard:** the pin hardcodes Traefik's LB IP, same as the
-hosts.toml mirror and the 5 literals broken by the 2026-05-30 `.200→.203`
-move. Any future Traefik LB renumber must update both (grep nodes for
-`forgejo-internal-pin`).
+Persisted in `modules/create-template-vm/cloud_init.yaml` (new nodes; DNS
+drop-ins) and `scripts/setup-forgejo-containerd-mirror.sh` (existing-node
+rollout). hosts.toml mirror left in place but documented as vestigial.
+
+**Renumber hazard: resolved.** A future Traefik LB renumber propagates
+via the apex A record automatically (drift probe alerts if it doesn't);
+only the vestigial hosts.toml literal goes stale. **New trade-off:**
+`*.viktorbarzin.me` resolution from nodes now depends on in-cluster
+Technitium (3 replicas); in a full cluster outage these names SERVFAIL —
+acceptable, the services are down anyway, and bootstrap images pull via
+the IP-addressed `10.0.20.10` mirrors.
 
 ## Verification
 
-- `getent hosts forgejo.viktorbarzin.me` → `10.0.20.203` on all 7 nodes;
-  `curl https://forgejo.viktorbarzin.me/v2/` → 401 (internal route, valid TLS).
+- `getent hosts forgejo.viktorbarzin.me` → `10.0.20.203` on all 7 nodes
+  **with no `/etc/hosts` entry** (pure DNS via the routing domain);
+  `resolvectl status` shows `~viktorbarzin.me` routed to `10.0.20.201`;
+  general resolution (`getent hosts google.com`) intact on every node;
+  `crictl pull` of the tuya_bridge image succeeds via the DNS path.
 - tuya-bridge pod Running; `/health` `ok=true`; 27/27 devices
   `success=true`; 7/7 `*_tuya_cloud_up` gauges = 1; no tuya-related alerts.
 
@@ -90,10 +117,16 @@ move. Any future Traefik LB renumber must update both (grep nodes for
   latency bomb with the blast delayed until the cache misses.
 - Registry token realms are absolute URLs: any "redirect the registry"
   scheme must also redirect the *name*, not just the endpoint.
-- The remaining hairpin-exposed leg is **devvm git** (manual `/etc/hosts`
-  workaround documented in memory); a durable LAN-wide fix would need
-  pfSense Unbound host overrides (live network device — deliberate,
-  separate change).
+- Before inventing a redirect mechanism, check what the DNS authority
+  already serves: the Technitium split-horizon zone had the correct,
+  auto-maintained answer all along — the clients just weren't asking it.
+- Stale config comments are load-bearing: the obsolete "Technitium
+  NXDOMAINs forgejo" comment in cloud-init steered new nodes onto public
+  DNS, recreating the hairpin exposure on every node added after it.
+- All `10.0.x` legs are now DNS-routed (nodes + devvm via routing domain,
+  pods via CoreDNS rewrite). pfSense Unbound host overrides remain an
+  option for other LAN segments if a non-Technitium client ever needs
+  internal answers (live network device — deliberate, separate change).
 
 ## Related
 
