@@ -269,11 +269,11 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 - **Affected**: Non-proxied domains (ha-sofia, immich, headscale, calibre, vaultwarden, etc.) for 192.168.1.x clients
 - **Not affected**: Cloudflare-proxied domains (resolve to Cloudflare edge IPs, no translation needed)
-- **Not affected**: 10.0.x.x and K8s clients — these resolve non-proxied domains to the public IP and rely on pfSense NAT reflection, which is **intermittently broken** (observed i/o timeouts to `176.12.22.76:443` from k8s nodes and the devvm, 2026-06-04 → 2026-06-10). Hairpin-sensitive paths on this network route `*.viktorbarzin.me` to Technitium instead, via a systemd-resolved **routing domain** (`/etc/systemd/resolved.conf.d/viktorbarzin.conf`: `DNS=10.0.20.201`, `Domains=~viktorbarzin.me`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; `viktorbarzin-apex-probe` is the drift canary) — no hardcoded service IPs on clients:
-  - **k8s nodes (kubelet image pulls of `forgejo.viktorbarzin.me`)**: routing-domain drop-in on all 7 nodes (2026-06-10, replacing a same-day `/etc/hosts` pin; deployed via `modules/create-template-vm/cloud_init.yaml` for new nodes, `scripts/setup-forgejo-containerd-mirror.sh` rollout for existing ones). The containerd hosts.toml mirror alone is insufficient — Traefik 404s its bare-IP requests (no Host/SNI match) and the registry's Bearer auth realm is an absolute public URL fetched outside the mirror. Caution: public servers must NOT sit in the nodes' global resolved `DNS=` set — they merge with and race the routing domain (the old node5/6 `global-dns.conf` did exactly this; now `FallbackDNS=` only). Root cause analysis: `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`.
-  - **devvm**: same `viktorbarzin.conf` drop-in (predates the node rollout; provisioned by `setup-devvm.sh`).
-  - **in-cluster pods → forgejo**: CoreDNS `rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local` (2026-06-04, beads code-yh33) — pods bypass node resolved entirely.
-  - **Trade-off**: `*.viktorbarzin.me` resolution from nodes/devvm now depends on in-cluster Technitium (3 replicas). During a full cluster outage these names SERVFAIL — acceptable, the services behind them are down anyway; bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
+- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; `viktorbarzin-apex-probe` is the drift canary). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
+  - **devvm**: also covered by a `~viktorbarzin.me → 10.0.20.201` resolved routing domain (predates the pfSense override, provisioned by `setup-devvm.sh`) — redundant-but-harmless belt-and-suspenders.
+  - **in-cluster PODS are deliberately carved out**: the Traefik LB IP is `externalTrafficPolicy=Local` and unreachable from pods, so the `.203` answers pfSense now returns must NOT reach them. CoreDNS has a dedicated `viktorbarzin.me:53` block (in `stacks/technitium`, TF-managed): forgejo is pinned to Traefik's **ClusterIP** (interpolated from the live Service at plan time) and all other `.me` names forward to `8.8.8.8/1.1.1.1` — preserving pods' pre-existing public-IP behavior (beads code-yh33).
+  - **Trade-off**: `viktorbarzin.me` resolution via pfSense now depends on in-cluster Technitium (3 replicas). During a full cluster outage the zone SERVFAILs LAN-wide — acceptable, the services behind it are down anyway; node bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
+  - **Residual nondeterminism**: nodes keep `94.140.14.14` as a secondary resolver (netplan/qm `--nameserver`). If systemd-resolved fails over to it during a pfSense DNS blip, `.me` answers are public again until it switches back — a rare, self-healing window, accepted.
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
@@ -462,10 +462,18 @@ The zone-sync CronJob (runs every 30min) pushes the following to the Prometheus 
 
 ### Hairpin NAT Not Working (LAN → *.viktorbarzin.me Fails)
 
-Since 2026-04-19 (Workstream D), pfSense Unbound answers LAN DNS queries
-directly instead of forwarding to Technitium, so the Technitium Split Horizon
-post-processing does NOT run for 192.168.1.x clients anymore. Non-proxied
-services break hairpin on LAN clients again. Options:
+**Since 2026-06-10 this is largely solved at the resolver**: pfSense Unbound
+carries a domain override forwarding the entire `viktorbarzin.me` zone to
+Technitium, so ANY client that queries pfSense (all VLANs + 192.168.1.x
+clients pointed at `192.168.1.2`) gets the internal Traefik answer. If
+hairpin still fails for a client, first check which resolver it actually
+uses — clients on the TP-Link's own DHCP DNS (router/ISP) bypass pfSense
+entirely. Options for those:
+
+(Historical context: 2026-04-19 Workstream D made Unbound answer LAN
+queries directly, which had removed the Technitium Split Horizon
+post-processing from the LAN path until the 2026-06-10 domain override
+restored internal answers at the zone level.)
 
 1. **Switch service to proxied Cloudflare** (preferred) — set `dns_type = "proxied"` in the `ingress_factory` module call; DNS now resolves to Cloudflare edge, hairpin-independent.
 2. **Add a local-data override on pfSense Unbound** — under `Services → DNS Resolver → Host Overrides`, set `<service>.viktorbarzin.me → 10.0.20.203` (Traefik LB IP). This is equivalent to what Split Horizon did, applied at the resolver.

@@ -93,6 +93,55 @@ Verify via the Technitium API:
 curl -sk "http://127.0.0.1:5380/api/zones/options/get?token=$TOK&zone=viktorbarzin.lan" | jq .response.zoneTransfer
 ```
 
+## Domain Override: viktorbarzin.me → Technitium (2026-06-10)
+
+`$config['unbound']['domainoverrides']` carries one entry forwarding the
+whole `viktorbarzin.me` zone to Technitium `10.0.20.201` (forward-zone, not
+AXFR). Every Unbound client — all VLANs + 192.168.1.x via the WAN listener —
+gets Technitium's internal split-horizon answers: ingress hosts CNAME to the
+zone apex whose A record auto-tracks the live Traefik LB IP
+(`technitium-ingress-dns-sync` + `viktorbarzin-apex-probe` canary). This is
+what keeps kubelet forgejo image pulls (and everything else on 10.0.x) off
+the broken public NAT-hairpin with zero per-host DNS config — see
+`docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`.
+
+Notes:
+
+- The domain is NOT DNSSEC-signed (no DS records), so no `domain-insecure`
+  needed; private-IP answers pass without `private-domain` custom options
+  (verified empirically — pfSense handles domain overrides correctly).
+- **Cluster-outage behavior**: the zone SERVFAILs while Technitium is down
+  (forward-zone, no local copy). Deliberate — the services are down anyway.
+  Contrast with `viktorbarzin.lan`, which is AXFR-slaved to survive outages.
+- **In-cluster pods must NOT see these answers** (Traefik LB is ETP=Local,
+  unreachable from pods). CoreDNS has a dedicated `viktorbarzin.me:53`
+  carve-out (stacks/technitium) — do not remove it while this override exists.
+- Added with the standard SSH + PHP pattern (see "host override" memories /
+  this file's style):
+
+```php
+require_once("config.inc"); require_once("unbound.inc");
+global $config;
+$config["unbound"]["domainoverrides"][] = [
+  "domain" => "viktorbarzin.me", "ip" => "10.0.20.201",
+  "descr" => "...", "tls_hostname" => "",
+];
+write_config("add viktorbarzin.me domain override -> Technitium");
+services_unbound_configure();
+```
+
+Rollback: remove the entry from the array (match on `domain`), then
+`write_config()` + `services_unbound_configure()`. Pre-change backup:
+`/cf/conf/config.xml.bak-2026-06-10-pre-me-forward` (on-box).
+
+Verify:
+
+```
+dig +short @10.0.20.1 forgejo.viktorbarzin.me   # apex CNAME + live Traefik IP
+dig +short @10.0.20.1 mail.viktorbarzin.me      # 10.0.20.1 (non-Traefik record)
+dig +short @10.0.20.1 google.com                # public, unaffected
+```
+
 ## Operational Checks
 
 ```bash

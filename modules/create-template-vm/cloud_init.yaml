@@ -90,37 +90,23 @@ runcmd:
   - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
   - systemctl restart systemd-journald
   %{if is_k8s_template}
-  # systemd-resolved split DNS, two drop-ins (2026-06-10, replaces the
-  # public-first global DNS that was here before):
-  #
-  # viktorbarzin.conf — routing domain ~viktorbarzin.me -> Technitium
-  # (10.0.20.201). The technitium-ingress-dns-sync CronJob keeps a CNAME
-  # for every ingress host (incl. forgejo.viktorbarzin.me) chained to the
-  # zone apex, whose A record auto-tracks the live Traefik LB IP (canary:
-  # viktorbarzin-apex-probe). Keeps kubelet pulls of forgejo images off
-  # the flaky public NAT-hairpin with no hardcoded service IPs. (The old
-  # comment claiming Technitium NXDOMAINs forgejo.viktorbarzin.me is
-  # obsolete — ingress-dns-sync added it to the split-horizon zone. See
-  # docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md.)
-  #
-  # global-dns.conf — emergency fallback only. Public servers must NOT
-  # sit in the global DNS= set: they merge with viktorbarzin.conf's set
-  # and race the ~viktorbarzin.me routing domain, intermittently
-  # returning the public IP again. General resolution uses the
-  # link-level DNS from Proxmox's `qm set --nameserver`.
-  - mkdir -p /etc/systemd/resolved.conf.d
-  - |
-    cat > /etc/systemd/resolved.conf.d/viktorbarzin.conf <<'EOF'
-    [Resolve]
-    DNS=10.0.20.201
-    Domains=~viktorbarzin.me
-    EOF
-  - |
-    cat > /etc/systemd/resolved.conf.d/global-dns.conf <<'EOF'
-    [Resolve]
-    FallbackDNS=8.8.8.8 1.1.1.1
-    EOF
-  - systemctl restart systemd-resolved
+  # Node DNS is intentionally STOCK — no resolved drop-ins, no /etc/hosts
+  # pins. Link nameservers come from Proxmox `qm set --nameserver
+  # "10.0.20.1 94.140.14.14"` (pfSense + public secondary; set this when
+  # cloning a new node VM). Internal split-horizon for *.viktorbarzin.me
+  # happens at pfSense Unbound: a domain override forwards the zone to
+  # Technitium (10.0.20.201), whose split-horizon zone CNAMEs every ingress
+  # host to the apex A record that auto-tracks the live Traefik LB IP — so
+  # every VLAN client, nodes included, gets internal answers with zero
+  # per-host config (2026-06-10; runbook: docs/runbooks/pfsense-unbound.md).
+  # Pods are carved out separately (CoreDNS `viktorbarzin.me:53` block:
+  # public answers + forgejo pinned to Traefik's ClusterIP — the LB IP is
+  # ETP=Local and unreachable from pods; stacks/technitium).
+  # History: a global-dns.conf drop-in (public DNS primary) lived here until
+  # 2026-06-10. Its rationale ("Technitium NXDOMAINs forgejo.viktorbarzin.me")
+  # had long been obsolete, and it steered fresh forgejo pulls onto the broken
+  # public NAT-hairpin (7.5h tuya-bridge outage — see
+  # docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md).
   # Re-enabled 2026-05-10: unattended-upgrades is back on, but with a tight
   # Allowed-Origins list, a Package-Blacklist for k8s/containerd/runc/calico,
   # and Automatic-Reboot disabled (kured + sentinel-gate handles reboots in a

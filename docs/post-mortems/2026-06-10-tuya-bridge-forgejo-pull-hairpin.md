@@ -89,25 +89,50 @@ NXDOMAINs forgejo.viktorbarzin.me") was obsolete: the ingress-dns-sync
 has since added forgejo to the zone — a stale comment that actively
 pointed new nodes at the hairpin.
 
-Persisted in `modules/create-template-vm/cloud_init.yaml` (new nodes; DNS
-drop-ins) and `scripts/setup-forgejo-containerd-mirror.sh` (existing-node
-rollout). hosts.toml mirror left in place but documented as vestigial.
+**Final architecture (same day, round 3 — Viktor: "no customization,
+everything handled by the DNS infra"):** the routing-domain drop-ins were
+ALSO removed; nodes are now completely stock. Two resolver-side changes
+replaced them:
+
+1. **pfSense Unbound domain override** `viktorbarzin.me → 10.0.20.201`
+   (forward-zone to Technitium). Every Unbound client on every VLAN gets
+   the internal split-horizon answers with zero per-host config. No
+   DNSSEC complications (zone unsigned), private-IP answers pass, mail's
+   non-Traefik record (`→ 10.0.20.1`) verified working. Runbook:
+   `docs/runbooks/pfsense-unbound.md`; on-box backup
+   `config.xml.bak-2026-06-10-pre-me-forward`.
+2. **CoreDNS pod carve-out** (TF, `stacks/technitium`): a dedicated
+   `viktorbarzin.me:53` server block pins forgejo to Traefik's
+   **ClusterIP** (interpolated from the live Service — pods cannot reach
+   the ETP=Local LB IP that pfSense now returns) and forwards all other
+   `.me` names to `8.8.8.8/1.1.1.1`, preserving pods' pre-existing
+   public-IP behavior. Replaces the old forgejo rewrite in `.:53`.
+
+node5/6 were also re-pointed from link-DNS=Technitium to
+`10.0.20.1 94.140.14.14` (netplan + `qm set --nameserver` on PVE VMs
+205/206) for fleet parity, and their `global-dns.conf` was deleted.
 
 **Renumber hazard: resolved.** A future Traefik LB renumber propagates
 via the apex A record automatically (drift probe alerts if it doesn't);
-only the vestigial hosts.toml literal goes stale. **New trade-off:**
-`*.viktorbarzin.me` resolution from nodes now depends on in-cluster
-Technitium (3 replicas); in a full cluster outage these names SERVFAIL —
-acceptable, the services are down anyway, and bootstrap images pull via
-the IP-addressed `10.0.20.10` mirrors.
+only the vestigial hosts.toml literal goes stale. **Trade-offs:**
+`viktorbarzin.me` resolution via pfSense depends on in-cluster Technitium
+(3 replicas) — SERVFAIL during a full cluster outage (services down
+anyway; bootstrap images pull via the IP-addressed `10.0.20.10` mirrors).
+Nodes keep `94.140.14.14` as secondary DNS: a resolved failover during a
+pfSense blip briefly re-exposes public answers — rare, self-healing,
+accepted.
 
-## Verification
+## Verification (final architecture)
 
-- `getent hosts forgejo.viktorbarzin.me` → `10.0.20.203` on all 7 nodes
-  **with no `/etc/hosts` entry** (pure DNS via the routing domain);
-  `resolvectl status` shows `~viktorbarzin.me` routed to `10.0.20.201`;
-  general resolution (`getent hosts google.com`) intact on every node;
-  `crictl pull` of the tuya_bridge image succeeds via the DNS path.
+- All 7 nodes stock (no pins, no drop-ins); `getent hosts
+  forgejo.viktorbarzin.me` → `10.0.20.203` via pfSense → Technitium;
+  general resolution intact; `crictl pull` succeeds end-to-end.
+- pfSense: forgejo/immich/vault → apex CNAME → `.203`; mail →
+  `10.0.20.1` (`:993` verified); `google.com` public; `.lan` auth-zone
+  unaffected.
+- Pods: forgejo → `10.111.111.95` (Traefik ClusterIP),
+  immich → `176.12.22.76` (public, status quo) — verified in-pod after
+  CoreDNS reload.
 - tuya-bridge pod Running; `/health` `ok=true`; 27/27 devices
   `success=true`; 7/7 `*_tuya_cloud_up` gauges = 1; no tuya-related alerts.
 

@@ -33,6 +33,18 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Traefik Service ClusterIP for the CoreDNS viktorbarzin.me block below.
+# Pods cannot use the Traefik LB IP (.203, externalTrafficPolicy=Local — only
+# nodes with a local Traefik endpoint answer), so in-cluster answers must
+# target the ClusterIP. Read from the live Service so a recreate can never
+# leave a stale literal (same pattern as the woodpecker-server hostAlias fix).
+data "kubernetes_service" "traefik" {
+  metadata {
+    name      = "traefik"
+    namespace = "traefik"
+  }
+}
+
 # CoreDNS Corefile - manages cluster DNS resolution
 # The viktorbarzin.lan block forwards to Technitium via ClusterIP (stable, LB-independent).
 # A template regex in the viktorbarzin.lan block short-circuits junk queries
@@ -60,15 +72,6 @@ resource "kubernetes_config_map" "coredns" {
               fallthrough in-addr.arpa ip6.arpa
               ttl 30
           }
-          # Pin forgejo.viktorbarzin.me to the in-cluster Traefik Service so pod
-          # builds/pulls/pushes resolve to its ClusterIP, not the public IP that
-          # hairpins through the WAN gateway and intermittently times out buildkit
-          # pushes (woodpecker build pods don't use the node containerd mirror that
-          # fixes kubelet pulls). Service-name target auto-tracks the ClusterIP (no
-          # rot); Traefik's *.viktorbarzin.me wildcard keeps SNI/TLS valid. The
-          # woodpecker-server hostAlias (main.tf) becomes belt-and-suspenders.
-          # (beads code-yh33 — in-cluster *.viktorbarzin.me hairpin)
-          rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local
           prometheus :9153
           forward . 10.0.20.1 8.8.8.8 1.1.1.1 {
               policy sequential
@@ -83,6 +86,33 @@ resource "kubernetes_config_map" "coredns" {
           loop
           reload
           loadbalance
+      }
+      # Dedicated zone for *.viktorbarzin.me as seen by PODS. Needed because
+      # pfSense Unbound (first upstream of .:53) forwards this zone to
+      # Technitium since 2026-06-10, whose answers point at the Traefik LB
+      # (.203) — unreachable from pods (externalTrafficPolicy=Local). Pods
+      # therefore keep PUBLIC answers via 8.8.8.8/1.1.1.1 (their pre-existing
+      # behavior), except forgejo.viktorbarzin.me which is pinned to Traefik's
+      # ClusterIP (hosts plugin; the kubernetes plugin isn't in this block so
+      # a Service-name rewrite cannot resolve here). Replaces the old rewrite
+      # in .:53 (beads code-yh33 — in-cluster *.viktorbarzin.me hairpin).
+      viktorbarzin.me:53 {
+        errors
+        hosts {
+          ${data.kubernetes_service.traefik.spec.0.cluster_ip} forgejo.viktorbarzin.me
+          fallthrough
+        }
+        forward . 8.8.8.8 1.1.1.1 {
+            policy sequential
+            health_check 5s
+            max_fails 2
+        }
+        cache {
+          success 10000 300 6
+          denial 10000 300 60
+          serve_stale 86400s
+        }
+        reload
       }
       viktorbarzin.lan:53 {
         #log
