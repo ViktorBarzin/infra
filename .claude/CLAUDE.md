@@ -144,7 +144,7 @@ Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handle
 - **PDBs**: minAvailable=2 on Traefik and Authentik.
 - **Fallback proxies**: basicAuth when Authentik is down, fail-open when poison-fountain is down.
 - **CrowdSec bouncer**: graceful degradation mode (fail-open on error).
-- **Rate limiting**: Return 429 (not 503). Per-service tuning: Immich/Nextcloud need higher limits.
+- **Rate limiting**: Return 429 (not 503). Per-service tuning via dedicated middleware + `skip_default_rate_limit` (default 10/s burst 50): Immich 1000/20000, ActualBudget 50/300 (app boot = ~70 parallel revalidations).
 - **Retry middleware**: 2 attempts, 100ms — in default ingress chain.
 - **Entrypoint transport timeouts** (`websecure` `respondingTimeouts`): `writeTimeout=0` (unlimited download duration), `readTimeout=3600s` (uploads ≤1h), `idleTimeout=600s`. These are **HARD total-duration caps**, not nginx-style per-read idle timeouts — a finite `writeTimeout` truncates *any* large download at that wall-clock mark (a prior `writeTimeout=60s` silently cut Immich videos at 60s). **Do NOT re-tighten `writeTimeout`**; keep `readTimeout` finite (slow-loris backstop) but ≥ longest expected upload. Full rationale: `docs/architecture/networking.md` → "Entrypoint Transport Timeouts".
 - **HTTP/3 (QUIC)**: Enabled on Traefik. Works for **direct (non-proxied) apps** via the dedicated LB IP below (ETP=Local). Proxied apps get QUIC at the Cloudflare edge.
