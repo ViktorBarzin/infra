@@ -36,7 +36,10 @@ module "pfsense" {
   name             = "pfsense"
   external_name    = "pfsense.viktorbarzin.lan"
   tls_secret_name  = var.tls_secret_name
-  port             = 443
+  # webGUI moved to :8443 on 2026-06-10 — :443 on pfSense is now the
+  # SNI-routed HAProxy frontend (hostname->Traefik, no-SNI->GUI). Direct
+  # backend port avoids a Traefik->HAProxy->GUI double hop.
+  port             = 8443
   backend_protocol = "HTTPS"
 
   extra_annotations = {

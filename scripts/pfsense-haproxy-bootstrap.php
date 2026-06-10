@@ -45,6 +45,8 @@ $h['maxconn'] = '1000';
 
 // Our declared object names (anything starting with mailserver_ is ours)
 $POOL_NAMES = [
+    'webgui_traefik_443',        // SNI-routed 443: hostname traffic -> Traefik
+    'pfsense_webgui_8443',       // SNI-routed 443: no-SNI / pfsense.* -> webgui
     'mailserver_nodes',          // legacy (Phase 2/3 test)
     'mailserver_nodes_smtp',
     'mailserver_nodes_smtps',
@@ -52,6 +54,7 @@ $POOL_NAMES = [
     'mailserver_nodes_imaps',
 ];
 $FRONTEND_NAMES = [
+    'internal_https_443',        // SNI-routed internal 443 (2026-06-10)
     'mailserver_proxy_test',     // legacy (Phase 2/3 test, :2525)
     'mailserver_proxy_25',
     'mailserver_proxy_465',
@@ -185,6 +188,58 @@ $h['ha_pools']['item'][] = build_pool('mailserver_nodes_smtps', '30126', $NODES,
 $h['ha_pools']['item'][] = build_pool('mailserver_nodes_sub',   '30127', $NODES, 'TCP', '30147');
 $h['ha_pools']['item'][] = build_pool('mailserver_nodes_imaps', '30128', $NODES);
 
+// ── SNI-routed internal :443 pools (2026-06-10) ─────────────────────────
+// Completes the internal port table of 10.0.20.1 so mail.viktorbarzin.me
+// (internal A record -> 10.0.20.1) serves webmail too. Routing rule
+// (Viktor's design): TLS with a hostname (SNI present) -> Traefik; bare-IP
+// /no-SNI (admin hitting https://10.0.20.1) -> pfSense webgui, which moved
+// to :8443 to free the socket. pfsense.viktorbarzin.{lan,me} SNI is
+// excepted back to the webgui. Traefik leg mirrors the IPv6 bridge:
+// send-proxy-v2 (Traefik trusts 10.0.20.1), NO health check (PROXY-
+// expecting receivers reject bare probes — see runbook gotcha).
+$h['ha_pools']['item'][] = [
+    'name'                   => 'webgui_traefik_443',
+    'balance'                => '',
+    'check_type'             => 'none',
+    'monitor_domain'         => '',
+    'checkinter'             => '',
+    'retries'                => '',
+    'ha_servers'             => ['item' => [[
+        'name'     => 'traefik',
+        'address'  => '10.0.20.203',
+        'port'     => '443',
+        'weight'   => '10',
+        'ssl'      => '',
+        'advanced' => 'send-proxy-v2',
+        'status'   => 'active',
+    ]]],
+    'advanced_bind'          => '',
+    'persist_cookie_enabled' => '',
+    'transparent_clientip'   => '',
+    'advanced'               => '',
+];
+$h['ha_pools']['item'][] = [
+    'name'                   => 'pfsense_webgui_8443',
+    'balance'                => '',
+    'check_type'             => 'none',
+    'monitor_domain'         => '',
+    'checkinter'             => '',
+    'retries'                => '',
+    'ha_servers'             => ['item' => [[
+        'name'     => 'webgui',
+        'address'  => '127.0.0.1',
+        'port'     => '8443',
+        'weight'   => '10',
+        'ssl'      => '',
+        'advanced' => '',
+        'status'   => 'active',
+    ]]],
+    'advanced_bind'          => '',
+    'persist_cookie_enabled' => '',
+    'transparent_clientip'   => '',
+    'advanced'               => '',
+];
+
 // ── Frontends ───────────────────────────────────────────────────────────
 if (!is_array($h['ha_backends']))         $h['ha_backends']         = ['item' => []];
 if (!is_array($h['ha_backends']['item'])) $h['ha_backends']['item'] = [];
@@ -228,7 +283,36 @@ $h['ha_backends']['item'][] = build_frontend(
     'mailserver_nodes_imaps'
 );
 
-write_config('code-yiu: mailserver HAProxy — 4 production frontends + legacy :2525 test');
+// ── SNI-routed internal :443 frontend (2026-06-10) ──────────────────────
+// Binds both internal interface IPs so IP-based GUI access works from
+// either VLAN. mode tcp + SNI inspection; TLS passthrough on both legs
+// (Traefik serves the real certs; the webgui keeps its self-signed one).
+$h['ha_backends']['item'][] = [
+    'name'      => 'internal_https_443',
+    'descr'     => 'SNI-routed internal 443: hostname->Traefik (proxy-v2), no-SNI/pfsense.*->webgui:8443',
+    'status'    => 'active',
+    'secondary' => '',
+    'type'      => 'tcp',
+    'a_extaddr' => ['item' => [
+        ['extaddr' => 'custom', 'extaddr_custom' => '10.0.20.1', 'extaddr_port' => '443', 'extaddr_ssl' => '', 'extaddr_advanced' => ''],
+        ['extaddr' => 'custom', 'extaddr_custom' => '10.0.10.1', 'extaddr_port' => '443', 'extaddr_ssl' => '', 'extaddr_advanced' => ''],
+    ]],
+    'backend_serverpool' => 'pfsense_webgui_8443',
+    'ha_acls'   => ['item' => [
+        ['name' => 'sni_pfsense', 'expression' => 'custom', 'value' => 'req.ssl_sni -i -m str pfsense.viktorbarzin.lan pfsense.viktorbarzin.me', 'casesensitive' => '', 'not' => ''],
+        ['name' => 'sni_any',     'expression' => 'custom', 'value' => 'req.ssl_sni -m found', 'casesensitive' => '', 'not' => ''],
+    ]],
+    'a_actionitems' => ['item' => [
+        ['action' => 'use_backend', 'use_backendbackend' => 'pfsense_webgui_8443', 'acl' => 'sni_pfsense'],
+        ['action' => 'use_backend', 'use_backendbackend' => 'webgui_traefik_443',  'acl' => 'sni_any'],
+    ]],
+    'dontlognull'=> '',
+    'httpclose'  => '',
+    'forwardfor' => '',
+    'advanced'   => base64_encode("tcp-request inspect-delay 5s\n\ttcp-request content accept if { req.ssl_hello_type 1 } || !{ req.ssl_hello_type 1 }"),
+];
+
+write_config('mailserver HAProxy + SNI-routed internal 443 (hostname->Traefik, no-SNI->webgui:8443)');
 
 $messages = '';
 $rc = haproxy_check_and_run($messages, true);
