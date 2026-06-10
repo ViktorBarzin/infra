@@ -197,6 +197,34 @@ steps:
 - Keeps Woodpecker global secrets in sync with Vault
 - Runs in `woodpecker` namespace
 
+## Infra repo CI (Woodpecker repo 82 — Forgejo forge)
+
+The infra repo itself runs on Woodpecker via the **Forgejo** forge (repo id 82,
+registered 2026-06-08; the GitHub-side repo id 1 also remains registered).
+Pushes to `master` fire `.woodpecker/default.yml` (changed-stacks terragrunt
+apply) plus the `notify-nonadmin-push` Slack audit step (allow-then-audit
+contribution model — see `multi-tenancy.md`). Operational facts (2026-06-10):
+
+- **Webhook URL is the IN-CLUSTER service**: `http://woodpecker-server.woodpecker.svc.cluster.local/api/hook?...`
+  (PATCHed via the Forgejo API). The Woodpecker-generated default
+  (`https://ci.viktorbarzin.me/...`) resolves to the non-proxied public A
+  record from pods → NAT hairpin → intermittent `context deadline exceeded`,
+  silently dropping push events (found when a push produced no pipeline).
+  If Woodpecker ever "repairs" the repo it will rewrite the hook back to
+  `ci.viktorbarzin.me` — re-apply the in-cluster URL (or pin `ci.viktorbarzin.me`
+  in the CoreDNS pod carve-out alongside forgejo).
+- **Repo-scoped secrets must exist on BOTH repos**: pipelines reference
+  repo-level secrets (`registry_ssh_key`, `pve_ssh_key`, `CLOUDFLARE_TOKEN`,
+  …). Repo 82 was registered without them and every all-workflow compile
+  errored with `secret "registry_ssh_key" not found`. Fixed by cloning repo-1
+  rows to repo 82 in the Woodpecker DB (`insert into secrets … select … where
+  repo_id=1`). When registering a new forge repo for infra, clone the secret
+  set too.
+- **Empty commits defeat path filters**: a commit with no changed files makes
+  Woodpecker include ALL workflow files (path conditions can't exclude), so
+  every repo secret must resolve. Normal commits with real files only compile
+  the matching workflows.
+
 ## Decisions & Rationale
 
 ### Why GitHub Actions + Woodpecker?
