@@ -240,6 +240,16 @@ push straight to `master` — no PR gate — and the record of *what changed and
 why* is what matters. Force-push is disabled for everyone, so master history
 is append-only.
 
+**Feature-sized work is worktree-first** (org rule, 2026-06-10): develop in an
+isolated worktree (`.worktrees/<topic>`, branch `<os-user>/<topic>` off
+`forgejo/master`) so concurrent agent sessions never collide in the clone, then
+land by merging latest master into the branch and pushing it
+(`git push forgejo HEAD:master`, or the PR fallback below if not whitelisted) —
+the audit-trail rules below apply to the branch's commit messages all the same.
+Locked (git-crypt) clones can use plain `git worktree add`. Trivial
+single-commit fixes may be committed directly on a clean `master`. Full
+lifecycle: `~/.claude/rules/execution.md` §3.
+
 To land a finished change from such a clone:
 
 1. Commit on `master`. **The commit message is the audit trail** — this matters
