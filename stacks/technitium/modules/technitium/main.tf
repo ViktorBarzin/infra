@@ -87,22 +87,29 @@ resource "kubernetes_config_map" "coredns" {
           reload
           loadbalance
       }
-      # Dedicated zone for *.viktorbarzin.me as seen by PODS. Needed because
-      # pfSense Unbound (first upstream of .:53) forwards this zone to
-      # Technitium since 2026-06-10, whose answers point at the Traefik LB
-      # (.203) — unreachable from pods (externalTrafficPolicy=Local). Pods
-      # therefore keep PUBLIC answers via 8.8.8.8/1.1.1.1 (their pre-existing
-      # behavior), except forgejo.viktorbarzin.me which is pinned to Traefik's
-      # ClusterIP (hosts plugin; the kubernetes plugin isn't in this block so
-      # a Service-name rewrite cannot resolve here). Replaces the old rewrite
-      # in .:53 (beads code-yh33 — in-cluster *.viktorbarzin.me hairpin).
+      # Dedicated zone for *.viktorbarzin.me as seen by PODS. Pods are
+      # ordinary internal clients: same split-horizon answers as every
+      # node/VM/laptop (ingress hosts CNAME -> apex -> live Traefik LB;
+      # mail -> 10.0.20.1; vlmcs -> 10.0.20.202). Forwards to the SAME
+      # Technitium ClusterIP the viktorbarzin.lan block below uses.
+      # Verified 2026-06-10 on k8s 1.34: pods DO reach the ETP=Local LB IP
+      # (kube-proxy short-circuits in-cluster traffic to LB IPs via the
+      # cluster path) — re-verify after major k8s upgrades; the canary is
+      # the uptime-kuma [External] monitor fleet going red.
+      # forgejo stays pinned to Traefik's ClusterIP (hosts plugin) so CI
+      # pushes survive a Technitium outage; the kubernetes plugin isn't in
+      # this block so a Service-name rewrite cannot resolve here.
+      # History: until 2026-06-10 (evening) this block forwarded to public
+      # 8.8.8.8/1.1.1.1, which sent pods to the WAN IP and the broken
+      # TP-Link NAT loopback — 27 non-proxied [External] monitors dark
+      # (beads code-yh33 — in-cluster *.viktorbarzin.me hairpin).
       viktorbarzin.me:53 {
         errors
         hosts {
           ${data.kubernetes_service.traefik.spec.0.cluster_ip} forgejo.viktorbarzin.me
           fallthrough
         }
-        forward . 8.8.8.8 1.1.1.1 {
+        forward . 10.96.0.53 {
             policy sequential
             health_check 5s
             max_fails 2

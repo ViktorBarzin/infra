@@ -108,6 +108,19 @@ replaced them:
    `.me` names to `8.8.8.8/1.1.1.1`, preserving pods' pre-existing
    public-IP behavior. Replaces the old forgejo rewrite in `.:53`.
 
+   **Addendum (same day, evening):** the "pods cannot reach the
+   ETP=Local LB IP" premise was re-tested and is FALSE on k8s 1.34
+   (kube-proxy short-circuits in-cluster traffic to LB IPs via the
+   cluster path; verified from pods on three non-Traefik nodes). The
+   public-answer carve-out had meanwhile left pods as the only client
+   class still riding the TP-Link NAT loopback, which hard-died
+   2026-06-09 — 27 non-proxied `[External]` uptime-kuma monitors dark.
+   Fix: the block now forwards to the Technitium ClusterIP
+   (`10.96.0.53`) — pods are ordinary internal clients; forgejo pin
+   kept for Technitium-outage resilience. In-cluster `[External]`
+   monitors now test the internal path for all names; genuine
+   edge-path fidelity belongs to a true external vantage (ha-london).
+
 node5/6 were also re-pointed from link-DNS=Technitium to
 `10.0.20.1 94.140.14.14` (netplan + `qm set --nameserver` on PVE VMs
 205/206) for fleet parity, and their `global-dns.conf` was deleted.
