@@ -24,6 +24,26 @@ clone:
       backoff: 10s
 
 steps:
+  # Audit feed for the allow-then-audit contribution model: any master push by
+  # a NON-admin author is surfaced in Slack (Viktor's own pushes are not).
+  # Runs before apply and never blocks it. Note: [ci skip] commits never reach
+  # this step (Woodpecker skips the whole pipeline) — hence the rule that
+  # non-admins must not use [ci skip].
+  - name: notify-nonadmin-push
+    image: curlimages/curl
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - |
+        case "$CI_COMMIT_AUTHOR" in
+          viktor|ViktorBarzin|wizard) echo "admin push — no notify"; exit 0 ;;
+        esac
+        SUBJECT=$(echo "$CI_COMMIT_MESSAGE" | head -1 | tr -d '"\\')
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"📝 infra master push by *$CI_COMMIT_AUTHOR*: $SUBJECT\n$CI_REPO_URL/commit/$CI_COMMIT_SHA\"}" \
+          "$SLACK_WEBHOOK" || true
+
   - name: apply
     image: forgejo.viktorbarzin.me/viktor/infra-ci:latest
     pull: true

@@ -235,23 +235,39 @@ Their `~/code` clone arrives preconfigured: git identity, a `forgejo` remote
 authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
 (auto-freshened hourly and at session launch, fast-forward only).
 
+The model is **allow-then-audit** (Viktor, 2026-06-10): whitelisted users (emo)
+push straight to `master` — no PR gate — and the record of *what changed and
+why* is what matters. Force-push is disabled for everyone, so master history
+is append-only.
+
 To land a finished change from such a clone:
 
-1. `git checkout -b <os-user>/<short-topic> master` — always branch off fresh master
-2. Commit with a clear message (identity is preconfigured)
-3. `git push forgejo <os-user>/<short-topic>`
-4. Open the PR with the user's own PAT (`write:repository` suffices — verified 2026-06-10):
-   ```bash
-   TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
-   curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
-     https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
-     -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
-   ```
-5. `git checkout master` — leave the clone clean so auto-refresh keeps working
-6. Tell the user in plain language that the change is submitted for Viktor's review
+1. Commit on `master`. **The commit message is the audit trail** — this matters
+   more than the change itself:
+   - subject: what changed, specific ("ha-sofia: lower fan curve bias to -5")
+   - body: WHY, in plain words — paraphrase the user's actual request and any
+     reasoning ("Emil asked for quieter fans in the evening; curve was
+     overshooting after the 2026-06-08 redesign")
+2. `git push forgejo master`. If rejected non-fast-forward: `git pull --rebase
+   forgejo master` and push again.
+3. **Never use `[ci skip]`** as a non-admin — it hides the change from the
+   Slack audit feed; a no-op CI apply on a docs-only commit is harmless.
+4. Leave the clone on clean `master` so auto-refresh keeps working.
+5. Tell the user in plain language what happened. Stack changes are
+   auto-applied by CI — verify the live result with the user's read-only
+   kubectl before saying "it's live".
 
-Direct pushes to `master` are rejected by branch protection; merging (and the
-CI apply a master push triggers) is admin-only.
+If a push to `master` is rejected by branch protection (user not on the
+whitelist — e.g. new users before Viktor grants it), fall back to a
+`<os-user>/<short-topic>` branch + PR with the user's own PAT
+(`write:repository` suffices — verified 2026-06-10):
+
+```bash
+TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
+curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
+  https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
+  -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
+```
 
 ## Common Operations
 - **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
