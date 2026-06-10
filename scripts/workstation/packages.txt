@@ -15,9 +15,19 @@ python3
 python3-yaml
 python3-pip
 podman
+# build/runtime deps of setup-devvm.sh itself (added 2026-06-10 reproducibility audit):
+golang-go        # builds the t3-dispatch binary (setup-devvm.sh section 9)
+unzip            # extracts the kubelogin release zip (section 3; python3 zipfile is the fallback)
+build-essential  # cgo + npm native-module builds
+# core workstation tools (were manually-installed, not captured in the manifest):
+rsync
+wget
+tree
+shellcheck
 
 # --- installed by setup-devvm.sh via NON-apt paths (not apt-installable) ---
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)
+# gh (GitHub CLI)             -> GitHub's own apt repo (cli.github.com), NOT in the default Ubuntu repos
 # @anthropic-ai/claude-code   -> npm install -g
 # kubectl                     -> k8s apt repo OR pinned binary (already present on devvm)
 # vault                       -> HashiCorp apt repo OR pinned binary (already present on devvm)
