@@ -99,9 +99,10 @@ runcmd:
   # host to the apex A record that auto-tracks the live Traefik LB IP — so
   # every VLAN client, nodes included, gets internal answers with zero
   # per-host config (2026-06-10; runbook: docs/runbooks/pfsense-unbound.md).
-  # Pods are carved out separately (CoreDNS `viktorbarzin.me:53` block:
-  # public answers + forgejo pinned to Traefik's ClusterIP — the LB IP is
-  # ETP=Local and unreachable from pods; stacks/technitium).
+  # Pods get the SAME internal answers via CoreDNS's `viktorbarzin.me:53`
+  # block forwarding to the Technitium ClusterIP (+ forgejo pinned to
+  # Traefik's ClusterIP for Technitium-outage resilience; stacks/technitium.
+  # Pods reach the ETP=Local LB IP fine on k8s 1.34 — verified 2026-06-10).
   # History: a global-dns.conf drop-in (public DNS primary) lived here until
   # 2026-06-10. Its rationale ("Technitium NXDOMAINs forgejo.viktorbarzin.me")
   # had long been obsolete, and it steered fresh forgejo pulls onto the broken
