@@ -957,6 +957,36 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                 done
                 echo "Sync complete. Created $$CREATED new records."
 
+                # Static mail-auth records (SPF / brevo verification / MX /
+                # DMARC / DKIM) mirrored from the PUBLIC Cloudflare zone.
+                # The internal zone is authoritative for viktorbarzin.me, and
+                # since 2026-06-10 the MAILSERVER pods resolve the domain
+                # through it (CoreDNS viktorbarzin.me:53 -> Technitium).
+                # Without these, rspamd's SPF/DKIM/DMARC checks on inbound
+                # @viktorbarzin.me mail (e.g. the Brevo email-roundtrip probe)
+                # see SPF=none/DKIM=fail and quarantine it (EmailRoundtrip*
+                # alerts, 2026-06-10). Internal zone must be a SUPERSET of the
+                # public one for every record type clients consume. Idempotent:
+                # checked against the zone dump before adding. If these change
+                # in Cloudflare, update here too (slow-moving).
+                ZONE_DUMP=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$ZONE&listZone=true")
+                add_txt() {
+                  NAME="$$1"; MARK="$$2"; VALUE="$$3"
+                  if echo "$$ZONE_DUMP" | grep -q "$$MARK"; then echo "mail-auth: $$NAME ($$MARK) present"; return; fi
+                  R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$NAME" --data-urlencode "type=TXT" --data-urlencode "text=$$VALUE" --data-urlencode "ttl=3600") || true
+                  echo "$$R" | grep -q '"status":"ok"' && echo "mail-auth: added TXT $$NAME ($$MARK)" || echo "mail-auth: FAILED TXT $$NAME -- $$R"
+                }
+                add_txt "$$ZONE" "v=spf1" "v=spf1 include:spf.brevo.com ~all"
+                add_txt "$$ZONE" "brevo-code" "brevo-code:a6ef1dd91b248559900246eb4e7ceebd"
+                add_txt "_dmarc.$$ZONE" "v=DMARC1" "v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;"
+                add_txt "mail._domainkey.$$ZONE" "v=DKIM1" "v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB"
+                if ! echo "$$ZONE_DUMP" | grep -q '"type":"MX"'; then
+                  R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$ZONE" --data-urlencode "type=MX" --data-urlencode "exchange=mail.viktorbarzin.me" --data-urlencode "preference=1" --data-urlencode "ttl=3600") || true
+                  echo "$$R" | grep -q '"status":"ok"' && echo "mail-auth: added MX" || echo "mail-auth: FAILED MX -- $$R"
+                else
+                  echo "mail-auth: MX present"
+                fi
+
                 # Pin the .lan ingress anchor A record to the LIVE Traefik LB IP.
                 # *.viktorbarzin.lan ingress hosts CNAME to ingress.viktorbarzin.lan,
                 # so a Traefik LB IP move that misses the .lan zone silently breaks
