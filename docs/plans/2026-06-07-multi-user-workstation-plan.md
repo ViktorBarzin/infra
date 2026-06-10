@@ -171,6 +171,8 @@ users:
 
 ### Task 5.1: Cut emo over to his own writable locked clone (opt-in, reversible)
 
+> **DONE 2026-06-10** (staged across 06-08 → 06-10), with two deviations: (1) step 4(c) **skipped deliberately** — the live `/etc/skel` shared base delivers `~/.claude/{rules,skills}` AS symlinks into the admin base, so emo's existing symlinks match the as-built design and were kept; (2) push access was **added** (not in this plan): `ebarzin` = write collaborator on Forgejo `viktor/infra` + PAT in `~/.git-credentials` + `forgejo` remote, with `master` branch-protected (see ADR-0004 amendment — push to master auto-applies via Woodpecker, so it is whitelist-gated to `viktor`). Verified: branch push OK, master push rejected, `code-shared` removed, admin tree unreadable as emo.
+
 **Files:** none (host state; an explicit one-time action — NOT the routine reconcile)
 
 - [ ] **Step 1: Prereqs.** Confirm emo inherits config (Phase 1) + has his scoped kubeconfig (Phase 2). (Phase 3 deliberately SKIPPED emo — his clone is created *here*.)
