@@ -119,15 +119,18 @@ no `level` stream label.
 cluster error/warn line counts (5-min window) → `sensor.cluster_log_errors_5m` /
 `sensor.cluster_log_warnings_5m`, for a compact trend card on the Барзини status
 view plus a Grafana-link button. Those sensors reach Loki via the Traefik LB IP
-`10.0.20.203` + a `Host: loki.viktorbarzin.lan` header (`verify_ssl: false`)
-because `loki.viktorbarzin.lan` has **no Technitium record yet** (the
-`technitium-ingress-dns-sync` CronJob only creates `.me` CNAMEs + pins
-`ingress.viktorbarzin.lan`). The **PVE host** promtail (see "External host: pve"
-below) reaches Loki the same way, via an `/etc/hosts` pin
-`10.0.20.203 loki.viktorbarzin.lan`. **Follow-up (now 3 consumers — this sensor,
-rpi-sofia, the PVE host):** register `loki.viktorbarzin.lan` in Technitium as a
-CNAME → `ingress.viktorbarzin.lan` (auto-tracks Traefik LB renumbers) so all
-three resolve it by name instead of pinning the LB IP.
+`10.0.20.203` + a `Host: loki.viktorbarzin.lan` header (`verify_ssl: false`).
+**Update 2026-06-10:** `loki.viktorbarzin.lan` is now **registered in Technitium**
+as a CNAME → `ingress.viktorbarzin.lan` (the anchor whose A record auto-tracks the
+live Traefik LB IP), added via the Technitium API and AXFR-replicated to all 3
+instances — so it resolves by name LAN-wide. The **PVE host** promtail (see
+"External host: pve" below) uses the name directly, with **no `/etc/hosts` pin**.
+This HA sensor and the rpi-sofia promtail still pin the LB IP in their own configs
+and can drop to the name on next touch (`verify_ssl: false` / `insecure_skip_verify`
+stays — the internal `.lan` cert isn't publicly trusted). Per-host `.lan` CNAMEs
+are still added manually via the API; auto-managing them in
+`technitium-ingress-dns-sync` (today `.me`-only + the `ingress.viktorbarzin.lan`
+anchor) remains a follow-up.
 
 ### External host: rpi-sofia (Sofia Raspberry Pi)
 
@@ -155,7 +158,7 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 
 **Why now:** emo's Claude agent was granted **root SSH** to the host (a dedicated shared-root key `emo-pve-agent@devvm`, fingerprint `SHA256:Wd+m0EABlm4RDDykDh85PIYSqe0Al8Hr9AZ+7Ksy4HQ`, reachable as `ssh pve` from the devvm) so he can manage the host (e.g. the R730 fan daemon) via his agent. To keep an audit trail, **snoopy** (enabled via `/etc/ld.so.preload` → `libsnoopy.so`; config `scripts/pve-snoopy.ini`) logs every `execve()` to journald under identifier `snoopy`, and promtail ships it to Loki.
 
-**Logs** — `promtail` v3.5.1 (amd64) at `/usr/local/bin/promtail`, config `scripts/pve-promtail.yaml`, unit `scripts/pve-promtail.service`. Ships `/var/log/journal` to `https://loki.viktorbarzin.lan/loki/api/v1/push` (`insecure_skip_verify`; LB-IP reached via the `/etc/hosts` pin noted above). Relabels: `unit`, `level`, `identifier`; sshd lines (`identifier=~"sshd.*"`) are re-jobbed to `sshd-pve` so the S1 rule matches. Streams:
+**Logs** — `promtail` v3.5.1 (amd64) at `/usr/local/bin/promtail`, config `scripts/pve-promtail.yaml`, unit `scripts/pve-promtail.service`. Ships `/var/log/journal` to `https://loki.viktorbarzin.lan/loki/api/v1/push` (`insecure_skip_verify` — the internal `.lan` cert isn't publicly trusted; the name resolves via the Technitium CNAME above, no `/etc/hosts` pin). Relabels: `unit`, `level`, `identifier`; sshd lines (`identifier=~"sshd.*"`) are re-jobbed to `sshd-pve` so the S1 rule matches. Streams:
 - `{job="pve-journal", host="pve"}` — full host journal (kernel, pvestatd, fan-control, NFS, etc.).
 - `{job="pve-journal", identifier="snoopy"}` — **command audit** (every execve: `uid login tty sid cwd cmdline`).
 - `{job="sshd-pve"}` — sshd auth; an `Accepted publickey ... SHA256:<fp>` line ties a session to a key (e.g. emo's fp above). Feeds S1.
@@ -164,7 +167,7 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 
 Query examples (Grafana → Loki): `{host="pve"}`, `{job="pve-journal", identifier="snoopy"}` (command audit), `{job="sshd-pve"} |= "Accepted publickey"`.
 
-> Hand-managed (not Terraform), like the rpi-sofia and fan-control pieces: the promtail binary/config/unit, the snoopy enable (`/etc/ld.so.preload`), and the `/etc/hosts` Loki pin all live on the host. Source-of-truth files: `scripts/pve-promtail.{yaml,service}` + `scripts/pve-snoopy.ini`; deploy steps are in the `pve-promtail.yaml` header.
+> Hand-managed (not Terraform), like the rpi-sofia and fan-control pieces: the promtail binary/config/unit and the snoopy enable (`/etc/ld.so.preload`) live on the host (Loki resolves via the Technitium CNAME — no `/etc/hosts` pin). Source-of-truth files: `scripts/pve-promtail.{yaml,service}` + `scripts/pve-snoopy.ini`; deploy steps are in the `pve-promtail.yaml` header.
 
 ### Dell R730 iDRAC: SNMP-primary + Redfish remnant (migrated 2026-06-05)
 
