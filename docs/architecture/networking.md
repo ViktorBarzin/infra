@@ -351,7 +351,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | CrowdSec | `stacks/platform/` (sub-module) | Helm release, LAPI + bouncer |
 | Authentik | `stacks/authentik/` | Helm release, ingress, OIDC configs |
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
-| Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config |
+| Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
 | ingress_factory | `modules/ingress_factory/` | IngressRoute + middleware chain |
 
 ### Key Configuration Files
