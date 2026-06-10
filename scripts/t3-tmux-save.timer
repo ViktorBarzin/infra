@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic workstation tmux session snapshot
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*:0/5
+Persistent=false
+
+[Install]
+WantedBy=timers.target

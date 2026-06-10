@@ -256,6 +256,11 @@ done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 #     breaking nightly mid-day and took out auth for everyone. `enable` (no --now) just arms
 #     the 04:00 schedule; fresh boxes get t3 from setup-devvm.sh's pinned install, not here.
 run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
+#     tmux session persistence: periodic snapshot + boot-time restore (reboot
+#     survival for users' named claude sessions). Safe to --now: save is a
+#     read-only snapshot; restore is per-session idempotent.
+run systemctl enable --now t3-tmux-save.timer >/dev/null 2>&1 || true
+run systemctl enable t3-tmux-restore.service >/dev/null 2>&1 || true
 
 # 6) regenerate /etc/ttyd-user-map + dispatch.json from the desired state (SSoT:
 #    a roster entry removed here DISAPPEARS, which is what the offboarding cut relies on)

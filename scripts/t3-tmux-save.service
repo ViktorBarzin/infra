@@ -1,0 +1,6 @@
+[Unit]
+Description=Snapshot workstation tmux sessions (name -> claude conversation) for reboot survival
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-tmux-sessions save

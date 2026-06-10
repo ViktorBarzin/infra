@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore workstation tmux sessions (resume saved claude conversations) after boot
+After=network.target local-fs.target
+# Before the save timer's first run (OnBootSec=10min) so an empty post-boot
+# state can never be snapshotted over the manifest being restored from.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-tmux-sessions restore
+
+[Install]
+WantedBy=multi-user.target
