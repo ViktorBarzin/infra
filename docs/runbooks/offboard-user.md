@@ -29,7 +29,26 @@ gated `userdel_archive`, which is **never** auto-applied).
    sudo systemctl disable --now t3-serve@<os_user>.service
    sudo passwd -l <os_user>
    ```
-4. **Verify:** they can no longer reach `t3.viktorbarzin.me` (302 → Authentik, then
+4. **Revoke git + group access** *(manual)*:
+   ```bash
+   # legacy secret-bearing group, if they were ever in it
+   sudo gpasswd -d <os_user> code-shared
+   # drop write access to the infra repo
+   curl -X DELETE -H "Authorization: token <admin_pat>" \
+     https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/collaborators/<forgejo_login>
+   # if they were whitelisted for direct master push, remove them from the
+   # branch-protection whitelists (PATCH with the remaining usernames)
+   curl -X PATCH -H "Authorization: token <admin_pat>" -H 'Content-Type: application/json' \
+     https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/branch_protections/master \
+     -d '{"push_whitelist_usernames":["viktor"],"merge_whitelist_usernames":["viktor"]}'
+   # revoke their devvm git PAT (token name: devvm-infra-git; admin PAT may
+   # manage other users' tokens — verified 2026-06-10; the CLI has no delete)
+   curl -X DELETE -H "Authorization: token <admin_pat>" \
+     https://forgejo.viktorbarzin.me/api/v1/users/<forgejo_login>/tokens/devvm-infra-git
+   ```
+   Note: their already-running sessions keep dropped groups until cycled — restart
+   `t3-serve@<os_user>` to enforce immediately.
+5. **Verify:** they can no longer reach `t3.viktorbarzin.me` (302 → Authentik, then
    denied once removed from the `T3 Users` group — Part C) and cannot log in. Nothing
    is deleted; re-adding the roster entry + reconcile fully restores them.
 

@@ -45,6 +45,25 @@ install_locked_clone() {
   runuser -u "$user" -- git -C "$home/code" checkout --quiet master
 }
 
+# Keep an EXISTING non-admin clone fresh (the admin's tree is never touched): fetch
+# all remotes, then fast-forward master only when that is provably safe — on master,
+# clean tree, upstream configured. Never rebases/merges; a non-ff master (local
+# commits) is the user's to reconcile and is only WARNed about. Fetch failures
+# (offline, missing credentials) are non-fatal: freshness is best-effort.
+refresh_locked_clone() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home/code/.git" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] refresh clone -> $user:$home/code"; return 0; fi
+  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$home/code" fetch --all --prune --quiet 2>/dev/null \
+    || { log "WARN: clone fetch failed for $user (offline/credentials?) — skipped"; return 0; }
+  [[ "$(runuser -u "$user" -- git -C "$home/code" symbolic-ref --short -q HEAD)" == master ]] || return 0
+  [[ -z "$(runuser -u "$user" -- git -C "$home/code" status --porcelain)" ]] || return 0
+  runuser -u "$user" -- git -C "$home/code" rev-parse --verify -q 'master@{upstream}' >/dev/null || return 0
+  runuser -u "$user" -- git -C "$home/code" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 \
+    || log "WARN: $user master not fast-forwardable (local commits?) — left as-is"
+}
+
 # Per-user OIDC kubeconfig (kubelogin/PKCE — the `kubernetes` Authentik client is
 # public, no secret). Identical for all users: identity comes from each user's own
 # interactive OIDC login, which the apiserver maps (email claim) to their RBAC.
@@ -177,8 +196,9 @@ while IFS=$'\t' read -r os_user tier shell groups_csv; do
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
-  if [[ "$tier" != admin ]]; then            # non-admins: locked clone + kubeconfig + shared Claude token
+  if [[ "$tier" != admin ]]; then            # non-admins: locked clone (kept fresh) + kubeconfig + shared Claude token
     install_locked_clone "$os_user"
+    refresh_locked_clone "$os_user"
     install_user_kubeconfig "$os_user"
     install_user_claude_token "$os_user"
   fi

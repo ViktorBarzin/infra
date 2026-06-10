@@ -226,6 +226,49 @@ Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment me
 4. Viktor reviews → CI applies → Slack notification
 5. Portal: `https://k8s-portal.viktorbarzin.me/onboarding` for full guide
 
+### Non-admin workstation users — the AGENT does the git work
+
+Non-admin devvm users (power-user / namespace-owner tiers) may not know git at
+all. Their agent handles every version-control step silently — never ask them
+to commit, push, pull, or open a PR, and never surface git jargon at them.
+Their `~/code` clone arrives preconfigured: git identity, a `forgejo` remote
+authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
+(auto-freshened hourly and at session launch, fast-forward only).
+
+The model is **allow-then-audit** (Viktor, 2026-06-10): whitelisted users (emo)
+push straight to `master` — no PR gate — and the record of *what changed and
+why* is what matters. Force-push is disabled for everyone, so master history
+is append-only.
+
+To land a finished change from such a clone:
+
+1. Commit on `master`. **The commit message is the audit trail** — this matters
+   more than the change itself:
+   - subject: what changed, specific ("ha-sofia: lower fan curve bias to -5")
+   - body: WHY, in plain words — paraphrase the user's actual request and any
+     reasoning ("Emil asked for quieter fans in the evening; curve was
+     overshooting after the 2026-06-08 redesign")
+2. `git push forgejo master`. If rejected non-fast-forward: `git pull --rebase
+   forgejo master` and push again.
+3. **Never use `[ci skip]`** as a non-admin — it hides the change from the
+   Slack audit feed; a no-op CI apply on a docs-only commit is harmless.
+4. Leave the clone on clean `master` so auto-refresh keeps working.
+5. Tell the user in plain language what happened. Stack changes are
+   auto-applied by CI — verify the live result with the user's read-only
+   kubectl before saying "it's live".
+
+If a push to `master` is rejected by branch protection (user not on the
+whitelist — e.g. new users before Viktor grants it), fall back to a
+`<os-user>/<short-topic>` branch + PR with the user's own PAT
+(`write:repository` suffices — verified 2026-06-10):
+
+```bash
+TOK=$(sed -E 's#https://[^:]+:([^@]+)@.*#\1#' ~/.git-credentials)
+curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' \
+  https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/pulls \
+  -d '{"title":"<title>","head":"<os-user>/<short-topic>","base":"master","body":"<what + why>"}'
+```
+
 ## Common Operations
 - **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
