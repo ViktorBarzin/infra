@@ -36,6 +36,11 @@ gated `userdel_archive`, which is **never** auto-applied).
    # drop write access to the infra repo
    curl -X DELETE -H "Authorization: token <admin_pat>" \
      https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/collaborators/<forgejo_login>
+   # if they were whitelisted for direct master push, remove them from the
+   # branch-protection whitelists (PATCH with the remaining usernames)
+   curl -X PATCH -H "Authorization: token <admin_pat>" -H 'Content-Type: application/json' \
+     https://forgejo.viktorbarzin.me/api/v1/repos/viktor/infra/branch_protections/master \
+     -d '{"push_whitelist_usernames":["viktor"],"merge_whitelist_usernames":["viktor"]}'
    # revoke their devvm git PAT (token name: devvm-infra-git; admin PAT may
    # manage other users' tokens — verified 2026-06-10; the CLI has no delete)
    curl -X DELETE -H "Authorization: token <admin_pat>" \
