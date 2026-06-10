@@ -6,7 +6,7 @@ After=network.target local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/t3-tmux-sessions restore
+ExecStart=/usr/local/bin/tmux-persist restore
 
 [Install]
 WantedBy=multi-user.target

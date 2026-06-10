@@ -3,4 +3,4 @@ Description=Snapshot workstation tmux sessions (name -> claude conversation) for
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/t3-tmux-sessions save
+ExecStart=/usr/local/bin/tmux-persist save

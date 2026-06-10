@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
-# Persist workstation tmux sessions across devvm reboots.
+# Persist WEB-TERMINAL (ttyd/tmux) sessions across devvm reboots.
+#
+# Scope: the tmux-based web terminal only. The t3 chat surface persists its
+# own threads (~/.t3 state.sqlite, backed up daily by t3-backup-state) — this
+# script is about the tmux sessions, which are otherwise memory-only. Users
+# come from /etc/ttyd-user-map (the terminal surface's roster-derived map).
 #
 #   save    — snapshot every roster user's live tmux sessions to
-#             /var/lib/t3-tmux-state/<user>.tsv (name, cwd, claude session
+#             /var/lib/tmux-persist/<user>.tsv (name, cwd, claude session
 #             uuid). The uuid is sniffed from the claude process's OPEN
 #             transcript fd (~/.claude/projects/<slug>/<uuid>.jsonl), so it is
 #             correct regardless of how the session was launched (fresh via
 #             start-claude.sh or an explicit --resume). Runs every 5 min via
-#             t3-tmux-save.timer. A user with no tmux server keeps their last
+#             tmux-persist-save.timer. A user with no tmux server keeps their last
 #             manifest (so a post-reboot save can't wipe it before restore).
 #   restore — recreate manifest sessions that don't currently exist, resuming
 #             each saved conversation (claude --resume <uuid>). Per-session
 #             idempotent: existing names are left alone, so it is safe both at
-#             boot (t3-tmux-restore.service) and after a partial loss.
+#             boot (tmux-persist-restore.service) and after a partial loss.
 #
 # v1 limitation: one window/pane per session is captured (the workstation
 # usage pattern — one named claude conversation per tmux session).
 set -euo pipefail
 
-STATE_DIR=/var/lib/t3-tmux-state
+STATE_DIR=/var/lib/tmux-persist
 MAP=/etc/ttyd-user-map
 MODE="${1:-}"
 
-log() { echo "[t3-tmux-sessions] $*"; }
+log() { echo "[tmux-persist] $*"; }
 
 users() { [[ -r "$MAP" ]] && cut -d= -f2 "$MAP" | sort -u; }
 
@@ -106,5 +111,5 @@ restore() {
 case "$MODE" in
   save) save ;;
   restore) restore ;;
-  *) echo "usage: t3-tmux-sessions save|restore" >&2; exit 1 ;;
+  *) echo "usage: tmux-persist save|restore" >&2; exit 1 ;;
 esac
