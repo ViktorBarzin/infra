@@ -90,18 +90,35 @@ runcmd:
   - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
   - systemctl restart systemd-journald
   %{if is_k8s_template}
-  # systemd-resolved global DNS fallback. Without this, only the
-  # link-level DNS from Proxmox's `qm set --nameserver` (Technitium,
-  # 10.0.20.201) is consulted — and Technitium returns NXDOMAIN for
-  # forgejo.viktorbarzin.me, so kubelet image pulls from the Forgejo
-  # registry break. Public DNS upstream + Technitium fallback matches
-  # the pre-existing manual setup on k8s-node1..4.
+  # systemd-resolved split DNS, two drop-ins (2026-06-10, replaces the
+  # public-first global DNS that was here before):
+  #
+  # viktorbarzin.conf — routing domain ~viktorbarzin.me -> Technitium
+  # (10.0.20.201). The technitium-ingress-dns-sync CronJob keeps a CNAME
+  # for every ingress host (incl. forgejo.viktorbarzin.me) chained to the
+  # zone apex, whose A record auto-tracks the live Traefik LB IP (canary:
+  # viktorbarzin-apex-probe). Keeps kubelet pulls of forgejo images off
+  # the flaky public NAT-hairpin with no hardcoded service IPs. (The old
+  # comment claiming Technitium NXDOMAINs forgejo.viktorbarzin.me is
+  # obsolete — ingress-dns-sync added it to the split-horizon zone. See
+  # docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md.)
+  #
+  # global-dns.conf — emergency fallback only. Public servers must NOT
+  # sit in the global DNS= set: they merge with viktorbarzin.conf's set
+  # and race the ~viktorbarzin.me routing domain, intermittently
+  # returning the public IP again. General resolution uses the
+  # link-level DNS from Proxmox's `qm set --nameserver`.
   - mkdir -p /etc/systemd/resolved.conf.d
+  - |
+    cat > /etc/systemd/resolved.conf.d/viktorbarzin.conf <<'EOF'
+    [Resolve]
+    DNS=10.0.20.201
+    Domains=~viktorbarzin.me
+    EOF
   - |
     cat > /etc/systemd/resolved.conf.d/global-dns.conf <<'EOF'
     [Resolve]
-    DNS=8.8.8.8 1.1.1.1
-    FallbackDNS=10.0.20.201
+    FallbackDNS=8.8.8.8 1.1.1.1
     EOF
   - systemctl restart systemd-resolved
   # Re-enabled 2026-05-10: unattended-upgrades is back on, but with a tight
