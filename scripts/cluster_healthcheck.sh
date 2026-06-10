@@ -2026,11 +2026,16 @@ check_hardware_exporters() {
         fi
     done
 
-    # Check Prometheus scrape targets for hardware exporters
+    # Check Prometheus scrape targets for hardware exporters.
+    # last_over_time(up[15m]) instead of instant `up`: the redfish-idrac
+    # remnant scrapes every 10m (> the 5m staleness window), so an instant
+    # query returns it EMPTY ~half the time -> intermittent false "missing"
+    # (observed 2026-06-10). 15m covers the slowest job; identical answers
+    # for the 1-2m jobs.
     local prom_jobs=("snmp-idrac" "snmp-ups" "redfish-idrac" "proxmox-host")
     local up_result
     up_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
-        wget -q -O- 'http://localhost:9090/api/v1/query?query=up' 2>/dev/null || true)
+        wget -q -O- 'http://localhost:9090/api/v1/query?query=last_over_time(up%5B15m%5D)' 2>/dev/null || true)
 
     if [[ -n "$up_result" ]]; then
         for job in "${prom_jobs[@]}"; do
