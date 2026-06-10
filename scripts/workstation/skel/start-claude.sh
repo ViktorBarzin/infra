@@ -26,10 +26,12 @@ cd "$HOME/code" 2>/dev/null || cd "$HOME"
 # 10s fetch cap per repo so an offline remote never stalls the launch.
 freshen_repo() {
   GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$1" fetch --all --prune --quiet 2>/dev/null || true
-  if [ "$(git -C "$1" symbolic-ref --short -q HEAD)" = master ] \
+  # ff whatever branch is checked out (master, main, ...) when that is provably
+  # safe: on a branch, clean tree, upstream configured. Never rebases/merges.
+  if [ -n "$(git -C "$1" symbolic-ref --short -q HEAD)" ] \
      && [ -z "$(git -C "$1" status --porcelain 2>/dev/null)" ] \
-     && git -C "$1" rev-parse --verify -q 'master@{upstream}' >/dev/null 2>&1; then
-    git -C "$1" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 || true
+     && git -C "$1" rev-parse --verify -q '@{upstream}' >/dev/null 2>&1; then
+    git -C "$1" merge --ff-only '@{upstream}' >/dev/null 2>&1 || true
   fi
 }
 if [ -d "$HOME/code/.git" ]; then
