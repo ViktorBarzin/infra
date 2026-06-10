@@ -128,10 +128,13 @@ async def ws_leg(leg, resolver):
         reason = "connect_failed"
         try:
             connector = aiohttp.TCPConnector(resolver=resolver, force_close=True)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.ws_connect(
-                    url, timeout=aiohttp.ClientWSTimeout(ws_close=10), heartbeat=None
-                ) as ws:
+            # total=None: a session-level total timeout would kill the
+            # long-lived WS; only connection establishment is bounded.
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=None, connect=15, sock_connect=15),
+            ) as session:
+                async with session.ws_connect(url, heartbeat=None) as ws:
                     established = time.monotonic()
                     attempts = 0
                     CONNECTED.labels(leg).set(1)
