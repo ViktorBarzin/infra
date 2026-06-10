@@ -103,3 +103,6 @@ stacks/terminal/clipboard-upload/clipboard-upload
 # Plaintext terraform state — NEVER commit (use SOPS-encrypted .tfstate.enc only)
 terraform.tfstate
 terraform.tfstate.backup
+
+# Per-feature git worktrees (worktree-first workflow — execution.md §3)
+.worktrees/
