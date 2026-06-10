@@ -54,9 +54,9 @@ GHCR
 # Host/SNI and 404s the mirror's bare-IP requests, and the registry's
 # Bearer auth realm is the absolute https://forgejo.viktorbarzin.me/v2/token
 # URL fetched outside the mirror). What actually keeps forgejo pulls
-# internal is the systemd-resolved routing domain ~viktorbarzin.me ->
-# Technitium (viktorbarzin.conf, written by cloud_init.yaml), which
-# resolves forgejo to the live Traefik LB via the split-horizon zone.
+# internal is the pfSense Unbound domain override forwarding
+# viktorbarzin.me -> Technitium, whose split-horizon zone serves the live
+# Traefik LB IP (no node-side DNS config at all).
 # Kept for config uniformity; harmless. See
 # docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md.
 mkdir -p /etc/containerd/certs.d/forgejo.viktorbarzin.me
