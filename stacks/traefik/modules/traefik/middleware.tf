@@ -294,6 +294,31 @@ resource "kubernetes_manifest" "middleware_immich_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# ActualBudget-specific rate limit. The Actual web app boots with ~70
+# near-parallel requests (55 /data/migrations/*.sql + statics, all served
+# max-age=0 so every load re-validates them); the default 10/50 limiter
+# 429s the tail and stalls every page load with retry backoff (the
+# "Server returned an error while checking its status" screen). Burst must
+# absorb a few simultaneous device boots from one client IP.
+resource "kubernetes_manifest" "middleware_actualbudget_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "actualbudget-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 50
+        burst   = 300
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
