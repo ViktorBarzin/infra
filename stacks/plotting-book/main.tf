@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "plotting-book" {
     name = "plotting-book"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -122,8 +122,10 @@ resource "kubernetes_deployment" "plotting-book" {
           }
         }
         container {
-          image = "ancamilea/book-plotter:latest"
-          # image = "viktorbarzin/book-plotter:7"
+          # Baseline only — CI owns the live tag (GHA builds viktorbarzin/book-plotter:<sha8>,
+          # Woodpecker repo 43 set-images it; see ignore_changes above). :latest is pushed by
+          # the same GHA build, so a from-scratch apply starts on current code.
+          image             = "viktorbarzin/book-plotter:latest"
           name              = "plotting-book"
           image_pull_policy = "Always"
           env {
