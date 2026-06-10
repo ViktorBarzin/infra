@@ -5,16 +5,25 @@
 ## Applications (11)
 | Application | Provider Type | Auth Flow |
 |-------------|--------------|-----------|
-| Cloudflare Access | OAuth2/OIDC | explicit consent |
+| Cloudflare Access | OAuth2/OIDC | implicit consent |
 | Domain wide catch all | Proxy (forward auth) | implicit consent |
-| Forgejo | OAuth2/OIDC | explicit consent |
+| Forgejo | OAuth2/OIDC | implicit consent |
 | Grafana | OAuth2/OIDC | implicit consent |
-| Headscale | OAuth2/OIDC | explicit consent |
-| Immich | OAuth2/OIDC | explicit consent |
+| Headscale | OAuth2/OIDC | implicit consent |
+| Immich | OAuth2/OIDC | implicit consent |
 | Kubernetes | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
-| linkwarden | OAuth2/OIDC | explicit consent |
+| linkwarden | OAuth2/OIDC | implicit consent |
+| Vault | OAuth2/OIDC | implicit consent |
 | wrongmove | OAuth2/OIDC | implicit consent |
+
+> **2026-06-10 — every provider now uses implicit consent.** Cloudflare
+> Access (pk 9), Forgejo (20), Immich (1), Headscale (13), linkwarden (8)
+> and Vault (53) were switched from
+> `default-provider-authorization-explicit-consent` via the API (these
+> providers are UI-managed, not in TF). All are first-party apps; the
+> expiring consent screen (re-shown every 4 weeks per app) only slowed
+> first-time signin.
 
 > **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
 > confidential client `k8s-dashboard`, built for seamless dashboard SSO via
@@ -60,8 +69,27 @@
 - All sources use `invitation-enrollment` as enrollment flow (new users require invitation)
 
 ## Authorization Flows
-- **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen
-- **Implicit consent** (`default-provider-authorization-implicit-consent`): Auto-redirects
+- **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen — no provider uses it since 2026-06-10
+- **Implicit consent** (`default-provider-authorization-implicit-consent`): Auto-redirects — used by ALL providers
+
+## Authentication Flow (single-screen login, 2026-06-10)
+
+`default-authentication-flow` bindings: identification (order 10) →
+mfa-validation (order 30) → user-login (order 100). The identification
+stage (`default-authentication-identification`, pk
+`32aca5ab-106e-43f4-a4cc-4513d80e57f3`) has `password_stage` set to
+`default-authentication-password`, so username + password render on ONE
+screen (one round trip instead of two). The previously separate
+password-stage binding at order 20 (pk `0fc677db-a23f-4ee7-8648-da342e14573b`)
+was DELETED via the API — authentik requires removing it when the
+identification stage embeds the password field. `password_stage` is pinned in
+Terraform (`authentik_stage_identification.default_identification` in
+`stacks/authentik/authentik_provider.tf`); all other stage fields stay
+UI-managed via `ignore_changes`. Social-login buttons remain on the same
+screen and bypass the password field, so Google/GitHub/Facebook users are
+unaffected. If a future authentik upgrade/blueprint re-adds the order-20
+binding, users would briefly see a second password prompt — delete the
+binding again.
 
 ## Invitation Enrollment Flow
 Slug: `invitation-enrollment` | PK: `7d667321-2b02-4e16-8161-148078a8dac1`
@@ -149,7 +177,9 @@ Notes:
 - The standalone embedded-outpost deployment needs `AUTHENTIK_POSTGRESQL__{HOST,PORT,USER,PASSWORD,NAME}` env vars to reach the dbaas cluster — codified via `kubernetes_json_patches.deployment` envFrom the shared `goauthentik` Secret. The `app.kubernetes.io/component=server` pod label is also injected via JSON patch (matches the `component:server` half of the Service selector that the controller adds for embedded outposts).
 - `ProxyProvider.remember_me_offset` stays UI-managed via `ignore_changes`.
 - The Authentik provider's resource schema does **not** expose the `Outpost.managed` field. We rely on TF's "write only fields it knows about" semantic: the server-set `goauthentik.io/outposts/embedded` value is preserved across applies because Terraform never writes `managed`. Don't change the resource provider schema expectations without verifying this assumption holds.
-- The `unauthenticated_age` env var is injected via `server.env` / `worker.env` (not `authentik.sessions.unauthenticated_age`) because we set `authentik.existingSecret.secretName: goauthentik`, which makes the chart skip rendering its own `AUTHENTIK_*` Secret. The `authentik.*` value block is therefore inert in this stack — anything new under `authentik.*` must use the `*.env` arrays instead. The same applies to the existing `authentik.cache.*`, `authentik.web.*`, `authentik.worker.*` blocks (currently inert; live values come from the orphaned, helm-keep-policy `goauthentik` Secret created by chart 2025.10.3 before `existingSecret` was introduced).
+- ALL tuned env vars are injected via `server.env` / `worker.env` (not the `authentik.*` values block) because we set `authentik.existingSecret.secretName: goauthentik`, which makes the chart skip rendering its own `AUTHENTIK_*` Secret. The `authentik.*` value block is therefore inert in this stack — anything new under `authentik.*` must use the `*.env` arrays instead. Live base values come from the orphaned, helm-keep-policy `goauthentik` Secret created by chart 2025.10.3 before `existingSecret` was introduced. **2026-06-10:** the previously-inert tuning (`AUTHENTIK_WEB__WORKERS=3`, `AUTHENTIK_WEB__THREADS=4`, `AUTHENTIK_CACHE__TIMEOUT_FLOWS=1800`, `AUTHENTIK_CACHE__TIMEOUT_POLICIES=900`, `AUTHENTIK_POSTGRESQL__CONN_MAX_AGE=60`, `AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS=true`, worker `AUTHENTIK_WORKER__THREADS=4`) was moved into the env arrays and is now actually live — before that, pods silently ran defaults (2 gunicorn workers, 300s caches, no persistent DB conns).
+- **Outpost (2026-06-10):** `log_level=info` (was `trace` — per-request overhead on the forward-auth hot path) and `kubernetes_replicas=2` (was 1 — single-pod hot path; safe since proxy sessions live in Postgres). Both in `authentik_outpost.embedded` config.
+- **Static assets (2026-06-10):** a second `ingress_factory` (`module.ingress-static`, path `/static` on the authentik host) attaches the `authentik-static-cache-headers` middleware → `Cache-Control: public, max-age=31536000, immutable`. Authentik itself serves no max-age; assets are version-fingerprinted so immutable is safe. Mainly helps split-horizon internal users (no Cloudflare edge cache on the direct path).
 
 ## Upgrade Validation Checklist
 
@@ -161,8 +191,9 @@ Run after **any** of these:
 The fragile surfaces are the `kubernetes_json_patches` and the `Outpost.managed` field — both rely on assumptions that can silently break across upgrades. The checklist exercises the same path the alerts watch, so it doubles as a smoke test for the alerts.
 
 ```bash
-# 1. Service routes to the outpost pod (NOT the server pods).
-#    Empty endpoints => auth-proxy fallback fires; expected: ONE pod IP, ports 9000/9300/9443.
+# 1. Service routes to the outpost pods (NOT the server pods).
+#    Empty endpoints => auth-proxy fallback fires; expected: TWO pod IPs
+#    (kubernetes_replicas=2 since 2026-06-10), ports 9000/9300/9443.
 kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost
 
 # 2. Service selector still excludes the server pods. Expected: includes

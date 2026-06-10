@@ -91,14 +91,21 @@ resource "authentik_outpost" "embedded" {
   protocol_providers = [authentik_provider_proxy.catchall.id]
   service_connection = "99e227a7-4562-4888-9660-4c27da678c50"
   config = jsonencode({
-    log_level                        = "trace"
-    docker_labels                    = null
-    authentik_host                   = "https://authentik.viktorbarzin.me/"
-    docker_network                   = null
-    container_image                  = null
-    docker_map_ports                 = true
-    refresh_interval                 = "minutes=5"
-    kubernetes_replicas              = 1
+    # info, not trace: the outpost sits on the hot path of every request to
+    # every auth="required" ingress — trace logging is per-request overhead
+    # with no operational value (request access lines are emitted at info).
+    log_level        = "info"
+    docker_labels    = null
+    authentik_host   = "https://authentik.viktorbarzin.me/"
+    docker_network   = null
+    container_image  = null
+    docker_map_ports = true
+    refresh_interval = "minutes=5"
+    # 2 replicas: removes the single-pod hot path for all forward-auth
+    # subrequests. Safe since sessions moved to the shared Postgres backend
+    # (authentik_providers_proxy_proxysession, 2026-05-10) — no pod-local
+    # session state anymore.
+    kubernetes_replicas              = 2
     kubernetes_namespace             = "authentik"
     authentik_host_browser           = ""
     object_naming_template           = "ak-outpost-%(name)s"
@@ -195,6 +202,49 @@ resource "authentik_stage_user_login" "default_login" {
       terminate_other_sessions,
       geoip_binding,
       network_binding,
+    ]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Default Identification stage — adopted 2026-06-10 to embed the password
+# field on the identification screen (single-screen login: one round trip and
+# one screen instead of two). Per authentik docs, when an Identification stage
+# carries a password stage the Password stage must NOT be bound separately —
+# the redundant order-20 binding on default-authentication-flow (pk
+# 0fc677db-a23f-4ee7-8648-da342e14573b) was deleted via the API in the same
+# change. Social-login users are unaffected: source buttons stay on the same
+# screen and bypass the password field.
+# -----------------------------------------------------------------------------
+
+import {
+  to = authentik_stage_identification.default_identification
+  id = "32aca5ab-106e-43f4-a4cc-4513d80e57f3"
+}
+
+data "authentik_stage" "default_authentication_password" {
+  name = "default-authentication-password"
+}
+
+resource "authentik_stage_identification" "default_identification" {
+  name           = "default-authentication-identification"
+  password_stage = data.authentik_stage.default_authentication_password.id
+  lifecycle {
+    # Pin only password_stage; everything else stays UI-managed (same pattern
+    # as authentik_stage_user_login.default_login above).
+    ignore_changes = [
+      user_fields,
+      case_insensitive_matching,
+      show_matched_user,
+      show_source_labels,
+      sources,
+      enrollment_flow,
+      recovery_flow,
+      passwordless_flow,
+      pretend_user_exists,
+      captcha_stage,
+      webauthn_stage,
+      enable_remember_me,
     ]
   }
 }

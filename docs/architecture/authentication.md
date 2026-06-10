@@ -40,10 +40,10 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| Authentik Server | 2026.2.2 | `stacks/authentik/` | Core IdP application servers (2 replicas) |
+| Authentik Server | 2026.2.2 | `stacks/authentik/` | Core IdP application servers (3 replicas) |
 | Authentik Worker | 2026.2.2 | `stacks/authentik/` | Background task processors (2 replicas) |
 | PgBouncer | Latest | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
-| Embedded Outpost | - | Built into Authentik | Forward auth endpoint for Traefik |
+| Embedded Outpost | - | Standalone deployment, managed by Authentik | Forward auth endpoint for Traefik (2 replicas, PG-backed sessions) |
 | Traefik ForwardAuth | - | `modules/kubernetes/ingress_factory/` | Middleware attached when `auth = "required"` or `"public"` |
 | Vault OIDC Method | - | `stacks/vault/` | Human SSO authentication to Vault |
 | Vault K8s Auth | - | `stacks/vault/` | Service account JWT authentication |
@@ -64,14 +64,35 @@ Services pick an auth tier via the `auth` enum on the `ingress_factory` module (
 When `auth = "required"`, an unauthenticated request flows:
 
 1. Request hits Traefik ingress
-2. ForwardAuth middleware calls Authentik embedded outpost
-3. Authentik checks for valid session cookie
+2. ForwardAuth middleware calls the `auth-proxy` nginx (basicAuth fallback when Authentik is down), which proxies to the Authentik embedded outpost over a keepalive connection pool
+3. Authentik checks for valid session cookie (domain-level `authentik_proxy_*` cookie on `.viktorbarzin.me`, 4-week validity — one cookie covers all forward-auth apps)
 4. If missing/invalid, redirects to Authentik login page (authentik.viktorbarzin.me)
-5. User authenticates via social provider (Google/GitHub/Facebook)
+5. User authenticates on a **single screen**: username + password together (the identification stage embeds the password stage), or a social provider button (Google/GitHub/Facebook), then MFA validation
 6. Authentik creates session, sets cookie, redirects back to original URL
 7. Subsequent requests include session cookie, pass auth check, reach backend
 
 Authentik adds authentication headers (user, email, groups) to forwarded requests. These headers are stripped before reaching the backend to prevent confusion.
+
+### First-time signin performance (2026-06-10)
+
+Signin latency is dominated by screen count and round trips, not server time
+(DB avg 1.6ms). Standing decisions:
+
+- **Single-screen login**: the identification stage carries `password_stage`,
+  so username+password is one round trip. The separate password-stage binding
+  was removed from `default-authentication-flow` (required by authentik when
+  embedding). Pinned in TF: `authentik_stage_identification.default_identification`.
+- **Implicit consent everywhere**: all OIDC providers are first-party, so none
+  use the explicit-consent flow (it re-prompted every 4 weeks per app).
+- **Live tuning via `server.env`/`worker.env`** (the `authentik.*` Helm values
+  are inert due to `existingSecret`): 3 gunicorn workers, 30m flow-plan cache,
+  15m policy cache, 60s persistent DB connections.
+- **Static assets cached immutable**: `/static` ingress carve-out adds
+  `Cache-Control: public, max-age=31536000, immutable` (assets are
+  version-fingerprinted; authentik itself sends no max-age).
+- **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
+- **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
+  TCP setup on the forward-auth subrequest path.
 
 **Anti-exposure guard**: every `auth = "app"` or `auth = "none"` line MUST have a preceding `# auth = "<tier>": <reason>` comment documenting what gates the backend (for `"app"`) or why the endpoint is intentionally public (for `"none"`). The convention is enforced by `scripts/check-ingress-auth-comments.py`, which `scripts/tg` runs on every `plan/apply/destroy/refresh` and blocks the terragrunt invocation if violated. Stack-scoped — each stack documents itself.
 
