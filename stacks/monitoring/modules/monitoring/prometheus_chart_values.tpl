@@ -1696,6 +1696,28 @@ serverFiles:
               severity: warning
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
+          - alert: VzdumpBackupStale
+            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: ~50h / 2 daily cycles)"
+              description: "vzdump-vms.timer on 192.168.1.127 hasn't produced a fresh devvm image. Check: ssh root@192.168.1.127 systemctl status vzdump-vms. Runbook: docs/architecture/backup-dr.md (VM Image Backups)."
+          - alert: VzdumpBackupNeverRun
+            expr: absent(vzdump_last_run_timestamp{job="vzdump-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "vzdump VM image backup job has never reported metrics to Pushgateway"
+          - alert: VzdumpBackupFailing
+            expr: vzdump_last_status{job="vzdump-backup"} != 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "vzdump VM image backup last run failed (status={{ $value }})"
           - alert: BackupDiskFull
             expr: (1 - node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"} / node_filesystem_size_bytes{job="proxmox-host", mountpoint="/mnt/backup"}) > 0.85
             for: 15m
