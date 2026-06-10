@@ -54,11 +54,14 @@ PUSHGATEWAY="${NFS_MIRROR_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB=nfs-mirror
 
 EXCLUDES=(
-    # ---- /mnt/backup subtrees owned by daily-backup — leave alone ----
+    # ---- /mnt/backup subtrees owned by OTHER backup jobs — leave alone ----
+    # Without these, the top-level `rsync --delete /srv/nfs/ → /mnt/backup/` below
+    # reaps any /mnt/backup dir that has no /srv/nfs counterpart.
     --exclude='/pvc-data/'
     --exclude='/sqlite-backup/'
     --exclude='/pfsense/'
     --exclude='/pve-config/'
+    --exclude='/vzdump/'       # VM images from vzdump-vms — NOT a /srv/nfs svc (else --delete reaps them nightly)
     --exclude='/lost+found/'
 
     # ---- state files used by other backup jobs ----
