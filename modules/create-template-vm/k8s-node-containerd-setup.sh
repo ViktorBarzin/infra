@@ -49,7 +49,7 @@ server = "https://ghcr.io"
   capabilities = ["pull", "resolve"]
 GHCR
 
-# Forgejo OCI registry: prefer in-cluster Traefik LB (10.0.20.200) to
+# Forgejo OCI registry: prefer in-cluster Traefik LB (10.0.20.203) to
 # avoid hairpin NAT. Traefik serves the *.viktorbarzin.me wildcard so
 # SNI verification succeeds. If the mirror is unreachable, fall back to
 # public DNS resolution (needs the global DNS fallback set up below).
@@ -61,6 +61,20 @@ server = "https://forgejo.viktorbarzin.me"
   capabilities = ["pull", "resolve"]
   skip_verify = true
 FORGEJO
+
+# /etc/hosts pin — REQUIRED in addition to the hosts.toml mirror. The
+# mirror alone cannot make forgejo pulls hairpin-proof for two reasons
+# (2026-06-10 tuya-bridge outage, third incident of this class):
+#   a) Traefik routes by Host/SNI and 404s the mirror's bare-IP requests,
+#      so containerd always falls back to `server` (public DNS → hairpin).
+#   b) The registry's Bearer auth realm is the absolute URL
+#      https://forgejo.viktorbarzin.me/v2/token, which containerd fetches
+#      verbatim — that leg never goes through the mirror at all.
+# Pinning the name to Traefik's LB fixes resolve + token + blob legs with
+# correct SNI and a valid cert. If Traefik's LB IP ever changes, update
+# this pin together with the hosts.toml IP above.
+grep -q forgejo-internal-pin /etc/hosts || \
+  echo '10.0.20.203 forgejo.viktorbarzin.me # forgejo-internal-pin (managed: setup-forgejo-containerd-mirror.sh)' >> /etc/hosts
 
 # quay.io + registry.k8s.io: include mirror configs that match node4's
 # layout (no real pull-through cache today, server line is the direct

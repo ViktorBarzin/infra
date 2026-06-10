@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # One-shot deployment of the forgejo.viktorbarzin.me containerd hosts.toml
-# entry across every k8s node. Cloud-init only fires on VM provision, so
-# existing nodes need this manual rollout.
+# entry + /etc/hosts pin across every k8s node. Cloud-init only fires on VM
+# provision, so existing nodes need this manual rollout.
+#
+# The /etc/hosts pin (forgejo.viktorbarzin.me -> Traefik LB) is what actually
+# makes pulls hairpin-proof: Traefik 404s the mirror's bare-IP requests (no
+# Host/SNI match) and the registry's Bearer auth realm is the absolute public
+# URL, so the hosts.toml mirror alone always degrades to the flaky public-IP
+# hairpin (2026-06-10 tuya-bridge outage; see
+# docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md).
 #
 # What it does, per node:
 #   1. drain (ignore-daemonsets, delete-emptydir-data)
 #   2. ssh in: mkdir + write /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml
+#      + append the forgejo /etc/hosts pin
 #   3. systemctl restart containerd
 #   4. uncordon
 #
@@ -42,6 +50,8 @@ mkdir -p "$CERTS_DIR"
 cat > "$CERTS_DIR/hosts.toml" <<'TOML'
 $HOSTS_TOML
 TOML
+grep -q forgejo-internal-pin /etc/hosts || \
+  echo '10.0.20.203 forgejo.viktorbarzin.me # forgejo-internal-pin (managed: setup-forgejo-containerd-mirror.sh)' >> /etc/hosts
 systemctl restart containerd
 EOF
 
