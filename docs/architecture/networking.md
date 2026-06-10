@@ -247,7 +247,7 @@ Every ingress created by the `ingress_factory` module follows this chain:
 
 1. **CrowdSec Bouncer**: Checks IP against threat database. **Fail-open** mode — if LAPI is unreachable, traffic passes through to prevent outages.
 2. **Authentik Forward-Auth** (if `protected = true`): SSO authentication via OIDC. Non-authenticated users are redirected to login. Auth headers are stripped before forwarding to backend.
-3. **Rate Limiting**: Per-IP throttling. Returns **429 Too Many Requests** (not 503) when limit exceeded. Default limits are generous; services like Immich and Nextcloud have higher custom limits.
+3. **Rate Limiting**: Per-IP throttling. Returns **429 Too Many Requests** (not 503) when limit exceeded. Default is `rate-limit` (average 10 req/s, burst 50). Services whose clients legitimately burst harder get a dedicated middleware via `skip_default_rate_limit = true` + `extra_middlewares`: Immich (`immich-rate-limit`, 1000/20000, photo uploads) and ActualBudget (`actualbudget-rate-limit`, 50/300 — the Actual web app boots with ~70 parallel asset/migration revalidations; the default burst 429'd the tail and stalled every page load).
 4. **Retry**: 2 attempts with 100ms delay on transient failures (5xx errors, connection errors).
 
 Additional middleware:
@@ -515,11 +515,11 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 ### Rate Limiter Blocks Legitimate Traffic
 
-**Symptoms**: Users report 429 errors during normal usage (e.g., Immich uploads).
+**Symptoms**: Users report 429 errors during normal usage (e.g., Immich uploads, ActualBudget's "Server returned an error while checking its status" boot screen).
 
 **Diagnosis**: Check Traefik middleware config for the affected IngressRoute.
 
-**Fix**: Increase rate limit in `ingress_factory` module. Default is 100 req/min per IP. Immich and Nextcloud use 500 req/min.
+**Fix**: Give the service a dedicated higher-limit middleware (don't loosen the shared default): define `<service>-rate-limit` in `stacks/traefik/modules/traefik/middleware.tf`, then set `skip_default_rate_limit = true` + `extra_middlewares = ["traefik-<service>-rate-limit@kubernetescrd"]` on its `ingress_factory` call. Shared default is average 10 req/s / burst 50; Immich uses 1000/20000, ActualBudget 50/300.
 
 ### Large Downloads or Uploads Truncate / Fail Partway
 
