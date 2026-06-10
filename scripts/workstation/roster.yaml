@@ -10,6 +10,14 @@
 #   power-user      - cluster-wide READ (no Secrets) via oidc-power-user-readonly; locked clone
 #   namespace-owner - admin in their own namespace(s) only; locked clone
 #
+# Optional per-user code layout (non-admins):
+#   code_layout: single (default) - ~/code IS the locked infra clone
+#   code_layout: workspace        - ~/code is a directory of per-project clones:
+#                                   the locked infra clone at ~/code/infra, plus
+#                                   each `repos` entry cloned from Forgejo
+#                                   viktor/<name> with the user's own PAT.
+#                                   A single-layout ~/code is auto-migrated.
+#
 # wizard IS listed (as admin): the reconcile REGENERATES /etc/ttyd-user-map +
 # dispatch.json from this file, so omitting him would drop his t3 instance. The
 # provisioner skips account/group/clone mutations for already-existing users, so
@@ -17,5 +25,5 @@
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin}                                          # base config author + cluster-admin
   emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user}                                     # NET-NEW k8s_users entry (add as power-user before provisioning)
-  ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book]}   # ALREADY provisioned in-cluster -- assert, don't re-create
+  ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit]}   # ALREADY provisioned in-cluster -- assert, don't re-create
 # gheorghe:  {authentik_user: vabbit81,    k8s_user: vabbit81, tier: namespace-owner, namespaces: [vabbit81]}      # already a cluster ns-owner; uncomment to give him a devvm workstation

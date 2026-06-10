@@ -20,6 +20,12 @@ MAP=/etc/ttyd-user-map
 DRY_RUN="${DRY_RUN:-0}"
 # Public infra repo for the locked clone (no auth; the monorepo has no remote).
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
+# Canonical push target for non-admin infra clones (AGENTS.md "Non-admin
+# workstation users"), and the base URL for workspace-layout `repos` entries —
+# those clone AS the user so their ~/.git-credentials PAT authenticates
+# against private Forgejo repos.
+FORGEJO_INFRA_REMOTE="${FORGEJO_INFRA_REMOTE:-https://forgejo.viktorbarzin.me/viktor/infra.git}"
+REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
@@ -27,22 +33,24 @@ ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
 
-# Per-non-admin writable, git-crypt-LOCKED infra clone at ~/code. Keyless +
+# Per-non-admin writable, git-crypt-LOCKED infra clone at ~/<subpath>. Keyless +
 # filter=cat ⇒ code/docs are plaintext, git-crypt'd secret files stay ciphertext.
 # Writable + ungated (push != apply; applies are admin-only). NEVER touches an
-# existing ~/code (so emo's symlink survives until the gated cutover).
+# existing target (so emo's symlink survives until the gated cutover). subpath
+# is "code" (single layout) or "code/infra" (workspace layout).
 install_locked_clone() {
-  local user="$1" home
+  local user="$1" sub="$2" home dst
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -z "$home" ]] && return 0
-  [[ -e "$home/code" || -L "$home/code" ]] && return 0
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] locked infra clone -> $user:$home/code"; return 0; fi
-  log "clone locked infra -> $user:~/code"
-  runuser -u "$user" -- git clone --quiet --no-checkout "$INFRA_REMOTE" "$home/code"
-  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.smudge cat
-  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.clean cat
-  runuser -u "$user" -- git -C "$home/code" config filter.git-crypt.required false
-  runuser -u "$user" -- git -C "$home/code" checkout --quiet master
+  dst="$home/$sub"
+  [[ -e "$dst" || -L "$dst" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] locked infra clone -> $user:$dst"; return 0; fi
+  log "clone locked infra -> $user:~/$sub"
+  runuser -u "$user" -- git clone --quiet --no-checkout "$INFRA_REMOTE" "$dst"
+  runuser -u "$user" -- git -C "$dst" config filter.git-crypt.smudge cat
+  runuser -u "$user" -- git -C "$dst" config filter.git-crypt.clean cat
+  runuser -u "$user" -- git -C "$dst" config filter.git-crypt.required false
+  runuser -u "$user" -- git -C "$dst" checkout --quiet master
 }
 
 # Keep an EXISTING non-admin clone fresh (the admin's tree is never touched): fetch
@@ -50,18 +58,98 @@ install_locked_clone() {
 # clean tree, upstream configured. Never rebases/merges; a non-ff master (local
 # commits) is the user's to reconcile and is only WARNed about. Fetch failures
 # (offline, missing credentials) are non-fatal: freshness is best-effort.
-refresh_locked_clone() {
-  local user="$1" home
+refresh_user_clone() {
+  local user="$1" sub="$2" home dir
   home="$(getent passwd "$user" | cut -d: -f6)"
-  [[ -n "$home" && -d "$home/code/.git" ]] || return 0
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] refresh clone -> $user:$home/code"; return 0; fi
-  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$home/code" fetch --all --prune --quiet 2>/dev/null \
-    || { log "WARN: clone fetch failed for $user (offline/credentials?) — skipped"; return 0; }
-  [[ "$(runuser -u "$user" -- git -C "$home/code" symbolic-ref --short -q HEAD)" == master ]] || return 0
-  [[ -z "$(runuser -u "$user" -- git -C "$home/code" status --porcelain)" ]] || return 0
-  runuser -u "$user" -- git -C "$home/code" rev-parse --verify -q 'master@{upstream}' >/dev/null || return 0
-  runuser -u "$user" -- git -C "$home/code" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 \
-    || log "WARN: $user master not fast-forwardable (local commits?) — left as-is"
+  dir="$home/$sub"
+  [[ -n "$home" && -d "$dir/.git" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] refresh clone -> $user:$dir"; return 0; fi
+  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$dir" fetch --all --prune --quiet 2>/dev/null \
+    || { log "WARN: fetch failed for $user:$sub (offline/credentials?) — skipped"; return 0; }
+  [[ "$(runuser -u "$user" -- git -C "$dir" symbolic-ref --short -q HEAD)" == master ]] || return 0
+  [[ -z "$(runuser -u "$user" -- git -C "$dir" status --porcelain)" ]] || return 0
+  runuser -u "$user" -- git -C "$dir" rev-parse --verify -q 'master@{upstream}' >/dev/null || return 0
+  runuser -u "$user" -- git -C "$dir" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 \
+    || log "WARN: $user:$sub master not fast-forwardable (local commits?) — left as-is"
+}
+
+# Non-admin infra clones are documented to carry a `forgejo` remote (the
+# canonical push target) with master tracking forgejo/master — see AGENTS.md
+# "Non-admin workstation users". Clones made before that contract only have
+# the GitHub origin; wire the remote + upstream idempotently. Best-effort: an
+# offline fetch leaves the upstream as-is.
+wire_forgejo_remote() {
+  local user="$1" sub="$2" home dir
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  dir="$home/$sub"
+  [[ -n "$home" && -d "$dir/.git" ]] || return 0
+  if ! runuser -u "$user" -- git -C "$dir" remote get-url forgejo >/dev/null 2>&1; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] add forgejo remote -> $user:$sub"; return 0; fi
+    log "add forgejo remote -> $user:~/$sub"
+    runuser -u "$user" -- git -C "$dir" remote add forgejo "$FORGEJO_INFRA_REMOTE"
+  fi
+  [[ "$DRY_RUN" == 1 ]] && return 0
+  [[ "$(runuser -u "$user" -- git -C "$dir" rev-parse --abbrev-ref -q 'master@{upstream}' 2>/dev/null)" == forgejo/master ]] && return 0
+  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$dir" fetch --quiet forgejo 2>/dev/null \
+    || { log "WARN: forgejo fetch failed for $user — upstream left as-is"; return 0; }
+  runuser -u "$user" -- git -C "$dir" branch --set-upstream-to=forgejo/master master >/dev/null 2>&1 \
+    && log "set $user:~/$sub master upstream -> forgejo/master" \
+    || log "WARN: could not set $user:~/$sub master upstream to forgejo/master"
+}
+
+# Workspace layout: ~/code is a plain directory of per-project clones. A user
+# still on the single layout (~/code IS the infra clone) is migrated by moving
+# the whole clone — local branches, dirty files, untracked state all survive —
+# to ~/code/infra. Running processes follow the moved inode, so live sessions
+# keep working (their cwd lands inside ~/code/infra).
+ensure_workspace_layout() {
+  local user="$1" home tmp
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  if [[ -d "$home/code/.git" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] migrate $user:~/code (single clone) -> ~/code/infra"; return 0; fi
+    log "migrate $user: ~/code (single infra clone) -> ~/code/infra"
+    tmp="$home/.code-workspace-migrate.$$"
+    mv "$home/code" "$tmp"
+    install -d -o "$user" -g "$user" -m 0755 "$home/code"
+    mv "$tmp" "$home/code/infra"
+  elif [[ ! -e "$home/code" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] create workspace dir $user:~/code"; return 0; fi
+    install -d -o "$user" -g "$user" -m 0755 "$home/code"
+  fi
+}
+
+# Single-layout clones often accumulated nested project clones (the old layout
+# gave users nowhere else to put them — e.g. ancamilea's tripit inside ~/code).
+# After migration such a clone would sit buried at ~/code/infra/<repo>; hoist a
+# roster repo to its workspace home instead of stranding it + cloning fresh.
+# Only untracked git dirs move — content the infra repo tracks is never touched.
+hoist_nested_repo() {
+  local user="$1" repo="$2" home src dst
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  src="$home/code/infra/$repo"; dst="$home/code/$repo"
+  [[ -d "$src/.git" && ! -e "$dst" ]] || return 0
+  runuser -u "$user" -- git -C "$home/code/infra" ls-files --error-unmatch "$repo" >/dev/null 2>&1 && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] hoist nested $repo -> $user:$dst"; return 0; fi
+  log "hoist nested $repo clone -> $user:~/code/$repo"
+  mv "$src" "$dst"
+}
+
+# Extra per-project repos for workspace-layout users, cloned from Forgejo AS
+# the user (their ~/.git-credentials PAT authenticates against private repos).
+# A failed clone (no access yet, offline) is a WARN — the reconcile must never
+# abort over a single repo; the next hourly run retries.
+install_user_repo() {
+  local user="$1" repo="$2" home dst
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  dst="$home/code/$repo"
+  [[ -e "$dst" || -L "$dst" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] clone $REPO_REMOTE_BASE/$repo.git -> $user:$dst"; return 0; fi
+  log "clone $repo -> $user:~/code/$repo"
+  runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git clone --quiet "$REPO_REMOTE_BASE/$repo.git" "$dst" 2>/dev/null \
+    || log "WARN: clone of $repo failed for $user (access/offline?) — skipped"
 }
 
 # Machine-wide Claude managed config: the repo file (in the admin tree, like the
@@ -218,7 +306,11 @@ jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced inv
 sync_managed_config
 
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
-while IFS=$'\t' read -r os_user tier shell groups_csv; do
+# NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
+# the jq below emits "-" for empty groups/repos and we map it back here.
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
+  [[ "$groups_csv" == "-" ]] && groups_csv=""
+  [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
     log "create account: $os_user (shell $shell)"
     run useradd -m -s "$shell" "$os_user"
@@ -234,14 +326,29 @@ while IFS=$'\t' read -r os_user tier shell groups_csv; do
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
-  if [[ "$tier" != admin ]]; then            # non-admins: locked clone (kept fresh) + kubeconfig + shared Claude token
-    install_locked_clone "$os_user"
-    refresh_locked_clone "$os_user"
+  if [[ "$tier" != admin ]]; then            # non-admins: locked clone(s) (kept fresh) + kubeconfig + shared Claude token
+    if [[ "$code_layout" == workspace ]]; then
+      ensure_workspace_layout "$os_user"
+      install_locked_clone "$os_user" code/infra
+      wire_forgejo_remote  "$os_user" code/infra   # before refresh: ff targets the canonical upstream same-pass
+      refresh_user_clone   "$os_user" code/infra
+      IFS=',' read -ra extra_repos <<< "$repos_csv"
+      for repo in "${extra_repos[@]}"; do
+        [[ -n "$repo" ]] || continue
+        hoist_nested_repo  "$os_user" "$repo"
+        install_user_repo  "$os_user" "$repo"
+        refresh_user_clone "$os_user" "code/$repo"
+      done
+    else
+      install_locked_clone "$os_user" code
+      wire_forgejo_remote  "$os_user" code         # before refresh: ff targets the canonical upstream same-pass
+      refresh_user_clone   "$os_user" code
+    fi
     install_user_kubeconfig "$os_user"
     install_user_claude_token "$os_user"
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (.groups|join(","))] | @tsv' "$desired_file")
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do

@@ -87,6 +87,97 @@ def test_missing_users_key_is_valid_empty():
 
 
 # --------------------------------------------------------------------------
+# code_layout + repos: per-user workspace layout (~/code/<repo> clones)
+# --------------------------------------------------------------------------
+
+
+def test_code_layout_defaults_to_single_with_no_repos():
+    r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
+    assert r.users["emo"].code_layout == "single"
+    assert r.users["emo"].repos == ()
+
+
+def test_workspace_layout_carries_repos():
+    r = _roster(
+        """
+        users:
+          ancamilea: {authentik_user: ancaelena98, k8s_user: anca,
+                      tier: namespace-owner, namespaces: [plotting-book],
+                      code_layout: workspace, repos: [tripit]}
+        """
+    )
+    u = r.users["ancamilea"]
+    assert u.code_layout == "workspace"
+    assert u.repos == ("tripit",)
+
+
+def test_rejects_unknown_code_layout():
+    with pytest.raises(eng.RosterError, match="code_layout"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            "code_layout: flat}}"
+        )
+
+
+def test_repos_require_workspace_layout():
+    # repos clone to ~/code/<name>, which only exists under the workspace layout.
+    with pytest.raises(eng.RosterError, match="workspace"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            "repos: [tripit]}}"
+        )
+
+
+@pytest.mark.parametrize("bad", ["../evil", "a/b", "", ".hidden", "-flag"])
+def test_rejects_path_unsafe_repo_name(bad):
+    # Repo names become root-executed clone/mv paths — reject anything that
+    # isn't a plain leading-alphanumeric name.
+    with pytest.raises(eng.RosterError, match="repo"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            f"code_layout: workspace, repos: ['{bad}']" "}}"
+        )
+
+
+def test_rejects_infra_in_repos():
+    # The infra clone is implicit at ~/code/infra for workspace users.
+    with pytest.raises(eng.RosterError, match="implicit"):
+        _roster(
+            "users: {bob: {authentik_user: b, k8s_user: b, tier: power-user, "
+            "code_layout: workspace, repos: [infra]}}"
+        )
+
+
+def test_derive_accounts_carry_code_layout_and_repos():
+    r = _roster(
+        """
+        users:
+          emo:       {authentik_user: e, k8s_user: emo, tier: power-user}
+          ancamilea: {authentik_user: a, k8s_user: anca, tier: namespace-owner,
+                      namespaces: [plotting-book], code_layout: workspace,
+                      repos: [tripit]}
+        """
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["emo"].code_layout == "single"
+    assert ds.accounts["emo"].repos == ()
+    assert ds.accounts["ancamilea"].code_layout == "workspace"
+    assert ds.accounts["ancamilea"].repos == ("tripit",)
+
+
+def test_desired_state_dict_includes_code_layout_and_repos():
+    # The JSON adapter is the contract the bash provisioner consumes via jq.
+    r = _roster(
+        "users: {ancamilea: {authentik_user: a, k8s_user: anca, "
+        "tier: namespace-owner, namespaces: [plotting-book], "
+        "code_layout: workspace, repos: [tripit]}}"
+    )
+    d = eng._desired_state_to_dict(eng.derive_desired_state(r, {}))
+    assert d["accounts"]["ancamilea"]["code_layout"] == "workspace"
+    assert d["accounts"]["ancamilea"]["repos"] == ["tripit"]
+
+
+# --------------------------------------------------------------------------
 # validate_tiers: roster tier vs live k8s_users (fail-loud, module #1)
 # --------------------------------------------------------------------------
 
