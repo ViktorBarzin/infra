@@ -55,7 +55,7 @@ External mail (WAN) path — PROXY v2
 │  pfSense WAN:{25,465,587,993}                                       │
 │      │  NAT rdr → 10.0.20.1:{same}                                  │
 │      ▼                                                              │
-│  pfSense HAProxy  (mode tcp, 4 frontends, 4 backend pools)          │
+│  pfSense HAProxy  (mode tcp, 5 frontends, 6 backend pools)          │
 │      │  data: send-proxy-v2 → :{30125..30128}  (PROXY-aware pod)   │
 │      │  health: TCP-check    → :{30145..30147}  (no-PROXY pod)     │
 │      │  inter 5000                                                  │
@@ -112,6 +112,28 @@ kubectl logs -c docker-mailserver deployment/mailserver -n mailserver \
   | grep 'smtpd-proxy25.*CONNECT from' | tail -5
 # Expect external source IPs (e.g., Brevo 77.32.148.x), NOT 10.0.20.x
 ```
+
+## SNI-routed internal :443 frontend (2026-06-10)
+
+`internal_https_443` binds `10.0.20.1:443` + `10.0.10.1:443` and completes
+the internal port table of the mail front door so `mail.viktorbarzin.me`
+(internal A record → 10.0.20.1) serves webmail too. Routing (Viktor's
+design — route by what the client asked for):
+
+| Client connects with | Routed to |
+|---|---|
+| SNI = `pfsense.viktorbarzin.{lan,me}` | webgui backend `127.0.0.1:8443` |
+| any other SNI (hostnames, e.g. `mail.…`) | Traefik `10.0.20.203:443`, send-proxy-v2 |
+| no SNI (bare IP — `https://10.0.20.1`) | webgui backend `127.0.0.1:8443` |
+
+The **pfSense webGUI was moved to `:8443`** (config.xml
+`system.webgui.port`, 2026-06-10) to free the 443 socket; admin access by
+IP keeps working through the no-SNI route, and `:8443` remains a direct
+fallback if HAProxy is down. The `pfsense.viktorbarzin.me` Traefik ingress
+(stacks/reverse-proxy) targets `:8443` directly. Traefik leg mirrors the
+IPv6 bridge: send-proxy-v2 (Traefik trusts 10.0.20.1), **no health check**
+(PROXY-expecting receivers reject bare probes — gotcha above). All of this
+is declared in `pfsense-haproxy-bootstrap.php` — re-run to reset.
 
 ## Bootstrap / restore from scratch
 
