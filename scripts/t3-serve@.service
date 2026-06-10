@@ -15,6 +15,17 @@ WorkingDirectory=/home/%i
 ExecStart=/usr/bin/t3 serve --host 0.0.0.0 --port ${T3_PORT} --base-dir /home/%i/.t3
 Restart=on-failure
 RestartSec=5
+# Memory containment (2026-06-10): agent children live in this cgroup; a
+# runaway agent (10.8G anon on a 23G host) swap-thrashed the whole devvm —
+# every >20s stall fires the t3 client watchdog (visible "disconnects") —
+# then global-OOMed. Cap the cgroup so a runaway OOMs early and locally,
+# and forbid swap so stalls can't smear into minutes-long freezes.
+MemoryHigh=12G
+MemoryMax=16G
+MemorySwapMax=0
+# Default OOMPolicy=stop kills the WHOLE unit (8.5min outage 2026-06-10
+# 19:56) when ANY child is OOM-killed; continue = runaway dies, server stays.
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target
