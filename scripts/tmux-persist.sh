@@ -12,8 +12,9 @@
 #             transcript fd (~/.claude/projects/<slug>/<uuid>.jsonl), so it is
 #             correct regardless of how the session was launched (fresh via
 #             start-claude.sh or an explicit --resume). Runs every 5 min via
-#             tmux-persist-save.timer. A user with no tmux server keeps their last
-#             manifest (so a post-reboot save can't wipe it before restore).
+#             tmux-persist-save.timer. A snapshot that captures no live sessions
+#             (no server, OR a stale socket left behind by an OOM-killed server)
+#             keeps the user's last manifest, so it can't be wiped before restore.
 #   restore — recreate manifest sessions that don't currently exist, resuming
 #             each saved conversation (claude --resume <uuid>). Per-session
 #             idempotent: existing names are left alone, so it is safe both at
@@ -70,10 +71,10 @@ uuid_of_claude() {
 
 save() {
   install -d -m 0755 "$STATE_DIR"
-  local u uid sess pane_pid pane_cwd cpid uuid tmp
+  local u uid sess pane_pid pane_cwd cpid uuid tmp n
   for u in $(users); do
     uid="$(id -u "$u" 2>/dev/null)" || continue
-    [[ -S "/tmp/tmux-$uid/default" ]] || continue   # no server -> keep last manifest
+    [[ -S "/tmp/tmux-$uid/default" ]] || continue   # no socket at all -> keep last manifest
     tmp="$(mktemp)"
     while IFS=$'\t' read -r sess pane_pid pane_cwd; do
       [[ -n "$sess" ]] || continue
@@ -82,8 +83,19 @@ save() {
       printf '%s\t%s\t%s\n' "$sess" "$pane_cwd" "$uuid" >> "$tmp"
     done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}' 2>/dev/null \
              | sort -u -t$'\t' -k1,1)
-    install -m 0600 "$tmp" "$STATE_DIR/$u.tsv"; rm -f "$tmp"
-    log "saved $(wc -l < "$STATE_DIR/$u.tsv") session(s) for $u"
+    # Only overwrite the manifest when we captured >=1 live session. A socket
+    # file can outlive its server (an OOM-killed tmux server leaves
+    # /tmp/tmux-<uid>/default behind); list-panes then yields nothing, and
+    # installing that empty result would clobber a good manifest right before
+    # restore needs it. Empty capture -> keep the last good manifest.
+    n=$(wc -l < "$tmp")
+    if (( n > 0 )); then
+      install -m 0600 "$tmp" "$STATE_DIR/$u.tsv"
+      log "saved $n session(s) for $u"
+    else
+      log "no live sessions for $u (stale socket or dead server) — keeping last manifest"
+    fi
+    rm -f "$tmp"
   done
 }
 
