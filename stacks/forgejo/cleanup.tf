@@ -22,12 +22,22 @@ data "vault_kv_secret_v2" "forgejo_viktor" {
 }
 
 locals {
-  # Activated 2026-06-09 after verifying a dry-run delete list against all
-  # running viktor/* images cluster-wide: 0 running images on the delete set
-  # (would prune 317 stale versions, keeping newest 10 + latest + cache tags).
-  # Live retention is what keeps the registry PVC from filling on the HDD
-  # (we deliberately did NOT move Forgejo to SSD — see beads code-oflt).
-  forgejo_cleanup_dry_run = false
+  # REVERTED TO DRY-RUN 2026-06-10: the first live runs ORPHANED OCI indexes.
+  # The keep-set is computed over package VERSIONS (newest 10 + tag "latest"
+  # + *cache* tags), but multi-arch/attestation index CHILDREN are separate
+  # UNTAGGED sha256 versions — for images not rebuilt recently they fall
+  # outside the newest-10 window and get deleted while their parent index is
+  # kept. Result: index children 404 (viktor/kms-website :latest + :dfc83fb,
+  # caught by forgejo-integrity-probe / RegistryManifestIntegrityFailure,
+  # 2026-06-10). Do NOT re-enable until the script either (a) resolves each
+  # kept index's child digests via the registry API and adds them to the
+  # keep set, or (b) skips untagged sha256 versions entirely, or (c) is
+  # replaced by Forgejo's native per-owner package cleanup rules (container-
+  # aware). The 2026-06-09 "0 running images on the delete set" verification
+  # checked running PODS, not index child references — insufficient.
+  # History: activated 2026-06-09 (would prune 317 stale versions); registry
+  # PVC pressure concern remains (HDD, no SSD move — see beads code-oflt).
+  forgejo_cleanup_dry_run = true
 }
 
 resource "kubernetes_config_map" "forgejo_cleanup_script" {
