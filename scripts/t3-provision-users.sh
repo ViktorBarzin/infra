@@ -259,8 +259,8 @@ run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 #     tmux session persistence: periodic snapshot + boot-time restore (reboot
 #     survival for users' named claude sessions). Safe to --now: save is a
 #     read-only snapshot; restore is per-session idempotent.
-run systemctl enable --now t3-tmux-save.timer >/dev/null 2>&1 || true
-run systemctl enable t3-tmux-restore.service >/dev/null 2>&1 || true
+run systemctl enable --now tmux-persist-save.timer >/dev/null 2>&1 || true
+run systemctl enable tmux-persist-restore.service >/dev/null 2>&1 || true
 
 # 6) regenerate /etc/ttyd-user-map + dispatch.json from the desired state (SSoT:
 #    a roster entry removed here DISAPPEARS, which is what the offboarding cut relies on)
