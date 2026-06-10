@@ -980,6 +980,18 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                 add_txt "$$ZONE" "brevo-code" "brevo-code:a6ef1dd91b248559900246eb4e7ceebd"
                 add_txt "_dmarc.$$ZONE" "v=DMARC1" "v=DMARC1; p=quarantine; pct=100; fo=1; ri=3600; sp=quarantine; adkim=r; aspf=r; rua=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com; ruf=mailto:dmarc@viktorbarzin.me,mailto:adb84997@inbox.ondmarc.com,mailto:postmaster@viktorbarzin.me;"
                 add_txt "mail._domainkey.$$ZONE" "v=DKIM1" "v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB"
+                # Brevo DKIM selectors are CNAMEs to Brevo-hosted keys; rspamd
+                # resolves them when verifying inbound Brevo-signed mail
+                # (R_DKIM_PERMFAIL +4.5 without them — the actual junk-score
+                # driver in the 2026-06-10 roundtrip breakage).
+                add_cname() {
+                  NAME="$$1"; TARGET="$$2"
+                  if echo "$$ZONE_DUMP" | grep -q "$$TARGET"; then echo "mail-auth: $$NAME present"; return; fi
+                  R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$NAME" --data-urlencode "type=CNAME" --data-urlencode "cname=$$TARGET" --data-urlencode "ttl=3600") || true
+                  echo "$$R" | grep -q '"status":"ok"' && echo "mail-auth: added CNAME $$NAME -> $$TARGET" || echo "mail-auth: FAILED CNAME $$NAME -- $$R"
+                }
+                add_cname "brevo1._domainkey.$$ZONE" "b1.viktorbarzin-me.dkim.brevo.com"
+                add_cname "brevo2._domainkey.$$ZONE" "b2.viktorbarzin-me.dkim.brevo.com"
                 if ! echo "$$ZONE_DUMP" | grep -q '"type":"MX"'; then
                   R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$ZONE" --data-urlencode "type=MX" --data-urlencode "exchange=mail.viktorbarzin.me" --data-urlencode "preference=1" --data-urlencode "ttl=3600") || true
                   echo "$$R" | grep -q '"status":"ok"' && echo "mail-auth: added MX" || echo "mail-auth: FAILED MX -- $$R"
