@@ -183,6 +183,11 @@ module "ingress" {
   tls_secret_name   = var.tls_secret_name
   dns_type          = "proxied"
   extra_annotations = var.homepage_annotations
+  # Actual's app boot fires ~70 parallel asset/migration revalidations
+  # (max-age=0); the default 10/50 limiter 429s the tail and stalls every
+  # load. Dedicated higher-burst limiter, same pattern as Immich.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-actualbudget-rate-limit@kubernetescrd"]
 }
 
 
