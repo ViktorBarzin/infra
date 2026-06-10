@@ -19,6 +19,19 @@ fi
 
 cd "$HOME/code" 2>/dev/null || cd "$HOME"
 
+# Freshen ~/code at session start so the user begins on current upstream state
+# (the hourly t3-provision-users reconcile does the same in the background).
+# Fast-forward only, and only when safe (on master + clean tree); hard 15s cap so
+# an offline remote never stalls the launch. No-op for repos without remotes.
+if [ -d "$HOME/code/.git" ]; then
+  GIT_TERMINAL_PROMPT=0 timeout 15 git -C "$HOME/code" fetch --all --prune --quiet 2>/dev/null || true
+  if [ "$(git -C "$HOME/code" symbolic-ref --short -q HEAD)" = master ] \
+     && [ -z "$(git -C "$HOME/code" status --porcelain 2>/dev/null)" ] \
+     && git -C "$HOME/code" rev-parse --verify -q 'master@{upstream}' >/dev/null 2>&1; then
+    git -C "$HOME/code" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 || true
+  fi
+fi
+
 # Prefer the system-wide `claude` (installed by setup-devvm.sh); fall back to npx.
 launch() {
   if command -v claude >/dev/null 2>&1; then
