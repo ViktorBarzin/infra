@@ -34,3 +34,7 @@ shellcheck
 # kubelogin (kubectl oidc-login) -> `kubectl krew install oidc-login` or int128/kubelogin release.
 #                                NOTE: the apt package literally named "kubelogin" is the AZURE
 #                                tool, NOT the OIDC one we need -- do not apt-install it.
+
+# Scraped by Prometheus job `devvm` (stacks/monitoring) — pressure/swap/load
+# history for t3 drop attribution (docs/runbooks/t3-drop-attribution.md).
+prometheus-node-exporter
