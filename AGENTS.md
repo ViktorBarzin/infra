@@ -231,9 +231,17 @@ Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment me
 Non-admin devvm users (power-user / namespace-owner tiers) may not know git at
 all. Their agent handles every version-control step silently — never ask them
 to commit, push, pull, or open a PR, and never surface git jargon at them.
-Their `~/code` clone arrives preconfigured: git identity, a `forgejo` remote
+Their infra clone arrives preconfigured: git identity, a `forgejo` remote
 authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
 (auto-freshened hourly and at session launch, fast-forward only).
+
+Two per-user layouts exist (`code_layout` in
+`scripts/workstation/roster.yaml`): `single` (the default) — `~/code` IS the
+locked infra clone — and `workspace` — `~/code` is a plain directory of
+per-project clones: the infra clone at `~/code/infra`, plus each roster
+`repos` entry (e.g. `~/code/tripit`) cloned from Forgejo `viktor/<name>` with
+the user's own PAT. The reconcile auto-migrates a single-layout `~/code` when
+a user is flipped to `workspace`, and keeps every clone fresh either way.
 
 The model is **allow-then-audit** (Viktor, 2026-06-10): whitelisted users (emo)
 push straight to `master` — no PR gate — and the record of *what changed and

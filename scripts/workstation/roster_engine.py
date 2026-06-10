@@ -13,6 +13,7 @@ per person and are recorded explicitly (no email->username derivation).
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -21,6 +22,13 @@ import yaml
 
 BASE_PORT = 3773
 VALID_TIERS = ("admin", "power-user", "namespace-owner")
+# single    - ~/code IS the locked infra clone (the original non-admin layout)
+# workspace - ~/code is a plain directory of per-project clones; the locked
+#             infra clone lives at ~/code/infra and `repos` clone alongside it
+VALID_CODE_LAYOUTS = ("single", "workspace")
+# Repo names become root-executed clone/mv paths under ~/code — plain
+# leading-alphanumeric names only (no separators, dotfiles, or option-like names).
+_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Tier -> supplementary groups the reconcile ENSURES (additive-only; never stripped).
 TIER_GROUPS: dict[str, tuple[str, ...]] = {
     "admin": ("code-shared", "docker", "sudo"),
@@ -48,6 +56,8 @@ class User:
     k8s_user: str
     tier: str
     namespaces: tuple[str, ...] = ()
+    code_layout: str = "single"
+    repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +72,8 @@ class Account:
     shell: str
     login_locked: bool
     groups: tuple[str, ...]
+    code_layout: str = "single"
+    repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,7 +110,31 @@ def _parse_user(os_user: str, spec: dict) -> User:
         raise RosterError(f"user {os_user!r}: namespace-owner requires namespaces")
     if tier != "namespace-owner" and namespaces:
         raise RosterError(f"user {os_user!r}: only namespace-owner may set namespaces")
-    return User(os_user, spec["authentik_user"], spec["k8s_user"], tier, namespaces)
+    code_layout = spec.get("code_layout", "single")
+    if code_layout not in VALID_CODE_LAYOUTS:
+        raise RosterError(
+            f"user {os_user!r}: unknown code_layout {code_layout!r} "
+            f"(valid: {list(VALID_CODE_LAYOUTS)})"
+        )
+    repos = tuple(spec.get("repos") or ())
+    if repos and code_layout != "workspace":
+        raise RosterError(f"user {os_user!r}: repos require code_layout: workspace")
+    for repo in repos:
+        if not _REPO_NAME_RE.match(repo):
+            raise RosterError(f"user {os_user!r}: unsafe repo name {repo!r}")
+    if "infra" in repos:
+        raise RosterError(
+            f"user {os_user!r}: infra is implicit at ~/code/infra — drop it from repos"
+        )
+    return User(
+        os_user,
+        spec["authentik_user"],
+        spec["k8s_user"],
+        tier,
+        namespaces,
+        code_layout,
+        repos,
+    )
 
 
 def load_roster(text: str) -> Roster:
@@ -205,6 +241,8 @@ def derive_desired_state(
             shell=DEFAULT_SHELL,
             login_locked=True,
             groups=TIER_GROUPS[u.tier],
+            code_layout=u.code_layout,
+            repos=u.repos,
         )
         for u in roster.users.values()
     }
@@ -257,6 +295,8 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "shell": a.shell,
                 "login_locked": a.login_locked,
                 "groups": list(a.groups),
+                "code_layout": a.code_layout,
+                "repos": list(a.repos),
             }
             for name, a in ds.accounts.items()
         },

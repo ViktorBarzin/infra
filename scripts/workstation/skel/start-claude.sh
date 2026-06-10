@@ -19,17 +19,25 @@ fi
 
 cd "$HOME/code" 2>/dev/null || cd "$HOME"
 
-# Freshen ~/code at session start so the user begins on current upstream state
-# (the hourly t3-provision-users reconcile does the same in the background).
-# Fast-forward only, and only when safe (on master + clean tree); hard 15s cap so
-# an offline remote never stalls the launch. No-op for repos without remotes.
-if [ -d "$HOME/code/.git" ]; then
-  GIT_TERMINAL_PROMPT=0 timeout 15 git -C "$HOME/code" fetch --all --prune --quiet 2>/dev/null || true
-  if [ "$(git -C "$HOME/code" symbolic-ref --short -q HEAD)" = master ] \
-     && [ -z "$(git -C "$HOME/code" status --porcelain 2>/dev/null)" ] \
-     && git -C "$HOME/code" rev-parse --verify -q 'master@{upstream}' >/dev/null 2>&1; then
-    git -C "$HOME/code" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 || true
+# Freshen the user's clone(s) at session start so they begin on current upstream
+# state (the hourly t3-provision-users reconcile does the same in the background).
+# Single layout freshens ~/code itself; workspace layout freshens each repo under
+# ~/code. Fast-forward only, and only when safe (on master + clean tree); hard
+# 10s fetch cap per repo so an offline remote never stalls the launch.
+freshen_repo() {
+  GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$1" fetch --all --prune --quiet 2>/dev/null || true
+  if [ "$(git -C "$1" symbolic-ref --short -q HEAD)" = master ] \
+     && [ -z "$(git -C "$1" status --porcelain 2>/dev/null)" ] \
+     && git -C "$1" rev-parse --verify -q 'master@{upstream}' >/dev/null 2>&1; then
+    git -C "$1" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 || true
   fi
+}
+if [ -d "$HOME/code/.git" ]; then
+  freshen_repo "$HOME/code"
+else
+  for repo_git in "$HOME"/code/*/.git; do
+    [ -d "$repo_git" ] && freshen_repo "${repo_git%/.git}"
+  done
 fi
 
 # Prefer the system-wide `claude` (installed by setup-devvm.sh); fall back to npx.
