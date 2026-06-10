@@ -119,8 +119,11 @@ cd infra/stacks/kyverno && scripts/tg apply
 cd infra/stacks/monitoring && scripts/tg apply
 cd infra/stacks/forgejo && scripts/tg apply
 
-# Containerd hosts.toml on each existing k8s node — VM cloud-init
-# only fires on first boot.
+# Containerd hosts.toml + /etc/hosts pin on each existing k8s node — VM
+# cloud-init only fires on first boot. The /etc/hosts pin
+# (10.0.20.203 forgejo.viktorbarzin.me) is what makes pulls hairpin-proof:
+# the hosts.toml mirror alone falls back to public DNS (Traefik 404s its
+# bare-IP requests, and the registry auth realm is an absolute public URL).
 infra/scripts/setup-forgejo-containerd-mirror.sh
 ```
 
@@ -135,7 +138,9 @@ docker pull alpine:3.20
 docker tag alpine:3.20 forgejo.viktorbarzin.me/viktor/smoketest:1
 docker push forgejo.viktorbarzin.me/viktor/smoketest:1
 
-# Pull from a k8s node.
+# Per-node pull path: pin present + name resolves internally + pull works.
+ssh wizard@<node> 'grep forgejo-internal-pin /etc/hosts && getent hosts forgejo.viktorbarzin.me'
+# Expect: 10.0.20.203  forgejo.viktorbarzin.me
 ssh wizard@<node> sudo crictl pull forgejo.viktorbarzin.me/viktor/smoketest:1
 
 # Confirm the cluster-wide Secret was synced into a fresh namespace.

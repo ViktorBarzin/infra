@@ -258,8 +258,10 @@ The TP-Link AP (dumb AP on 192.168.1.x) does not support hairpin NAT. LAN client
 Technitium's **Split Horizon AddressTranslation** app post-processes DNS responses for 192.168.1.0/24 clients, translating the public IP to the internal Traefik LB IP:
 
 ```
-176.12.22.76 → 10.0.20.200
+176.12.22.76 → 10.0.20.203
 ```
+
+(Was `10.0.20.200` until Traefik's 2026-05-30 move to its dedicated `.203` LB IP.)
 
 **DNS Rebinding Protection** has `viktorbarzin.me` in `privateDomains` to allow the translated private IP without being stripped as a rebinding attack.
 
@@ -267,7 +269,10 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 - **Affected**: Non-proxied domains (ha-sofia, immich, headscale, calibre, vaultwarden, etc.) for 192.168.1.x clients
 - **Not affected**: Cloudflare-proxied domains (resolve to Cloudflare edge IPs, no translation needed)
-- **Not affected**: 10.0.x.x and K8s clients (reach public IP via pfSense outbound NAT normally)
+- **Not affected**: 10.0.x.x and K8s clients — these resolve non-proxied domains to the public IP and rely on pfSense NAT reflection, which is **intermittently broken** (observed i/o timeouts to `176.12.22.76:443` from k8s nodes and the devvm, 2026-06-04 → 2026-06-10). Hairpin-sensitive paths on this network get explicit per-leg fixes instead:
+  - **kubelet image pulls of `forgejo.viktorbarzin.me`**: `/etc/hosts` pin `10.0.20.203 forgejo.viktorbarzin.me` on every k8s node (marker `forgejo-internal-pin`; deployed via `modules/create-template-vm/k8s-node-containerd-setup.sh` for new nodes, `scripts/setup-forgejo-containerd-mirror.sh` rollout for existing ones). The containerd hosts.toml mirror alone is insufficient — Traefik 404s its bare-IP requests (no Host/SNI match) and the registry's Bearer auth realm is an absolute public URL fetched outside the mirror. Root cause of the 2026-06-10 tuya-bridge outage (`docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`).
+  - **in-cluster pods → forgejo**: CoreDNS `rewrite name exact forgejo.viktorbarzin.me traefik.traefik.svc.cluster.local` (2026-06-04, beads code-yh33).
+  - **devvm git → forgejo**: still exposed to the hairpin (manual `/etc/hosts` pin workaround when it flares).
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
@@ -462,7 +467,7 @@ post-processing does NOT run for 192.168.1.x clients anymore. Non-proxied
 services break hairpin on LAN clients again. Options:
 
 1. **Switch service to proxied Cloudflare** (preferred) — set `dns_type = "proxied"` in the `ingress_factory` module call; DNS now resolves to Cloudflare edge, hairpin-independent.
-2. **Add a local-data override on pfSense Unbound** — under `Services → DNS Resolver → Host Overrides`, set `<service>.viktorbarzin.me → 10.0.20.200` (Traefik LB IP). This is equivalent to what Split Horizon did, applied at the resolver.
+2. **Add a local-data override on pfSense Unbound** — under `Services → DNS Resolver → Host Overrides`, set `<service>.viktorbarzin.me → 10.0.20.203` (Traefik LB IP). This is equivalent to what Split Horizon did, applied at the resolver.
 3. **Revert to prior NAT rdr + Technitium Split Horizon** — documented in `docs/runbooks/pfsense-unbound.md` rollback section.
 
 K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` queries DO reach Technitium (e.g., from pods that query via CoreDNS → Technitium forwarding for `.viktorbarzin.me` via pfSense). Verify Technitium split-horizon app:
@@ -470,7 +475,7 @@ K8s-side Split Horizon is still configured and applies when `*.viktorbarzin.me` 
 1. Verify Split Horizon app is installed on all instances
 2. Check CronJob status: `kubectl get cronjob -n technitium technitium-split-horizon-sync`
 3. Run the job manually: `kubectl create job --from=cronjob/technitium-split-horizon-sync test-sh -n technitium`
-4. Test: `dig @10.0.20.201 immich.viktorbarzin.me` — should return 10.0.20.200 for 192.168.1.x source
+4. Test: `dig @10.0.20.201 immich.viktorbarzin.me` — should return 10.0.20.203 for 192.168.1.x source
 
 ### Zone Not Replicating to Secondary/Tertiary
 
