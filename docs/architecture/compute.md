@@ -22,9 +22,11 @@ graph TB
         NODE2["VM 202: k8s-node2<br/>8c / 32GB"]
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
         NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
+        NODE5["VM 205: k8s-node5<br/>8c / 32GB"]
+        NODE6["VM 206: k8s-node6<br/>8c / 32GB"]
     end
 
-    subgraph K8s["Kubernetes Cluster v1.34.2"]
+    subgraph K8s["Kubernetes Cluster v1.34.8"]
         direction TB
 
         subgraph VPA["VPA (Goldilocks - Initial Mode)"]
@@ -62,7 +64,7 @@ graph TB
 | Model | Dell PowerEdge R730 |
 | CPU | 1x Intel Xeon E5-2699 v4 (22 cores / 44 threads, CPU2 unpopulated) |
 | Total Cores/Threads | 22 cores / 44 threads |
-| RAM | 272GB DDR4-2400 ECC RDIMM physical (10 DIMMs: 8x32G Samsung + 2x8G Hynix). VMs use ~176GB total (k8s-node1 48GB + 4 K8s VMs x 32GB) |
+| RAM | 272GB DDR4-2400 ECC RDIMM physical (10 DIMMs: 8x32G Samsung + 2x8G Hynix). K8s VMs use ~240GB total (k8s-node1 48GB + 6 K8s VMs x 32GB) |
 | GPU | NVIDIA Tesla T4 (16GB GDDR6, PCIe 0000:06:00.0) |
 | Storage | 1.1TB SSD + 931GB SSD + 10.7TB HDD |
 | Hypervisor | Proxmox VE |
@@ -76,8 +78,10 @@ graph TB
 | k8s-node2 | 202 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
+| k8s-node5 | 205 | 8 | 32GB | vmbr1:vlan20 (10.0.20.105) | Worker (joined 2026-05-26) | None |
+| k8s-node6 | 206 | 8 | 32GB | vmbr1:vlan20 (10.0.20.106) | Worker (joined 2026-05-26) | None |
 
-**Total Cluster Resources**: 48 vCPUs, ~176GB RAM (k8s-node1 48GB + 4 nodes x 32GB)
+**Total Cluster Resources**: 64 vCPUs, ~240GB RAM (k8s-node1 16c/48GB + master and 5 workers at 8c/32GB each)
 
 > **All Linux VMs are hand-managed in Proxmox, NOT in Terraform**
 > (decided 2026-05-26, commit 44c3770a). The telmate/proxmox v3.0.2
