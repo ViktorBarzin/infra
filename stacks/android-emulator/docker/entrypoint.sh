@@ -6,6 +6,11 @@ set -euo pipefail
 
 API_LEVEL="${API_LEVEL:-36}"
 SYSTEM_IMAGE="system-images;android-${API_LEVEL};google_apis;x86_64"
+# Pinned emulator build (36.1.9). The sdkmanager-latest emulator (36.6.11)
+# hangs before executing a single guest instruction in this pod (KVM and TCG
+# alike, all gpu modes) — debugged 2026-06-11; 36.1.9 boots fine. Bump only
+# after verifying a newer build actually boots here.
+EMULATOR_BUILD="${EMULATOR_BUILD:-13823996}"
 AVD_NAME="${AVD_NAME:-lab}"
 EMULATOR_RAM_MB="${EMULATOR_RAM_MB:-4096}"
 SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1080x2280x24}"
@@ -37,6 +42,16 @@ if [ ! -f "$MARKER" ]; then
   # the package manifest is what avdmanager actually validates against
   test -f "/sdk/system-images/android-${API_LEVEL}/google_apis/x86_64/package.xml"
   touch "$MARKER"
+fi
+
+# --- pin the emulator build (replaces whatever sdkmanager installed) ---------
+if [ ! -f "/sdk/.emulator-pinned-${EMULATOR_BUILD}" ]; then
+  echo "Pinning emulator build ${EMULATOR_BUILD}..."
+  wget -q "https://dl.google.com/android/repository/emulator-linux_x64-${EMULATOR_BUILD}.zip" -O /sdk/emu.zip
+  rm -rf /sdk/emulator
+  unzip -qo /sdk/emu.zip -d /sdk && rm -f /sdk/emu.zip
+  rm -f /sdk/.emulator-pinned-*
+  touch "/sdk/.emulator-pinned-${EMULATOR_BUILD}"
 fi
 
 # --- AVD (idempotent) --------------------------------------------------------
@@ -83,8 +98,11 @@ done
 echo "Boot completed."
 
 # Expose the emulator's adbd (localhost:5555) to the pod network. Plain TCP,
-# no auth — reachable only inside the LAN via the MetalLB IP.
-socat TCP-LISTEN:5555,fork,reuseaddr TCP:127.0.0.1:5555 &
+# no auth — reachable only inside the LAN via the MetalLB IP. Bind to the pod
+# IP only: the emulator itself already listens on 127.0.0.1:5555, so a
+# wildcard bind fails with EADDRINUSE.
+POD_IP=$(hostname -i | awk '{print $1}')
+socat "TCP-LISTEN:5555,bind=${POD_IP},fork,reuseaddr" TCP:127.0.0.1:5555 &
 
 # Supervise: if any background process dies, exit so the pod restarts.
 wait -n
