@@ -79,6 +79,15 @@ locals {
     TTS_MODE     = "openai_compatible"
     TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
     TTS_MODEL    = "chatterbox"
+    # Live flight-fare scrape (tripit ADR-0007, issue #18): Playwright driving
+    # the SHARED chrome-service browser over CDP (no per-pod browser). The
+    # provider rate-limits (30s min interval), caches 6h, backs off 300s on
+    # failure, and degrades to manual entry — never blocks the grid. NOTE:
+    # FareMode `playwright` only exists in images >= the #18 slice; setting
+    # this against an older image crash-loops on the unknown enum (old pods
+    # keep serving), so the env landed AFTER that image rolled out.
+    FARE_PROVIDER = "playwright"
+    FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
   }
 }
 

@@ -10,9 +10,14 @@ serves two distinct populations:
    `chromium.connect_over_cdp("http://chrome-service.chrome-service.svc:9222")`
    to drive a real browser when upstream anti-bot trips a headless one
    (`disable-devtool.js` redirect-to-google trap, `navigator.webdriver`
-   checks, console-clear timing tricks). The only currently-active
-   in-cluster caller is the `chrome-service-snapshot-harvester` CronJob;
-   the `stacks/f1-stream/files/backend/playback_verifier.py` +
+   checks, console-clear timing tricks). Currently-active in-cluster
+   callers: the `chrome-service-snapshot-harvester` CronJob, and
+   **tripit's `PlaywrightFareProvider`** (since 2026-06-11, tripit issue
+   #18 / ADR-0007) — the flight-fare scrape connects per quote, opens a
+   fresh incognito context, scrapes Google Flights, and closes the
+   context; rate-limited to one attempt per 30s with a 6h fare cache, so
+   browser load is negligible. The
+   `stacks/f1-stream/files/backend/playback_verifier.py` +
    `chrome_browser.py` tree is a vestigial design — the deployed
    f1-stream image (built from `github.com/ViktorBarzin/f1-stream`)
    does not use this code path.
