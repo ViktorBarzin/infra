@@ -101,9 +101,14 @@ locals {
     # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
     # discovery, the five web story sources, and the claude-agent-service script
     # writer (CLAUDE_AGENT_TOKEN already in tripit-secrets).
-    SIGHT_DISCOVERY_PROVIDER = "wikipedia"
+    # wikipedia+llm = GeoSearch merged with claude-agent-service "what's worth
+    # seeing here" proposals (tripit#29); the place resolver backs manual sight
+    # search AND LLM-proposal resolution — its fake default is the same class of
+    # gap that shipped the feature dark, so set it explicitly.
+    SIGHT_DISCOVERY_PROVIDER = "wikipedia+llm"
     STORY_SOURCE_MODE        = "web"
     SCRIPT_WRITER_MODE       = "chat"
+    PLACE_RESOLVER_MODE      = "wikipedia"
   }
 }
 
