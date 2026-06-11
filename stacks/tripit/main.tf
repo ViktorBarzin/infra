@@ -577,6 +577,27 @@ locals {
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
     }
+    # Tour-guide overnight audio fill (tripit#30, ADR-0011): synthesizes the
+    # narration audio queue against Chatterbox, which the tts stack scales up
+    # 02:00–06:00 Europe/London behind a free-VRAM preflight. 02:20 gives the
+    # scale-up + first model load headroom; the 04:30 pass re-runs the same
+    # idempotent worker as insurance (skipped window / mid-window guard yield /
+    # slow FP16 synthesis). Outside the window the worker records a
+    # `tts_unreachable` run and exits quietly — that is the normal daytime state.
+    fill-tour-audio = {
+      schedule  = "20 2 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "fill-tour-audio"]
+      suspend   = false
+      extra_env = {}
+    }
+    fill-tour-audio-retry = {
+      schedule  = "30 4 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "fill-tour-audio"]
+      suspend   = false
+      extra_env = {}
+    }
   }
 }
 
