@@ -8,34 +8,6 @@
 # - privileged + /dev/kvm hostPath (namespace is on the Kyverno exclude list)
 # - swiftshader rendering — deliberately NOT on the contended T4 GPU node
 
-# Recovery stanzas (delete after they apply once): pipeline 85 created all of
-# these but PG-backend state races during the new schema's first applies left
-# them out of (or dropped them from) the recorded state, so plans kept trying
-# to re-create live resources. House pattern: adopt via import blocks,
-# plan-to-zero, then drop the stanzas. State currently holds namespace +
-# deployment; these five are the ones missing (TF 1.5 errors on importing an
-# already-managed address, so only the missing set is listed).
-import {
-  to = kubernetes_persistent_volume_claim.sdk
-  id = "android-emulator/android-emulator-sdk"
-}
-import {
-  to = kubernetes_service.adb
-  id = "android-emulator/android-emulator-adb"
-}
-import {
-  to = kubernetes_service.novnc
-  id = "android-emulator/android-emulator"
-}
-import {
-  to = module.ingress-internal.kubernetes_ingress_v1.proxied-ingress
-  id = "android-emulator/android-emulator"
-}
-import {
-  to = module.tls_secret.kubernetes_secret.tls_secret
-  id = "android-emulator/tls-secret"
-}
-
 resource "kubernetes_namespace" "android-emulator" {
   metadata {
     name = "android-emulator"
