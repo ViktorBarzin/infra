@@ -15,13 +15,28 @@ SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1080x2280x24}"
 mkdir -p "$ANDROID_USER_HOME"
 
 # --- SDK packages on the PVC (idempotent; first boot downloads ~2.5GB) ------
-if [ ! -x /sdk/platform-tools/adb ] || [ ! -x /sdk/emulator/emulator ] || \
-   [ ! -d "/sdk/system-images/android-${API_LEVEL}" ]; then
-  echo "Installing SDK packages into /sdk (first boot)..."
+# A directory existing is NOT proof of a complete install (an interrupted
+# sdkmanager leaves partial trees that avdmanager rejects with "Valid system
+# image paths are: null") — so completion is tracked with a marker file
+# written only after sdkmanager succeeds.
+MARKER="/sdk/.sdk-install-complete-android-${API_LEVEL}"
+if [ ! -f "$MARKER" ]; then
+  echo "Installing SDK packages into /sdk (first boot or prior partial install)..."
+  rm -rf "/sdk/system-images/android-${API_LEVEL}"
   # (yes || true): yes dies of SIGPIPE (141) when sdkmanager stops reading,
   # which set -o pipefail would otherwise turn into a fatal error.
   (yes || true) | sdkmanager --sdk_root=/sdk --licenses >/dev/null
-  sdkmanager --sdk_root=/sdk "platform-tools" "emulator" "$SYSTEM_IMAGE"
+  for attempt in 1 2 3; do
+    if sdkmanager --sdk_root=/sdk "platform-tools" "emulator" "$SYSTEM_IMAGE"; then
+      break
+    fi
+    echo "sdkmanager attempt $attempt failed; retrying in 10s..." >&2
+    [ "$attempt" = 3 ] && exit 1
+    sleep 10
+  done
+  # the package manifest is what avdmanager actually validates against
+  test -f "/sdk/system-images/android-${API_LEVEL}/google_apis/x86_64/package.xml"
+  touch "$MARKER"
 fi
 
 # --- AVD (idempotent) --------------------------------------------------------
