@@ -301,3 +301,63 @@ func TestProbeWSEcho(t *testing.T) {
 		}
 	}
 }
+
+func TestIsWebSocket(t *testing.T) {
+	cases := []struct {
+		up, conn string
+		want     bool
+	}{
+		{"websocket", "Upgrade", true},
+		{"websocket", "keep-alive, Upgrade", true},
+		{"WebSocket", "upgrade", true},
+		{"", "keep-alive", false},
+		{"h2c", "Upgrade", false},
+		{"websocket", "keep-alive", false},
+	}
+	for _, c := range cases {
+		r, _ := http.NewRequest("GET", "/ws", nil)
+		if c.up != "" {
+			r.Header.Set("Upgrade", c.up)
+		}
+		r.Header.Set("Connection", c.conn)
+		if got := isWebSocket(r); got != c.want {
+			t.Errorf("isWebSocket(up=%q conn=%q)=%v want %v", c.up, c.conn, got, c.want)
+		}
+	}
+}
+
+func TestClassifyClose(t *testing.T) {
+	cases := []struct {
+		in   error
+		want string
+	}{
+		{nil, "graceful"},
+		{errTest("context canceled"), "downstream_closed"},
+		{errTest("read tcp 127.0.0.1:60664->127.0.0.1:3773: read: connection reset by peer"), "upstream_closed"},
+		{errTest("write: broken pipe"), "upstream_closed"},
+		{errTest("unexpected EOF"), "upstream_closed"},
+		{errTest("dial tcp 127.0.0.1:3773: connect: connection refused"), "upstream_closed"},
+		{errTest("some novel error"), "some novel error"},
+	}
+	for _, c := range cases {
+		if got := classifyClose(c.in); got != c.want {
+			t.Errorf("classifyClose(%v)=%q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }
+
+func TestClientIP(t *testing.T) {
+	r, _ := http.NewRequest("GET", "/ws", nil)
+	r.RemoteAddr = "10.0.0.5:1234"
+	if got := clientIP(r); got != "10.0.0.5:1234" {
+		t.Errorf("clientIP no-xff = %q", got)
+	}
+	r.Header.Set("X-Forwarded-For", "1.2.3.4, 10.10.1.1")
+	if got := clientIP(r); got != "1.2.3.4, 10.10.1.1" {
+		t.Errorf("clientIP xff = %q", got)
+	}
+}
