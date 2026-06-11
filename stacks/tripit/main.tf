@@ -79,6 +79,14 @@ locals {
     TTS_MODE     = "openai_compatible"
     TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
     TTS_MODEL    = "chatterbox"
+    # Tour-guide content pipeline (tripit#24/#25): these three default to `fake`
+    # in tripit's config, which is what shipped dark on 2026-06-08 — prod only
+    # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
+    # discovery, the five web story sources, and the claude-agent-service script
+    # writer (CLAUDE_AGENT_TOKEN already in tripit-secrets).
+    SIGHT_DISCOVERY_PROVIDER = "wikipedia"
+    STORY_SOURCE_MODE        = "web"
+    SCRIPT_WRITER_MODE       = "chat"
   }
 }
 
