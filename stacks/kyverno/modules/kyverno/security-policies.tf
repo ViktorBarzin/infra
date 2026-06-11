@@ -23,10 +23,11 @@ locals {
     "xray", "infra-maintenance", "metrics-server", "tigera-operator", "frigate",
     # Additions discovered during wave 1 enforce flip — these contain workloads
     # that legitimately need privileged / hostNetwork / SYS_ADMIN:
-    "kured",           # kured DaemonSet is privileged (manages node reboots)
-    "default",         # etcd backup + defrag CronJobs use hostNetwork
-    "changedetection", # uses SYS_ADMIN for chromium sandbox
-    "woodpecker",      # CI pipeline pods (wp-*) run privileged docker builds
+    "kured",            # kured DaemonSet is privileged (manages node reboots)
+    "default",          # etcd backup + defrag CronJobs use hostNetwork
+    "changedetection",  # uses SYS_ADMIN for chromium sandbox
+    "woodpecker",       # CI pipeline pods (wp-*) run privileged docker builds
+    "android-emulator", # emulator pod is privileged for /dev/kvm (ADR-0001)
   ]
 }
 

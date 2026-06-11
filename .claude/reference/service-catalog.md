@@ -41,6 +41,7 @@
 | shadowsocks | Proxy | shadowsocks |
 | webhook_handler | Webhook processing | webhook_handler |
 | tuya-bridge | Smart home bridge | tuya-bridge |
+| android-emulator | Shared Android 16 test emulator (adb 10.0.20.200:5555, noVNC android-emulator.viktorbarzin.lan) | android-emulator |
 | dawarich | Location history | dawarich |
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
