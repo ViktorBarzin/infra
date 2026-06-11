@@ -99,6 +99,10 @@ resource "kubernetes_namespace" "tripit" {
       "istio-injection" = "disabled"
       # Opt into Keel auto-update (inject-keel-annotations ClusterPolicy).
       "keel.sh/enrolled" = "true"
+      # Admit this namespace through chrome-service's CDP NetworkPolicy
+      # (chrome-service-ws-ingress) — the fare scrape (#18) drives the
+      # shared browser on :9222.
+      "chrome-service.viktorbarzin.me/client" = "true"
     }
   }
   lifecycle {
