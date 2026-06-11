@@ -73,8 +73,14 @@ locals {
       repo_id = "chatterbox-multilingual"
     }
     tts_engine = {
-      device                 = "cuda"
-      predefined_voices_path = "/data/voices"
+      device = "cuda"
+      # Predefined voices come from the IMAGE's bundled set (28 reference WAVs
+      # under the devnen server's /app/voices) rather than the NFS PVC: nobody
+      # can seed /data/voices without NFS-host shell access, and an empty
+      # predefined dir means /v1/audio/voices serves nothing (it gates the
+      # readiness probe). tripit's Voice catalog (tripit#30) names a subset of
+      # these stems. /data keeps reference_audio (future cloning) + HF cache.
+      predefined_voices_path = "/app/voices"
       reference_audio_path   = "/data/reference_audio"
     }
   })
