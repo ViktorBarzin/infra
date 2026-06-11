@@ -8,6 +8,15 @@
 # - privileged + /dev/kvm hostPath (namespace is on the Kyverno exclude list)
 # - swiftshader rendering — deliberately NOT on the contended T4 GPU node
 
+# Recovery stanza (delete after it applies once): pipeline 85's first apply
+# created the namespace but a PG-backend workspace-creation lock race left it
+# out of the recorded state, so subsequent plans tried to re-create it.
+# House pattern: adopt via import block, plan-to-zero, then drop the stanza.
+import {
+  to = kubernetes_namespace.android-emulator
+  id = "android-emulator"
+}
+
 resource "kubernetes_namespace" "android-emulator" {
   metadata {
     name = "android-emulator"
