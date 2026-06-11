@@ -8,9 +8,9 @@
 #   scp scripts/pve-promtail.service root@192.168.1.127:/etc/systemd/system/promtail.service
 #   ssh root@192.168.1.127 'mkdir -p /var/lib/promtail && systemctl daemon-reload && systemctl enable --now promtail'
 #   # Binary: grafana/loki v3.5.1 promtail-linux-amd64 -> /usr/local/bin/promtail (chmod 0755).
-#   # Loki reach: /etc/hosts pin "10.0.20.203 loki.viktorbarzin.lan" (Traefik LB, ETP-Local).
-#   #   FOLLOW-UP: replace the pin with a Technitium CNAME loki.viktorbarzin.lan -> ingress.viktorbarzin.lan
-#   #   so it auto-tracks Traefik LB renumbers (also fixes the rpi-sofia pin — see docs/architecture/monitoring.md).
+#   # Loki reach: loki.viktorbarzin.lan resolves via a Technitium CNAME -> ingress.viktorbarzin.lan
+#   #   (registered 2026-06-10 via the Technitium API; auto-tracks the live Traefik LB IP, AXFR'd to all
+#   #   3 instances). NO /etc/hosts pin. insecure_skip_verify stays — the internal .lan cert isn't trusted.
 #
 # Streams produced:
 #   {job="pve-journal"}                    — full host journal (filter identifier="snoopy" for the command audit)
