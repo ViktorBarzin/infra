@@ -47,13 +47,20 @@ server:
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
-    # Persistent client-side DB connections (safe with PgBouncer session mode;
-    # must stay < pgbouncer server_idle_timeout=600s). Cuts per-request Django
-    # connection setup off the auth hot path.
-    - name: AUTHENTIK_POSTGRESQL__CONN_MAX_AGE
-      value: "60"
-    - name: AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS
-      value: "true"
+    # Do NOT set AUTHENTIK_POSTGRESQL__CONN_MAX_AGE here. With PgBouncer in
+    # session mode every persistent Django connection pins a server connection
+    # 1:1, so the 3x(20+5) pool saturated during the 2026-06-10 rolling
+    # restart (58s pool waits, readiness flapping, and the shared CNPG primary
+    # failed over mid-storm). The ~1-2ms/request connection-setup saving is
+    # not worth that risk on the shared PG substrate.
+  # Liveness budget sized for slow boots (2026-06-10 incident): during a
+  # rolling restart pods queue on authentik's DB migration lock; the go layer
+  # answers /-/health/live before the core is up, so with the default 3x10s
+  # budget kubelet kill-looped every booting pod and amplified the contention.
+  # Startup probe still bounds total boot time (60x10s).
+  livenessProbe:
+    failureThreshold: 6
+    timeoutSeconds: 5
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -84,6 +91,16 @@ server:
     minAvailable: 2
 global:
   addPrometheusAnnotations: true
+  image:
+    # Pin to the Keel-managed live tag. Keel (diun-annotated, keel.sh/enrolled
+    # namespace) bumps the IMAGE between chart releases, while helm defaults
+    # the tag to the chart appVersion — so any helm upgrade silently
+    # DOWNGRADES the running pods to the chart pin (2026-06-10: a values-only
+    # apply rolled live 2026.2.4 back to 2026.2.2 against a 2026.2.4-migrated
+    # DB → boot storm, see docs/post-mortems/2026-06-10-authentik-downgrade-
+    # boot-storm.md). Keep this tag in sync with what Keel has deployed when
+    # touching this chart; clear it only when bumping the chart version itself.
+    tag: "2026.2.4"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
@@ -98,15 +115,12 @@ worker:
     # Dramatiq worker threads per pod (default 2).
     - name: AUTHENTIK_WORKER__THREADS
       value: "4"
-    # Keep cache + DB-connection settings in lockstep with server.env.
+    # Keep cache settings in lockstep with server.env. (No CONN_MAX_AGE —
+    # see the server.env note: session-mode PgBouncer pins persistent conns.)
     - name: AUTHENTIK_CACHE__TIMEOUT_FLOWS
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
-    - name: AUTHENTIK_POSTGRESQL__CONN_MAX_AGE
-      value: "60"
-    - name: AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS
-      value: "true"
   strategy:
     type: RollingUpdate
     rollingUpdate:

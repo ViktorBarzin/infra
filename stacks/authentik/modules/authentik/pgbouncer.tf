@@ -48,6 +48,11 @@ resource "kubernetes_deployment" "pgbouncer" {
         labels = {
           app = "pgbouncer"
         }
+        annotations = {
+          # pgbouncer reads its ini only at startup (subPath mount never
+          # propagates updates anyway) — roll the pods on config change.
+          "checksum/pgbouncer-config" = sha1(kubernetes_config_map.pgbouncer_config.data["pgbouncer.ini"])
+        }
       }
 
       spec {

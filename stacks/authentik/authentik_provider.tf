@@ -217,11 +217,6 @@ resource "authentik_stage_user_login" "default_login" {
 # screen and bypass the password field.
 # -----------------------------------------------------------------------------
 
-import {
-  to = authentik_stage_identification.default_identification
-  id = "32aca5ab-106e-43f4-a4cc-4513d80e57f3"
-}
-
 data "authentik_stage" "default_authentication_password" {
   name = "default-authentication-password"
 }
@@ -243,8 +238,6 @@ resource "authentik_stage_identification" "default_identification" {
       passwordless_flow,
       pretend_user_exists,
       captcha_stage,
-      webauthn_stage,
-      enable_remember_me,
     ]
   }
 }

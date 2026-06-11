@@ -494,7 +494,16 @@ resource "kubernetes_deployment" "bot_block_proxy" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 
@@ -653,7 +662,16 @@ resource "kubernetes_deployment" "x402_gateway" {
 
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 
@@ -922,7 +940,16 @@ resource "kubernetes_deployment" "auth_proxy" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 
