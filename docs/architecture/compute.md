@@ -101,7 +101,12 @@ graph TB
 > PVE host (sources in `infra/scripts/`, install pattern per
 > `architecture/backup-dr.md`). Timer fires `OnBootSec=5min` +
 > `OnCalendar=hourly`, so any drift (config restore, manual `qm
-> set`, fresh clone) self-heals within the hour. Current caps:
+> set`, fresh clone) self-heals within the hour. The script compares
+> *normalized option sets*, so an unchanged config is a true no-op —
+> until 2026-06-11 a raw string compare (defeated by `qm config`'s
+> canonical key order) re-issued `qm set` hourly against running VMs,
+> live-rewriting QEMU throttle state via QMP (implicated in the devvm
+> I/O stall; see `post-mortems/2026-06-11-devvm-qemu-io-stall.md`). Current caps:
 > 102 devvm 60/60, 103 home-assistant 40/40, 200 k8s-master 100/60,
 > 201 k8s-node1 150/120, 202 k8s-node2 150/120, 203 k8s-node3 150/120,
 > 204 k8s-node4 150/120, 220 docker-registry 40/40.

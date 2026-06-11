@@ -92,7 +92,7 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | VMID | Name | Status | CPUs | RAM | Network | Disk | Notes |
 |------|------|--------|------|-----|---------|------|-------|
 | 101 | pfsense | running | 8 | 4GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall |
-| 102 | devvm | running | 16 | 24GB | vmbr1:vlan10 | 100G | Development VM + t3code Workstation host. 14G swap (8G /swapfile + 6G /swapfile2, grown 2026-06-10; swappiness=10). Capacity budget: ~4-5G RAM/active user, max ~3-4 concurrent active Claude sessions. NOT Terraform-managed. |
+| 102 | devvm | running | 16 | 24GB | vmbr1:vlan10 | 100G | Development VM + t3code Workstation host. 14G swap (8G /swapfile + 6G /swapfile2, grown 2026-06-10; swappiness=10). Capacity budget: ~4-5G RAM/active user, max ~3-4 concurrent active Claude sessions. NOT Terraform-managed. Disk controller: `virtio-scsi-single` + `scsi0 iothread=1,aio=threads` staged 2026-06-11 after the QEMU I/O stall (was `scsihw: lsi`, the only VM on the legacy path — see `docs/post-mortems/2026-06-11-devvm-qemu-io-stall.md`); applies at next cold stop→start. |
 | 103 | home-assistant | running | 8 | 8GB | vmbr0 | 64G | HA Sofia, net0(vlan10) disabled, SSH: vbarzin@192.168.1.8 |
 | 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup (unused) |
 | 200 | k8s-master | running | 8 | 32GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |

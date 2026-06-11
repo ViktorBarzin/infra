@@ -27,6 +27,12 @@ TARGETS=(
   "220:scsi0:40:40"      # docker-registry
 )
 
+# Sort a disk spec's comma-separated options so two specs with the same
+# option set but different key order compare equal.
+normalized() {
+  tr ',' '\n' <<<"$1" | LC_ALL=C sort | paste -sd, -
+}
+
 apply_one() {
   local spec="$1"
   local vmid slot rd wr
@@ -49,8 +55,13 @@ apply_one() {
   newvalue="${cleaned},mbps_rd=${rd},mbps_wr=${wr}"
 
   # Skip the qm-set call entirely when state already matches — keeps
-  # journal noise low under the hourly timer.
-  if [[ "$current" == "$newvalue" ]]; then
+  # journal noise low under the hourly timer. Compare option SETS, not raw
+  # strings: `qm config` prints keys in its own canonical order, so a raw
+  # compare never matched and every hourly run re-issued `qm set`, which
+  # live-rewrites the running VM's QEMU throttle state via QMP (implicated
+  # in the 2026-06-11 devvm I/O stall — see
+  # docs/post-mortems/2026-06-11-devvm-qemu-io-stall.md).
+  if [[ "$(normalized "$current")" == "$(normalized "$newvalue")" ]]; then
     echo "vmid $vmid: $slot already at mbps_rd=${rd},mbps_wr=${wr} — no-op"
     return 0
   fi
