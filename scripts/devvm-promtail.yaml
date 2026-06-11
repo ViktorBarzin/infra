@@ -1,0 +1,59 @@
+# Promtail config for the devvm (10.0.10.10) — ships the systemd journal to cluster Loki.
+#
+# devvm is a standalone VM (NOT a k8s node), so its journal — including the t3
+# stack (t3-dispatch, t3-serve@<user>) — was never in Loki. Added 2026-06-11 for
+# t3 drop forensics: t3-dispatch now logs each /ws connection's open/close with
+# duration + which side hung up (downstream_closed = client/CF/Traefik went away;
+# upstream_closed = t3-serve closed/stalled; graceful = clean close). Joined with
+# Traefik's per-/ws duration (already in Loki) this attributes every drop to a layer.
+#
+# NOT Terraform-managed (devvm is outside k8s) — same hand-deployed pattern as
+# scripts/pve-promtail.* and the rpi-sofia promtail. This file is source-of-truth.
+#
+# Deploy (on devvm, as root via sudo):
+#   sudo install -d -m 0755 /etc/promtail /var/lib/promtail
+#   sudo install -m 0644 scripts/devvm-promtail.yaml    /etc/promtail/config.yml
+#   sudo install -m 0644 scripts/devvm-promtail.service /etc/systemd/system/promtail.service
+#   # Binary: grafana/loki v3.5.1 promtail-linux-amd64 -> /usr/local/bin/promtail (chmod 0755).
+#   sudo systemctl daemon-reload && sudo systemctl enable --now promtail
+#   # Loki reach: loki.viktorbarzin.lan (Technitium CNAME -> live Traefik LB; insecure cert).
+#
+# Streams produced:
+#   {job="devvm-journal"}                     — full devvm journal
+#   {job="devvm-journal", unit="t3-dispatch.service"}        — dispatch (ws open/close lines)
+#   {job="devvm-journal", unit="t3-serve@wizard.service"}    — per-user t3 serve
+#   {job="sshd-devvm"}                        — sshd auth lines (parity with sshd-pve)
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: https://loki.viktorbarzin.lan/loki/api/v1/push
+    tls_config:
+      insecure_skip_verify: true
+
+scrape_configs:
+  - job_name: journal
+    journal:
+      max_age: 12h
+      json: false
+      path: /var/log/journal
+      labels:
+        host: devvm
+        job: devvm-journal
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal_priority_keyword']
+        target_label: level
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: identifier
+      # sshd auth lines -> job=sshd-devvm (parity with the pve shipper's sshd-pve).
+      - source_labels: ['__journal_syslog_identifier']
+        regex: 'sshd.*'
+        target_label: job
+        replacement: 'sshd-devvm'

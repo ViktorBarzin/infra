@@ -212,7 +212,64 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Steady state: reverse-proxy (incl. WebSocket upgrade) to the user's instance.
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", e.Port))
-	httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// WebSocket connection logging: t3 drops manifest as the client's 20s
+	// heartbeat watchdog reconnecting, so a flood of short-lived /ws connections
+	// IS the symptom. Log each WS open + close (duration + which side hung up) so
+	// a drop is attributable from logs alone — graceful closes otherwise leave no
+	// trace (the default ReverseProxy only logs on error). cause stays "graceful"
+	// unless ErrorHandler fires; ErrorHandler runs within ServeHTTP, so reading
+	// cause after ServeHTTP returns needs no synchronisation.
+	if isWebSocket(r) {
+		start := time.Now()
+		ip := clientIP(r)
+		cause := "graceful"
+		proxy.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, err error) {
+			cause = classifyClose(err)
+		}
+		log.Printf("ws open user=%s ip=%s", e.OsUser, ip)
+		proxy.ServeHTTP(w, r)
+		log.Printf("ws close user=%s ip=%s dur_ms=%d cause=%s",
+			e.OsUser, ip, time.Since(start).Milliseconds(), cause)
+		return
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// isWebSocket reports whether r is a WebSocket upgrade request.
+func isWebSocket(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") &&
+		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+// clientIP returns the forwarded client chain (X-Forwarded-For, set by
+// Traefik/CF) when present, else the immediate peer — for correlating a drop
+// to a specific client/edge.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return xff
+	}
+	return r.RemoteAddr
+}
+
+// classifyClose maps a reverse-proxy copy error to which side ended the socket:
+// downstream (client/CF/Traefik went away) vs upstream (the user's t3 serve
+// closed/reset). Distinguishes a last-mile/client drop from a t3-serve stall.
+func classifyClose(err error) string {
+	if err == nil {
+		return "graceful"
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "context canceled"):
+		return "downstream_closed" // client / CF / Traefik tore down
+	case strings.Contains(s, "reset by peer"), strings.Contains(s, "broken pipe"),
+		strings.Contains(s, "EOF"), strings.Contains(s, "connection refused"):
+		return "upstream_closed" // t3 serve closed / unreachable
+	default:
+		return s
+	}
 }
 
 func main() {
