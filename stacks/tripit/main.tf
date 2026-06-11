@@ -101,9 +101,14 @@ locals {
     # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
     # discovery, the five web story sources, and the claude-agent-service script
     # writer (CLAUDE_AGENT_TOKEN already in tripit-secrets).
-    SIGHT_DISCOVERY_PROVIDER = "wikipedia"
+    # wikipedia+llm = GeoSearch merged with claude-agent-service "what's worth
+    # seeing here" proposals (tripit#29); the place resolver backs manual sight
+    # search AND LLM-proposal resolution — its fake default is the same class of
+    # gap that shipped the feature dark, so set it explicitly.
+    SIGHT_DISCOVERY_PROVIDER = "wikipedia+llm"
     STORY_SOURCE_MODE        = "web"
     SCRIPT_WRITER_MODE       = "chat"
+    PLACE_RESOLVER_MODE      = "wikipedia"
   }
 }
 
@@ -576,6 +581,27 @@ locals {
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
+    }
+    # Tour-guide overnight audio fill (tripit#30, ADR-0011): synthesizes the
+    # narration audio queue against Chatterbox, which the tts stack scales up
+    # 02:00–06:00 Europe/London behind a free-VRAM preflight. 02:20 gives the
+    # scale-up + first model load headroom; the 04:30 pass re-runs the same
+    # idempotent worker as insurance (skipped window / mid-window guard yield /
+    # slow FP16 synthesis). Outside the window the worker records a
+    # `tts_unreachable` run and exits quietly — that is the normal daytime state.
+    fill-tour-audio = {
+      schedule  = "20 2 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "fill-tour-audio"]
+      suspend   = false
+      extra_env = {}
+    }
+    fill-tour-audio-retry = {
+      schedule  = "30 4 * * *"
+      timezone  = "Europe/London"
+      command   = ["python", "-m", "tripit_api", "fill-tour-audio"]
+      suspend   = false
+      extra_env = {}
     }
   }
 }
