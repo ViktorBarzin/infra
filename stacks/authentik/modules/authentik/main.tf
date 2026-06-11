@@ -29,7 +29,7 @@ resource "kubernetes_namespace" "authentik" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -110,4 +110,45 @@ module "ingress-outpost" {
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
   exclude_crowdsec = true
+}
+
+# Immutable caching for the flow-executor static assets. Authentik serves
+# /static/dist/* with version-fingerprinted filenames (e.g. poly-2026.2.4.js)
+# but no max-age, so browsers re-validate the login JS bundle on every signin
+# — and split-horizon internal users (direct to Traefik, no Cloudflare) get no
+# edge cache at all. Long-lived immutable caching is safe: every authentik
+# upgrade changes the asset URLs.
+resource "kubernetes_manifest" "static_cache_headers" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "static-cache-headers"
+      namespace = kubernetes_namespace.authentik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customResponseHeaders = {
+          "Cache-Control" = "public, max-age=31536000, immutable"
+        }
+      }
+    }
+  }
+}
+
+module "ingress-static" {
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Same-host path carve-out of the public authentik UI ingress above, only
+  # adding the cache-headers middleware for the static asset prefix.
+  # auth = "none": versioned static assets of the (already public) Authentik login UI.
+  auth              = "none"
+  namespace         = kubernetes_namespace.authentik.metadata[0].name
+  name              = "authentik-static"
+  host              = "authentik"
+  service_name      = "goauthentik-server"
+  ingress_path      = ["/static"]
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false
+  homepage_enabled  = false
+  extra_middlewares = ["authentik-static-cache-headers@kubernetescrd"]
 }

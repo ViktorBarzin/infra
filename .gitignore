@@ -104,5 +104,5 @@ stacks/terminal/clipboard-upload/clipboard-upload
 terraform.tfstate
 terraform.tfstate.backup
 
-# Per-feature git worktrees (worktree-first workflow — execution.md §3)
+# Per-feature git worktrees (worktree-first workflow — execution.md)
 .worktrees/

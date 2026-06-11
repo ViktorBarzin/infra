@@ -17,7 +17,7 @@ All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 
 - **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (4TB) — bulk media and backup targets
 - **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB) — high-performance data (Immich ML)
 
-Both `StorageClass: nfs-truenas` and `StorageClass: nfs-proxmox` point to the Proxmox host and are functionally identical. The `nfs-truenas` name is historical — it was retained because StorageClass names are immutable on bound PVs (48 PVs reference it) and renaming would force mass PV churn across the cluster.
+`StorageClass: nfs-truenas` is the **only** NFS StorageClass and points to the Proxmox host. The name is historical — it was retained because StorageClass names are immutable on bound PVs (48 PVs reference it) and renaming would force mass PV churn across the cluster. (A short-lived parallel `nfs-proxmox` StorageClass was removed on 2026-04-25, commit 484b4c71, during the vault NFS-hostile migration.)
 
 **Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, auto SQLite backups, pfSense backups, and PVE config. NFS data syncs directly to Synology via inotify change tracking (not stored on sda). Independent of live storage (sdc).
 
@@ -47,7 +47,7 @@ graph TB
     end
 
     subgraph K8s["Kubernetes Cluster"]
-        CSI_NFS["nfs-csi driver<br/>StorageClass: nfs-proxmox (+ legacy nfs-truenas)<br/>soft,timeo=30,retrans=3"]
+        CSI_NFS["nfs-csi driver<br/>StorageClass: nfs-truenas (historical name)<br/>soft,timeo=30,retrans=3"]
         CSI_PVE["Proxmox CSI plugin<br/>StorageClass: proxmox-lvm<br/>StorageClass: proxmox-lvm-encrypted"]
 
         NFS_PV["NFS PersistentVolumes<br/>RWX, ~100 volumes"]
@@ -85,8 +85,7 @@ graph TB
 | Proxmox NFS (HDD) | LV `pve/nfs-data`, 4TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
 | Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
-| StorageClass `nfs-proxmox` | RWX, soft mount | Cluster-wide | NFS storage, points to Proxmox host |
-| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | **Historical name** — functionally identical to `nfs-proxmox`, points to the Proxmox host. Kept because SC names are immutable on 48 bound PVs. |
+| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | The only NFS StorageClass — **historical name**, points to the Proxmox host. Kept because SC names are immutable on 48 bound PVs. (Sibling `nfs-proxmox` SC removed 2026-04-25, commit 484b4c71.) |
 | TF module `nfs_volume` | `modules/kubernetes/nfs_volume/` | Infra repo | Static NFS PV/PVC factory |
 | ~~TrueNAS VM~~ | **DECOMMISSIONED 2026-04-13** | Was VM 9000 at 10.0.10.15 | Replaced by Proxmox NFS. VM still in stopped state pending deletion. |
 | ~~democratic-csi-iscsi~~ | **REMOVED** | Was namespace: iscsi-csi | Replaced by Proxmox CSI (2026-04-02) |
@@ -113,7 +112,7 @@ graph TB
 
 **Note**: Some legacy PVs still reference `/mnt/main/<service>` paths. These work via compatibility symlinks/bind-mounts on the Proxmox host. New PVs should use `/srv/nfs/<service>` or `/srv/nfs-ssd/<service>`.
 
-**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-proxmox` StorageClass (or the legacy `nfs-truenas` for existing PVs) via PVCs.
+**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-truenas` StorageClass (historical name; it points at the Proxmox host) via PVCs.
 
 ### Block Storage Flow (Proxmox CSI) — NEW
 

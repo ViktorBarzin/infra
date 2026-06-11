@@ -35,6 +35,41 @@ Attribution table:
 
 Alerts `T3ProbeLegDown` / `T3ProbeDropBurst` fire on sustained breakage.
 
+## 1b. Connection logs in Loki (passive, always-on — catch a real drop)
+
+Three layers of the real path log every t3 `/ws` connection to Loki, so a drop
+the user actually experienced is attributable after the fact without a repro. A
+drop is **a short-lived `/ws` connection** (a healthy session holds one socket
+for hours); the client's 20s heartbeat watchdog reconnects on any break.
+
+| Layer | Loki stream | What it tells you |
+|---|---|---|
+| Traefik | `{job="traefik"}` ⟶ filter `t3code-t3` + `GET /ws` | per-connection **duration** (trailing `…ms`) + edge (cloudflared pod) IP |
+| cloudflared | `{job="cloudflared"}` ⟶ filter `t3.viktorbarzin.me/ws` | CF-tunnel-side close (`ended abruptly: context canceled` = browser/CF side hung up) |
+| t3-dispatch | `{job="devvm-journal",unit="t3-dispatch.service"} \|= "ws close"` | **`dur_ms` + `cause`** — the discriminator below |
+
+`cause` on the dispatch `ws close` line:
+- **`downstream_closed`** — client / Cloudflare / Traefik tore the socket down
+  (`context canceled`). Short `dur_ms` = client watchdog firing → a **last-mile /
+  network-quality** drop (or CF/tunnel blip); t3-serve was fine.
+- **`upstream_closed`** — the user's `t3 serve` closed/reset (reset by peer / EOF
+  / refused) → t3-serve stall/restart/OOM.
+- **`graceful`** — clean close from either side (e.g. the client watchdog's
+  `disconnect()` after a >20s heartbeat gap). Cross-check `dur_ms`: a ~20s+
+  graceful close with no devvm pressure spike (§3) is a heartbeat-timeout whose
+  stall was NOT on devvm → last-mile.
+
+Triage query (Grafana Explore → Loki) — every short t3 socket in a window:
+
+```logql
+{job="devvm-journal", unit="t3-dispatch.service"} |= "ws close"
+  | regexp `dur_ms=(?P<dur>[0-9]+) cause=(?P<cause>\S+)` | dur < 120000
+```
+
+Line the timestamp up against `{job="traefik"}` (duration + edge IP) and
+`{job="cloudflared"}` (CF-side close) for the same second to localise the layer.
+devvm journald (incl. `t3-serve@<user>`) ships via `scripts/devvm-promtail.*`.
+
 ## 2. Server-side log recipe (per-event forensics)
 
 On devvm (timestamps in UTC):

@@ -255,6 +255,8 @@ Routed via **Loki ruler → Alertmanager → `#security` Slack receiver**. Same 
 
 **Policy: no public-IP access ever.** Vault, kube-apiserver, PVE sshd must transit a trusted LAN or Headscale. Anything else fires an alert.
 
+**Documented exception — break-glass SSH (2026-06-11):** one deliberate carve-out. The Proxmox host's sshd listens on a WAN-exposed `:52222` (edge-router forward), **key-only**, trusting only a dedicated break-glass key (`Match LocalPort` → `authorized_keys.breakglass`), rate-limited (iptables hashlimit) + fail2ban. It is intentionally reachable from the public internet so it survives a cluster/tunnel outage with no dependency on the cluster — the one case the "must transit LAN/Headscale" rule cannot serve. Brute-force-proof (no password); the trade is Shodan-visibility. As-built: `docs/runbooks/breakglass-ssh.md`; rationale: `docs/plans/2026-06-11-breakglass-ssh-redesign-design.md`. (Replaced the 2026-05-30 port-knock variant, which was non-scannable but had a circular Vault dependency that caused a lockout.)
+
 #### Why no canary tokens
 
 Original plan included canary tokens (fake K8s Secret, Vault KV path, PVE file, sinkhole hostname). Rejected because Viktor routinely greps `secret/viktor` (135 keys) and lists `kubectl get secret -A` — any read-trigger canary self-fires. Use-based canaries (zero-RBAC SA tokens with audit alerts on use) were also considered but rejected in favor of cleaner source-IP anomaly detection (K9, V7) on REAL tokens — same threat model, no fake-token operational burden.
