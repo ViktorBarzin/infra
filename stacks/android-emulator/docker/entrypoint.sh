@@ -40,9 +40,18 @@ if [ ! -f "$MARKER" ]; then
 fi
 
 # --- AVD (idempotent) --------------------------------------------------------
-if ! avdmanager list avd -c | grep -qx "$AVD_NAME"; then
+# avdmanager IGNORES ANDROID_SDK_ROOT (and has no --sdk_root): it derives the
+# SDK root from its own toolsdir. Run it from a copy of cmdline-tools seeded
+# INSIDE /sdk so it resolves the PVC as the root — otherwise it looks under
+# /opt/android and reports "Valid system image paths are: null".
+if [ ! -x /sdk/cmdline-tools/latest/bin/avdmanager ]; then
+  mkdir -p /sdk/cmdline-tools
+  cp -a /opt/android/cmdline-tools/latest /sdk/cmdline-tools/latest
+fi
+AVDMANAGER=/sdk/cmdline-tools/latest/bin/avdmanager
+if ! "$AVDMANAGER" list avd -c | grep -qx "$AVD_NAME"; then
   echo "Creating AVD '$AVD_NAME' (${SYSTEM_IMAGE}, pixel_7)..."
-  (echo no || true) | avdmanager create avd -n "$AVD_NAME" -k "$SYSTEM_IMAGE" --device pixel_7
+  (echo no || true) | "$AVDMANAGER" create avd -n "$AVD_NAME" -k "$SYSTEM_IMAGE" --device pixel_7
   cat >> "${ANDROID_AVD_HOME}/${AVD_NAME}.avd/config.ini" <<EOF
 hw.ramSize=${EMULATOR_RAM_MB}
 disk.dataPartition.size=8192M

@@ -4,8 +4,8 @@
 # cmdline-tools and the native libraries the emulator needs at runtime.
 #
 # Rebuild + push (rare — only when tool/library versions bump):
-#   docker build -t forgejo.viktorbarzin.me/viktor/android-emulator:api36-v2 .
-#   docker push forgejo.viktorbarzin.me/viktor/android-emulator:api36-v2
+#   docker build -t forgejo.viktorbarzin.me/viktor/android-emulator:api36-v3 .
+#   docker push forgejo.viktorbarzin.me/viktor/android-emulator:api36-v3
 FROM eclipse-temurin:17-jdk-jammy
 
 ENV DEBIAN_FRONTEND=noninteractive
