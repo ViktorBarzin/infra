@@ -88,6 +88,14 @@ locals {
     # keep serving), so the env landed AFTER that image rolled out.
     FARE_PROVIDER = "playwright"
     FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Calendar-conflict column (tripit issue #19): read the owner's Nextcloud
+    # calendar over CalDAV to flag date clashes on a planning Option. Base +
+    # user are non-secret; the app-password arrives via tripit-secrets. Same
+    # image-first hold-order as FARE_PROVIDER — `nextcloud` mode only exists in
+    # images >= the #19 slice (older images crash-loop on the unknown enum).
+    CALENDAR_CONFLICT_PROVIDER = "nextcloud"
+    NEXTCLOUD_CALDAV_BASE      = "https://nextcloud.viktorbarzin.me/remote.php/dav"
+    NEXTCLOUD_CALDAV_USER      = "admin"
   }
 }
 
@@ -205,6 +213,11 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "TREK_USER", remoteRef = { key = "tripit", property = "TREK_USER" } },
         { secretKey = "TREK_PASSWORD", remoteRef = { key = "tripit", property = "TREK_PASSWORD" } },
         { secretKey = "CLAUDE_AGENT_TOKEN", remoteRef = { key = "tripit", property = "CLAUDE_AGENT_TOKEN" } },
+        # Read-only Nextcloud app-password for the calendar-conflict column
+        # (tripit issue #19) — CalDAV PROPFIND/REPORT only. Single-account: this
+        # is the owner's (admin's) calendar, so every tripit user's conflict
+        # check reflects viktor's availability (v1 caveat, documented in-app).
+        { secretKey = "NEXTCLOUD_CALDAV_APP_PASSWORD", remoteRef = { key = "tripit", property = "NEXTCLOUD_CALDAV_APP_PASSWORD" } },
       ]
     }
   }
