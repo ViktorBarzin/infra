@@ -1174,3 +1174,5 @@ resource "kubectl_manifest" "mutate_strip_cpu_limits" {
 # Apply re-trigger 2026-06-11: 87702bdc landed with [ci skip], so this stack was
 # never CI-applied; tripit#26 (tour-guide redo) needs the tts GPU-priority
 # exclusion live before the tts stack applies. No functional change in this commit.
+
+# (See stacks/tts/main.tf — same apply-trigger note, tripit#26.)

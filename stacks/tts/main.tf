@@ -478,3 +478,7 @@ resource "kubernetes_cron_job_v1" "offpeak" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# Apply trigger 2026-06-11 (tripit#26): the previous push was a merge commit, so
+# the changed-stack detector (git diff HEAD~1 HEAD = first-parent diff) missed
+# stacks/tts entirely. Non-merge commit so the diff names this stack.
