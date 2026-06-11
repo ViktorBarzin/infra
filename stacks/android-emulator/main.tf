@@ -110,12 +110,15 @@ resource "kubernetes_deployment" "android-emulator" {
           }
 
           resources {
-            # No CPU limit (cluster-wide rule — CFS throttling); requests=limits
-            # on memory. Emulator peak: qemu (-memory 4096) + guest overhead +
-            # Xvfb/VNC + JVM sdkmanager on first boot.
+            # No CPU limit (cluster-wide rule — CFS throttling). Burstable on
+            # memory: the tier-1 quota caps requests.memory at 4Gi per
+            # namespace, so requests stay under it while the limit gives the
+            # emulator (qemu -memory 4096 + guest overhead + Xvfb/VNC + JVM
+            # sdkmanager on first boot) room to peak — same Burstable pattern
+            # tiers 3/4 use deliberately.
             requests = {
               cpu    = "2"
-              memory = "8Gi"
+              memory = "3Gi"
             }
             limits = {
               memory = "8Gi"
