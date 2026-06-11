@@ -1,0 +1,18 @@
+# Break-glass SSH fail2ban jail (redesigned 2026-06-11). Source of truth.
+# Deploy to the PVE host with:
+#   scp scripts/fail2ban-breakglass-sshd.local root@192.168.1.127:/etc/fail2ban/jail.d/breakglass-sshd.local
+#   ssh root@192.168.1.127 'systemctl restart fail2ban'
+#
+# GOTCHA (Debian 13 / OpenSSH 9.x): auth lines are logged under
+# _COMM=sshd-session, NOT _COMM=sshd. The stock Debian jail keys journalmatch on
+# `_SYSTEMD_UNIT=ssh.service + _COMM=sshd` and therefore silently NEVER bans.
+# Match by unit only so both sshd and sshd-session lines are seen. Ban on both
+# SSH ports (the WAN break-glass listener is :52222).
+[sshd]
+enabled = true
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=ssh.service
+port = ssh,52222
+maxretry = 4
+findtime = 10m
+bantime = 1h

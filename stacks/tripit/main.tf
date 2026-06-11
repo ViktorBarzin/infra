@@ -96,6 +96,14 @@ locals {
     CALENDAR_CONFLICT_PROVIDER = "nextcloud"
     NEXTCLOUD_CALDAV_BASE      = "https://nextcloud.viktorbarzin.me/remote.php/dav"
     NEXTCLOUD_CALDAV_USER      = "admin"
+    # Tour-guide content pipeline (tripit#24/#25): these three default to `fake`
+    # in tripit's config, which is what shipped dark on 2026-06-08 — prod only
+    # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
+    # discovery, the five web story sources, and the claude-agent-service script
+    # writer (CLAUDE_AGENT_TOKEN already in tripit-secrets).
+    SIGHT_DISCOVERY_PROVIDER = "wikipedia"
+    STORY_SOURCE_MODE        = "web"
+    SCRIPT_WRITER_MODE       = "chat"
   }
 }
 

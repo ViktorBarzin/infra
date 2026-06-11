@@ -1,4 +1,10 @@
 authentik:
+  # NOTE: because we set existingSecret below, the chart does NOT render the
+  # authentik.* values into an AUTHENTIK_* env Secret — the live env comes
+  # from the orphaned, helm-keep-policy `goauthentik` Secret created by chart
+  # 2025.10.3. Anything under authentik.* here is effectively INERT. All new
+  # or tuned config MUST go through server.env / worker.env instead (see
+  # .claude/reference/authentik-state.md).
   log_level: warning
   # log_level: trace
   secret_key: ""
@@ -14,38 +20,47 @@ authentik:
     port: 6432
     user: authentik
     password: ""
-    # Persistent client-side connections (safe with PgBouncer session mode;
-    # must be < pgbouncer server_idle_timeout=600s). Cuts Django connection
-    # setup overhead off the ~70 sequential ORM ops per flow stage.
-    conn_max_age: 60
-    conn_health_checks: true
-  cache:
-    # Cache flow plans for 30m and policy evaluations for 15m. Authentik 2026.2
-    # moved cache storage from Redis to Postgres, so a TTL hit is still a
-    # SELECT — but a single indexed lookup beats re-evaluating PolicyBindings.
-    timeout_flows: 1800
-    timeout_policies: 900
-  web:
-    # Gunicorn: 3 workers × 4 threads per server pod (default 2×4).
-    # Pairs with the server memory bump to 2Gi (each worker preloads Django ~500Mi).
-    workers: 3
-    threads: 4
-  worker:
-    # Celery-equivalent worker threads per pod (default 2, renamed from
-    # AUTHENTIK_WORKER__CONCURRENCY in 2025.8).
-    threads: 4
 
 server:
   replicas: 3
-  # Anonymous Django sessions (no completed login: bots, healthcheckers,
-  # partial flows) expire in 2h. Default is days=1. Once login completes,
-  # UserLoginStage.session_duration takes over via request.session.set_expiry.
-  # Injected via server.env (not authentik.sessions.*) because we use
-  # authentik.existingSecret.secretName, which makes the chart skip
-  # rendering the AUTHENTIK_* secret — so the values block doesn't reach env.
   env:
+    # Anonymous Django sessions (no completed login: bots, healthcheckers,
+    # partial flows) expire in 2h. Default is days=1. Once login completes,
+    # UserLoginStage.session_duration takes over via request.session.set_expiry.
+    # Injected via server.env (not authentik.sessions.*) because we use
+    # authentik.existingSecret.secretName, which makes the chart skip
+    # rendering the AUTHENTIK_* secret — so the values block doesn't reach env.
     - name: AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE
       value: "hours=2"
+    # Gunicorn: 3 workers × 4 threads per server pod (defaults 2×4).
+    # Pairs with the server memory limit of 2Gi (each worker preloads
+    # Django ~500Mi).
+    - name: AUTHENTIK_WEB__WORKERS
+      value: "3"
+    - name: AUTHENTIK_WEB__THREADS
+      value: "4"
+    # Cache flow plans for 30m and policy evaluations for 15m (defaults 300s).
+    # Authentik 2026.2 stores cache in Postgres, so a TTL hit is still a
+    # SELECT — but a single indexed lookup beats re-planning the flow
+    # (~70 sequential ORM ops per flow stage POST).
+    - name: AUTHENTIK_CACHE__TIMEOUT_FLOWS
+      value: "1800"
+    - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
+      value: "900"
+    # Do NOT set AUTHENTIK_POSTGRESQL__CONN_MAX_AGE here. With PgBouncer in
+    # session mode every persistent Django connection pins a server connection
+    # 1:1, so the 3x(20+5) pool saturated during the 2026-06-10 rolling
+    # restart (58s pool waits, readiness flapping, and the shared CNPG primary
+    # failed over mid-storm). The ~1-2ms/request connection-setup saving is
+    # not worth that risk on the shared PG substrate.
+  # Liveness budget sized for slow boots (2026-06-10 incident): during a
+  # rolling restart pods queue on authentik's DB migration lock; the go layer
+  # answers /-/health/live before the core is up, so with the default 3x10s
+  # budget kubelet kill-looped every booting pod and amplified the contention.
+  # Startup probe still bounds total boot time (60x10s).
+  livenessProbe:
+    failureThreshold: 6
+    timeoutSeconds: 5
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -76,17 +91,36 @@ server:
     minAvailable: 2
 global:
   addPrometheusAnnotations: true
+  image:
+    # Pin to the Keel-managed live tag. Keel (diun-annotated, keel.sh/enrolled
+    # namespace) bumps the IMAGE between chart releases, while helm defaults
+    # the tag to the chart appVersion — so any helm upgrade silently
+    # DOWNGRADES the running pods to the chart pin (2026-06-10: a values-only
+    # apply rolled live 2026.2.4 back to 2026.2.2 against a 2026.2.4-migrated
+    # DB → boot storm, see docs/post-mortems/2026-06-10-authentik-downgrade-
+    # boot-storm.md). Keep this tag in sync with what Keel has deployed when
+    # touching this chart; clear it only when bumping the chart version itself.
+    tag: "2026.2.4"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
   # certificate renewal) — no user-facing traffic, so 2-of-3 isn't
   # needed for availability. Drop saves ~100m sustained CPU.
   replicas: 2
-  # Same unauthenticated_age cap as server — both the server (Django session
-  # middleware) and worker (cleanup tasks) need to see the value.
   env:
+    # Same unauthenticated_age cap as server — both the server (Django session
+    # middleware) and worker (cleanup tasks) need to see the value.
     - name: AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE
       value: "hours=2"
+    # Dramatiq worker threads per pod (default 2).
+    - name: AUTHENTIK_WORKER__THREADS
+      value: "4"
+    # Keep cache settings in lockstep with server.env. (No CONN_MAX_AGE —
+    # see the server.env note: session-mode PgBouncer pins persistent conns.)
+    - name: AUTHENTIK_CACHE__TIMEOUT_FLOWS
+      value: "1800"
+    - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
+      value: "900"
   strategy:
     type: RollingUpdate
     rollingUpdate:

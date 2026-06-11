@@ -92,19 +92,21 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | VMID | Name | Status | CPUs | RAM | Network | Disk | Notes |
 |------|------|--------|------|-----|---------|------|-------|
 | 101 | pfsense | running | 8 | 4GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | 32G | Gateway/firewall |
-| 102 | devvm | running | 16 | 24GB | vmbr1:vlan10 | 100G | Development VM + t3code Workstation host. 8G swapfile (swappiness=10). Capacity budget: ~4-5G RAM/active user, max ~3-4 concurrent active Claude sessions. NOT Terraform-managed. |
+| 102 | devvm | running | 16 | 24GB | vmbr1:vlan10 | 100G | Development VM + t3code Workstation host. 14G swap (8G /swapfile + 6G /swapfile2, grown 2026-06-10; swappiness=10). Capacity budget: ~4-5G RAM/active user, max ~3-4 concurrent active Claude sessions. NOT Terraform-managed. Disk controller: `virtio-scsi-single` + `scsi0 iothread=1,aio=threads` staged 2026-06-11 after the QEMU I/O stall (was `scsihw: lsi`, the only VM on the legacy path — see `docs/post-mortems/2026-06-11-devvm-qemu-io-stall.md`); applies at next cold stop→start. |
 | 103 | home-assistant | running | 8 | 8GB | vmbr0 | 64G | HA Sofia, net0(vlan10) disabled, SSH: vbarzin@192.168.1.8 |
 | 105 | pbs | stopped | 16 | 8GB | vmbr1:vlan10 | 32G | Proxmox Backup (unused) |
-| 200 | k8s-master | running | 8 | 16GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |
-| 201 | k8s-node1 | running | 16 | 32GB | vmbr1:vlan20 | 256G | GPU node, Tesla T4 |
-| 202 | k8s-node2 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
-| 203 | k8s-node3 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
-| 204 | k8s-node4 | running | 8 | 24GB | vmbr1:vlan20 | 256G | Worker |
+| 200 | k8s-master | running | 8 | 32GB | vmbr1:vlan20 | 64G | Control plane (10.0.20.100) |
+| 201 | k8s-node1 | running | 16 | 48GB | vmbr1:vlan20 | 256G | GPU node, Tesla T4 |
+| 202 | k8s-node2 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker |
+| 203 | k8s-node3 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker |
+| 204 | k8s-node4 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker |
+| 205 | k8s-node5 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker (10.0.20.105, joined 2026-05-26) |
+| 206 | k8s-node6 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker (10.0.20.106, joined 2026-05-26) |
 | 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
 | 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM |
 | ~~9000~~ | ~~truenas~~ | **stopped/decommissioned** | — | — | — | — | NFS migrated to Proxmox host (192.168.1.127) at `/srv/nfs` and `/srv/nfs-ssd` |
 
-**Total VM RAM allocated**: 196 GB of 272 GB (72%) — 76 GB free for future VMs (devvm corrected 8GB→24GB 2026-06-08)
+**Total VM RAM allocated**: ~288 GB nominal across running VMs vs 272 GB physical — OVERCOMMITTED (ballooning enabled on K8s workers, host swap in use; see memory id=535/2543). K8s rows live-verified via `kubectl get nodes` capacity 2026-06-11 (master 32G, node1 48G, node2-6 32G; the old 16/32/24GB figures predated the 2026-04-02 resize and node5/6).
 
 ## VM Templates
 | VMID | Name | Purpose |

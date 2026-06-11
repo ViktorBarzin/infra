@@ -494,7 +494,16 @@ resource "kubernetes_deployment" "bot_block_proxy" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 
@@ -653,7 +662,16 @@ resource "kubernetes_deployment" "x402_gateway" {
 
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 
@@ -720,6 +738,11 @@ resource "kubernetes_config_map" "auth_proxy_config" {
     "default.conf" = <<-EOT
       upstream authentik {
           server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
+          # Reuse connections to the outpost. Without this every forward-auth
+          # subrequest (= every request to every auth="required" ingress) opens
+          # a fresh TCP connection. Requires HTTP/1.1 + cleared Connection
+          # header on the proxy_pass locations below.
+          keepalive 32;
       }
       server {
           listen 9000;
@@ -734,6 +757,8 @@ resource "kubernetes_config_map" "auth_proxy_config" {
 
           location /outpost.goauthentik.io/auth/traefik {
               proxy_pass http://authentik;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
               proxy_connect_timeout 3s;
               proxy_read_timeout 5s;
               proxy_send_timeout 5s;
@@ -764,6 +789,8 @@ resource "kubernetes_config_map" "auth_proxy_config" {
 
           location /outpost.goauthentik.io/ {
               proxy_pass http://authentik;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
               proxy_connect_timeout 3s;
               proxy_read_timeout 10s;
               proxy_set_header Host $host;
@@ -819,6 +846,11 @@ resource "kubernetes_deployment" "auth_proxy" {
       metadata {
         labels = {
           app = "auth-proxy"
+        }
+        annotations = {
+          # nginx only reads its config at startup — roll the pods whenever
+          # the ConfigMap content changes.
+          "checksum/auth-proxy-config" = sha1(kubernetes_config_map.auth_proxy_config.data["default.conf"])
         }
       }
       spec {
@@ -908,7 +940,16 @@ resource "kubernetes_deployment" "auth_proxy" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+    ]
   }
 }
 

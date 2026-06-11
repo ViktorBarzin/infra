@@ -89,7 +89,18 @@ resource "kubernetes_deployment" "error_pages" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
+      # live object (keel enrollment / resource-governance) — don't strip them.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+    ]
   }
 }
 
