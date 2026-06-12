@@ -26,7 +26,7 @@ Violations cause state drift, which causes future applies to break or silently r
 ## Instructions
 - **"remember X"**: Use `memory-tool store "content" --category facts --tags "tag1,tag2"` (via exec) for persistent cross-session memory. Also update this file + `AGENTS.md` (if shared knowledge), commit with `[ci skip]`. To recall: `memory-tool recall "query"`. To list: `memory-tool list`. To delete: `memory-tool delete <id>`. The native `memory_search` and `memory_get` tools are also available for searching indexed memory files. For **storing** new memories, always use the `memory-tool` CLI via exec.
 - **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` (preferred — handles state decrypt/encrypt) or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies.
-- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma)
+- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
 - **New service**: Use `setup-project` skill for full workflow
 - **Ingress**: `ingress_factory` module. **Auth** (`auth` string enum, default `"required"` — fail-closed). Pick by asking "what gates the app?":
   - `auth = "required"` — Authentik forward-auth gates every request. Use when the backend has **no built-in user auth** and Authentik is the only thing standing between strangers and the app (prowlarr, qbittorrent, netbox, phpipam, k8s-dashboard, any admin UI shipped without its own login).
@@ -88,6 +88,17 @@ Violations cause state drift, which causes future applies to break or silently r
 - **Quarterly right-sizing**: Run `krr` (Dockerized, against Prometheus) for recommendations; compare to current requests and adjust in TF. (Goldilocks dashboard removed 2026-06-12.)
 
 ## CI/CD Architecture — GHA Builds + Woodpecker Deploy
+
+**Doctrine (ADR-0002): leverage external infra for ALL CI compute.** Builds,
+tests, lint, and release jobs run on GitHub Actions hosted runners (public
+repos: unlimited free; private: 2000 free min/mo) — never on cluster nodes.
+In-cluster pipelines are reserved for cluster-touching steps only: Woodpecker
+deploys (`kubectl set image`), terragrunt applies, certbot. Do not
+(re)introduce in-cluster image builds or CI test runs — the fallback-build
+pattern was deliberately removed (clean cut). **Watch what you trigger**:
+after any push that fires a build chain, monitor it to completion (GHA run →
+Woodpecker deploy → `rollout status`) and fix failures immediately; verify
+via live state, not the checkmark. Fleet migration: PRD infra#10 (ADR-0002).
 
 **Owned-app deploy model (build triggers the rollout — 2026-06-02):** For
 self-hosted apps **we build** (Forgejo `viktor/<name>` + Dockerfile +
