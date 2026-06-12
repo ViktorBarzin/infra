@@ -80,6 +80,15 @@ resource "kubernetes_deployment" "android-emulator" {
         labels = { app = "android-emulator" }
       }
       spec {
+        node_selector = {
+          "nvidia.com/gpu.present" : "true"
+        }
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
         image_pull_secrets {
           name = "registry-credentials"
         }
@@ -121,7 +130,8 @@ resource "kubernetes_deployment" "android-emulator" {
               memory = "3Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory           = "8Gi"
+              "nvidia.com/gpu" = "1" # T4 time-slice; ~0.5-1GiB VRAM while awake
             }
           }
 
@@ -167,7 +177,12 @@ resource "kubernetes_deployment" "android-emulator" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # the wake gate + idle sleeper own replicas (scale-to-zero on demand);
+      # an apply must not resurrect or kill the emulator.
+      spec[0].replicas,
+    ]
   }
 }
 
@@ -215,45 +230,82 @@ resource "kubernetes_service" "novnc" {
   }
 }
 
-# Browser screen view (noVNC) — LAN only.
-module "ingress-internal" {
+# Ingress layout, same on both hostnames: the wake gate owns `/` (visiting
+# wakes a sleeping emulator), while the noVNC asset/socket paths go straight
+# to the emulator service. LAN (.lan) is unauthenticated local-only for
+# agents; public (.me) is Authentik-gated for humans.
+locals {
+  novnc_paths = [
+    "/vnc.html", "/app", "/core", "/vendor",
+    "/websockify", "/package.json", "/defaults.json", "/mandatory.json",
+  ]
+}
+
+module "ingress-internal-gate" {
   source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": LAN-only (allow_local_access_only) noVNC screen view of the
-  # shared test emulator — no user data behind it; Authentik would break the
-  # websocket flow agents and users rely on.
+  # auth = "none": LAN-only (allow_local_access_only) wake gate + screen for
+  # the shared test emulator — no user data behind it; agents need cookie-free
+  # curl access and Authentik would break the noVNC websocket flow.
   auth                    = "none"
   namespace               = kubernetes_namespace.android-emulator.metadata[0].name
   name                    = "android-emulator"
   root_domain             = "viktorbarzin.lan"
+  service_name            = kubernetes_service.gate.metadata[0].name
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true
   ssl_redirect            = false
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
-  # noVNC loads ~60 unbundled ES modules in parallel; the default 10/50
-  # limiter 429s the tail and the loader hangs forever. Dedicated limiter,
-  # same pattern as actualbudget/immich.
-  skip_default_rate_limit = true
-  extra_middlewares       = ["traefik-android-emulator-rate-limit@kubernetescrd"]
 }
 
-# Remote (off-LAN) screen access — Authentik-gated at the edge; WebSockets
-# work through forward-auth same-origin (proven by stacks/terminal's ttyd).
-# adb (5555) deliberately stays LAN-only: it is unauthenticated and must
-# never be exposed publicly.
-module "ingress-public" {
+module "ingress-internal-novnc" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": LAN-only noVNC paths (see ingress-internal-gate above).
+  auth                    = "none"
+  namespace               = kubernetes_namespace.android-emulator.metadata[0].name
+  name                    = "android-emulator-novnc"
+  host                    = "android-emulator"
+  root_domain             = "viktorbarzin.lan"
+  service_name            = kubernetes_service.novnc.metadata[0].name
+  ingress_path            = local.novnc_paths
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  # noVNC loads ~60 unbundled ES modules in parallel; the default 10/50
+  # limiter 429s the tail and the loader hangs forever.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-android-emulator-rate-limit@kubernetescrd"]
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
+# Remote (off-LAN) access — Authentik-gated at the edge; WebSockets work
+# through forward-auth same-origin (proven by stacks/terminal's ttyd).
+# adb (5555) deliberately stays LAN-only: it is unauthenticated.
+module "ingress-public-gate" {
   source          = "../../modules/kubernetes/ingress_factory"
   auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.android-emulator.metadata[0].name
   name            = "android-emulator-public"
   host            = "android-emulator"
-  service_name    = kubernetes_service.novnc.metadata[0].name
+  service_name    = kubernetes_service.gate.metadata[0].name
   tls_secret_name = var.tls_secret_name
-  # noVNC loads ~60 unbundled ES modules in parallel; the default 10/50
-  # limiter 429s the tail and the loader hangs forever. Dedicated limiter,
-  # same pattern as actualbudget/immich.
+}
+
+module "ingress-public-novnc" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
+  namespace       = kubernetes_namespace.android-emulator.metadata[0].name
+  name            = "android-emulator-public-novnc"
+  host            = "android-emulator"
+  service_name    = kubernetes_service.novnc.metadata[0].name
+  ingress_path    = local.novnc_paths
+  tls_secret_name = var.tls_secret_name
+  # see ingress-internal-novnc — noVNC's parallel module storm needs the
+  # dedicated limiter.
   skip_default_rate_limit = true
   extra_middlewares       = ["traefik-android-emulator-rate-limit@kubernetescrd"]
 }

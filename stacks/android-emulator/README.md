@@ -4,6 +4,21 @@ Android 16 (API 36, `google_apis/x86_64`) emulator running under KVM in the
 cluster, so agents can natively test app/PWA changes before shipping (first
 tenant: tripit). Decision record: `docs/adr/0001-android-emulator-in-cluster.md`.
 
+## On-demand lifecycle (since 2026-06-12)
+
+The emulator **scales to zero when idle** (no adb/VNC connections for ~1h,
+checked by the `android-emulator-idle-sleeper` CronJob) and **wakes on
+visit**: the wake gate owns `/` on both hostnames. Warm boot is ~90s.
+
+- Humans: open https://android-emulator.viktorbarzin.me — it wakes the
+  emulator if needed, shows a self-refreshing boot page, then hands over to
+  the noVNC screen.
+- Agents (before adb): wake + poll, then connect:
+
+      curl -ks --resolve android-emulator.viktorbarzin.lan:443:10.0.20.203 https://android-emulator.viktorbarzin.lan/wake
+      until curl -ks --resolve android-emulator.viktorbarzin.lan:443:10.0.20.203 https://android-emulator.viktorbarzin.lan/status | grep -q '"ready": 1'; do sleep 5; done
+      adb connect 10.0.20.200:5555
+
 ## Endpoints
 
 | What | Where |
@@ -39,8 +54,10 @@ uninstall your test app when done, and presence-claim
   lives on the `android-emulator-sdk` PVC (`proxmox-lvm`); the entrypoint
   installs it idempotently. **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
-- The emulator renders via swiftshader (CPU) — deliberately NOT scheduled on
-  the contended T4 GPU node.
+- The emulator runs on the GPU node (k8s-node1) with a T4 time-slice and
+  `-gpu host` hardware rendering (~0.5–1 GiB VRAM while awake — scale-to-zero
+  keeps it transient); if GPU init fails it falls back to swiftshader (CPU)
+  automatically.
 
 ## Rebuilding the image (rare — tool/library bumps only)
 

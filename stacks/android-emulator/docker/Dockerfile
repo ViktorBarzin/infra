@@ -4,8 +4,8 @@
 # cmdline-tools and the native libraries the emulator needs at runtime.
 #
 # Rebuild + push (rare — only when tool/library versions bump):
-#   docker build -t forgejo.viktorbarzin.me/viktor/android-emulator:api36-v4 .
-#   docker push forgejo.viktorbarzin.me/viktor/android-emulator:api36-v4
+#   docker build -t forgejo.viktorbarzin.me/viktor/android-emulator:api36-v5 .
+#   docker push forgejo.viktorbarzin.me/viktor/android-emulator:api36-v5
 FROM eclipse-temurin:17-jdk-jammy
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpulse0 libgl1 libglu1-mesa libnss3 libasound2 libfontconfig1 \
     libx11-6 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 \
     libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 libxkbcommon0 \
+    libegl1 libgles2 \
     libxkbfile1 libsm6 libice6 libdbus-1-3 \
     # virtual display + browser viewing
     xvfb x11vnc novnc websockify openbox \
