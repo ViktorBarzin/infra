@@ -3,7 +3,7 @@ resource "kubernetes_namespace" "tuya-bridge" {
     name = "tuya-bridge"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.cluster
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }
@@ -75,8 +75,13 @@ resource "kubernetes_deployment" "tuya-bridge" {
         image_pull_secrets {
           name = "registry-credentials"
         }
+        # ghcr image (ADR-0002 off-infra builds); secret cloned by the kyverno
+        # sync-ghcr-credentials policy (safety net while the package is private).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
-          image             = "forgejo.viktorbarzin.me/viktor/tuya_bridge:${var.image_tag}"
+          image             = "ghcr.io/viktorbarzin/tuya_bridge:${var.image_tag}"
           image_pull_policy = "IfNotPresent"
           name              = "tuya-bridge"
           port {
