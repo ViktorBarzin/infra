@@ -19,10 +19,13 @@ variable "schedule" {
   default = "30 7 * * *"
 }
 
-# Mirrors stacks/claude-agent-service image tag — the image ships curl + jq.
+# :latest + Always per the owned-app CronJob convention. NOTE: the registry
+# no longer holds the sha tag the other claude-agent-service CronJobs pin
+# (2fd7670d) — they survive on node image caches only. When issue infra#19
+# migrates claude-agent-service to ghcr, repoint this image too.
 variable "image_tag" {
   type    = string
-  default = "2fd7670d"
+  default = "latest"
 }
 
 locals {
@@ -119,9 +122,10 @@ resource "kubernetes_cron_job_v1" "sweep" {
               name = "registry-credentials"
             }
             container {
-              name    = "sweep"
-              image   = local.image
-              command = ["/bin/sh", "/scripts/sweep.sh"]
+              name              = "sweep"
+              image             = local.image
+              image_pull_policy = "Always"
+              command           = ["/bin/sh", "/scripts/sweep.sh"]
               env_from {
                 secret_ref {
                   name = "ci-pipeline-health-creds"
