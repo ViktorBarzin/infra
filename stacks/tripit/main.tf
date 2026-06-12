@@ -820,3 +820,22 @@ module "ingress_planner_slack" {
   port             = 8080
   tls_secret_name  = var.tls_secret_name
 }
+
+# Bearer-only API host for the native Shell (tripit ADR-0017, viktor/tripit#49).
+# auth = "none": the backend itself validates OIDC bearer JWTs from the
+# tripit-app Authentik provider (AUTH_MODE=hybrid, tripit slice 2) — a WebView
+# client can't do the forward-auth cookie dance, and CORS preflights would die
+# at the outpost. strip-auth-headers deletes inbound X-authentik-* so the
+# hybrid fallback header can never be spoofed through this host.
+module "ingress_api" {
+  source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none"
+  anti_ai_scraping  = false
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.tripit.metadata[0].name
+  name              = "tripit-api"
+  service_name      = "tripit"
+  port              = 8080
+  tls_secret_name   = var.tls_secret_name
+  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
+}
