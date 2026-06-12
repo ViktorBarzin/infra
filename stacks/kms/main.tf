@@ -54,7 +54,7 @@ resource "kubernetes_deployment" "kms-web-page" {
           name = "registry-credentials"
         }
         container {
-          image             = "forgejo.viktorbarzin.me/viktor/kms-website:${var.image_tag}"
+          image             = "ghcr.io/viktorbarzin/kms-website:${var.image_tag}"
           name              = "kms-web-page"
           image_pull_policy = "IfNotPresent"
           resources {
