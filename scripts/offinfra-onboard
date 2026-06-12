@@ -70,6 +70,12 @@ FORGEJO_TOKEN=$(git -C "$CLONE" remote get-url "$FORGEJO_REMOTE" | sed -n 's#htt
 [ -n "$FORGEJO_TOKEN" ] || { echo "could not extract forgejo token (remote URL or ~/.git-credentials)" >&2; exit 1; }
 
 FJ() { curl -sf --resolve "$FORGEJO_HOST:443:$FORGEJO_LB" -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' "$@"; }
+
+# Clone must be clean and CURRENT — the final push goes straight to master
+# (hit live on job-hunter: stale clone -> rejected push + rebase conflict).
+[ -z "$(git -C "$CLONE" status --porcelain)" ] || { echo "clone $CLONE is dirty — commit/stash first" >&2; exit 1; }
+git -C "$CLONE" fetch "$FORGEJO_REMOTE" >/dev/null 2>&1
+git -C "$CLONE" merge --ff-only "$FORGEJO_REMOTE/master" >/dev/null 2>&1 || { echo "clone $CLONE could not fast-forward to $FORGEJO_REMOTE/master" >&2; exit 1; }
 WP() { curl -sf -H "Authorization: Bearer $WP_TOKEN" -H 'Content-Type: application/json' "$@"; }
 
 # --- 1) GitHub mirror repo ---
