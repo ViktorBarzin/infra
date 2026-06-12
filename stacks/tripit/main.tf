@@ -30,12 +30,22 @@ locals {
   # (keys via the tripit-secrets ExternalSecret), WEATHER_PROVIDER=openmeteo,
   # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=fake and
   # MAIL_INGEST_ENABLED=false here (the ingest-plans CronJob overrides both).
-  # AUTH_MODE=forwardauth: the backend trusts the Authentik-injected
-  # X-authentik-email header (forward-auth at the ingress). STORAGE_DIR points
-  # at the RWX NFS PVC — the app's default ./var is not writable by the
-  # non-root user.
+  # AUTH_MODE=hybrid (tripit ADR-0017, image >= 81a816f7): a Bearer JWT from
+  # the tripit-app Authentik provider wins (validated in-app against OIDC_*);
+  # otherwise the backend trusts the Authentik-injected X-authentik-email
+  # header exactly as forwardauth did (browser path unchanged; the tripit-api
+  # ingress strips inbound X-authentik-* so the fallback can't be spoofed).
+  # STORAGE_DIR points at the RWX NFS PVC — the app's default ./var is not
+  # writable by the non-root user.
   app_env = {
-    AUTH_MODE            = "forwardauth"
+    AUTH_MODE     = "hybrid"
+    OIDC_ISSUER   = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
+    OIDC_JWKS_URL = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
+    OIDC_AUDIENCE = "tripit-app"
+    # OTA Web bundles (ADR-0014): the signed zip URL must point at the
+    # bearer-only host — the in-app request-derived base would be wrong
+    # behind the proxy (uvicorn doesn't trust forwarded headers).
+    BUNDLE_PUBLIC_BASE   = "https://tripit-api.viktorbarzin.me"
     SERVE_FRONTEND_DIR   = "/app/frontend_build"
     STORAGE_DIR          = "/data/documents"
     PERSONAL_STORAGE_DIR = "/data/personal-documents"
@@ -187,6 +197,9 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "VAPID_PRIVATE_KEY", remoteRef = { key = "tripit", property = "VAPID_PRIVATE_KEY" } },
         { secretKey = "VAPID_SUBJECT", remoteRef = { key = "tripit", property = "VAPID_SUBJECT" } },
         { secretKey = "CALENDAR_TOKEN_SECRET", remoteRef = { key = "tripit", property = "CALENDAR_TOKEN_SECRET" } },
+        # HMAC secret signing the short-lived OTA Web-bundle zip URLs (ADR-0014
+        # addendum; the Shell's native downloader can't send auth headers).
+        { secretKey = "BUNDLE_TOKEN_SECRET", remoteRef = { key = "tripit", property = "BUNDLE_TOKEN_SECRET" } },
         { secretKey = "DOCUMENT_ENCRYPTION_KEY", remoteRef = { key = "tripit", property = "DOCUMENT_ENCRYPTION_KEY" } },
         { secretKey = "IMAP_PASSWORD", remoteRef = { key = "tripit", property = "IMAP_PASSWORD" } },
         # spam@viktorbarzin.me password — used only by the ingest-plans CronJob
