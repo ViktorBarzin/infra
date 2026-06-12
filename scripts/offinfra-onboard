@@ -132,6 +132,16 @@ else
   log "Woodpecker repo id = $WP_REPO_ID"
 fi
 
+# Normalize repo settings: TRUSTED repos get netrc injected into EVERY step
+# container; bitnami/kubectl (non-root, HOME=/) then dies with
+# "//.netrc: Permission denied" (hit live on f1-stream repo 10, an old-era
+# registration that carried trusted=true; tripit 167 is untrusted and works).
+if [ "$DRY_RUN" = 0 ]; then
+  run WP -X PATCH "$WP_API/repos/$WP_REPO_ID" \
+    -d '{"trusted":{"network":false,"volumes":false,"security":false}}' >/dev/null \
+    && log "Woodpecker repo settings normalized (untrusted)"
+fi
+
 # --- 5) Render workflow + deploy files into the clone ---
 DEPLOY_CMDS=""
 for d in "${DEPLOYS[@]}"; do
