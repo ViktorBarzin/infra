@@ -83,12 +83,32 @@ x11vnc -display :0 -nopw -forever -shared -quiet -bg
 websockify --web /usr/share/novnc 6080 localhost:5900 &
 
 # --- emulator -----------------------------------------------------------------
-# swiftshader = CPU rendering (no GPU dependency); KVM does the heavy lifting.
-emulator -avd "$AVD_NAME" \
-  -gpu swiftshader_indirect -accel on \
-  -memory "$EMULATOR_RAM_MB" \
-  -no-audio -no-boot-anim \
-  &
+# Use the host GPU when the NVIDIA runtime injected one (driver libs +
+# /dev/nvidia* appear when the pod requests nvidia.com/gpu), otherwise
+# swiftshader (CPU rendering). If the GPU launch dies early, fall back to
+# swiftshader automatically so the worst case equals CPU rendering.
+GPU_FLAG="swiftshader_indirect"
+[ -e /dev/nvidiactl ] && GPU_FLAG="host"
+echo "Emulator GPU mode: $GPU_FLAG"
+
+launch_emulator() {
+  emulator -avd "$AVD_NAME" \
+    -gpu "$1" -accel on \
+    -memory "$EMULATOR_RAM_MB" \
+    -no-audio -no-boot-anim \
+    &
+  EMU_PID=$!
+}
+
+launch_emulator "$GPU_FLAG"
+if [ "$GPU_FLAG" = "host" ]; then
+  sleep 25
+  if ! kill -0 "$EMU_PID" 2>/dev/null; then
+    echo "GPU launch (-gpu host) died early — falling back to swiftshader." >&2
+    rm -f "${ANDROID_AVD_HOME}/${AVD_NAME}.avd"/*.lock
+    launch_emulator swiftshader_indirect
+  fi
+fi
 
 adb wait-for-device
 echo "Emulator up; waiting for boot completion..."
