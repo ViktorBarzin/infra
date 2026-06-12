@@ -65,7 +65,9 @@ GH_PAT=$(vault kv get -field=github_pat secret/viktor)
 FORGEJO_REMOTE=$(git -C "$CLONE" remote -v | awk -v h="$FORGEJO_HOST" '$2 ~ h && $3 == "(push)" {print $1; exit}')
 [ -n "$FORGEJO_REMOTE" ] || { echo "no forgejo remote in $CLONE" >&2; exit 1; }
 FORGEJO_TOKEN=$(git -C "$CLONE" remote get-url "$FORGEJO_REMOTE" | sed -n 's#https://[^:]*:\([^@]*\)@.*#\1#p')
-[ -n "$FORGEJO_TOKEN" ] || { echo "could not extract forgejo token from remote URL" >&2; exit 1; }
+# Fallback: clones using the credential-store helper carry no token in the URL
+[ -n "$FORGEJO_TOKEN" ] || FORGEJO_TOKEN=$(sed -n "s#https://[^:]*:\([^@]*\)@$FORGEJO_HOST.*#\1#p" ~/.git-credentials 2>/dev/null | head -1)
+[ -n "$FORGEJO_TOKEN" ] || { echo "could not extract forgejo token (remote URL or ~/.git-credentials)" >&2; exit 1; }
 
 FJ() { curl -sf --resolve "$FORGEJO_HOST:443:$FORGEJO_LB" -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' "$@"; }
 WP() { curl -sf -H "Authorization: Bearer $WP_TOKEN" -H 'Content-Type: application/json' "$@"; }
