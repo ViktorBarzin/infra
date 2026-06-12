@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# offinfra-onboard — migrate a Canonical (Forgejo) repo's image build to
+# GitHub Actions → ghcr.io (ADR-0002, PRD infra#10). Idempotent: re-running
+# skips every already-done step.
+#
+# What it does:
+#   1. Ensures the GitHub mirror repo exists (right visibility; unarchives).
+#   2. Sets GHA secrets (WOODPECKER_TOKEN, FORGEJO_GIT_TOKEN, SLACK_WEBHOOK).
+#   3. Ensures the Forgejo push-mirror (sync_on_commit) + fires an initial sync.
+#   4. Registers the mirror in Woodpecker (github forge) → deploy repo id.
+#   5. Renders .github/workflows/build.yml + .woodpecker/deploy.yml into the
+#      clone, removes the old in-cluster build pipeline.
+#   6. Commits on the FORGEJO side and pushes master (this fires the chain).
+#   7. Flips the GitHub default branch to master once the mirror has synced.
+#
+# Usage:
+#   offinfra-onboard <name> --clone <path> --visibility private|public \
+#     --namespace <ns> --deploy "<deployment>=<container>[,<container>...]" \
+#     [--image <ghcr-image-name>] [--context <docker-context>] \
+#     [--test-steps <yaml-file>] [--dry-run]
+#
+#   --deploy is repeatable. --test-steps points at a YAML fragment of extra
+#   steps for the lint-and-test job (indented for a `steps:` list); omitted =
+#   a no-op test job.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+TEMPLATES="$SCRIPT_DIR/offinfra-templates"
+GH_OWNER="ViktorBarzin"
+FORGEJO_HOST="forgejo.viktorbarzin.me"
+FORGEJO_LB="10.0.20.203"
+WP_API="https://ci.viktorbarzin.me/api"
+
+NAME=${1:?usage: offinfra-onboard <name> [flags]}; shift
+CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." TEST_STEPS_FILE="" DRY_RUN=0
+DEPLOYS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --clone) CLONE=$2; shift 2;;
+    --visibility) VISIBILITY=$2; shift 2;;
+    --namespace) NAMESPACE=$2; shift 2;;
+    --image) IMAGE=$2; shift 2;;
+    --context) CONTEXT=$2; shift 2;;
+    --deploy) DEPLOYS+=("$2"); shift 2;;
+    --test-steps) TEST_STEPS_FILE=$2; shift 2;;
+    --dry-run) DRY_RUN=1; shift;;
+    *) echo "unknown flag: $1" >&2; exit 1;;
+  esac
+done
+IMAGE=${IMAGE:-$NAME}
+[ -n "$CLONE" ] && [ -d "$CLONE/.git" ] || { echo "--clone must point at a git clone" >&2; exit 1; }
+[ "$VISIBILITY" = "private" ] || [ "$VISIBILITY" = "public" ] || { echo "--visibility private|public" >&2; exit 1; }
+[ -n "$NAMESPACE" ] || { echo "--namespace required" >&2; exit 1; }
+[ ${#DEPLOYS[@]} -gt 0 ] || { echo "at least one --deploy required" >&2; exit 1; }
+
+log() { printf '\033[1m[%s]\033[0m %s\n' "$NAME" "$*"; }
+run() { if [ "$DRY_RUN" = 1 ]; then echo "DRY: $*"; else "$@"; fi; }
+
+# --- credentials ---
+export VAULT_ADDR=${VAULT_ADDR:-https://vault.viktorbarzin.me}
+WP_TOKEN=$(vault kv get -field=woodpecker_api_token secret/ci/global)
+SLACK_WEBHOOK=$(vault kv get -field=slack_webhook secret/ci/global)
+GH_PAT=$(vault kv get -field=github_pat secret/viktor)
+# Forgejo token: from the clone's forgejo remote URL (the documented contract)
+FORGEJO_REMOTE=$(git -C "$CLONE" remote -v | awk -v h="$FORGEJO_HOST" '$2 ~ h && $3 == "(push)" {print $1; exit}')
+[ -n "$FORGEJO_REMOTE" ] || { echo "no forgejo remote in $CLONE" >&2; exit 1; }
+FORGEJO_TOKEN=$(git -C "$CLONE" remote get-url "$FORGEJO_REMOTE" | sed -n 's#https://[^:]*:\([^@]*\)@.*#\1#p')
+[ -n "$FORGEJO_TOKEN" ] || { echo "could not extract forgejo token from remote URL" >&2; exit 1; }
+
+FJ() { curl -sf --resolve "$FORGEJO_HOST:443:$FORGEJO_LB" -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' "$@"; }
+WP() { curl -sf -H "Authorization: Bearer $WP_TOKEN" -H 'Content-Type: application/json' "$@"; }
+
+# --- 1) GitHub mirror repo ---
+if state=$(gh api "repos/$GH_OWNER/$NAME" --jq '{archived,private}' 2>/dev/null); then
+  archived=$(jq -r .archived <<<"$state"); private=$(jq -r .private <<<"$state")
+  if [ "$archived" = "true" ]; then
+    log "GitHub repo exists but is ARCHIVED — unarchiving"
+    run gh api -X PATCH "repos/$GH_OWNER/$NAME" -F archived=false >/dev/null
+  fi
+  want_private=$([ "$VISIBILITY" = private ] && echo true || echo false)
+  if [ "$private" != "$want_private" ]; then
+    log "setting visibility -> $VISIBILITY"
+    run gh api -X PATCH "repos/$GH_OWNER/$NAME" -F private="$want_private" >/dev/null
+  else
+    log "GitHub repo visibility already $VISIBILITY — SKIP"
+  fi
+else
+  log "creating GitHub mirror repo ($VISIBILITY)"
+  run gh repo create "$GH_OWNER/$NAME" "--$VISIBILITY" \
+    --description "One-way mirror of forgejo viktor/$NAME — do NOT commit here (ADR-0002)" >/dev/null
+fi
+
+# --- 2) GHA secrets ---
+log "setting GHA secrets (WOODPECKER_TOKEN, FORGEJO_GIT_TOKEN, SLACK_WEBHOOK)"
+if [ "$DRY_RUN" = 0 ]; then
+  gh secret set WOODPECKER_TOKEN  -R "$GH_OWNER/$NAME" --body "$WP_TOKEN"
+  gh secret set FORGEJO_GIT_TOKEN -R "$GH_OWNER/$NAME" --body "$FORGEJO_TOKEN"
+  gh secret set SLACK_WEBHOOK     -R "$GH_OWNER/$NAME" --body "$SLACK_WEBHOOK"
+fi
+
+# --- 3) Forgejo push-mirror ---
+mirrors=$(FJ "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors" || echo '[]')
+if printf '%s' "$mirrors" | jq -e --arg a "github.com/$GH_OWNER/$NAME" '.[] | select(.remote_address | contains($a))' >/dev/null 2>&1; then
+  log "push-mirror already configured — SKIP"
+else
+  log "creating push-mirror -> github.com/$GH_OWNER/$NAME (sync_on_commit)"
+  run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors" \
+    -d "{\"remote_address\":\"https://github.com/$GH_OWNER/$NAME.git\",\"remote_username\":\"$GH_OWNER\",\"remote_password\":$(jq -Rn --arg p "$GH_PAT" '$p'),\"interval\":\"8h0m0s\",\"sync_on_commit\":true}" >/dev/null
+fi
+log "firing initial mirror sync"
+run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors-sync" >/dev/null || true
+
+# --- 4) Woodpecker registration (github forge) ---
+WP_REPO_ID=$(WP "$WP_API/repos?perPage=100" | jq -r --arg n "$GH_OWNER/$NAME" '.[] | select(.full_name == $n) | .id' | head -1)
+if [ -n "$WP_REPO_ID" ]; then
+  log "Woodpecker repo already registered (id=$WP_REPO_ID) — SKIP"
+else
+  GH_REPO_ID=$(gh api "repos/$GH_OWNER/$NAME" --jq .id)
+  log "registering mirror in Woodpecker (forge_remote_id=$GH_REPO_ID)"
+  if [ "$DRY_RUN" = 0 ]; then
+    WP_REPO_ID=$(WP -X POST "$WP_API/repos?forge_remote_id=$GH_REPO_ID" | jq -r .id)
+  else
+    WP_REPO_ID="DRY"
+  fi
+  log "Woodpecker repo id = $WP_REPO_ID"
+fi
+
+# --- 5) Render workflow + deploy files into the clone ---
+DEPLOY_CMDS=""
+for d in "${DEPLOYS[@]}"; do
+  dep=${d%%=*}; containers=${d#*=}
+  setargs=""
+  IFS=',' read -ra cs <<<"$containers"
+  for c in "${cs[@]}"; do setargs="$setargs $c=\${IMAGE_NAME}:\${IMAGE_TAG}"; done
+  DEPLOY_CMDS="$DEPLOY_CMDS      - \"kubectl -n $NAMESPACE set image deployment/$dep$setargs\"\n"
+  DEPLOY_CMDS="$DEPLOY_CMDS      - \"kubectl -n $NAMESPACE rollout status deployment/$dep --timeout=300s\"\n"
+done
+if [ -n "$TEST_STEPS_FILE" ]; then
+  TEST_STEPS=$(cat "$TEST_STEPS_FILE")
+else
+  TEST_STEPS='      - run: echo "no test steps configured"'
+fi
+
+export T_NAME=$NAME T_IMAGE=$IMAGE T_CONTEXT=$CONTEXT T_WPID=$WP_REPO_ID T_TEST="$TEST_STEPS" T_DEPLOY="$DEPLOY_CMDS"
+render() { # $1=template $2=dest
+  python3 - "$1" "$2" <<'PYEOF'
+import os, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+s = s.replace('{{NAME}}', os.environ['T_NAME'])
+s = s.replace('{{IMAGE}}', os.environ['T_IMAGE'])
+s = s.replace('{{CONTEXT}}', os.environ['T_CONTEXT'])
+s = s.replace('{{WP_REPO_ID}}', os.environ['T_WPID'])
+s = s.replace('{{TEST_STEPS}}', os.environ['T_TEST'])
+s = s.replace('{{DEPLOY_CMDS}}', os.environ['T_DEPLOY'].replace('\\n', '\n').rstrip('\n'))
+os.makedirs(os.path.dirname(dst), exist_ok=True)
+open(dst, 'w').write(s)
+PYEOF
+}
+log "rendering build.yml + deploy.yml"
+if [ "$DRY_RUN" = 0 ]; then
+  render "$TEMPLATES/build.yml.tmpl"  "$CLONE/.github/workflows/build.yml"
+  render "$TEMPLATES/deploy.yml.tmpl" "$CLONE/.woodpecker/deploy.yml"
+fi
+
+# --- 6) Remove old in-cluster build pipeline + commit on Forgejo side ---
+cd "$CLONE"
+OLD_REMOVED=""
+for f in .woodpecker.yml .woodpecker/build.yml .woodpecker/build-fallback.yml; do
+  [ -f "$f" ] && { run git rm -q "$f"; OLD_REMOVED="$OLD_REMOVED $f"; }
+done
+run git add .github/workflows/build.yml .woodpecker/deploy.yml
+if git diff --cached --quiet 2>/dev/null; then
+  log "no changes to commit — SKIP (already migrated)"
+else
+  log "committing + pushing to forgejo master (this fires the chain)"
+  run git commit -q -m "ci: move image build off-infra to GHA -> ghcr (ADR-0002)
+
+Generated by infra/scripts/offinfra-onboard: GHA builds+tests on the
+GitHub mirror, pushes ghcr.io/viktorbarzin/$IMAGE, then triggers the
+Woodpecker deploy (repo $WP_REPO_ID). Old in-cluster build pipeline
+removed:$OLD_REMOVED
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  run git push "$FORGEJO_REMOTE" master
+fi
+
+# --- 7) GitHub default branch -> master (after mirror sync) ---
+if [ "$DRY_RUN" = 0 ]; then
+  for i in $(seq 1 24); do
+    if gh api "repos/$GH_OWNER/$NAME/branches/master" >/dev/null 2>&1; then
+      cur=$(gh api "repos/$GH_OWNER/$NAME" --jq .default_branch)
+      [ "$cur" != "master" ] && gh api -X PATCH "repos/$GH_OWNER/$NAME" -F default_branch=master >/dev/null && log "default branch -> master"
+      break
+    fi
+    sleep 5
+  done
+fi
+
+log "DONE. Verify the chain:"
+echo "  - GHA run:    gh run list -R $GH_OWNER/$NAME --limit 3"
+echo "  - ghcr tags:  (token exchange) https://ghcr.io/v2/viktorbarzin/$IMAGE/tags/list"
+echo "  - WP deploy:  $WP_API/repos/$WP_REPO_ID/pipelines"
+echo "  - rollout:    kubectl -n $NAMESPACE get deploy"
+echo "  - pull secret: ensure the Deployment carries ghcr-credentials (Kyverno allowlist + stack imagePullSecrets)"
