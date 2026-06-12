@@ -47,6 +47,11 @@ resource "kubernetes_secret" "ghcr_credentials" {
 }
 
 resource "kubectl_manifest" "sync_ghcr_credentials" {
+  # Kyverno's validate-policy webhook DENIES in-place changes to a generate
+  # rule's spec ("changes of immutable fields ... is disallowed"), so any
+  # allowlist edit must delete+recreate the policy. Generated secrets survive
+  # policy deletion; generateExisting re-adopts them on recreate.
+  force_new = true
   yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
     kind       = "ClusterPolicy"
