@@ -78,14 +78,14 @@ Violations cause state drift, which causes future applies to break or silently r
 ## Resource Management Patterns
 - **CPU**: All CPU limits removed cluster-wide (CFS throttling). Only set CPU requests based on actual usage.
 - **Memory**: Set explicit `requests=limits` based on VPA upperBound. Target: upperBound x 1.2 for stable services, x 1.3 for GPU/volatile workloads.
-- **VPA (Goldilocks)**: Must be `Initial` mode (not `Auto`) — Auto conflicts with Terraform's declarative resource management.
+- **Right-sizing**: VPA/Goldilocks was **REMOVED 2026-06-12** (etcd-load-reduction — 349 VPAs all ran `updateMode=Off`, costing ~800 etcd objects + continuous recommender writes + a pod-creation admission webhook for dashboard-only value). Right-size **on demand with `krr`** (Robusta, Dockerized from the devvm — no cluster install, no admission webhook, no eviction risk; reads Prometheus). Set container resources explicitly in TF from krr output.
 - **LimitRange**: Tier-based defaults silently apply to pods with `resources: {}`. Always set explicit resources on containers needing more than defaults. Tier 3-edge and 4-aux now use Burstable QoS (request < limit) to reduce scheduler pressure.
 - **Democratic-CSI sidecars**: Must set explicit resources (32-80Mi) in Helm values — 17 sidecars default to 256Mi each via LimitRange. `csiProxy` is a TOP-LEVEL chart key, not nested under controller/node.
 - **ResourceQuota blocks rolling updates**: When quota is tight, scale to 0 then back to 1 instead of RollingUpdate. Or use Recreate strategy.
 - **Kyverno ndots drift**: Kyverno injects dns_config on all pods. Every `kubernetes_deployment`, `kubernetes_stateful_set`, and `kubernetes_cron_job_v1` MUST include `lifecycle { ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1 }` (use `spec[0].job_template[0].spec[0].template[0].spec[0].dns_config` for CronJobs). The `# KYVERNO_LIFECYCLE_V1` marker is the canonical discoverability tag — grep for it to locate every site. A shared Terraform module was considered but `ignore_changes` only accepts static attribute paths (not module outputs, locals, or expressions), so the snippet convention is the only viable path. Full rationale and copy-paste snippets in `AGENTS.md` → "Kyverno Drift Suppression".
 - **NVIDIA GPU operator resources**: dcgm-exporter and cuda-validator resources configurable via `dcgmExporter.resources` and `validator.resources` in nvidia values.yaml.
 - **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
-- **Quarterly right-sizing**: Check Goldilocks dashboard. Compare VPA upperBound to current request. Also check for under-provisioned (VPA upper > request x 0.8).
+- **Quarterly right-sizing**: Run `krr` (Dockerized, against Prometheus) for recommendations; compare to current requests and adjust in TF. (Goldilocks dashboard removed 2026-06-12.)
 
 ## CI/CD Architecture — GHA Builds + Woodpecker Deploy
 
@@ -318,7 +318,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 - **CrowdSec Helm upgrade times out**: `terragrunt apply` on platform stack causes CrowdSec Helm release to get stuck in `pending-upgrade`. Workaround: `helm rollback crowdsec <rev> -n crowdsec`. Root cause: likely ResourceQuota CPU at 302% preventing pods from passing readiness probes. Needs investigation.
 - **OpenClaw config is writable**: OpenClaw writes to `openclaw.json` at runtime (doctor --fix, plugin auto-enable). Never use subPath ConfigMap mounts for it — use an init container to copy into a writable volume. Needs 2Gi memory + `NODE_OPTIONS=--max-old-space-size=1536`. **`mcp.servers` baked into the ConfigMap-loaded openclaw.json gets stripped by `doctor --fix`** — register MCP servers via `openclaw mcp set <name> <json>` in the container startup command instead (CLI-written entries persist across doctor runs). Current servers wired this way: `ha`, `context7`, `playwright` (sidecar at `localhost:3000/mcp`).
 - **OpenClaw memory-core indexes `/workspace/memory/`, not `/home/node/.openclaw/memory/`**: `/home/node/.openclaw/memory/main.sqlite` is the index store, NOT a content source. Files written under `/home/node/.openclaw/memory/projects/<x>/*.md` will NOT be indexed. To populate memory-core, write Markdown under `/workspace/memory/projects/<source>/` and run `openclaw memory index --force`. This is what the daily `memory-sync` CronJob in `stacks/openclaw/` does for claude-memory → OpenClaw sync.
-- **Goldilocks VPA sets limits**: When increasing memory requests, always set explicit `limits` too — Goldilocks may have added a limit that blocks the change.
+- **(Obsolete 2026-06-12) Goldilocks VPA**: VPA/Goldilocks was uninstalled (etcd-load-reduction); the old "Goldilocks may have added a limit that blocks the change" gotcha no longer applies. Use `krr` for right-sizing.
 
 ## User Preferences
 - **Calendar**: Nextcloud at `nextcloud.viktorbarzin.me`

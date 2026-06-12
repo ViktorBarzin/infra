@@ -52,7 +52,7 @@ namespaceOverride: ""
 commonLabels: {}
 
 cronJobApiVersion: "batch/v1"
-schedule: "*/5 * * * *"
+schedule: "0 * * * *"  # hourly (was */5; 2026-06-12 etcd-load-reduction — fewer list/evict cycles, rebalancing isn't time-critical)
 suspend: false
 # startingDeadlineSeconds: 200
 successfulJobsHistoryLimit: 10
