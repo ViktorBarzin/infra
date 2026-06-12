@@ -319,6 +319,31 @@ resource "kubernetes_manifest" "middleware_actualbudget_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# TripIt-specific rate limit. The trip Photos tab proxies every Immich
+# thumbnail through tripit's own /api — scrolling a few-hundred-photo trip
+# fires that many parallel image GETs from one client IP, and the default
+# 10/50 limiter 429s the tail (fourth instance of the parallel-asset
+# pattern, after ha-sofia, ActualBudget, and noVNC). Burst must absorb a
+# full trip-gallery scroll plus lightbox prefetches.
+resource "kubernetes_manifest" "middleware_tripit_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "tripit-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
