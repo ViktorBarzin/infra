@@ -598,6 +598,19 @@ resource "vault_policy" "terraform_state" {
     path "secret/metadata/vault" {
       capabilities = ["deny"]
     }
+    # Explicit deny on the breakglass SSH key (added with the claude-breakglass
+    # stack, 2026-06-12). That key grants root-on-devvm + PVE VM-102 power
+    # verbs; it must NOT be readable by the shared claude-agent pod, whose
+    # agents (recruiter-triage, nextcloud-todos-exec) ingest untrusted input
+    # with Bash. The breakglass pod runs in its own namespace with NO Vault
+    # role and gets the key via ESO only. See
+    # claude-agent-service/docs/adr/0001-breakglass-security-architecture.md.
+    path "secret/data/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
   EOT
 }
 
