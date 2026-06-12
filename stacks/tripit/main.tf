@@ -760,6 +760,12 @@ module "ingress" {
   name            = "tripit"
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  # The Photos tab proxies Immich thumbnails through /api — a trip-gallery
+  # scroll is hundreds of parallel image GETs, far past the default 10/50
+  # limiter. Dedicated 100/1000 middleware (stacks/traefik middleware.tf);
+  # the calendar/email carve-out ingresses below stay on the default.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-tripit-rate-limit@kubernetescrd"]
 }
 
 # Calendar feed carve-out for the same host: path /api/calendar served by the
