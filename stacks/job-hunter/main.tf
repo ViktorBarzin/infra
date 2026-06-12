@@ -175,6 +175,11 @@ resource "kubernetes_deployment" "job_hunter" {
         image_pull_secrets {
           name = "registry-credentials"
         }
+        # Private ghcr image (ADR-0002 off-infra builds) — cloned into this
+        # namespace by the kyverno sync-ghcr-credentials allowlist policy.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
 
         init_container {
           name    = "alembic-migrate"
