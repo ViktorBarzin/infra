@@ -54,10 +54,12 @@ uninstall your test app when done, and presence-claim
   lives on the `android-emulator-sdk` PVC (`proxmox-lvm`); the entrypoint
   installs it idempotently. **First boot downloads ~2.5GB (≈9GB unpacked on the PVC) and takes ~15 min**
   (startup probe allows 30); subsequent restarts boot in ~1–2 min.
-- The emulator runs on the GPU node (k8s-node1) with a T4 time-slice and
-  `-gpu host` hardware rendering (~0.5–1 GiB VRAM while awake — scale-to-zero
-  keeps it transient); if GPU init fails it falls back to swiftshader (CPU)
-  automatically.
+- The emulator runs on the GPU node (k8s-node1) with a T4 time-slice
+  (qemu holds ~100 MiB VRAM while awake; scale-to-zero keeps it transient).
+  Guest GL is deliberately SOFTWARE (llvmpipe): rendering into Xvfb pins GL
+  to the X stack, and true NVIDIA headless GL would need -no-window plus the
+  emulator's own streaming instead of x11vnc — not worth it at the measured
+  CPU numbers below.
 
 ## Rebuilding the image (rare — tool/library bumps only)
 
@@ -81,15 +83,16 @@ doesn't warrant CI plumbing (the off-infra-CI rule targets *repeated* build IO).
 - Different API level: set `API_LEVEL` env on the deployment (entrypoint
   installs that system image on the same PVC) or recreate the AVD.
 
-## Resource profile (measured 2026-06-12)
+## Resource profile (measured 2026-06-12, v6 on node1)
 
-- **Memory**: ~5.8Gi steady (limit 8Gi, requests 3Gi — Burstable inside the tier-1 quota).
-- **CPU**: ~1.8 cores idle with the screen off; **5+ cores with the screen on**
-  (any on-screen animation forces continuous swiftshader rendering + VNC
-  encoding). Etiquette: turn the screen off when you finish a session —
-  `adb -s 10.0.20.200:5555 shell input keyevent KEYCODE_POWER` (and the same
-  to wake it).
-- **Disk**: ~7G of the 30Gi PVC.
+- **Asleep (scaled to zero)**: nothing — the gate (~10m CPU/13Mi) is the only
+  standing cost.
+- **Awake**: settles to **~0.5–1.3 cores** with a static screen (on or off),
+  ~4.8–5.2 Gi memory (limit 8 Gi, requests 3 Gi), ~100 MiB T4 VRAM. Boot
+  bursts 5–9 cores for the first few minutes (dex2oat etc.).
+- **Disk**: ~7 G of the 30 Gi PVC.
+- Etiquette still applies for long sessions with animated content:
+  `adb -s 10.0.20.200:5555 shell input keyevent KEYCODE_SLEEP` when done.
 
 ## Remote access
 
