@@ -96,6 +96,16 @@ locals {
     CALENDAR_CONFLICT_PROVIDER = "nextcloud"
     NEXTCLOUD_CALDAV_BASE      = "https://nextcloud.viktorbarzin.me/remote.php/dav"
     NEXTCLOUD_CALDAV_USER      = "admin"
+    # Live "Research this" agent (tripit issue #23, ADR-0008): opt-in per-Decision
+    # research via the in-cluster claude-agent-service (the `trip-planner` agent),
+    # budget-capped ~$2/run, bounded to a wall-clock deadline so a slow agent
+    # degrades to "found nothing" rather than a 504. Reuses CLAUDE_AGENT_TOKEN
+    # (already in tripit-secrets, shared with the tour ScriptWriter + planner bot)
+    # — shares the Anthropic OAuth quota, hence opt-in not always-on. Flipped live
+    # 2026-06-11 after a prod-pod behaviour review (country_when proposed
+    # not-yet-visited countries + real UK bank-holiday leave windows + fares).
+    # `claude_agent` mode requires images >= the #23 slice (already deployed).
+    RESEARCH_PROVIDER = "claude_agent"
     # Tour-guide content pipeline (tripit#24/#25): these three default to `fake`
     # in tripit's config, which is what shipped dark on 2026-06-08 — prod only
     # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
