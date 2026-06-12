@@ -374,6 +374,36 @@ resource "kubernetes_deployment" "chatterbox" {
           name = kubernetes_secret.ghcr_credentials.metadata[0].name
         }
 
+        # tripit's voice catalog sends bare stems ("Emily"); the server resolves
+        # the voice as a LITERAL filename in predefined_voices_path THEN in
+        # reference_audio (404 otherwise, observed 2026-06-12: all 27 queued
+        # narrations failed with "Voice file 'Emily' not found"). Upstream HEAD
+        # (= our pinned sha) has no stem fallback, and symlinks can't bridge it
+        # because safe_resolve_within() .resolve()s them out of the containment
+        # check. So seed REAL extension-less copies of the bundled voices into
+        # reference_audio on the PVC (the second lookup path). Same image as the
+        # main container = no extra pull; idempotent; ~15 MB once. The engine
+        # sniffs audio content, not extensions.
+        init_container {
+          name  = "seed-stem-voices"
+          image = local.image
+          command = ["sh", "-c", <<-EOC
+            set -eu
+            mkdir -p /data/reference_audio
+            for f in /app/voices/*.wav /app/voices/*.mp3; do
+              [ -e "$f" ] || continue
+              stem="$(basename "$f")"; stem="$${stem%.*}"
+              [ -e "/data/reference_audio/$stem" ] || cp "$f" "/data/reference_audio/$stem"
+            done
+            echo "reference_audio seeded:"; ls /data/reference_audio
+          EOC
+          ]
+          volume_mount {
+            name       = "models"
+            mount_path = "/data"
+          }
+        }
+
         container {
           name  = "chatterbox-tts"
           image = local.image
