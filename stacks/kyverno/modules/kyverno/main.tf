@@ -30,7 +30,22 @@ resource "helm_release" "kyverno" {
       forceFailurePolicyIgnore = {
         enabled = true
       }
+      # Reporting fully disabled (2026-06-12, etcd-load-reduction). policyReports
+      # were already off, so admission/aggregate/background reporting generated
+      # ephemeralreports + an hourly all-resource etcd re-scan for NO user-facing
+      # output. Admission enforcement (deny-* policies) and Keel mutation are
+      # independent of reporting; policy violations surface via Loki->Slack. This
+      # removes a steady-state etcd write/scan load (control-plane flap mitigation).
       policyReports = {
+        enabled = false
+      }
+      admissionReports = {
+        enabled = false
+      }
+      aggregateReports = {
+        enabled = false
+      }
+      backgroundScan = {
         enabled = false
       }
     }
