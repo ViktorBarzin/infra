@@ -111,9 +111,16 @@ log "firing initial mirror sync"
 run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors-sync" >/dev/null || true
 
 # --- 4) Woodpecker registration (github forge) ---
-WP_REPO_ID=$(WP "$WP_API/repos?perPage=100" | jq -r --arg n "$GH_OWNER/$NAME" '.[] | select(.full_name == $n) | .id' | head -1)
-if [ -n "$WP_REPO_ID" ]; then
-  log "Woodpecker repo already registered (id=$WP_REPO_ID) — SKIP"
+WP_ROW=$(WP "$WP_API/repos?perPage=100" | jq -c --arg n "$GH_OWNER/$NAME" '[.[] | select(.full_name == $n)] | first // empty')
+WP_REPO_ID=$(jq -r '.id // empty' <<<"$WP_ROW")
+if [ -n "$WP_REPO_ID" ] && [ "$(jq -r .active <<<"$WP_ROW")" = "true" ]; then
+  log "Woodpecker repo already registered + active (id=$WP_REPO_ID) — SKIP"
+elif [ -n "$WP_REPO_ID" ]; then
+  # Registered but INACTIVE (e.g. the old GHA-era registration was
+  # deactivated — hit live on f1-stream, repo 10): re-activate in place.
+  GH_REPO_ID=$(gh api "repos/$GH_OWNER/$NAME" --jq .id)
+  log "Woodpecker repo $WP_REPO_ID exists but is INACTIVE — re-activating"
+  run WP -X POST "$WP_API/repos?forge_remote_id=$GH_REPO_ID" >/dev/null
 else
   GH_REPO_ID=$(gh api "repos/$GH_OWNER/$NAME" --jq .id)
   log "registering mirror in Woodpecker (forge_remote_id=$GH_REPO_ID)"
