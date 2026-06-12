@@ -9,7 +9,7 @@ variable "postgresql_host" { type = string }
 locals {
   namespace = "job-hunter"
   # Phase 3 cutover 2026-05-07 — see infra/docs/plans/2026-05-07-forgejo-registry-consolidation-plan.md.
-  image = "forgejo.viktorbarzin.me/viktor/job-hunter:${var.image_tag}"
+  image = "ghcr.io/viktorbarzin/job-hunter:${var.image_tag}"
   labels = {
     app = "job-hunter"
   }
