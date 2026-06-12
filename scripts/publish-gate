@@ -45,7 +45,7 @@ fi
 # --- 3. PII heuristics on tracked files ---
 say ""; say "-- PII heuristics (tracked files) --"
 cd "$CLONE"
-EMAILS=$(git grep -hoiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' -- ':!*.lock' 2>/dev/null \
+EMAILS=$(git grep -hoiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' -- ':!*.lock' ':!package-lock.json' ':!pnpm-lock.yaml' ':!.beads' 2>/dev/null \
   | grep -viE '@(viktorbarzin\.me|example\.(com|org|test)|test\.(com|local)|localhost|users\.noreply\.github\.com|googlegroups\.com)' \
   | grep -viE '^(noreply|no-reply|ci|admin|info|support|hello|user|foo|bar|test.*)@' \
   | sort -u | head -20)
@@ -54,7 +54,7 @@ KEYS=$(git grep -l 'BEGIN.*PRIVATE KEY' 2>/dev/null | head -5)
 [ -n "$KEYS" ] && { say "PRIVATE KEY blocks in: $KEYS"; DIRTY=1; } || say "private keys: none"
 ENVF=$(git ls-files | grep -E '(^|/)\.env($|\.)' | head -5)
 [ -n "$ENVF" ] && { say "committed .env files: $ENVF (review)"; DIRTY=1; } || say ".env files: none"
-FIXTURES=$(git ls-files | grep -iE '(fixtures?|testdata|tests?/data)/' | head -10)
+FIXTURES=$(git ls-files | grep -iE '(fixtures?|testdata|tests?/data|^\.beads)/' | head -10)
 if [ -n "$FIXTURES" ]; then say "fixture files present (eyeball for PII):"; say "$FIXTURES"; else say "fixtures: none"; fi
 
 say ""

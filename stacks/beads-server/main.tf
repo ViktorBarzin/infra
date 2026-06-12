@@ -29,7 +29,7 @@ resource "kubernetes_namespace" "beads" {
   metadata {
     name = "beads-server"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -72,7 +72,7 @@ resource "kubernetes_config_map" "dolt_init" {
     namespace = kubernetes_namespace.beads.metadata[0].name
   }
   data = {
-    "01-create-beads-user.sql" = <<-EOT
+    "01-create-beads-user.sql"     = <<-EOT
       CREATE USER IF NOT EXISTS 'beads'@'%' IDENTIFIED BY '';
       GRANT ALL PRIVILEGES ON *.* TO 'beads'@'%' WITH GRANT OPTION;
     EOT
@@ -133,7 +133,7 @@ resource "kubernetes_deployment" "dolt" {
       }
       spec {
         container {
-          name  = "dolt"
+          name = "dolt"
           # Pinned to 2.0.3 — :latest currently resolves to 0.50.10 on dolthub
           # (different versioning stream) whose docker-entrypoint.sh references
           # an undefined docker_process_sql function and crash-loops on every
@@ -211,7 +211,7 @@ resource "kubernetes_deployment" "dolt" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
       # Keel annotations are codified in metadata.annotations above (policy=never
       # opts this deployment out of auto-updates — see the comment there).
@@ -336,7 +336,7 @@ resource "kubernetes_deployment" "workbench" {
       }
       spec {
         init_container {
-          name  = "seed-config"
+          name = "seed-config"
           # Pinned 2026-05-26: Keel rolled :latest → :0.1.0 on 2026-05-17,
           # which speaks an old GraphQL schema (missing `type` arg on
           # addDatabaseConnection) → seed-config fails, UI can't add the
@@ -369,7 +369,7 @@ resource "kubernetes_deployment" "workbench" {
         }
 
         container {
-          name  = "workbench"
+          name = "workbench"
           # Pinned 2026-05-26: Keel rolled :latest → :0.1.0 on 2026-05-17,
           # which speaks an old GraphQL schema (missing `type` arg on
           # addDatabaseConnection) → seed-config fails, UI can't add the
@@ -484,7 +484,7 @@ resource "kubernetes_deployment" "workbench" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -521,11 +521,11 @@ module "tls_secret" {
 }
 
 module "ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  dns_type         = "proxied"
-  namespace        = kubernetes_namespace.beads.metadata[0].name
-  name             = "dolt-workbench"
-  tls_secret_name  = var.tls_secret_name
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.beads.metadata[0].name
+  name            = "dolt-workbench"
+  tls_secret_name = var.tls_secret_name
   # auth = "none": Dolt Workbench is client-side encrypted task database; no backend user auth required; Anubis PoW fronts ingress.
   auth             = "none"
   exclude_crowdsec = true
@@ -679,7 +679,7 @@ resource "kubernetes_deployment" "beadboard" {
         container {
           name = "beadboard"
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-          image = "forgejo.viktorbarzin.me/viktor/beadboard:${var.beadboard_image_tag}"
+          image = "ghcr.io/viktorbarzin/beadboard:${var.beadboard_image_tag}"
 
           port {
             name           = "http"
@@ -766,7 +766,7 @@ resource "kubernetes_deployment" "beadboard" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
