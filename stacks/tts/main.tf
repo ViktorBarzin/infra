@@ -44,9 +44,12 @@ variable "offpeak_window_down_schedule" {
 }
 
 variable "offpeak_guard_schedule" {
-  type        = string
-  default     = "*/5 2-5 * * *" # every 5 min inside the 02:00–06:00 window
-  description = "Cron schedule for the mid-window guard that yields the card if free VRAM drops."
+  type = string
+  # ALL-DAY since the demand gate (2026-06-12): live synthesis can hold the
+  # card at any hour, so the yield-on-VRAM-pressure guard must watch at any
+  # hour too. A guard tick while replicas=0 is a no-op.
+  default     = "*/5 * * * *"
+  description = "Cron schedule for the guard that yields the card if free VRAM drops below the floor."
 }
 
 locals {
@@ -106,8 +109,8 @@ locals {
     # treat conservatively (skip scale-up).
     if ! BODY="$(curl -sf -m 10 "$${METRICS_URL}")"; then
       echo "WARN: could not scrape $${METRICS_URL}"
-      if [ "$${ACTION}" = "up" ]; then
-        echo "preflight: scrape failed -> NOT scaling up (fail-safe)"; exit 0
+      if [ "$${ACTION}" = "up" ] || [ "$${ACTION}" = "demand" ]; then
+        echo "$${ACTION}: scrape failed -> NOT scaling up (fail-safe)"; exit 0
       fi
       # For down/guard a failed scrape must NOT block yielding the card.
       BODY=""
@@ -139,6 +142,29 @@ locals {
         echo "window end -> scaling chatterbox-tts to 0"
         kubectl -n tts scale deploy/chatterbox-tts --replicas=0
         ;;
+      demand)
+        # GPU-gated LIVE narration (tripit#24 amendment, 2026-06-12): scale up
+        # whenever tripit has audio waiting AND the card has room; idle back
+        # down when the queue empties (even inside the nightly window — done is
+        # done, free the card early). The 02:00 window-up stays the guaranteed
+        # nightly catch-up for days the daytime card never had room.
+        QUEUED="$(curl -sf -m 10 "$${QUEUE_URL}" \
+          | sed -n 's/.*"queued"[^0-9]*\([0-9][0-9]*\).*/\1/p')" || QUEUED=""
+        QUEUED="$${QUEUED:-0}"
+        REPLICAS="$(kubectl -n tts get deploy/chatterbox-tts -o jsonpath='{.spec.replicas}')"
+        echo "demand: queued=$${QUEUED} replicas=$${REPLICAS}"
+        if [ "$${QUEUED}" -gt 0 ] && [ "$${REPLICAS}" = "0" ]; then
+          if [ "$${FREE}" -ge "$${FLOOR}" ]; then
+            echo "demand: audio waiting + room on the card -> scaling chatterbox-tts to 1"
+            kubectl -n tts scale deploy/chatterbox-tts --replicas=1
+          else
+            echo "demand: audio waiting but free < floor -> staying down (nightly window catches up)"
+          fi
+        elif [ "$${QUEUED}" -eq 0 ] && [ "$${REPLICAS}" != "0" ]; then
+          echo "demand: queue empty -> idling chatterbox-tts back to 0"
+          kubectl -n tts scale deploy/chatterbox-tts --replicas=0
+        fi
+        ;;
     esac
   EOT
 
@@ -159,7 +185,17 @@ locals {
       schedule = var.offpeak_guard_schedule
       action   = "guard"
     }
+    # GPU-gated live narration: every 3 min, scale up when tripit's audio queue
+    # is non-empty and the VRAM preflight passes; idle down when it empties.
+    chatterbox-demand-gate = {
+      schedule = "*/3 * * * *"
+      action   = "demand"
+    }
   }
+
+  # tripit's unauthenticated in-cluster queue probe (count only, non-sensitive).
+  # A 404 from an older tripit image yields QUEUED=0 -> the gate no-ops.
+  tripit_queue_url = "http://tripit.tripit.svc.cluster.local:8080/api/tour/tts-queue"
 }
 
 resource "kubernetes_namespace" "tts" {
@@ -462,6 +498,10 @@ resource "kubernetes_cron_job_v1" "offpeak" {
               env {
                 name  = "GPU_TOTAL"
                 value = tostring(var.gpu_total_bytes)
+              }
+              env {
+                name  = "QUEUE_URL"
+                value = local.tripit_queue_url
               }
               resources {
                 requests = { cpu = "20m", memory = "64Mi" }
