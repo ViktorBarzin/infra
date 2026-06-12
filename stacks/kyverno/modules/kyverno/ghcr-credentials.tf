@@ -13,6 +13,10 @@
 locals {
   ghcr_private_namespaces = [
     "tripit",
+    # tuya-bridge runs a PUBLIC-decision image, but new ghcr packages default
+    # PRIVATE until their visibility is flipped (UI) — safety net so pulls
+    # work from the first deploy; prune once the package is public.
+    "tuya-bridge",
     "f1-stream",
     "job-hunter",
     "instagram-poster",

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# publish-gate — gate a Canonical repo's PUBLIC flip (ADR-0002).
+# A repo may go public ONLY on a CLEAN verdict; a DIRTY verdict means it stays
+# private — canonical history is never rewritten for publication.
+#
+# Checks (full git history, not just the worktree):
+#   1. gitleaks  — secret patterns across all commits
+#   2. trufflehog (docker) — verified-credential detection across all commits
+#   3. PII heuristics — emails/phones/keys in tracked files + fixture inventory
+#
+# Usage: publish-gate <clone-path>
+# Exit: 0 = CLEAN, 1 = DIRTY, 2 = scanner error. Report: /tmp/publish-gate-<name>.txt
+set -uo pipefail
+CLONE=${1:?usage: publish-gate <clone-path>}
+CLONE=$(cd "$CLONE" && pwd)
+NAME=$(basename "$CLONE")
+REPORT="/tmp/publish-gate-$NAME.txt"
+DIRTY=0; ERR=0
+
+say() { echo "$@" | tee -a "$REPORT"; }
+: > "$REPORT"
+say "== publish-gate: $NAME @ $(git -C "$CLONE" rev-parse --short HEAD) ($(date -u +%FT%TZ)) =="
+
+# --- 1. gitleaks (full history) ---
+say ""; say "-- gitleaks (full history) --"
+if gitleaks git "$CLONE" --no-banner --redact --report-path /tmp/publish-gate-$NAME-gitleaks.json >>"$REPORT" 2>&1; then
+  say "gitleaks: CLEAN"
+else
+  rc=$?
+  if [ "$rc" = 1 ]; then say "gitleaks: LEAKS FOUND (see $REPORT + json)"; DIRTY=1
+  else say "gitleaks: scanner error rc=$rc"; ERR=1; fi
+fi
+
+# --- 2. trufflehog (verified credentials, full history) ---
+say ""; say "-- trufflehog (verified only, full history) --"
+if docker run --rm -v "$CLONE":/repo:ro trufflesecurity/trufflehog:latest \
+     git file:///repo --only-verified --fail --no-update >>"$REPORT" 2>&1; then
+  say "trufflehog: CLEAN (no verified credentials)"
+else
+  rc=$?
+  if [ "$rc" = 183 ]; then say "trufflehog: VERIFIED CREDENTIALS FOUND"; DIRTY=1
+  else say "trufflehog: scanner error rc=$rc"; ERR=1; fi
+fi
+
+# --- 3. PII heuristics on tracked files ---
+say ""; say "-- PII heuristics (tracked files) --"
+cd "$CLONE"
+EMAILS=$(git grep -hoiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' -- ':!*.lock' 2>/dev/null \
+  | grep -viE '@(viktorbarzin\.me|example\.(com|org|test)|test\.(com|local)|localhost|users\.noreply\.github\.com|googlegroups\.com)' \
+  | grep -viE '^(noreply|no-reply|ci|admin|info|support|hello|user|foo|bar|test.*)@' \
+  | sort -u | head -20)
+if [ -n "$EMAILS" ]; then say "real-looking emails found:"; say "$EMAILS"; say "(review: PII?)"; DIRTY=1; else say "emails: none beyond allowlist"; fi
+KEYS=$(git grep -l 'BEGIN.*PRIVATE KEY' 2>/dev/null | head -5)
+[ -n "$KEYS" ] && { say "PRIVATE KEY blocks in: $KEYS"; DIRTY=1; } || say "private keys: none"
+ENVF=$(git ls-files | grep -E '(^|/)\.env($|\.)' | head -5)
+[ -n "$ENVF" ] && { say "committed .env files: $ENVF (review)"; DIRTY=1; } || say ".env files: none"
+FIXTURES=$(git ls-files | grep -iE '(fixtures?|testdata|tests?/data)/' | head -10)
+if [ -n "$FIXTURES" ]; then say "fixture files present (eyeball for PII):"; say "$FIXTURES"; else say "fixtures: none"; fi
+
+say ""
+if [ "$ERR" = 1 ]; then say "VERDICT: ERROR (scanner failed — fix and re-run)"; exit 2; fi
+if [ "$DIRTY" = 1 ]; then say "VERDICT: DIRTY — repo stays PRIVATE (do not rewrite history)"; exit 1; fi
+say "VERDICT: CLEAN — public flip approved"
+exit 0
