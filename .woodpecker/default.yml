@@ -135,6 +135,20 @@ steps:
           git fetch --deepen=1 origin master 2>/dev/null || true
         fi
 
+        # Diff base: prefer the push's true before-state (CI_PREV_COMMIT_SHA).
+        # HEAD~1 is WRONG for merge commits — it is the first parent (the
+        # feature-branch side), so the diff shows the OTHER lineage's files
+        # and silently skips the stacks this push actually changed
+        # (bit ci-pipeline-health on 2026-06-12, pipeline 128).
+        DIFF_BASE="HEAD~1"
+        if [ -n "${CI_PREV_COMMIT_SHA:-}" ] && [ "$CI_PREV_COMMIT_SHA" != "$CI_COMMIT_SHA" ]; then
+          git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=50 origin master 2>/dev/null || true
+          if git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null; then
+            DIFF_BASE="$CI_PREV_COMMIT_SHA"
+          fi
+        fi
+        echo "Diff base: $DIFF_BASE"
+
         # If still no parent, apply all platform stacks as a safe fallback
         if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
           echo "Cannot determine changed files — applying ALL platform stacks"
@@ -142,14 +156,14 @@ steps:
           > .app_apply
         else
           # Check if global files changed (triggers full platform apply)
-          GLOBAL_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E '^(modules/|config\.tfvars|terragrunt\.hcl)' || true)
+          GLOBAL_CHANGED=$(git diff --name-only "$DIFF_BASE" HEAD | grep -E '^(modules/|config\.tfvars|terragrunt\.hcl)' || true)
 
           if [ -n "$GLOBAL_CHANGED" ]; then
             echo "Global files changed — applying ALL platform stacks"
             echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
           else
             # Detect platform stacks that changed
-            git diff --name-only HEAD~1 HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
+            git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u > .all_changed
             > .platform_apply
             while read -r stack; do
               if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
@@ -160,7 +174,7 @@ steps:
 
           # Detect app stacks that changed
           > .app_apply
-          git diff --name-only HEAD~1 HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
+          git diff --name-only "$DIFF_BASE" HEAD | grep '^stacks/' | cut -d/ -f2 | sort -u | while read -r stack; do
             if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
               continue  # Skip platform stacks
             fi
