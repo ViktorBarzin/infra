@@ -106,3 +106,7 @@ terraform.tfstate.backup
 
 # Per-feature git worktrees (worktree-first workflow — execution.md)
 .worktrees/
+
+# Timestamped terraform state backups (terraform.tfstate.<ts>.backup) — plaintext Tier-0
+# secrets; created by terraform state ops. The patterns above miss the timestamped form.
+terraform.tfstate.*.backup
