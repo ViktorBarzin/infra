@@ -231,6 +231,11 @@ module "ingress-internal" {
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
+  # noVNC loads ~60 unbundled ES modules in parallel; the default 10/50
+  # limiter 429s the tail and the loader hangs forever. Dedicated limiter,
+  # same pattern as actualbudget/immich.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-android-emulator-rate-limit@kubernetescrd"]
 }
 
 # Remote (off-LAN) screen access — Authentik-gated at the edge; WebSockets
@@ -246,4 +251,9 @@ module "ingress-public" {
   host            = "android-emulator"
   service_name    = kubernetes_service.novnc.metadata[0].name
   tls_secret_name = var.tls_secret_name
+  # noVNC loads ~60 unbundled ES modules in parallel; the default 10/50
+  # limiter 429s the tail and the loader hangs forever. Dedicated limiter,
+  # same pattern as actualbudget/immich.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-android-emulator-rate-limit@kubernetescrd"]
 }
