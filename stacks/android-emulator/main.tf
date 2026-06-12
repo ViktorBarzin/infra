@@ -107,6 +107,15 @@ resource "kubernetes_deployment" "android-emulator" {
             privileged = true # /dev/kvm access
           }
 
+          env {
+            # The GPU operator injects only compute,utility by default — the
+            # NVIDIA EGL/GL libraries need the graphics capability, otherwise
+            # the emulator's -gpu host silently falls back to Mesa llvmpipe
+            # (software GL) inside the container.
+            name  = "NVIDIA_DRIVER_CAPABILITIES"
+            value = "all"
+          }
+
           port {
             name           = "adb"
             container_port = 5555
