@@ -851,6 +851,10 @@ resource "kubernetes_deployment" "auth_proxy" {
           # nginx only reads its config at startup — roll the pods whenever
           # the ConfigMap content changes.
           "checksum/auth-proxy-config" = sha1(kubernetes_config_map.auth_proxy_config.data["default.conf"])
+          # The emergency-fallback htpasswd is a subPath secret mount, which
+          # does NOT auto-update on change — roll the pods when it rotates so a
+          # regenerated emergency password actually takes effect.
+          "checksum/auth-proxy-htpasswd" = sha1(var.auth_fallback_htpasswd)
         }
       }
       spec {

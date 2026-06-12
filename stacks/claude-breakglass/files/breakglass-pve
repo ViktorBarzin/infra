@@ -1,0 +1,115 @@
+#!/bin/bash
+# breakglass-pve — forced-command wrapper for the in-cluster claude-breakglass
+# service. Installed in the Proxmox host's /root/.ssh/authorized_keys behind a
+#   command="/usr/local/bin/breakglass-pve",restrict,from="<cluster CIDRs>"
+# entry, so the breakglass SSH key can ONLY run the verbs below against VM 102
+# (the devvm) — never a free shell on the hypervisor.
+#
+# The requested verb arrives in $SSH_ORIGINAL_COMMAND. Anything that is not a
+# single bare verb from the allowlist is rejected and logged. Every MUTATING
+# verb captures forensics first, unconditionally, so an erroneous reset never
+# destroys the evidence of why the devvm was wedged.
+#
+# Deployed via scp (see docs/runbooks/breakglass-ui.md); not Terraform-managed
+# (PVE host config is out-of-band, like fan-control / pve-nfs-exports).
+set -euo pipefail
+
+VMID=102
+LOG=/var/log/breakglass-pve.log
+
+ts()  { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log() { echo "$(ts) [breakglass-pve] $*" >>"$LOG" 2>/dev/null || true; }
+
+verb="${SSH_ORIGINAL_COMMAND:-}"
+src="${SSH_CLIENT%% *}"
+
+# Only a single bare verb is accepted — no arguments, no shell metacharacters,
+# no second VMID. This is the whole security boundary of the forced command.
+case "$verb" in
+  status|forensics|reset|stop|start|cycle) : ;;
+  *)
+    log "REJECTED verb='$verb' from=$src"
+    echo "breakglass-pve: rejected '$verb'. allowed: status|forensics|reset|stop|start|cycle (VM $VMID only)" >&2
+    exit 2
+    ;;
+esac
+
+forensics() {
+  echo "=== breakglass forensics $(ts) — VM $VMID on $(hostname) ==="
+  echo "--- qm status ---";            qm status "$VMID" 2>&1 || true
+  echo "--- qm config ---";            qm config "$VMID" 2>&1 || true
+  echo "--- qm pending (staged) ---";  qm pending "$VMID" 2>&1 || true
+  echo "--- guest agent ping ---";     timeout 5 qm agent "$VMID" ping 2>&1 || echo "(no guest-agent response)"
+  echo "--- qmp query-status ---";     echo "info status" | timeout 5 qm monitor "$VMID" 2>&1 || true
+  echo "--- qmp block jobs ---";       echo "info block-jobs" | timeout 5 qm monitor "$VMID" 2>&1 || true
+  echo "--- host uptime/load ---";     uptime 2>&1 || true
+  echo "--- host memory ---";          free -h 2>&1 || true
+  echo "--- host io (1s) ---";         ( command -v iostat >/dev/null && iostat -dx 1 2 2>/dev/null | tail -n +4 ) || echo "(iostat unavailable)"
+  echo "=== end forensics ==="
+}
+
+# Wait until VM reaches 'stopped', up to ~timeout seconds. Returns 0 if stopped.
+wait_stopped() {
+  local timeout="$1" i
+  for ((i=0; i<timeout; i+=2)); do
+    qm status "$VMID" 2>/dev/null | grep -q 'status: stopped' && return 0
+    sleep 2
+  done
+  return 1
+}
+
+log "verb=$verb from=$src"
+
+case "$verb" in
+  status)
+    qm status "$VMID"
+    ;;
+
+  forensics)
+    forensics
+    ;;
+
+  stop|reset|start|cycle)
+    # Forensics-first: emit to the caller AND persist on the host.
+    F="$(forensics)"
+    printf '%s\n' "$F"
+    printf '%s\n' "$F" | sed "s/^/$(ts) [forensics] /" >>"$LOG" 2>/dev/null || true
+
+    case "$verb" in
+      start)
+        qm start "$VMID"
+        ;;
+      reset)
+        # Warm reset — reuses the QEMU process. Does NOT apply staged config.
+        qm reset "$VMID"
+        ;;
+      stop)
+        qm stop "$VMID"
+        ;;
+      cycle)
+        # Cold stop->start: spawns a FRESH QEMU process, so staged config
+        # (qm pending) is applied — the fix class for the 2026-06-11 I/O stall.
+        # If a wedged QEMU ignores a clean stop, escalate to killing the
+        # process (matches the 2026-06-11 manual recovery), then start.
+        echo "$(ts) cycle: requesting clean stop of VM $VMID"
+        qm stop "$VMID" >/dev/null 2>&1 || true
+        if wait_stopped 40; then
+          echo "$(ts) cycle: clean stop OK"
+        else
+          log "cycle: clean stop FAILED — killing wedged QEMU for $VMID"
+          echo "$(ts) cycle: clean stop failed, killing wedged QEMU"
+          pid="$(cat "/var/run/qemu-server/$VMID.pid" 2>/dev/null || true)"
+          if [[ -n "$pid" ]]; then
+            kill -9 "$pid" 2>/dev/null || true
+          else
+            pkill -9 -f -- "-id $VMID" 2>/dev/null || true
+          fi
+          sleep 3
+          qm unlock "$VMID" 2>/dev/null || true
+        fi
+        qm start "$VMID"
+        ;;
+    esac
+    log "verb=$verb COMPLETE"
+    ;;
+esac
