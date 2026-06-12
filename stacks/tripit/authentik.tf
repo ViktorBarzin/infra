@@ -51,6 +51,11 @@ resource "authentik_provider_oauth2" "tripit_app" {
   name        = "tripit-app"
   client_id   = "tripit-app"
   client_type = "public"
+  # sub = the user's EMAIL, not the default hashed_user_id: tripit prod users
+  # are email-keyed (forwardauth provisioned id == email), and the backend's
+  # hybrid bearer arm must resolve the SAME user row, not mint a hash-keyed
+  # twin (review finding, tripit #50).
+  sub_mode = "user_email"
 
   authorization_flow = data.authentik_flow.default_authorization_implicit_consent.id
   invalidation_flow  = data.authentik_flow.default_provider_invalidation.id
