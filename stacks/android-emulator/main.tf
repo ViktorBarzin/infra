@@ -68,7 +68,14 @@ resource "kubernetes_deployment" "android-emulator" {
     }
   }
   spec {
-    replicas = 1
+    # Scaled to 0 (2026-06-12): the emulator's ~4.7-core swiftshader CPU burn
+    # on node3 saturated the single PVE host and starved etcd on the k8s-master
+    # VM → control-plane (scheduler/controller-manager/kyverno) leader-election
+    # crashloop. It is a shared TEST instance, not a 24/7 service: spin up
+    # on-demand (replicas = 1) for a testing session, return to 0 when done.
+    # Durable relief pending the structural etcd-protection fix (PVE CPU weight
+    # / etcd WAL on SSD).
+    replicas = 0
     strategy {
       type = "Recreate" # RWO PVC — old pod must release it first
     }
