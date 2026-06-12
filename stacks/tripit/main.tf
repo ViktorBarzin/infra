@@ -106,6 +106,15 @@ locals {
     # not-yet-visited countries + real UK bank-holiday leave windows + fares).
     # `claude_agent` mode requires images >= the #23 slice (already deployed).
     RESEARCH_PROVIDER = "claude_agent"
+    # Stay cover photos (tripit issue #47, ADR-0017): auto-fetch each picked
+    # city's Wikipedia lead image (keyless REST summary API, "City, Country"
+    # first), downloaded into the app's STORAGE_DIR (never hotlinked) and
+    # served by the backend; editable per Stay (URL/upload). Fetches run
+    # post-commit under an 8s budget and degrade to a placeholder — never
+    # block trip creation. `wikipedia` mode requires images >= the #47 slice
+    # (older images crash-loop on the unknown enum) — landed after that
+    # image rolled out, same hold-order as FARE/CALENDAR/RESEARCH above.
+    CITY_IMAGE_PROVIDER = "wikipedia"
     # Tour-guide content pipeline (tripit#24/#25): these three default to `fake`
     # in tripit's config, which is what shipped dark on 2026-06-08 — prod only
     # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
