@@ -90,6 +90,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **Public domain**: `viktorbarzin.me` (Cloudflare) | **Internal**: `viktorbarzin.lan` (Technitium DNS)
 - **Onboarding portal**: `https://k8s-portal.viktorbarzin.me` — self-service kubectl setup + docs
 - **CI/CD**: Woodpecker CI — PRs run plan, merges to master auto-apply all stacks
+- **CI compute is external (ADR-0002, 2026-06-12)**: builds, tests, lint, and release jobs run on GitHub Actions hosted runners via each repo's GitHub mirror — never on cluster nodes. In-cluster pipelines exist only for steps that need cluster access (Woodpecker `kubectl set image` deploys, terragrunt applies, certbot). Never add an in-cluster build or test pipeline to any repo; the fallback-build pattern was deliberately removed. After pushing anything that fires a build chain, watch it end-to-end (GHA run → Woodpecker deploy → rollout) before calling the change done — verify live state, not the checkmark.
 
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
