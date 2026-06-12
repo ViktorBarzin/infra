@@ -4,6 +4,11 @@
 # emulator windowed into it, and expose its adbd on :5555 for the LAN.
 set -euo pipefail
 
+# Containerd grants an effectively unbounded RLIMIT_NOFILE (2^31); x11vnc's
+# connection handling sweeps the whole fd table with fcntl per fd, so every
+# VNC connect hung for ages. Cap it for everything we launch.
+ulimit -n 65536
+
 API_LEVEL="${API_LEVEL:-36}"
 SYSTEM_IMAGE="system-images;android-${API_LEVEL};google_apis;x86_64"
 # Pinned emulator build (36.1.9). The sdkmanager-latest emulator (36.6.11)
@@ -79,7 +84,7 @@ export DISPLAY=:0
 Xvfb :0 -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
 sleep 1
 openbox &
-x11vnc -display :0 -nopw -forever -shared -quiet -bg
+x11vnc -display :0 -nopw -forever -shared -quiet -nolookup -bg
 websockify --web /usr/share/novnc 6080 localhost:5900 &
 
 # --- emulator -----------------------------------------------------------------
