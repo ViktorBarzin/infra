@@ -9,3 +9,5 @@ dependency "infra" {
 
 # apply-trigger 2026-06-12 (android-emulator-rate-limit middleware): non-merge
 # commit so the changed-stack detector sees this stack (merge-diff blindness).
+
+# apply-trigger 2026-06-12: error-pages READ_BUFFER_SIZE rollout (merge-blind detector)
