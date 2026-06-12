@@ -232,3 +232,18 @@ module "ingress-internal" {
     "gethomepage.dev/enabled" = "false"
   }
 }
+
+# Remote (off-LAN) screen access — Authentik-gated at the edge; WebSockets
+# work through forward-auth same-origin (proven by stacks/terminal's ttyd).
+# adb (5555) deliberately stays LAN-only: it is unauthenticated and must
+# never be exposed publicly.
+module "ingress-public" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.android-emulator.metadata[0].name
+  name            = "android-emulator-public"
+  host            = "android-emulator"
+  service_name    = kubernetes_service.novnc.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
