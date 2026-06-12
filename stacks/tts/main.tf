@@ -152,9 +152,19 @@ locals {
         # down when the queue empties (even inside the nightly window — done is
         # done, free the card early). The 02:00 window-up stays the guaranteed
         # nightly catch-up for days the daytime card never had room.
-        QUEUED="$(curl -sf -m 10 "$${QUEUE_URL}" \
-          | sed -n 's/.*"queued"[^0-9]*\([0-9][0-9]*\).*/\1/p')" || QUEUED=""
-        QUEUED="$${QUEUED:-0}"
+        # A FAILED probe must not read as "queue empty": defaulting to 0 idled
+        # the deployment the very minute it first went Ready (2026-06-12 20:30
+        # UTC — one transient curl failure, 27 items still queued). Fail-safe
+        # is NO ACTION; worst case a stale-up deployment idles until the 06:00
+        # window-down. (This also covers a 404 from an older tripit image.)
+        if ! QBODY="$(curl -sf -m 10 "$${QUEUE_URL}")"; then
+          echo "demand: queue probe failed -> no action (fail-safe)"; exit 0
+        fi
+        QUEUED="$(printf '%s\n' "$${QBODY}" \
+          | sed -n 's/.*"queued"[^0-9]*\([0-9][0-9]*\).*/\1/p')"
+        if [ -z "$${QUEUED}" ]; then
+          echo "demand: unparseable queue response -> no action (fail-safe)"; exit 0
+        fi
         REPLICAS="$(kubectl -n tts get deploy/chatterbox-tts -o jsonpath='{.spec.replicas}')"
         echo "demand: queued=$${QUEUED} replicas=$${REPLICAS}"
         if [ "$${QUEUED}" -gt 0 ] && [ "$${REPLICAS}" = "0" ]; then
@@ -198,7 +208,8 @@ locals {
   }
 
   # tripit's unauthenticated in-cluster queue probe (count only, non-sensitive).
-  # A 404 from an older tripit image yields QUEUED=0 -> the gate no-ops.
+  # Probe failures (incl. a 404 from an older tripit image) make the demand
+  # gate take NO action — only an explicit parsed count scales anything.
   tripit_queue_url = "http://tripit.tripit.svc.cluster.local:8080/api/tour/tts-queue"
 }
 
