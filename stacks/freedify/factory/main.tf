@@ -105,8 +105,12 @@ resource "kubernetes_deployment" "freedify" {
           name = "registry-credentials"
         }
         container {
-          # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-          image = "forgejo.viktorbarzin.me/viktor/freedify:${var.tag}"
+          # ADR-0002 off-infra builds (2026-06-12, infra#22): GHA on the GitHub
+          # mirror pushes ghcr.io/viktorbarzin/freedify; the Woodpecker deploy
+          # pipeline rolls :sha8 via kubectl set image. Public package — no
+          # pull secret needed. The image is ignore_changes'd below so applies
+          # don't revert the deployed :sha8; this literal only seeds creates.
+          image = "ghcr.io/viktorbarzin/freedify:${var.tag}"
           name  = "freedify"
 
           port {
@@ -194,7 +198,10 @@ resource "kubernetes_deployment" "freedify" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI deploy pipeline sets :sha8 (ADR-0002)
+    ]
   }
 }
 
