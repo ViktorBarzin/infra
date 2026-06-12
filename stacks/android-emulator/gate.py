@@ -14,7 +14,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 NS = os.environ.get("NAMESPACE", "android-emulator")
 DEPLOY = os.environ.get("DEPLOYMENT", "android-emulator")
-API = "https://kubernetes.default.svc"
+# Use the injected env vars, not DNS: kubernetes.default.svc failed to
+# resolve from this alpine/musl pod (ndots + injected dns_config quirk).
+API = "https://%s:%s" % (
+    os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc"),
+    os.environ.get("KUBERNETES_SERVICE_PORT", "443"),
+)
 TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 IDLE_ANNOTATION = "emulator.viktorbarzin.me/idle-checks"
