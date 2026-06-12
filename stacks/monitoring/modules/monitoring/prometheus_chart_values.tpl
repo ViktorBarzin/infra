@@ -51,7 +51,12 @@ alertmanager:
       group_by: ["alertname"]
       group_wait: 30s
       group_interval: 5m
-      repeat_interval: 4h
+      # alert-on-change (2026-06-12): warning/info no longer re-notify while they
+      # stay firing — a 1y repeat is effectively "notify once, then only on a
+      # membership change or resolve". The daily alert-digest CronJob
+      # (alert_digest.tf) carries standing state. Criticals keep a slow re-ping
+      # (see the severity=critical child route).
+      repeat_interval: 8760h
       receiver: slack-warning
       routes:
         # Wave 1 security lane — matches alerts that set `lane = "security"`
@@ -68,14 +73,19 @@ alertmanager:
         - receiver: slack-critical
           group_wait: 10s
           group_interval: 1m
-          repeat_interval: 1h
+          # alert-on-change tier (2026-06-12): criticals still re-ping, but every
+          # 6h not 1h — a slow nag so a real prod-down issue isn't forgotten,
+          # minus the hourly drip. Warnings/info don't re-ping at all.
+          repeat_interval: 6h
           matchers:
             - severity = critical
           continue: false
         - receiver: slack-info
           group_wait: 5m
           group_interval: 30m
-          repeat_interval: 12h
+          # alert-on-change (2026-06-12): info never re-pings while firing; the
+          # daily digest carries standing state.
+          repeat_interval: 8760h
           matchers:
             - severity = info
           continue: false
@@ -175,6 +185,28 @@ alertmanager:
           - alertname = KubeletImagePullErrors
         target_matchers:
           - alertname =~ "PodsStuckContainerCreating|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods"
+      # A node under DiskPressure/MemoryPressure/PIDPressure evicts pods and
+      # stalls image GC + pulls — the resulting pod-churn alerts are downstream
+      # symptoms. The 2026-06-12 midday cascade fired 25 PodCrashLooping + 14
+      # PodImagePullBackOff uninhibited because only NodeDown (not node pressure)
+      # was a source. NodeConditionBad already matches all three pressures; keep
+      # NodeDiskPressure too for redundancy. No `equal` (matches the NodeDown
+      # rule above): the pod-churn alertnames carry no `node` label, and a
+      # multi-node pressure event is exactly when cluster-wide suppression helps.
+      - source_matchers:
+          - alertname =~ "NodeConditionBad|NodeDiskPressure"
+        target_matchers:
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|PodImagePullBackOff|PodsStuckContainerCreating|ScrapeTargetDown|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods"
+      # Two t3 path-probe alerts describe one leg-down condition: T3ProbeLegDown
+      # (connected==0, root) and T3ProbeDropBurst (>6 disconnects/15m, symptom).
+      # A down leg both reads disconnected AND disconnects repeatedly — suppress
+      # the burst for that same leg so one alert fires, not two. ~3,400 alert-min
+      # of overlap in the 24h before this (the #1 noise source).
+      - source_matchers:
+          - alertname = T3ProbeLegDown
+        target_matchers:
+          - alertname = T3ProbeDropBurst
+        equal: [leg]
     receivers:
       - name: slack-critical
         slack_configs:
@@ -501,6 +533,16 @@ serverFiles:
             regex: true
             source_labels:
               - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
+          # Only scrape Ready endpoints. Completed CronJob pods linger in the
+          # service's EndpointSlice as NotReady addresses (their labels still
+          # match the Service selector) and were scraped as down targets,
+          # firing ScrapeTargetDown false positives (tts/tripit/beads, memory
+          # id=4895). Dropping NotReady here kills that whole class; a Ready pod
+          # whose metrics endpoint is genuinely broken still fires.
+          - action: keep
+            regex: true
+            source_labels:
+              - __meta_kubernetes_endpoint_ready
           - action: replace
             regex: (https?)
             source_labels:
@@ -554,6 +596,12 @@ serverFiles:
             regex: true
             source_labels:
               - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
+          # Only scrape Ready endpoints — see kubernetes-service-endpoints above
+          # (drops lingering completed-CronJob NotReady pods → no ScrapeTargetDown FP).
+          - action: keep
+            regex: true
+            source_labels:
+              - __meta_kubernetes_endpoint_ready
           - action: replace
             regex: (https?)
             source_labels:
@@ -1634,7 +1682,9 @@ serverFiles:
               summary: "LVM PVC snapshot job has never reported metrics to Pushgateway"
           - alert: LVMSnapshotFailing
             expr: lvm_snapshot_last_status{job="lvm-pvc-snapshot"} != 0
-            for: 0m
+            # for: 5m (was 0m) — ride out a single Pushgateway status flip; a real
+            # failure persists until the next run overwrites it (alert-noise 2026-06-12)
+            for: 5m
             labels:
               severity: critical
             annotations:
@@ -1656,7 +1706,7 @@ serverFiles:
               summary: "Daily backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: WeeklyBackupFailing
             expr: daily_backup_last_status{job="daily-backup"} != 0
-            for: 0m
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -1677,7 +1727,7 @@ serverFiles:
               summary: "Offsite backup sync is {{ $value | humanizeDuration }} old (threshold: 9d)"
           - alert: OffsiteBackupSyncFailing
             expr: offsite_sync_last_status{job="offsite-backup-sync"} != 0
-            for: 0m
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -1691,7 +1741,7 @@ serverFiles:
               summary: "NFS local mirror to sda is {{ $value | humanizeDuration }} old (threshold: 16d / 2 weekly cycles)"
           - alert: NfsMirrorFailing
             expr: nfs_mirror_last_status{job="nfs-mirror"} != 0
-            for: 0m
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -1713,7 +1763,7 @@ serverFiles:
               summary: "vzdump VM image backup job has never reported metrics to Pushgateway"
           - alert: VzdumpBackupFailing
             expr: vzdump_last_status{job="vzdump-backup"} != 0
-            for: 0m
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -2724,7 +2774,9 @@ serverFiles:
           # current value (fresh /tmp each run), so the alert could never fire.
           - alert: DNSQuerySpike
             expr: dns_anomaly_total_queries > 2 * avg_over_time(dns_anomaly_total_queries[1h] offset 15m) and dns_anomaly_total_queries > 1000
-            for: 0m
+            # for: 5m (was 0m) — a single 15-min scrape spike self-clears; a real
+            # spike persists across scrapes (alert-noise 2026-06-12)
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -2738,7 +2790,7 @@ serverFiles:
               summary: "DNS query volume dropped: {{ $value | printf \"%.0f\" }} queries (<50% of 1h avg) — upstream clients may be failing to reach Technitium"
           - alert: DNSHighErrorRate
             expr: dns_anomaly_server_failure > 100
-            for: 0m
+            for: 5m
             labels:
               severity: warning
             annotations:
@@ -3085,6 +3137,16 @@ serverFiles:
               description: "The must-stay-public URL {{ $labels.instance }} (carve-out `{{ $labels.service }}`) is failing its blackbox probe — most likely it now 302-redirects to Authentik SSO. A path-scoped `auth = \"none\"` carve-out probably regressed (TF revert / deploy / ingress_factory auth default flipping back to \"required\"). Native-client / public / webhook / WebSocket / SPA-XHR traffic to this endpoint is broken for strangers and machines. Check the owning stack's ingress_factory `auth` + `ingress_path`, and curl the URL: `curl -sI '{{ $labels.instance }}'` — a Location to authentik.viktorbarzin.me confirms the regression. Probe config + target list: stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf."
 
 extraScrapeConfigs: |
+  # Alertmanager self-metrics. The bundled Alertmanager Service carries no
+  # prometheus.io/scrape annotation, so kubernetes-service-endpoints never
+  # discovered it — there was NO alertmanager_notifications_total / _alerts /
+  # _notifications_failed_total series until this job (alert-noise-reduction
+  # 2026-06-12), i.e. notification volume was unmeasurable. Static target = the
+  # in-cluster Alertmanager service.
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets:
+        - 'prometheus-alertmanager.monitoring.svc.cluster.local:9093'
   # Authentik walling-off guard. Probes each must-stay-public carve-out URL via
   # blackbox-exporter's `http_no_authentik_redirect` module (no_follow_redirects +
   # fail_if_header_matches on a Location -> Authentik). probe_success == 0 for a
