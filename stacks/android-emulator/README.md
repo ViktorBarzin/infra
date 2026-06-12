@@ -63,3 +63,18 @@ doesn't warrant CI plumbing (the off-infra-CI rule targets *repeated* build IO).
   re-downloads cleanly. Snapshots/AVD state are disposable by design.
 - Different API level: set `API_LEVEL` env on the deployment (entrypoint
   installs that system image on the same PVC) or recreate the AVD.
+
+## Resource profile (measured 2026-06-12)
+
+- **Memory**: ~5.8Gi steady (limit 8Gi, requests 3Gi — Burstable inside the tier-1 quota).
+- **CPU**: ~1.8 cores idle with the screen off; **5+ cores with the screen on**
+  (any on-screen animation forces continuous swiftshader rendering + VNC
+  encoding). Etiquette: turn the screen off when you finish a session —
+  `adb -s 10.0.20.200:5555 shell input keyevent KEYCODE_POWER` (and the same
+  to wake it).
+- **Disk**: ~7G of the 30Gi PVC.
+
+## Remote access
+
+https://android-emulator.viktorbarzin.me (Cloudflare-proxied, Authentik-gated)
+serves the same noVNC screen for off-LAN use. adb stays LAN-only by design.
