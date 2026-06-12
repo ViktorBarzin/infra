@@ -8,13 +8,14 @@ variable "beadboard_image_tag" {
   default = "17a38e43"
 }
 
-# Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — keep in
-# sync when the claude-agent-service image is rebuilt. Reused here because the
-# dispatcher + reaper CronJobs only need bd, curl, and jq, which that image
-# already ships.
+# Tracks claude-agent-service `:latest` (stacks/claude-agent-service/main.tf uses
+# image_tag "latest" + KEEL_IGNORE_IMAGE). Reused here because the dispatcher +
+# reaper CronJobs only need bd, curl, and jq, which that image already ships.
+# Was pinned to SHA "2fd7670d", which Forgejo retention pruned → ImagePullBackOff
+# (fixed 2026-06-12); ":latest" stays in sync automatically and can't go stale.
 variable "claude_agent_service_image_tag" {
   type    = string
-  default = "2fd7670d"
+  default = "latest"
 }
 
 # Kill switch for auto-dispatch. When false, both CronJobs are suspended. The
