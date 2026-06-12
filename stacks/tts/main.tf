@@ -440,12 +440,18 @@ resource "kubernetes_deployment" "chatterbox" {
             mount_path = "/data"
           }
 
-          # /v1/audio/voices is cheap and only 200s once the model is loaded —
-          # so it gates real readiness. First start downloads the model, which
-          # is slow; the generous failure_threshold absorbs that.
+          # TCP probes, deliberately NOT http: the server synthesizes chunks
+          # as a BLOCKING call inside its async handler, so the event loop —
+          # and any HTTP probe — hangs for the whole multi-minute story. The
+          # http liveness probe killed the container mid-synthesis (exit 137,
+          # observed 2026-06-12 20:48–20:53: every drain pass then faced a
+          # cold engine and timed out forever). TCP keeps the original
+          # semantics where it matters: uvicorn only binds 8004 AFTER the
+          # lifespan hook finishes loading the model ("Application startup
+          # complete" precedes "Uvicorn running"), so a TCP readiness pass
+          # still means "model loaded", while a GPU-busy server stays alive.
           readiness_probe {
-            http_get {
-              path = "/v1/audio/voices"
+            tcp_socket {
               port = 8004
             }
             initial_delay_seconds = 20
@@ -453,8 +459,7 @@ resource "kubernetes_deployment" "chatterbox" {
             failure_threshold     = 12
           }
           liveness_probe {
-            http_get {
-              path = "/v1/audio/voices"
+            tcp_socket {
               port = 8004
             }
             initial_delay_seconds = 120
