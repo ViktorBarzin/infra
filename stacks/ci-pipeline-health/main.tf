@@ -9,6 +9,8 @@
 #
 # Runs IN-CLUSTER (not a claude.ai cloud routine) because Vault and the
 # Woodpecker token are LAN-only — cloud agents can't reach them.
+#
+# First apply rode the DIFF_BASE fix (pipeline-128 merge-commit detection bug).
 
 variable "schedule" {
   type = string
