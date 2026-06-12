@@ -169,8 +169,20 @@ A user-managed secret committed to a Stack directory as `sealed-*.yaml`. Distinc
 ### CI/CD
 
 **GHA build + Woodpecker deploy**:
-The split where Docker images are built+pushed by GitHub Actions and Woodpecker only runs `kubectl set image` on a deploy-only pipeline. Repos that can't fit GHA limits stay on Woodpecker for build too.
-_Avoid_: bare "Woodpecker pipeline" — say "build" or "deploy".
+The split where every owned image is built+pushed by GitHub Actions and Woodpecker only runs `kubectl set image` on a deploy-only pipeline (ADR-0002). Woodpecker never builds images.
+_Avoid_: bare "Woodpecker pipeline" — say "build" or "deploy"; "fallback build" (the in-cluster fallback path was removed by ADR-0002).
+
+**Canonical repo**:
+The Forgejo `viktor/<name>` repo — the only place commits land, workflow files included.
+_Avoid_: "upstream" (ambiguous); committing anywhere else.
+
+**GitHub mirror**:
+The GitHub repo a **Canonical repo** push-mirrors to, one-way, so GitHub Actions can build from it; anything committed on the mirror is silently overwritten by the next sync.
+_Avoid_: treating it as a second writable remote; bare "the GitHub repo" without saying mirror.
+
+**Forgejo registry**:
+Forgejo's built-in container registry — since ADR-0002 a frozen archive holding one last-known-good tag per **Service**, not a build target; owned images live on ghcr.io.
+_Avoid_: "private registry" (collides with the registry VM's pull-through caches); pushing new images to it.
 
 **Keel**:
 The **poll-driven** rollout orchestrator — watches registries for new image tags and rolls the matching Deployments automatically. The actor behind "auto-upgrade" for upstream images, and a redundant net for owned apps (already rolled on push by **Woodpecker deploy**).
@@ -192,6 +204,7 @@ A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content
 - A **proxmox-lvm-encrypted** PVC binds to one Node at a time (RWO) and requires a Service-level backup CronJob; an **NFS volume** is RWX and is backed up at the host level via rsync.
 - **State tier** and **Namespace tier** are orthogonal — a Tier 0 Stack can deploy a Service into any Namespace tier and vice versa.
 - A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit) or **Keel** (poll-driven, on a new registry tag); **Diun** only notifies. Operator-managed StatefulSets are rolled by neither.
+- An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
 
 ## Example dialogue
@@ -211,3 +224,4 @@ A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content
 - **"secret"** spans Vault entries, K8s Secret objects, **ExternalSecrets**, and **Sealed Secrets**. Always specify which.
 - **"proxied"** / **"non-proxied"** refer to Cloudflare's CDN posture for a DNS record, _not_ Anubis or forward-auth layering.
 - **"policy"** spans **Kyverno policy** (admission-time mutate/generate/validate), **Calico NetworkPolicy** (data-path ingress/egress), Vault policy (KV access), and K8s RBAC. Always qualify which engine.
+- **"registry"** spans three things: ghcr.io (where owned images live, ADR-0002), the **Forgejo registry** (frozen last-known-good archive), and the registry VM's pull-through caches (read-only proxies of upstream registries). Name which one.
