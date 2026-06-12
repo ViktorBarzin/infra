@@ -838,13 +838,20 @@ module "ingress_api" {
   # tripit slice 2; 401 for everything else). strip-auth-headers deletes
   # inbound X-authentik-* so the hybrid fallback header can never be spoofed
   # through this host.
-  auth              = "none"
-  anti_ai_scraping  = false
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.tripit.metadata[0].name
-  name              = "tripit-api"
-  service_name      = "tripit"
-  port              = 8080
-  tls_secret_name   = var.tls_secret_name
-  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.tripit.metadata[0].name
+  name             = "tripit-api"
+  service_name     = "tripit"
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
+  # Same photo-grid burst profile as the main tripit host (the Android Shell's
+  # gallery fetches thumbnails through this host) — share the dedicated
+  # 100/1000 tripit-rate-limit instead of the default 10/50.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-strip-auth-headers@kubernetescrd",
+    "traefik-tripit-rate-limit@kubernetescrd",
+  ]
 }
