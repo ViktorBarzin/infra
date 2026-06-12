@@ -79,6 +79,17 @@ hw.keyboard=yes
 EOF
 fi
 
+# --- noVNC defaults: scaled view, autoconnect, self-reconnect ----------------
+cat > /usr/share/novnc/defaults.json <<'JSON'
+{
+  "autoconnect": true,
+  "reconnect": true,
+  "reconnect_delay": 2000,
+  "resize": "scale",
+  "shared": true
+}
+JSON
+
 # --- virtual display + browser viewing ---------------------------------------
 export DISPLAY=:0
 Xvfb :0 -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
