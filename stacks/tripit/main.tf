@@ -142,34 +142,10 @@ resource "kubernetes_namespace" "tripit" {
   }
 }
 
-# GHCR pull secret (tripit ns only) for the private ghcr.io/viktorbarzin/tripit image
-# now built off-infra by GitHub Actions. Uses viktor's github_pat as the pull
-# credential — admin-scoped, accepted as an interim (rotate to a fine-grained
-# read:packages token later). Scoped to this namespace to limit the broad token's
-# blast radius (deliberately NOT folded into the cluster-wide registry-credentials).
-data "vault_kv_secret_v2" "viktor" {
-  mount = "secret"
-  name  = "viktor"
-}
-
-resource "kubernetes_secret" "ghcr_credentials" {
-  metadata {
-    name      = "ghcr-credentials"
-    namespace = kubernetes_namespace.tripit.metadata[0].name
-  }
-  type = "kubernetes.io/dockerconfigjson"
-  data = {
-    ".dockerconfigjson" = jsonencode({
-      auths = {
-        "ghcr.io" = {
-          username = "ViktorBarzin"
-          password = data.vault_kv_secret_v2.viktor.data["github_pat"]
-          auth     = base64encode("ViktorBarzin:${data.vault_kv_secret_v2.viktor.data["github_pat"]}")
-        }
-      }
-    })
-  }
-}
+# GHCR pull secret: the ghcr-credentials Secret in this namespace is cloned in
+# by the kyverno stack's sync-ghcr-credentials ClusterPolicy (allowlisted
+# private-ghcr namespaces only — ADR-0002). Source of truth:
+# stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
 
 # App secrets — seed these in Vault before applying:
 #   secret/tripit
@@ -370,7 +346,7 @@ resource "kubernetes_deployment" "tripit" {
           name = "registry-credentials"
         }
         image_pull_secrets {
-          name = kubernetes_secret.ghcr_credentials.metadata[0].name
+          name = "ghcr-credentials"
         }
 
         init_container {
@@ -650,7 +626,7 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
               name = "registry-credentials"
             }
             image_pull_secrets {
-              name = kubernetes_secret.ghcr_credentials.metadata[0].name
+              name = "ghcr-credentials"
             }
             container {
               name    = "worker"
