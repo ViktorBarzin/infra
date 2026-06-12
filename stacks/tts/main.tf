@@ -451,8 +451,9 @@ resource "kubernetes_deployment" "chatterbox" {
     ignore_changes = [
       # Off-peak CronJobs own the replica count — don't let apply reset it.
       spec[0].replicas,
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # image is TF-OWNED (pinned GHCR sha tag) — NOT keel-managed: keel can't
+      # poll the private GHCR repo, and the 2026-06-12 registry switch must apply.
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
