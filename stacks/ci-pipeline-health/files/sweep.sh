@@ -63,16 +63,15 @@ done
 wp_checked=$(awk '{s+=$1} END {print s+0}' "$NOTES.wpcount" 2>/dev/null || echo 0)
 rm -f "$NOTES.wpcount"
 
-# --- 3) GHA minutes vs free tier ---
-billing=$(gh_get "${GH_API}/users/ViktorBarzin/settings/billing/actions")
+# --- 3) GHA minutes vs free tier (enhanced billing API; old endpoint is 410-gone) ---
+YM_Y=$(date -u +%Y); YM_M=$(date -u +%-m)
+billing=$(gh_get "${GH_API}/users/ViktorBarzin/settings/billing/usage?year=${YM_Y}&month=${YM_M}")
 if [ $? -eq 0 ]; then
-  used=$(printf '%s' "$billing" | jq -r '.total_minutes_used')
-  included=$(printf '%s' "$billing" | jq -r '.included_minutes')
-  if [ "${included:-0}" -gt 0 ] 2>/dev/null; then
-    pct=$((used * 100 / included))
-    echo "GHA minutes: ${used}/${included} (${pct}%)" >>"$NOTES"
-    [ "$pct" -ge 75 ] && echo "GHA minutes at ${pct}% of the free tier (${used}/${included}) — check for runaway workflows or consider Pro" >>"$ISSUES"
-  fi
+  used=$(printf '%s' "$billing" | jq '[.usageItems[] | select(.product=="actions" and .unitType=="Minutes") | .quantity] | add // 0 | floor')
+  included=2000
+  pct=$((used * 100 / included))
+  echo "GHA minutes (month): ${used}/${included} (${pct}%)" >>"$NOTES"
+  [ "$pct" -ge 75 ] && echo "GHA minutes at ${pct}% of the free tier (${used}/${included}) — check for runaway workflows or consider Pro" >>"$ISSUES"
 else
   echo "minutes check unavailable" >>"$NOTES"
 fi
