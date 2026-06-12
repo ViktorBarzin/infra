@@ -1,7 +1,11 @@
 variable "image_tag" {
-  type        = string
-  default     = "latest"
-  description = "chatterbox-tts image tag. Use the 8-char git SHA in CI; :latest for local trials."
+  type = string
+  # Pinned to the devnen upstream sha the GHA build was dispatched against
+  # (tripit .github/workflows/build-chatterbox.yml). NOT :cu128/:latest — the
+  # original Forgejo-registry push is unpullable (corrupt layer blob, 500 on
+  # HEAD), which is also why the image moved to GHCR.
+  default     = "915ae289"
+  description = "chatterbox-tts GHCR image tag (devnen upstream short sha)."
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +59,7 @@ variable "offpeak_guard_schedule" {
 locals {
   namespace = "tts"
   labels    = { app = "chatterbox-tts" }
-  image     = "forgejo.viktorbarzin.me/viktor/chatterbox-tts:${var.image_tag}"
+  image     = "ghcr.io/viktorbarzin/chatterbox-tts:${var.image_tag}"
 
   # config.yaml rendered into a ConfigMap, mounted at /app/config.yaml (the
   # server's WORKDIR is /app). Voices, reference audio and the HF model cache
@@ -268,6 +272,33 @@ resource "kubernetes_job" "models_dir_init" {
   timeouts { create = "3m" }
 }
 
+# Pull secret for the PRIVATE ghcr.io/viktorbarzin/chatterbox-tts image (built
+# off-infra by tripit's build-chatterbox.yml GHA workflow — the Forgejo registry
+# copy is unpullable, corrupt layer blob). Mirrors stacks/tripit's ghcr secret.
+data "vault_kv_secret_v2" "viktor" {
+  mount = "secret"
+  name  = "viktor"
+}
+
+resource "kubernetes_secret" "ghcr_credentials" {
+  metadata {
+    name      = "ghcr-credentials"
+    namespace = kubernetes_namespace.tts.metadata[0].name
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = jsonencode({
+      auths = {
+        "ghcr.io" = {
+          username = "ViktorBarzin"
+          password = data.vault_kv_secret_v2.viktor.data["github_pat"]
+          auth     = base64encode("ViktorBarzin:${data.vault_kv_secret_v2.viktor.data["github_pat"]}")
+        }
+      }
+    })
+  }
+}
+
 resource "kubernetes_config_map" "chatterbox_config" {
   metadata {
     name      = "chatterbox-config"
@@ -328,6 +359,9 @@ resource "kubernetes_deployment" "chatterbox" {
         priority_class_name = "tier-2-gpu"
 
         image_pull_secrets { name = "registry-credentials" }
+        image_pull_secrets {
+          name = kubernetes_secret.ghcr_credentials.metadata[0].name
+        }
 
         container {
           name  = "chatterbox-tts"
