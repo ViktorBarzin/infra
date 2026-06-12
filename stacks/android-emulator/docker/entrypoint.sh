@@ -133,6 +133,34 @@ until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
 done
 echo "Boot completed."
 
+# --- fit the emulator window to the whole virtual display ---------------------
+# The emulator's Qt window opens small (it picks a conservative scale for a
+# headless display) and floats inside the 1080x2280 Xvfb, so noVNC's
+# resize=scale was scaling mostly black space. Background fitter: dismiss the
+# one-shot "nested virtualization" warning dialog, undecorate + fill the phone
+# window, and park the control strip off the right edge. Re-runs for a while to
+# catch the window/dialog appearing, then periodically in case they recreate.
+( export DISPLAY=:0
+  fit_once() {
+    # auto-OK the nested-virt warning if it is up
+    for w in $(xdotool search --name "Nested Virtualization" 2>/dev/null); do
+      xdotool windowactivate --sync "$w" key --clearmodifiers Return 2>/dev/null || true
+    done
+    emu=$(wmctrl -l 2>/dev/null | awk "/Android Emulator - /{print \$1; exit}")
+    [ -z "$emu" ] && return 1
+    # fill the display minus a sliver for the control strip
+    xdotool windowmove "$emu" 0 0 2>/dev/null
+    xdotool windowsize "$emu" 1010 2280 2>/dev/null
+    for t in $(wmctrl -l 2>/dev/null | awk "{ if (\$4 == \"Emulator\") print \$1 }"); do
+      xdotool windowmove "$t" 1015 0 2>/dev/null || true
+    done
+    return 0
+  }
+  # aggressive for the first ~2 min (window + dialog timing), then keep tidy
+  for _ in $(seq 1 60); do fit_once && break; sleep 2; done
+  while true; do fit_once; sleep 30; done
+) &
+
 # Expose the emulator's adbd (localhost:5555) to the pod network. Plain TCP,
 # no auth — reachable only inside the LAN via the MetalLB IP. Bind to the pod
 # IP only: the emulator itself already listens on 127.0.0.1:5555, so a
