@@ -453,3 +453,27 @@ resource "kubernetes_manifest" "middleware_retry" {
 
   depends_on = [helm_release.traefik]
 }
+
+# android-emulator noVNC rate limit. noVNC 1.3 ships unbundled: vnc.html
+# pulls ~60 ES modules in parallel on every page open, and the default
+# 10/50 limiter 429s the tail — the loader then waits forever on the
+# missing modules ("stuck on loading", verified 38x429 at a 90-request
+# burst on 2026-06-12). Same remedy as actualbudget/immich.
+resource "kubernetes_manifest" "middleware_android_emulator_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "android-emulator-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 50
+        burst   = 300
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
