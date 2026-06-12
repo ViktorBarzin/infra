@@ -226,6 +226,48 @@ module "nfs_models" {
   storage    = "20Gi" # multilingual weights + HF cache + voices headroom
 }
 
+# One-shot bootstrap: /srv/nfs-ssd is exported whole-tree, but the chatterbox
+# SUBDIR never existed on the host (a manual go-live step nobody with NFS-host
+# shell access ran), so kubelet's subdir mount failed with exit 32 forever
+# (observed first window, 2026-06-12). Mount the export ROOT — which exists —
+# and mkdir the subtree; kubelet's periodic mount retry then self-heals the
+# chatterbox pod. mkdir -p is idempotent; the Job is immutable-once-created.
+resource "kubernetes_job" "models_dir_init" {
+  metadata {
+    name      = "chatterbox-models-dir-init"
+    namespace = kubernetes_namespace.tts.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    backoff_limit              = 3
+    ttl_seconds_after_finished = 86400
+    template {
+      metadata { labels = local.labels }
+      spec {
+        restart_policy = "Never"
+        container {
+          name    = "mkdir"
+          image   = "busybox:1.37"
+          command = ["sh", "-c", "mkdir -p /mnt/chatterbox/hf_cache /mnt/chatterbox/reference_audio && ls -la /mnt/chatterbox"]
+          volume_mount {
+            name       = "nfs-ssd-root"
+            mount_path = "/mnt"
+          }
+        }
+        volume {
+          name = "nfs-ssd-root"
+          nfs {
+            server = "192.168.1.127"
+            path   = "/srv/nfs-ssd"
+          }
+        }
+      }
+    }
+  }
+  wait_for_completion = true
+  timeouts { create = "3m" }
+}
+
 resource "kubernetes_config_map" "chatterbox_config" {
   metadata {
     name      = "chatterbox-config"
