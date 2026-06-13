@@ -19,6 +19,9 @@ locals {
   # the ghcr-credentials Secret (kyverno sync-ghcr-credentials allowlist).
   # registry-credentials stays alongside so the currently-running sha-pinned
   # forgejo image remains pullable until the first ghcr deploy lands.
+  # (Applied via the 2026-06-13 re-trigger commit: the original pipeline 150
+  # was auto-killed by a concurrent nextcloud-todos master push before its
+  # apply step ran, and the successor's diff base excluded this stack.)
   image = "ghcr.io/viktorbarzin/fire-planner:${var.image_tag}"
   labels = {
     app = "fire-planner"
