@@ -440,7 +440,7 @@ resource "kubernetes_deployment" "chrome_service" {
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].container[1].image,
+      # container[1]=novnc now TF-managed on ghcr:latest (ADR-0002 #29) — was KEEL_IGNORE
       spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
