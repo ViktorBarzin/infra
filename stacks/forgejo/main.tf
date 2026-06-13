@@ -168,25 +168,29 @@ resource "kubernetes_deployment" "forgejo" {
             name       = "data"
             mount_path = "/data"
           }
-          # Bumped 1Gi -> 3Gi 2026-06-09, then 3Gi -> 6Gi 2026-06-13.
+          # Bumped 1Gi -> 3Gi 2026-06-09, then 3Gi -> 4Gi 2026-06-13.
           # OOMKilled again (exit 137) at the 3Gi cap on 2026-06-13 (2
-          # restarts; degraded the git backbone + spiked ingress TTFB/4xx).
-          # Steady-state is ~2.2Gi but it spiked into the 3Gi cap (true
-          # demand > 3.2Gi, ceiling unknown). The original 6/9 driver (tripit
-          # buildkit registry pushes) is GONE — the Forgejo container registry
-          # was frozen + emptied 2026-06-13 (ADR-0002, images moved to ghcr) —
-          # so the remaining spike is git ops / the integrity-probe catalog
-          # walk / a possible leak. Sized for generous headroom on the
-          # critical git remote; if working-set creeps toward 6Gi over days
-          # that's a leak to fix, not more RAM.
+          # restarts; briefly took the git remote + OCI registry down and
+          # spiked ingress TTFB/4xx). Steady-state ~2.2Gi but it spiked past
+          # the 3Gi cap. 4Gi is the CEILING here: the forgejo namespace
+          # tier-quota caps requests.memory at 4Gi and Guaranteed QoS means
+          # request == limit, so a pod can request at most 4Gi. A first
+          # attempt at 6Gi was REJECTED (FailedCreate: exceeded quota) and
+          # left forgejo with 0 pods until reverted -- do NOT raise memory
+          # past 4Gi without ALSO raising the tier-quota. The 6/9 OOM driver
+          # (tripit buildkit registry pushes) is gone now that the Forgejo
+          # registry was frozen + emptied 2026-06-13 (ADR-0002, ghcr), so the
+          # remaining spike is git ops / integrity-probe catalog walk / a
+          # possible leak; 4Gi should suffice. If it still OOMs, raise the
+          # tier-quota and this limit together.
           # requests=limits (Guaranteed QoS) per the repo memory convention.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "6Gi"
+              memory = "4Gi"
             }
             limits = {
-              memory = "6Gi"
+              memory = "4Gi"
             }
           }
           port {
