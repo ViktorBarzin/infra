@@ -8,10 +8,13 @@ variable "postgresql_host" { type = string }
 
 locals {
   namespace = "payslip-ingest"
-  # Phase 3 of forgejo-registry-consolidation — image= flipped to Forgejo
-  # 2026-05-07. registry-private kept image at the same path, so the new
-  # Forgejo URL is `viktor/<name>` under forgejo.viktorbarzin.me.
-  image = "forgejo.viktorbarzin.me/viktor/payslip-ingest:${var.image_tag}"
+  # Image built OFF-INFRA by GitHub Actions, pushed to GHCR (private) — ADR-0002,
+  # 2026-06-13 (issue #24): Forgejo viktor/payslip-ingest push-mirrors -> private
+  # ViktorBarzin/payslip-ingest GitHub repo -> GHA builds + pushes
+  # ghcr.io/viktorbarzin/payslip-ingest. The running Deployment tag is set via
+  # `kubectl set image` by the Woodpecker deploy pipeline (image is
+  # KEEL_IGNORE_IMAGE below); the CronJob tracks :latest with pull policy Always.
+  image = "ghcr.io/viktorbarzin/payslip-ingest:${var.image_tag}"
   labels = {
     app = "payslip-ingest"
   }
@@ -200,6 +203,11 @@ resource "kubernetes_deployment" "payslip_ingest" {
         image_pull_secrets {
           name = "registry-credentials"
         }
+        # Private ghcr image (ADR-0002 off-infra builds) — cloned into this
+        # namespace by the kyverno sync-ghcr-credentials allowlist policy.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
 
         init_container {
           name    = "alembic-migrate"
@@ -376,10 +384,19 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
             image_pull_secrets {
               name = "registry-credentials"
             }
+            # Private ghcr image (ADR-0002 off-infra builds) — cloned into this
+            # namespace by the kyverno sync-ghcr-credentials allowlist policy.
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             container {
-              name    = "sync"
-              image   = local.image
-              command = ["python", "-m", "payslip_ingest", "sync-meta-deposits"]
+              name  = "sync"
+              image = local.image
+              # Fleet convention for owned-app CronJobs (ADR-0002): track
+              # :latest and re-pull on every run. Replaces the dead SHA pin
+              # (:4f70681d) on the decommissioned Forgejo image path.
+              image_pull_policy = "Always"
+              command           = ["python", "-m", "payslip_ingest", "sync-meta-deposits"]
 
               env_from {
                 secret_ref {
