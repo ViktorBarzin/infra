@@ -4,6 +4,8 @@ locals {
   # pushes ghcr.io/viktorbarzin/instagram-poster (private — pulls need the
   # ghcr-credentials Secret cloned in by the kyverno sync-ghcr-credentials
   # ClusterPolicy). Replaces the forgejo.viktorbarzin.me/viktor base.
+  # (Applied via the 2026-06-13 re-trigger commit: the original pipeline 146
+  # was auto-killed by a concurrent master push before its apply step ran.)
   image = "ghcr.io/viktorbarzin/instagram-poster:${var.image_tag}"
   labels = {
     app = "instagram-poster"
