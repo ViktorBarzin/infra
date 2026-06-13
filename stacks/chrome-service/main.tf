@@ -324,7 +324,7 @@ resource "kubernetes_deployment" "chrome_service" {
         container {
           name = "novnc"
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-          image             = "forgejo.viktorbarzin.me/viktor/chrome-service-novnc:v4"
+          image             = "ghcr.io/viktorbarzin/chrome-service-novnc:latest"
           image_pull_policy = "IfNotPresent"
           port {
             name           = "http"

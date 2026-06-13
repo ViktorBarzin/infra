@@ -101,7 +101,7 @@ resource "kubernetes_deployment" "android-emulator" {
         }
         container {
           name  = "emulator"
-          image = "forgejo.viktorbarzin.me/viktor/android-emulator:${var.image_tag}"
+          image = "ghcr.io/viktorbarzin/android-emulator:${var.image_tag}"
 
           security_context {
             privileged = true # /dev/kvm access
