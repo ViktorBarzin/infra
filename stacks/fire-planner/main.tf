@@ -13,11 +13,13 @@ variable "tls_secret_name" {
 
 locals {
   namespace = "fire-planner"
-  # Phase 3 cutover 2026-05-07. NOTE: the registry-private repo for
-  # fire-planner has 0 tags — first build via Woodpecker on the new Forgejo
-  # repo (viktor/fire-planner, Dockerfile + .woodpecker.yml added 2026-05-07)
-  # must succeed BEFORE the next pod restart, otherwise pulls will 404.
-  image = "forgejo.viktorbarzin.me/viktor/fire-planner:${var.image_tag}"
+  # ADR-0002 off-infra builds (2026-06-13, issue infra#26): GHA on the GitHub
+  # mirror builds + pushes ghcr.io/viktorbarzin/fire-planner (:sha8 + :latest);
+  # Woodpecker is deploy-only. PRIVATE ghcr package — every pod spec pulls via
+  # the ghcr-credentials Secret (kyverno sync-ghcr-credentials allowlist).
+  # registry-credentials stays alongside so the currently-running sha-pinned
+  # forgejo image remains pullable until the first ghcr deploy lands.
+  image = "ghcr.io/viktorbarzin/fire-planner:${var.image_tag}"
   labels = {
     app = "fire-planner"
   }
@@ -230,6 +232,9 @@ resource "kubernetes_deployment" "fire_planner" {
         image_pull_secrets {
           name = "registry-credentials"
         }
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
 
         init_container {
           name              = "alembic-migrate"
@@ -390,6 +395,9 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
             image_pull_secrets {
               name = "registry-credentials"
             }
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             container {
               name    = "recompute"
               image   = local.image
@@ -472,6 +480,9 @@ resource "kubernetes_cron_job_v1" "fire_planner_col_refresh" {
             restart_policy = "OnFailure"
             image_pull_secrets {
               name = "registry-credentials"
+            }
+            image_pull_secrets {
+              name = "ghcr-credentials"
             }
             container {
               name    = "col-refresh"
@@ -738,6 +749,9 @@ resource "kubernetes_job_v1" "examples_bulk_ingest" {
         image_pull_secrets {
           name = "registry-credentials"
         }
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
           name              = "ingest"
           image             = local.image
@@ -858,6 +872,9 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
             restart_policy = "OnFailure"
             image_pull_secrets {
               name = "registry-credentials"
+            }
+            image_pull_secrets {
+              name = "ghcr-credentials"
             }
             container {
               name              = "ingest"
