@@ -24,6 +24,9 @@ locals {
     "wealthfolio",
     "fire-planner",
     "recruiter-responder",
+    # openclaw's install-recruiter-plugin init container pulls the PRIVATE
+    # ghcr.io/viktorbarzin/recruiter-responder:latest image (infra#27).
+    "openclaw",
   ]
 }
 
