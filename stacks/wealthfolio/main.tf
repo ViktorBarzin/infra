@@ -679,6 +679,10 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
             image_pull_secrets {
               name = "registry-credentials"
             }
+            # Private ghcr image (ADR-0002) — cloned by sync-ghcr-credentials.
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             container {
               name = "sync"
               # Phase 4 of forgejo-registry-consolidation 2026-05-07 +
@@ -686,7 +690,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
               # produced by /home/wizard/code/broker-sync (Forgejo
               # viktor/broker-sync, DockerHub viktorbarzin/broker-sync,
               # Forgejo viktor/wealthfolio-sync as the cluster pull path).
-              image = "forgejo.viktorbarzin.me/viktor/wealthfolio-sync:latest"
+              image = "ghcr.io/viktorbarzin/wealthfolio-sync:latest"
               env {
                 name = "IMAP_HOST"
                 value_from {
