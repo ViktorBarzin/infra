@@ -18,7 +18,7 @@ resource "kubernetes_namespace" "claude-memory" {
   metadata {
     name = "claude-memory"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -182,7 +182,7 @@ resource "kubernetes_deployment" "claude-memory" {
           name = "claude-memory"
           # Phase 3 cutover 2026-05-07 — moved off DockerHub to Forgejo as
           # part of the registry consolidation. Old: viktorbarzin/claude-memory-mcp:17
-          image = "forgejo.viktorbarzin.me/viktor/claude-memory-mcp:17"
+          image = "ghcr.io/viktorbarzin/claude-memory-mcp:latest"
 
           port {
             container_port = 8000
