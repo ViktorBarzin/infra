@@ -572,7 +572,7 @@ resource "kubernetes_deployment" "x402_gateway" {
         }
         container {
           name  = "x402-gateway"
-          image = "forgejo.viktorbarzin.me/viktor/x402-gateway:d9b83125"
+          image = "ghcr.io/viktorbarzin/x402-gateway:latest"
           port {
             name           = "http"
             container_port = 8923
@@ -664,6 +664,9 @@ resource "kubernetes_deployment" "x402_gateway" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
+      # KEEL_IGNORE_IMAGE: the GHA->ghcr build (ADR-0002 infra#28) set-images
+      # the running :sha8 tag; don't let terragrunt revert it to :latest.
+      spec[0].template[0].spec[0].container[0].image,
       # KEEL_LIFECYCLE_V1: keel.sh annotations + tier label are stamped on the
       # live object (keel enrollment / resource-governance) — don't strip them.
       metadata[0].annotations["keel.sh/policy"],
