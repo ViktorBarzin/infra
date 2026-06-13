@@ -427,7 +427,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup" {
     failed_jobs_history_limit = 5
     schedule                  = "30 0 * * *"
     # schedule                      = "* * * * *"
-    starting_deadline_seconds     = 10
+    starting_deadline_seconds     = 600
     successful_jobs_history_limit = 10
     job_template {
       metadata {}
@@ -519,7 +519,7 @@ resource "kubernetes_cron_job_v1" "mysql-backup-per-db" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     schedule                      = "45 0 * * *"
-    starting_deadline_seconds     = 10
+    starting_deadline_seconds     = 600
     successful_jobs_history_limit = 3
     job_template {
       metadata {}
@@ -1607,7 +1607,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
     failed_jobs_history_limit = 5
     schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
-    starting_deadline_seconds     = 10
+    starting_deadline_seconds     = 600
     successful_jobs_history_limit = 10
     job_template {
       metadata {}
@@ -1695,7 +1695,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup-per-db" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     schedule                      = "15 0 * * *"
-    starting_deadline_seconds     = 10
+    starting_deadline_seconds     = 600
     successful_jobs_history_limit = 3
     job_template {
       metadata {}
