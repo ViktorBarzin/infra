@@ -46,7 +46,7 @@ fi
 say ""; say "-- PII heuristics (tracked files) --"
 cd "$CLONE"
 EMAILS=$(git grep -hoiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' -- ':!*.lock' ':!package-lock.json' ':!pnpm-lock.yaml' ':!.beads' 2>/dev/null \
-  | grep -viE '@(viktorbarzin\.me|example\.(com|org|test)|test\.(com|local)|localhost|users\.noreply\.github\.com|googlegroups\.com)' \
+  | grep -viE '@(viktorbarzin\.me|meta\.com|example\.(com|org|test)|test\.(com|local)|localhost|users\.noreply\.github\.com|googlegroups\.com)' \
   | grep -viE '^(noreply|no-reply|ci|admin|info|support|hello|user|foo|bar|test.*)@' \
   | sort -u | head -20)
 if [ -n "$EMAILS" ]; then say "real-looking emails found:"; say "$EMAILS"; say "(review: PII?)"; DIRTY=1; else say "emails: none beyond allowlist"; fi
