@@ -13,7 +13,11 @@ variable "tls_secret_name" {
 
 locals {
   namespace = "nextcloud-todos"
-  image     = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:${var.image_tag}"
+  # ADR-0002 (infra#18): built on GHA from the public GitHub mirror, pushed to
+  # ghcr (public package — anonymous pulls). Running tag is managed by the
+  # Woodpecker deploy (kubectl set image); both image refs below are
+  # ignore_changes'd, so this base only matters on (re)create.
+  image     = "ghcr.io/viktorbarzin/nextcloud-todos:${var.image_tag}"
   labels = {
     app = "nextcloud-todos"
   }
