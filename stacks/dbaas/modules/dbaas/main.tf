@@ -1607,6 +1607,11 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
     failed_jobs_history_limit = 5
     schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
+    # 600s (was 10s): a 10s deadline silently DROPPED the 2026-06-13 00:00 run
+    # when the CronJob controller was late at the midnight backup/IO-storm tick,
+    # leaving the last full dump 37h old (fired PostgreSQLBackupStale). 600s lets
+    # a brief controller lag still launch the job. Same fix on the other three
+    # dbaas backup crons (they share the midnight window).
     starting_deadline_seconds     = 600
     successful_jobs_history_limit = 10
     job_template {
