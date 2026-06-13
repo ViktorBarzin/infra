@@ -14,7 +14,7 @@ clone:
 
 steps:
   - name: detect-drift
-    image: forgejo.viktorbarzin.me/viktor/infra-ci:latest
+    image: ghcr.io/viktorbarzin/infra-ci:latest
     pull: true
     backend_options:
       kubernetes:
