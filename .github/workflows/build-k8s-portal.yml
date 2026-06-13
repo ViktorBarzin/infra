@@ -7,7 +7,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'stacks/platform/modules/k8s-portal/files/**'
+      - 'stacks/k8s-portal/modules/k8s-portal/files/**'
   workflow_dispatch: {}
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: stacks/platform/modules/k8s-portal/files
+          context: stacks/k8s-portal/modules/k8s-portal/files
           platforms: linux/amd64
           provenance: false
           push: true
