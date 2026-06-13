@@ -16,7 +16,7 @@
 # Usage:
 #   offinfra-onboard <name> --clone <path> --visibility private|public \
 #     --namespace <ns> --deploy "<deployment>=<container>[,<container>...]" \
-#     [--image <ghcr-image-name>] [--context <docker-context>] \
+#     [--image <ghcr-image-name>] [--context <docker-context>] [--dockerfile <path>] \
 #     [--test-steps <yaml-file>] [--dry-run]
 #
 #   --deploy is repeatable. --test-steps points at a YAML fragment of extra
@@ -32,7 +32,7 @@ FORGEJO_LB="10.0.20.203"
 WP_API="https://ci.viktorbarzin.me/api"
 
 NAME=${1:?usage: offinfra-onboard <name> [flags]}; shift
-CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." TEST_STEPS_FILE="" DRY_RUN=0 NO_DEPLOY=0
+CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." DOCKERFILE="Dockerfile" TEST_STEPS_FILE="" DRY_RUN=0 NO_DEPLOY=0
 DEPLOYS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
     --namespace) NAMESPACE=$2; shift 2;;
     --image) IMAGE=$2; shift 2;;
     --context) CONTEXT=$2; shift 2;;
+    --dockerfile) DOCKERFILE=$2; shift 2;;
     --deploy) DEPLOYS+=("$2"); shift 2;;
     --test-steps) TEST_STEPS_FILE=$2; shift 2;;
     --no-deploy) NO_DEPLOY=1; shift;;
@@ -172,7 +173,7 @@ else
   TEST_STEPS='      - run: echo "no test steps configured"'
 fi
 
-export T_NAME=$NAME T_IMAGE=$IMAGE T_CONTEXT=$CONTEXT T_WPID=$WP_REPO_ID T_TEST="$TEST_STEPS" T_DEPLOY="$DEPLOY_CMDS"
+export T_NAME=$NAME T_IMAGE=$IMAGE T_CONTEXT=$CONTEXT T_DOCKERFILE=$DOCKERFILE T_WPID=$WP_REPO_ID T_TEST="$TEST_STEPS" T_DEPLOY="$DEPLOY_CMDS"
 render() { # $1=template $2=dest
   python3 - "$1" "$2" <<'PYEOF'
 import os, sys
@@ -181,6 +182,7 @@ s = open(src).read()
 s = s.replace('{{NAME}}', os.environ['T_NAME'])
 s = s.replace('{{IMAGE}}', os.environ['T_IMAGE'])
 s = s.replace('{{CONTEXT}}', os.environ['T_CONTEXT'])
+s = s.replace('{{DOCKERFILE}}', os.environ['T_DOCKERFILE'])
 s = s.replace('{{WP_REPO_ID}}', os.environ['T_WPID'])
 s = s.replace('{{TEST_STEPS}}', os.environ['T_TEST'])
 s = s.replace('{{DEPLOY_CMDS}}', os.environ['T_DEPLOY'].replace('\\n', '\n').rstrip('\n'))
