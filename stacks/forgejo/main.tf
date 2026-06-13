@@ -168,19 +168,25 @@ resource "kubernetes_deployment" "forgejo" {
             name       = "data"
             mount_path = "/data"
           }
-          # Bumped 1Gi -> 3Gi 2026-06-09: Forgejo was OOMKilled (exit 137)
-          # under registry-push load from in-cluster CI builds (tripit
-          # buildkit pushes large layers into the OCI registry). VPA
-          # upperBound reads ~1.5Gi, but that's suppressed by the 1Gi cap it
-          # kept OOMing against — size for the push spike, not steady-state.
+          # Bumped 1Gi -> 3Gi 2026-06-09, then 3Gi -> 6Gi 2026-06-13.
+          # OOMKilled again (exit 137) at the 3Gi cap on 2026-06-13 (2
+          # restarts; degraded the git backbone + spiked ingress TTFB/4xx).
+          # Steady-state is ~2.2Gi but it spiked into the 3Gi cap (true
+          # demand > 3.2Gi, ceiling unknown). The original 6/9 driver (tripit
+          # buildkit registry pushes) is GONE — the Forgejo container registry
+          # was frozen + emptied 2026-06-13 (ADR-0002, images moved to ghcr) —
+          # so the remaining spike is git ops / the integrity-probe catalog
+          # walk / a possible leak. Sized for generous headroom on the
+          # critical git remote; if working-set creeps toward 6Gi over days
+          # that's a leak to fix, not more RAM.
           # requests=limits (Guaranteed QoS) per the repo memory convention.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "3Gi"
+              memory = "6Gi"
             }
             limits = {
-              memory = "3Gi"
+              memory = "6Gi"
             }
           }
           port {
