@@ -25,7 +25,7 @@
 #   - infra/scripts/update_k8s.sh (per-node upgrade body)
 
 variable "schedule" {
-  type    = string
+  type = string
   # Daily 12:00 UTC — outside kured window (kured runs 02:00-06:00
   # London). Was weekly Sunday until 2026-05-18; daily picks up upstream
   # patch releases the same day they land. Concurrency is bounded by the
@@ -44,7 +44,7 @@ variable "enabled" {
 # ssh-client, curl, jq, envsubst — everything the upgrade Jobs need.
 variable "image_tag" {
   type    = string
-  default = "2fd7670d"
+  default = "latest"
 }
 
 # When true, detection runs but does NOT spawn the preflight Job.
@@ -55,7 +55,7 @@ variable "detection_dry_run" {
 
 locals {
   namespace = "k8s-upgrade"
-  image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.image_tag}"
+  image     = "ghcr.io/viktorbarzin/claude-agent-service:${var.image_tag}"
   labels = {
     app = "k8s-version-upgrade"
   }
@@ -67,7 +67,7 @@ resource "kubernetes_namespace" "k8s_upgrade" {
   metadata {
     name = local.namespace
     labels = {
-      tier = local.tiers.cluster
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }

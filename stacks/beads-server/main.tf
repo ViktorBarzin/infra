@@ -847,7 +847,7 @@ resource "kubernetes_config_map" "beads_metadata" {
 
 locals {
   # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-  claude_agent_service_image = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.claude_agent_service_image_tag}"
+  claude_agent_service_image = "ghcr.io/viktorbarzin/claude-agent-service:${var.claude_agent_service_image_tag}"
   beadboard_internal_url     = "http://${kubernetes_service.beadboard.metadata[0].name}.${kubernetes_namespace.beads.metadata[0].name}.svc.cluster.local"
 
   beads_script_prelude = <<-EOT

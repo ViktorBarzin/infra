@@ -30,7 +30,7 @@ variable "image_tag" {
 
 locals {
   namespace = "ci-pipeline-health"
-  image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service:${var.image_tag}"
+  image     = "ghcr.io/viktorbarzin/claude-agent-service:${var.image_tag}"
   labels = {
     app = "ci-pipeline-health"
   }
