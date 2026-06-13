@@ -11,7 +11,7 @@ data "vault_kv_secret_v2" "viktor_secrets" {
 locals {
   namespace = "claude-agent"
   # Phase 3 cutover 2026-05-07 — see infra/docs/plans/2026-05-07-forgejo-registry-consolidation-plan.md.
-  image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service"
+  image     = "ghcr.io/viktorbarzin/claude-agent-service"
   image_tag = "latest"
   labels = {
     app = "claude-agent-service"

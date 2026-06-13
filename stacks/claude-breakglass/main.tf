@@ -20,7 +20,7 @@ locals {
   namespace = "claude-breakglass"
   # Same image as claude-agent-service — the breakglass code lives in that repo
   # under app/breakglass/, and the deployment below overrides the command.
-  image     = "forgejo.viktorbarzin.me/viktor/claude-agent-service"
+  image     = "ghcr.io/viktorbarzin/claude-agent-service"
   image_tag = "latest"
   labels = {
     app = "claude-breakglass"
