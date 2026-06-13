@@ -143,7 +143,12 @@ steps:
         DIFF_BASE="HEAD~1"
         if [ -n "${CI_PREV_COMMIT_SHA:-}" ] && [ "$CI_PREV_COMMIT_SHA" != "$CI_COMMIT_SHA" ]; then
           git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=50 origin master 2>/dev/null || true
-          if git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null; then
+          # Restarted pipelines after master moved produce REVERSE diffs
+          # (CI_PREV ahead of the checked-out HEAD re-applied stale trees and
+          # reverted a sibling apply on 2026-06-12, pipeline 148). Only use
+          # CI_PREV when it is an ancestor of HEAD.
+          if git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null \
+             && git merge-base --is-ancestor "$CI_PREV_COMMIT_SHA" HEAD 2>/dev/null; then
             DIFF_BASE="$CI_PREV_COMMIT_SHA"
           fi
         fi
