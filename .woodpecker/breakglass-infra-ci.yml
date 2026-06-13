@@ -1,0 +1,31 @@
+# Break-glass: save the ghcr infra-ci image to a tarball on the registry VM
+# (10.0.20.10) so it can be `docker load`-ed onto a node if ghcr is ever
+# unreachable during a recovery. infra-ci now builds on GHA → ghcr (ADR-0002),
+# which is external + node-cached, so this is a belt-and-braces DR artifact —
+# run MANUALLY after an infra-ci rebuild (or periodically). Pulls from ghcr
+# (public, no login). Recovery: docs/runbooks/forgejo-registry-breakglass.md.
+when:
+  - event: manual
+
+steps:
+  - name: breakglass-tarball
+    image: alpine:3.20
+    failure: ignore
+    environment:
+      REGISTRY_SSH_KEY:
+        from_secret: registry_ssh_key
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$REGISTRY_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keyscan -t ed25519 10.0.20.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - |
+        ssh -n -o BatchMode=yes root@10.0.20.10 "
+          set -e
+          mkdir -p /opt/registry/data/private/_breakglass
+          IMAGE=ghcr.io/viktorbarzin/infra-ci:latest
+          docker pull \$IMAGE
+          docker save \$IMAGE | gzip > /opt/registry/data/private/_breakglass/infra-ci-latest.tar.gz
+          ls -lh /opt/registry/data/private/_breakglass/infra-ci-latest.tar.gz
+        "
