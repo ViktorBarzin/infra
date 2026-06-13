@@ -13,7 +13,10 @@ variable "tls_secret_name" {
 
 locals {
   namespace = "recruiter-responder"
-  image     = "forgejo.viktorbarzin.me/viktor/recruiter-responder:${var.image_tag}"
+  # GHA builds + pushes ghcr.io/viktorbarzin/recruiter-responder (PRIVATE,
+  # ADR-0002 off-infra builds, infra#27). Canonical repo stays on Forgejo;
+  # the GitHub mirror runs the build and the Woodpecker deploy moves the tag.
+  image = "ghcr.io/viktorbarzin/recruiter-responder:${var.image_tag}"
   labels = {
     app = "recruiter-responder"
   }
@@ -174,6 +177,12 @@ resource "kubernetes_deployment" "recruiter_responder" {
       spec {
         image_pull_secrets {
           name = "registry-credentials"
+        }
+        # GHCR pull secret: the ghcr-credentials Secret in this namespace is
+        # cloned in by the kyverno stack's sync-ghcr-credentials ClusterPolicy
+        # (allowlisted namespace) — the ghcr package is PRIVATE (ADR-0002).
+        image_pull_secrets {
+          name = "ghcr-credentials"
         }
 
         init_container {

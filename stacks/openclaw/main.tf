@@ -429,6 +429,15 @@ resource "kubernetes_deployment" "openclaw" {
       spec {
         service_account_name = kubernetes_service_account.openclaw.metadata[0].name
 
+        # GHCR pull secret for the install-recruiter-plugin init container —
+        # ghcr.io/viktorbarzin/recruiter-responder is a PRIVATE package
+        # (ADR-0002, infra#27). Cloned into this namespace by the kyverno
+        # stack's sync-ghcr-credentials ClusterPolicy (openclaw allowlisted).
+        # Forgejo-registry images in this pod keep pulling anonymously.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         # Init 0: fix /workspace ownership so node user can write
         init_container {
           name    = "fix-workspace-perms"
@@ -541,7 +550,7 @@ resource "kubernetes_deployment" "openclaw" {
           # IfNotPresent: a cached stale :latest meant the plugin manifest
           # (configSchema fix) never got pulled. An uncached SHA forces the
           # pull. Bump this when the openclaw plugin in nextcloud-todos changes.
-          image           = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:f85c6de1"
+          image             = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:f85c6de1"
           image_pull_policy = "Always"
           command = ["sh", "-c", <<-EOT
             set -eu
@@ -1151,7 +1160,7 @@ resource "kubernetes_deployment" "openclaw" {
 
         # Main container: OpenClaw
         container {
-          name  = "openclaw"
+          name = "openclaw"
           # Pinned back to 2026.2.26 (2026-06-04): 2026.5.4's gateway writes a
           # model `agentRuntime` key for the openai-codex provider that it then
           # rejects on startup ("Invalid config ... Unrecognized key:
