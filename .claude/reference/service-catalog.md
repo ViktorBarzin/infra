@@ -47,7 +47,7 @@
 | nextcloud | File sync/share | nextcloud |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
 | onlyoffice | Document editing | onlyoffice |
-| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05), Woodpecker-native build->deploy (repo id 166) | f1-stream |
+| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002) | f1-stream |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
