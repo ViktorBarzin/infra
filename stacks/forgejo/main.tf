@@ -11,11 +11,37 @@ resource "kubernetes_namespace" "forgejo" {
       "istio-injection" : "disabled"
       tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
+      # Opt out of the auto-generated tier-3-edge ResourceQuota (caps
+      # requests.memory at 4Gi). Forgejo's own pod requests 4Gi (the
+      # git + OCI-registry backbone, Guaranteed QoS), which pegged that
+      # tier quota at 100% and fired KubeQuotaAlmostFull. The
+      # forgejo-specific quota below gives headroom. Same pattern as dbaas.
+      "resource-governance/custom-quota" = "true"
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Custom ResourceQuota — replaces the tier-3-edge auto quota (opted out via the
+# resource-governance/custom-quota label above). requests.memory is 8Gi so the
+# 4Gi Forgejo pod sits at ~50% (clears KubeQuotaAlmostFull + the healthcheck
+# resourcequota check) with room for a transient migration/sidecar pod. To
+# raise Forgejo's memory limit past 4Gi later, bump requests.memory here too.
+resource "kubernetes_resource_quota" "forgejo" {
+  metadata {
+    name      = "forgejo-quota"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "8Gi"
+      "limits.memory"   = "32Gi"
+      pods              = "30"
+    }
   }
 }
 
