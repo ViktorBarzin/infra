@@ -1,0 +1,37 @@
+name: Build infra-ci
+
+# ADR-0002: the infra CI toolbox image (terraform/terragrunt/sops/kubectl/vault)
+# built off-infra on GHA → ghcr (public). BOOTSTRAP-CRITICAL: .woodpecker/default.yml's
+# apply step runs in this image. The Woodpecker build-ci-image.yml is kept until a
+# ghcr-based apply is proven, then removed.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ci/Dockerfile'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ci
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/infra-ci:latest
+            ghcr.io/viktorbarzin/infra-ci:${{ github.sha }}
