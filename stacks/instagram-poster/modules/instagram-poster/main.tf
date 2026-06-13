@@ -1,9 +1,10 @@
 locals {
   namespace = "instagram-poster"
-  # Forgejo registry consolidation (2026-05-07): all custom service images
-  # live under forgejo.viktorbarzin.me/viktor/<name>. The old 10.0.20.10
-  # private registry was decommissioned the same day.
-  image = "forgejo.viktorbarzin.me/viktor/instagram-poster:${var.image_tag}"
+  # Off-infra CI (ADR-0002, issue #23): GHA builds on the GitHub mirror and
+  # pushes ghcr.io/viktorbarzin/instagram-poster (private — pulls need the
+  # ghcr-credentials Secret cloned in by the kyverno sync-ghcr-credentials
+  # ClusterPolicy). Replaces the forgejo.viktorbarzin.me/viktor base.
+  image = "ghcr.io/viktorbarzin/instagram-poster:${var.image_tag}"
   labels = {
     app = "instagram-poster"
   }
@@ -244,8 +245,17 @@ resource "kubernetes_deployment" "instagram_poster" {
       }
 
       spec {
+        # registry-credentials (forgejo) kept for the transition — the live
+        # pod runs the last forgejo-built image until the first GHA→ghcr
+        # deploy lands. ghcr-credentials is cloned into this namespace by the
+        # kyverno stack's sync-ghcr-credentials ClusterPolicy (allowlisted
+        # private-ghcr namespaces only — ADR-0002). Source of truth:
+        # stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
         image_pull_secrets {
           name = "registry-credentials"
+        }
+        image_pull_secrets {
+          name = "ghcr-credentials"
         }
 
         # PVC mounts as root by default; pod runs as uid/gid 10001 (poster).
