@@ -45,7 +45,7 @@ steps:
           "$SLACK_WEBHOOK" || true
 
   - name: apply
-    image: forgejo.viktorbarzin.me/viktor/infra-ci:latest
+    image: ghcr.io/viktorbarzin/infra-ci:latest
     pull: true
     backend_options:
       kubernetes:
