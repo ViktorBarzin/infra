@@ -32,7 +32,7 @@ FORGEJO_LB="10.0.20.203"
 WP_API="https://ci.viktorbarzin.me/api"
 
 NAME=${1:?usage: offinfra-onboard <name> [flags]}; shift
-CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." TEST_STEPS_FILE="" DRY_RUN=0
+CLONE="" VISIBILITY="" NAMESPACE="" IMAGE="" CONTEXT="." TEST_STEPS_FILE="" DRY_RUN=0 NO_DEPLOY=0
 DEPLOYS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +43,7 @@ while [ $# -gt 0 ]; do
     --context) CONTEXT=$2; shift 2;;
     --deploy) DEPLOYS+=("$2"); shift 2;;
     --test-steps) TEST_STEPS_FILE=$2; shift 2;;
+    --no-deploy) NO_DEPLOY=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
@@ -51,7 +52,7 @@ IMAGE=${IMAGE:-$NAME}
 [ -n "$CLONE" ] && [ -d "$CLONE/.git" ] || { echo "--clone must point at a git clone" >&2; exit 1; }
 [ "$VISIBILITY" = "private" ] || [ "$VISIBILITY" = "public" ] || { echo "--visibility private|public" >&2; exit 1; }
 [ -n "$NAMESPACE" ] || { echo "--namespace required" >&2; exit 1; }
-[ ${#DEPLOYS[@]} -gt 0 ] || { echo "at least one --deploy required" >&2; exit 1; }
+[ ${#DEPLOYS[@]} -gt 0 ] || [ "$NO_DEPLOY" = 1 ] || { echo "at least one --deploy required (or --no-deploy for CronJob-only repos)" >&2; exit 1; }
 
 log() { printf '\033[1m[%s]\033[0m %s\n' "$NAME" "$*"; }
 run() { if [ "$DRY_RUN" = 1 ]; then echo "DRY: $*"; else "$@"; fi; }
@@ -119,6 +120,10 @@ log "firing initial mirror sync"
 run FJ -X POST "https://$FORGEJO_HOST/api/v1/repos/viktor/$NAME/push_mirrors-sync" >/dev/null || true
 
 # --- 4) Woodpecker registration (github forge) ---
+if [ "$NO_DEPLOY" = 1 ]; then
+  log "--no-deploy: skipping Woodpecker registration (CronJob-only; :latest+Always picks up builds)"
+  WP_REPO_ID="0"
+else
 WP_ROW=$(WP "$WP_API/repos?perPage=100" | jq -c --arg n "$GH_OWNER/$NAME" '[.[] | select(.full_name == $n)] | first // empty')
 WP_REPO_ID=$(jq -r '.id // empty' <<<"$WP_ROW")
 if [ -n "$WP_REPO_ID" ] && [ "$(jq -r .active <<<"$WP_ROW")" = "true" ]; then
@@ -148,6 +153,7 @@ if [ "$DRY_RUN" = 0 ]; then
   run WP -X PATCH "$WP_API/repos/$WP_REPO_ID" \
     -d '{"trusted":{"network":false,"volumes":false,"security":false}}' >/dev/null \
     && log "Woodpecker repo settings normalized (untrusted)"
+fi
 fi
 
 # --- 5) Render workflow + deploy files into the clone ---
@@ -182,10 +188,26 @@ os.makedirs(os.path.dirname(dst), exist_ok=True)
 open(dst, 'w').write(s)
 PYEOF
 }
-log "rendering build.yml + deploy.yml"
+log "rendering build.yml$([ "$NO_DEPLOY" = 1 ] && echo ' (no deploy job)' || echo ' + deploy.yml')"
 if [ "$DRY_RUN" = 0 ]; then
   render "$TEMPLATES/build.yml.tmpl"  "$CLONE/.github/workflows/build.yml"
-  render "$TEMPLATES/deploy.yml.tmpl" "$CLONE/.woodpecker/deploy.yml"
+  if [ "$NO_DEPLOY" = 1 ]; then
+    # CronJob-only: drop the deploy job (everything from "  deploy:" to the
+    # notify job) — :latest+Always CronJobs pick up new builds on next run.
+    python3 - "$CLONE/.github/workflows/build.yml" <<'PYDEL'
+import sys
+p=sys.argv[1]; lines=open(p).read().split("\n")
+out=[]; skip=False
+for l in lines:
+    if l.rstrip() == "  deploy:": skip=True
+    if l.rstrip() == "  notify-failure:": skip=False
+    if not skip: out.append(l)
+open(p,"w").write("\n".join(out).replace("needs: [lint-and-test, build, deploy]","needs: [lint-and-test, build]"))
+PYDEL
+    rm -f "$CLONE/.woodpecker/deploy.yml"
+  else
+    render "$TEMPLATES/deploy.yml.tmpl" "$CLONE/.woodpecker/deploy.yml"
+  fi
 fi
 
 # --- 6) Remove old in-cluster build pipeline + commit on Forgejo side ---
@@ -194,7 +216,8 @@ OLD_REMOVED=""
 for f in .woodpecker.yml .woodpecker/build.yml .woodpecker/build-fallback.yml; do
   [ -f "$f" ] && { run git rm -q "$f"; OLD_REMOVED="$OLD_REMOVED $f"; }
 done
-run git add .github/workflows/build.yml .woodpecker/deploy.yml
+run git add .github/workflows/build.yml
+[ -f .woodpecker/deploy.yml ] && run git add .woodpecker/deploy.yml
 if git diff --cached --quiet 2>/dev/null; then
   log "no changes to commit — SKIP (already migrated)"
 else
