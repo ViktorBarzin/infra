@@ -63,6 +63,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: {{CONTEXT}}
+          file: {{DOCKERFILE}}
           push: true
           platforms: linux/amd64
           # Single-manifest images (no provenance/SBOM attestation children) so
