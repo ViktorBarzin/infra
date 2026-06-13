@@ -75,6 +75,13 @@ resource "kubernetes_deployment" "k8s_portal" {
       }
 
       spec {
+        # GHCR pull secret: the ghcr-credentials Secret in this namespace is
+        # cloned in by the kyverno stack's sync-ghcr-credentials ClusterPolicy
+        # (allowlisted private-ghcr namespaces only — ADR-0002). Source of
+        # truth: stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
           name  = "portal"
           image = "ghcr.io/viktorbarzin/k8s-portal:latest"
