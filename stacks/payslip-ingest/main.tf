@@ -14,6 +14,9 @@ locals {
   # ghcr.io/viktorbarzin/payslip-ingest. The running Deployment tag is set via
   # `kubectl set image` by the Woodpecker deploy pipeline (image is
   # KEEL_IGNORE_IMAGE below); the CronJob tracks :latest with pull policy Always.
+  # (Re-applied 2026-06-13: infra pipeline 148 — a restart of the auto-killed
+  # 146 — diffed in reverse and re-applied this stack from a pre-migration
+  # tree, stripping the ghcr config above. This touch re-asserts it.)
   image = "ghcr.io/viktorbarzin/payslip-ingest:${var.image_tag}"
   labels = {
     app = "payslip-ingest"
