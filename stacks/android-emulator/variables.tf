@@ -5,6 +5,6 @@ variable "tls_secret_name" {
 
 variable "image_tag" {
   type        = string
-  default     = "api36-v8"
-  description = "android-emulator image tag at forgejo.viktorbarzin.me/viktor/android-emulator. Built + pushed manually from stacks/android-emulator/docker/ (see README.md) — bump this when the image is rebuilt."
+  default     = "latest"
+  description = "android-emulator image tag at forgejo.viktorbarzin.me/viktor/android-emulator. Built by GHA (.github/workflows/build-android-emulator.yml) -> ghcr.io/viktorbarzin/android-emulator on changes to stacks/android-emulator/docker/ (ADR-0002). :latest tracks the newest build."
 }
