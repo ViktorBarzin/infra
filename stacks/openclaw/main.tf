@@ -511,9 +511,12 @@ resource "kubernetes_deployment" "openclaw" {
         # recruiter-responder image into NFS extensions/. Plugin lifecycle
         # is coupled to the recruiter-responder image tag — bumping that
         # tag re-installs the plugin on next openclaw pod restart.
+        # Image moved forgejo -> ghcr (PRIVATE, ADR-0002 infra#27): the
+        # forgejo-side build is gone, so its :latest is frozen — ghcr is
+        # where new builds land. Pull auth via the pod-level ghcr-credentials.
         init_container {
           name  = "install-recruiter-plugin"
-          image = "forgejo.viktorbarzin.me/viktor/recruiter-responder:latest"
+          image = "ghcr.io/viktorbarzin/recruiter-responder:latest"
           command = ["sh", "-c", <<-EOT
             set -eu
             mkdir -p /home/node/.openclaw/extensions/recruiter-api
