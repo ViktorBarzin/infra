@@ -129,14 +129,14 @@ beadboard, nextcloud-todos, claude-agent-service, **claude-memory-mcp** (GHA →
 ghcr, NOT DockerHub), kms-website, Freedify, instagram-poster, payslip-ingest,
 broker-sync (image `wealthfolio-sync`), fire-planner, recruiter-responder,
 x402-gateway — plus tripit. Earlier public-repo apps already on GHA (Website,
-k8s-portal, apple-health-data, audiblez-web, plotting-book, insta2spotify,
+apple-health-data, audiblez-web, plotting-book, insta2spotify,
 audiobook-search, council-complaints) now also land on ghcr.
 - **PUBLIC ghcr packages:** beadboard, nextcloud-todos, claude-agent-service,
   claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
   chrome-service-novnc, android-emulator.
 - **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
-  infra-ci. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
+  infra-ci, k8s-portal. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
   = Vault `secret/viktor/ghcr_pull_token`, an alias of the admin `github_pat` —
   GitHub has no token-mint API, swap the alias value if a scoped token is ever
@@ -147,9 +147,11 @@ repo's own `.github/workflows/` (added to the GitHub lineage via PR; the
 github↔forgejo divergence was deliberately NOT reconciled):
 `build-chrome-service-novnc.yml` + `build-android-emulator.yml` → public ghcr;
 `build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
-`build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`. **infra-ci** is the image
-the `.woodpecker/default.yml` apply step + `drift-detection.yml` run in (proven
-by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.
+`build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
+PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (Keel-deployed; the LAST in-cluster
+Woodpecker build, migrated 2026-06-13 — completes "no local builds"). **infra-ci**
+is the image the `.woodpecker/default.yml` apply step + `drift-detection.yml` run
+in (proven by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.
 The Woodpecker `build-ci-image.yml` + `build-cli.yml` pipelines were REMOVED;
 infra-ci break-glass is a manual `.woodpecker/breakglass-infra-ci.yml` (ghcr
 pull-and-save to the registry VM).
@@ -162,9 +164,11 @@ stays DRY_RUN. Pull-through caches on `10.0.20.10` are unchanged. Runbook:
 **Woodpecker now runs only:** per-app `deploy.yml` (manual, `kubectl set
 image`), `default.yml` (terragrunt apply), `renew-tls.yml` (certbot),
 maintenance crons (drift-detection, provision-user, registry-config-sync,
-pve-nfs-exports-sync, issue-automation, postmortem-todos, k8s-portal), and the
+pve-nfs-exports-sync, issue-automation, postmortem-todos), and the
 manual `breakglass-infra-ci.yml`. **No build/test pipeline on any repo — do not
-(re)introduce one.**
+(re)introduce one.** (`.woodpecker/k8s-portal.yml`, the last in-cluster image
+build, was removed 2026-06-13 — k8s-portal now builds on GHA → ghcr, see
+Infra-owned images above.)
 
 **Decommissioned (issue #31):** travel_blog (stack destroyed + dir removed), 6
 dead builders' pipelines (terminal-lobby, webhook-handler, hmrc-sync,
