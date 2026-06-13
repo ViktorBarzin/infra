@@ -128,7 +128,7 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image             = "forgejo.viktorbarzin.me/viktor/f1-stream:${var.image_tag}"
+          image             = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
           image_pull_policy = "Always"
           name              = "f1-stream"
           # Right-sized 2026-06-05: was 1Gi (bundled-Chromium era). The image is
