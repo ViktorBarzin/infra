@@ -102,10 +102,14 @@ resource "kubernetes_deployment" "anisette" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
-              memory = "128Mi"
+              # anisette downloads + initializes Apple's CoreADI provisioning
+              # library at startup, which spikes past 128Mi → OOMKilled (exit
+              # 137) before it can bind :6969. 512Mi gives headroom; steady
+              # state is much lower.
+              memory = "512Mi"
             }
           }
           readiness_probe {
