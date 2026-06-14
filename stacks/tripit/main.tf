@@ -125,6 +125,11 @@ locals {
     # (older images crash-loop on the unknown enum) — landed after that
     # image rolled out, same hold-order as FARE/CALENDAR/RESEARCH above.
     CITY_IMAGE_PROVIDER = "wikipedia"
+    # Re-applied 2026-06-14: a69847a0 (the commit that added this) was never
+    # terraform-applied — its CI run skipped the tripit stack (changed-stack
+    # diff race), so the env never landed in-cluster and the provider fell back
+    # to the fake 1x1-PNG, leaving every trip/stay cover blank. This touch forces
+    # the tripit stack to re-apply and reconcile the drift.
     # Tour-guide content pipeline (tripit#24/#25): these three default to `fake`
     # in tripit's config, which is what shipped dark on 2026-06-08 — prod only
     # ever showed the placeholder "Sight 1". Real providers: Wikipedia GeoSearch
