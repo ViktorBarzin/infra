@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "health" {
   metadata {
     name = "health"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -128,6 +128,15 @@ resource "kubernetes_deployment" "health" {
             name  = "COOKIE_SECURE"
             value = "true"
           }
+          env {
+            # ADR-0008 (health repo): identity for the internal LAN test host.
+            # Only reached when no X-authentik-email header is present — i.e. via
+            # the auth="none" test ingress below. The public host's forward-auth
+            # fails closed, so requests arriving there always carry the real
+            # header and never fall back to this value.
+            name  = "DEV_AUTH_EMAIL"
+            value = "vbarzin@gmail.com"
+          }
 
           volume_mount {
             name       = "uploads"
@@ -204,6 +213,30 @@ module "ingress" {
     "gethomepage.dev/icon"         = "healthchecks.png"
     "gethomepage.dev/group"        = "Core Platform"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# https://health-test.viktorbarzin.lan — internal LAN-only test host for
+# automated/E2E testing + manual screenshots without the Authentik SSO dance
+# (ADR-0008). Same `health` deployment; acts as DEV_AUTH_EMAIL=vbarzin@gmail.com.
+module "ingress_test" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": LAN-only (allow_local_access_only) test host — no public
+  # exposure; the public health.viktorbarzin.me ingress above stays
+  # auth="required". No user data gate here by design — it serves the real app
+  # as DEV_AUTH_EMAIL since no X-authentik-email is injected (ADR-0008).
+  auth                    = "none"
+  namespace               = kubernetes_namespace.health.metadata[0].name
+  name                    = "health-test"
+  root_domain             = "viktorbarzin.lan"
+  service_name            = kubernetes_service.health.metadata[0].name
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  max_body_size           = "100m"
+  anti_ai_scraping        = false
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
   }
 }
 
