@@ -78,7 +78,15 @@ resource "kubernetes_deployment" "anisette" {
       spec {
         container {
           # Pinned by digest — upstream ships only a mutable :latest (no tags).
-          image = "dadoum/anisette-v3-server@sha256:1e20384985d3c49965f444bef39d627768dacc39ea0dca91f2a535edb7591ba3"
+          # The `docker.io/` prefix is REQUIRED, not cosmetic: the Kyverno
+          # require-trusted-registries policy allowlists `docker.io/*` but NOT a
+          # bare `dadoum/*` prefix (only enumerated DockerHub user repos like
+          # mendhak/*, mpepping/* are listed in
+          # stacks/kyverno/modules/kyverno/security-policies.tf). A bare
+          # `dadoum/anisette-v3-server@...` is denied at admission; the explicit
+          # docker.io/ registry matches the allowlist and still pulls via the
+          # 10.0.20.10 pull-through cache.
+          image = "docker.io/dadoum/anisette-v3-server@sha256:1e20384985d3c49965f444bef39d627768dacc39ea0dca91f2a535edb7591ba3"
           name  = "anisette"
           port {
             name           = "http"
