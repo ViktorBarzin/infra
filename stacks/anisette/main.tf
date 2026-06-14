@@ -55,6 +55,12 @@ resource "kubernetes_deployment" "anisette" {
       tier = local.tiers.aux
     }
   }
+  # anisette downloads + initializes Apple's CoreADI provisioning library on
+  # first start (slow, memory-spiky). wait_for_rollout=false so the apply never
+  # blocks on — and never strands out of terraform state — a pod that is still
+  # warming up (mirrors tts/llama-cpp). Pod health is still gated by the
+  # readiness probe below, so the Service only routes once it's actually up.
+  wait_for_rollout = false
   spec {
     replicas = 1
     selector {
