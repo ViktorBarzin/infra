@@ -197,6 +197,11 @@ module "ingress" {
   name            = "health"
   tls_secret_name = var.tls_secret_name
   max_body_size   = "100m"
+  # The redesigned SPA bursts well past the default 10/50 limiter on each page
+  # load (shell + fonts + a 5-8 call API burst). Swap the shared limiter for a
+  # health-specific one (100/1000), mirroring tripit/immich/actualbudget.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["health-rate-limit@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Health"
