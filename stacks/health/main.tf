@@ -209,8 +209,12 @@ module "ingress" {
   # The redesigned SPA bursts well past the default 10/50 limiter on each page
   # load (shell + fonts + a 5-8 call API burst). Swap the shared limiter for a
   # health-specific one (100/1000), mirroring tripit/immich/actualbudget.
+  # The ref MUST carry the middleware's namespace prefix: the CRD lives in the
+  # `traefik` ns, so it's `traefik-health-rate-limit@kubernetescrd` (same form as
+  # traefik-tripit-rate-limit). Without the prefix Traefik can't resolve it and
+  # 404s the whole router.
   skip_default_rate_limit = true
-  extra_middlewares       = ["health-rate-limit@kubernetescrd"]
+  extra_middlewares       = ["traefik-health-rate-limit@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Health"
