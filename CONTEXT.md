@@ -173,12 +173,16 @@ The split where every owned image is built+pushed by GitHub Actions and Woodpeck
 _Avoid_: bare "Woodpecker pipeline" — say "build" or "deploy"; "fallback build" (the in-cluster fallback path was removed by ADR-0002).
 
 **Canonical repo**:
-The Forgejo `viktor/<name>` repo — the only place commits land, workflow files included.
-_Avoid_: "upstream" (ambiguous); committing anywhere else.
+The Forgejo `viktor/<name>` repo — the only place commits land, workflow files included. Every first-party repo is Forgejo-canonical *except* an explicit set of **GitHub-first repos**. A clone keeps **only** the canonical remote (ADR-0003): the **GitHub mirror** is not a second push target.
+_Avoid_: "upstream" (ambiguous); committing anywhere else; keeping both remotes on a clone and hand-pushing to each (the dual-push habit that caused the 2026-06 divergence — ADR-0003).
 
 **GitHub mirror**:
-The GitHub repo a **Canonical repo** push-mirrors to, one-way, so GitHub Actions can build from it; anything committed on the mirror is silently overwritten by the next sync.
+The GitHub repo a **Canonical repo** push-mirrors to, one-way (Forgejo's `push_mirrors`, `sync_on_commit`), so GitHub Actions can build from it; anything committed on the mirror is silently overwritten by the next sync — and enabling the mirror **force-overwrites** the GitHub side, so a diverged GitHub-only commit must be merged back into Forgejo *before* the mirror is turned on or it is lost.
 _Avoid_: treating it as a second writable remote; bare "the GitHub repo" without saying mirror.
+
+**GitHub-first repo**:
+The deliberate exception to the **Canonical repo** rule — a repo whose canonical home is GitHub, so it sits outside the mirror policy. Two kinds: third-party clones/forks where GitHub is genuinely upstream (`jsoncrack.com`, `snmp_exporter`, `SparkyFitness`, `agent-rules-books`, `Plotting-Your-Dream-Book`), and a first-party repo intentionally kept public on GitHub (`health`). Single GitHub remote, never dual-pushed.
+_Avoid_: adding a Forgejo remote "for consistency"; treating one as a **Canonical repo**.
 
 **Forgejo registry**:
 Forgejo's built-in container registry — since ADR-0002 a frozen archive holding one last-known-good tag per **Service**, not a build target; owned images live on ghcr.io.
