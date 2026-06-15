@@ -49,6 +49,21 @@ resource "authentik_policy_expression" "admin_services_restriction" {
 
     host = request.context.get("host", "")
 
+    # TripIt External containment fence (ADR-0020 in the tripit repo). Publicly
+    # self-enrolled TripIt users (group "TripIt External", assigned by the
+    # tripit-enrollment flow's user_write) may reach tripit.viktorbarzin.me and
+    # NOTHING else. MUST be the FIRST host-dispatch branch: it is a request.user
+    # predicate that must dominate every host branch below, ESPECIALLY the
+    # default-allow `if host not in ADMIN_ONLY_HOSTS: return True` — placed after
+    # it, a tagged user would slip into other hosts. Safe to add: the group is
+    # net-new and created EMPTY, so this matches zero existing principals (no
+    # lockout). The fence is forward-auth ONLY; OIDC apps (Vault, Immich, …)
+    # contain External users via their own per-app group bindings — see
+    # docs/runbooks/tripit-external-signup.md. NEVER co-assign "TripIt External"
+    # to a trusted/internal user (this branch would fence them out of admin hosts).
+    if ak_is_group_member(request.user, name="TripIt External"):
+        return host == "tripit.viktorbarzin.me"
+
     # t3 Workstation edge gate: only members of "T3 Users" may reach t3.
     # Placed BEFORE the ADMIN_ONLY_HOSTS early-return (t3 is intentionally not in
     # that set — it must not require Home-Server-Admins, just T3 Users membership).
