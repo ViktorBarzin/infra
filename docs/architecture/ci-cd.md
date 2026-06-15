@@ -100,9 +100,13 @@ Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
 kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit
 **ALLOWLIST** of private-ghcr namespaces only (NOT cluster-wide; source
 `stacks/kyverno/modules/kyverno/ghcr-credentials.tf`). Cred = Vault
-`secret/viktor/ghcr_pull_token` (an alias of the admin `github_pat` — GitHub
-has no token-mint API; swap the alias value if a scoped token is ever
-UI-minted).
+`secret/viktor/ghcr_pull_token` (a dedicated classic PAT scoped to
+`read:packages`, UI-minted 2026-06-15 — no longer the admin `github_pat` alias.
+GitHub has no token-mint API, so rotation is manual: re-mint the classic
+`read:packages` PAT → `vault kv patch secret/viktor ghcr_pull_token=…` →
+targeted apply `module.kyverno.kubernetes_secret.ghcr_credentials` (reads Vault;
+avoids the git-crypt `tls-secret-sync` landmine on a locked clone), which
+Kyverno then re-syncs to the allowlisted namespaces).
 
 ### Migrated apps (issues #13–#27)
 

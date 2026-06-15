@@ -138,9 +138,12 @@ audiobook-search, council-complaints) now also land on ghcr.
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
   infra-ci, k8s-portal. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
-  = Vault `secret/viktor/ghcr_pull_token`, an alias of the admin `github_pat` —
-  GitHub has no token-mint API, swap the alias value if a scoped token is ever
-  UI-minted).
+  = Vault `secret/viktor/ghcr_pull_token`, a dedicated classic PAT scoped to
+  `read:packages` (UI-minted 2026-06-15; no longer the admin `github_pat`
+  alias). GitHub has no token-mint API, so rotation is manual: re-mint →
+  `vault kv patch secret/viktor ghcr_pull_token=…` → targeted apply
+  `module.kyverno.kubernetes_secret.ghcr_credentials` (reads Vault, dodges the
+  git-crypt tls-secret-sync landmine), Kyverno re-syncs the allowlist).
 
 **Infra-owned images (issues #29/#30)** build on GHA workflows IN the infra
 repo's own `.github/workflows/` (added to the GitHub lineage via PR; the
