@@ -131,6 +131,16 @@ resource "kubernetes_deployment" "t3_afk" {
     name      = "t3-afk"
     namespace = kubernetes_namespace.t3_afk.metadata[0].name
     labels    = local.labels
+    # keel.sh/policy=never must be a DEPLOYMENT-level annotation — that's where
+    # Keel reads it. (A pod-template label is ignored by Keel, which is why the
+    # earlier attempt failed.) The cluster's Kyverno inject-keel-annotations
+    # policy is opt-OUT: it stamps policy=patch on any workload that doesn't
+    # carry its own keel.sh/policy — and Keel then "patch"-downgraded
+    # node:24 -> node:24.0.2 (below t3@0.0.27's required node >=24.10), which
+    # crash-looped `t3 serve`. ADR 0003 (Keel-excluded).
+    annotations = {
+      "keel.sh/policy" = "never"
+    }
   }
 
   spec {
@@ -146,11 +156,7 @@ resource "kubernetes_deployment" "t3_afk" {
 
     template {
       metadata {
-        labels = merge(local.labels, {
-          # Belt-and-braces: this namespace isn't Keel-enrolled, but pin the
-          # churny pre-1.0 T3 explicitly out of any auto-upgrade. ADR 0003.
-          "keel.sh/policy" = "never"
-        })
+        labels = local.labels
       }
 
       spec {
@@ -312,7 +318,14 @@ resource "kubernetes_deployment" "t3_afk" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Kyverno's inject-keel-annotations stamps pollSchedule/trigger alongside
+      # the policy; we own keel.sh/policy=never above, but ignore these two so
+      # they don't perpetually drift the plan.
+      metadata[0].annotations["keel.sh/pollSchedule"],
+      metadata[0].annotations["keel.sh/trigger"],
+    ]
   }
 }
 
