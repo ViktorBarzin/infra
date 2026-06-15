@@ -13,16 +13,15 @@
 # The Vault application itself stays UI-managed (like the other OIDC apps); this
 # adds ONLY the authorization binding. policy_engine_mode on the app is "any", so
 # one group binding == membership in that group is required to authorize.
-data "authentik_application" "vault" {
-  slug = "vault"
-}
-
-data "authentik_group" "allow_login_users" {
-  name = "Allow Login Users"
-}
-
+#
+# UUIDs are PINNED as literals: this provider version has NO
+# `data "authentik_application"` data source (CI pipeline 198 failed on it), and
+# both objects are UI-managed and stable. To re-fetch if either is recreated, run
+# `ak shell` in the goauthentik-server pod and read
+# `Application.objects.get(name="Vault").pbm_uuid` and
+# `Group.objects.get(name="Allow Login Users").group_uuid`.
 resource "authentik_policy_binding" "vault_allow_login_users" {
-  target = data.authentik_application.vault.uuid
-  group  = data.authentik_group.allow_login_users.id
+  target = "fe5698e3-b6b1-4475-98fa-ce2bae22f4dd" # Authentik application "Vault" (pbm_uuid)
+  group  = "b4823cd7-8ed8-4d2f-8f94-bc285138f853" # group "Allow Login Users" (group_uuid)
   order  = 0
 }
