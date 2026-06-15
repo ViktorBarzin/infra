@@ -21,7 +21,13 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y "${PKGS[@]}" >/dev/null
 
-# 2) node >= 18 + claude-code (claude-code requires node >= 18)
+# 2) node >= 18 — needed for the t3 CLI (npm-global, below). NOT for claude-code:
+#    claude-code is the per-user NATIVE install (the recommended, self-updating
+#    ~/.local/bin/claude), provisioned per user by t3-provision-users
+#    (install_user_claude_native) and self-bootstrapped by start-claude.sh on first launch.
+#    We deliberately do NOT `npm install -g @anthropic-ai/claude-code` — npm/npx is not the
+#    recommended runtime, and a system-wide npm copy just shadows/duplicates the per-user
+#    native installs everyone auto-migrates to anyway.
 need_node=1
 if command -v node >/dev/null; then
   [[ "$(node -v | sed 's/^v\([0-9]*\).*/\1/')" -ge 18 ]] && need_node=0
@@ -30,14 +36,6 @@ if [[ $need_node -eq 1 ]]; then
   log "node: installing NodeSource 22.x"
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
   apt-get install -y nodejs >/dev/null
-fi
-# Detect the GLOBAL npm package, NOT whatever `claude` resolves to on PATH: the admin's
-# personal ~/.local/bin/claude shadows it, so `command -v claude` silently skipped the
-# system-wide install — leaving /usr/lib/node_modules/@anthropic-ai empty and fresh
-# non-admins with no claude (they only worked because the admin's install was on PATH).
-if ! npm ls -g --depth=0 @anthropic-ai/claude-code >/dev/null 2>&1; then
-  log "npm: installing @anthropic-ai/claude-code (system-wide)"
-  npm install -g @anthropic-ai/claude-code >/dev/null
 fi
 
 # 2b) t3 (the per-user coding surface) — PINNED, never nightly/latest. t3 is pre-1.0 and
