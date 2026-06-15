@@ -38,6 +38,23 @@ if [[ $need_node -eq 1 ]]; then
   apt-get install -y nodejs >/dev/null
 fi
 
+# 2a) ~/.local/bin on PATH for all LOGIN shells (machine-wide). The native claude install
+#     lives at ~/.local/bin; this guarantees login shells (SSH, etc.) find it regardless of
+#     whether the per-user native-installer rc edit ran. (The terminal launcher sets PATH
+#     itself, and t3-serve@.service hard-sets PATH in the unit.)
+install -d -m 0755 /etc/profile.d
+cat > /etc/profile.d/10-local-bin.sh <<'PROFILE_EOF'
+# Native per-user installs (e.g. claude-code) live in ~/.local/bin — put it on PATH.
+# Guarded so it never duplicates. Sourced by login shells (bash via /etc/profile; zsh
+# login via /etc/zsh/zprofile -> /etc/profile).
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+PROFILE_EOF
+chmod 0644 /etc/profile.d/10-local-bin.sh
+log "/etc/profile.d/10-local-bin.sh (~/.local/bin on PATH for login shells)"
+
 # 2b) t3 (the per-user coding surface) — PINNED, never nightly/latest. t3 is pre-1.0 and
 #     ships breaking auth-schema + bootstrap-API changes our t3-dispatch can't follow blind
 #     (2026-06-09 outage: a nightly auto-update broke pairing for ALL users). The daily
