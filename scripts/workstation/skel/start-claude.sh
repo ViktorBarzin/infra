@@ -42,13 +42,16 @@ else
   done
 fi
 
-# Prefer the system-wide `claude` (installed by setup-devvm.sh); fall back to npx.
+# Run the NATIVE `claude` (the recommended install: ~/.local/bin/claude, self-updating).
+# No npm/npx. If the native binary is missing (a fresh account before the hourly reconcile
+# has provisioned it), bootstrap it with the official native installer, then run it.
 launch() {
-  if command -v claude >/dev/null 2>&1; then
-    claude "$@"
-  else
-    npx @anthropic-ai/claude-code "$@"
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "  Installing Claude Code (native) for $(id -un) …"
+    curl -fsSL https://claude.ai/install.sh | bash || return 127
+    export PATH="$HOME/.local/bin:$PATH"
   fi
+  claude "$@"
 }
 
 # Re-assert Claude Code's first-run onboarding flag before launch. ~/.claude.json is a
