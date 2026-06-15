@@ -107,6 +107,21 @@ resource "kubernetes_config_map" "agent_claudemd" {
   }
 }
 
+# Auto-pair dispatcher script (run by the sidecar container below). Mirrors the
+# devvm t3-dispatch: on a cookieless, Authentik-gated page load it mints a
+# pairing credential and exchanges it for the t3_session cookie, so the user
+# never sees the manual /pair screen. Reverse-proxies everything else (incl.
+# WebSockets) to t3 serve.
+resource "kubernetes_config_map" "dispatcher" {
+  metadata {
+    name      = "t3-afk-dispatcher"
+    namespace = kubernetes_namespace.t3_afk.metadata[0].name
+  }
+  data = {
+    "dispatcher.js" = file("${path.module}/files/dispatcher.js")
+  }
+}
+
 # --- Storage ---
 # SSD-NFS (small-file friendly) for the T3 base dir: state.sqlite + the
 # server-signing-key (losing it invalidates every issued bearer), per-thread git
@@ -300,6 +315,43 @@ resource "kubernetes_deployment" "t3_afk" {
           }
         }
 
+        # Auto-pair dispatcher (sidecar). The Service points at this (:8080); it
+        # reverse-proxies to t3 serve (:3773) and injects the session cookie so
+        # the browser experience matches t3.viktorbarzin.me. Shares /data so it
+        # can exec the t3 CLI to mint pairing credentials.
+        container {
+          name    = "dispatcher"
+          image   = local.image
+          command = ["node", "/scripts/dispatcher.js"]
+          port {
+            container_port = 8080
+          }
+          env {
+            name  = "HOME"
+            value = "/home/node"
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+          volume_mount {
+            name       = "dispatcher"
+            mount_path = "/scripts"
+          }
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { memory = "256Mi" }
+          }
+        }
+
         volume {
           name = "data"
           persistent_volume_claim {
@@ -311,6 +363,13 @@ resource "kubernetes_deployment" "t3_afk" {
           name = "agent-claudemd"
           config_map {
             name = kubernetes_config_map.agent_claudemd.metadata[0].name
+          }
+        }
+
+        volume {
+          name = "dispatcher"
+          config_map {
+            name = kubernetes_config_map.dispatcher.metadata[0].name
           }
         }
       }
@@ -339,9 +398,11 @@ resource "kubernetes_service" "t3_afk" {
   }
   spec {
     selector = local.labels
+    # Route to the auto-pair dispatcher sidecar (:8080), which reverse-proxies
+    # to t3 serve (:3773) after injecting the t3_session cookie.
     port {
       port        = 3773
-      target_port = 3773
+      target_port = 8080
     }
     type = "ClusterIP"
   }
