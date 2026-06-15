@@ -51,6 +51,37 @@ launch() {
   fi
 }
 
+# Re-assert Claude Code's first-run onboarding flag before launch. ~/.claude.json is a
+# SINGLE file that ALL of a user's concurrent claude processes (this terminal, their
+# t3-serve instance, agent/SDK sessions) read-modify-write; a stale writer periodically
+# drops top-level keys — including hasCompletedOnboarding — which throws the next
+# interactive session back to the "Choose the text style" wizard even though the user is
+# fully logged in (credentials live in the SEPARATE ~/.claude/.credentials.json, which is
+# never affected). Idempotent, runs as the user right before launch, never clobbers other
+# keys. Best-effort: no-op if jq is missing or the file is empty/corrupt (claude self-heals).
+ensure_onboarding() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local cfg="$HOME/.claude.json" ver tmp
+  ver="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [ -s "$cfg" ]; then
+    jq -e . "$cfg" >/dev/null 2>&1 || return 0                                     # corrupt -> leave for claude
+    [ "$(jq -r '.hasCompletedOnboarding // false' "$cfg")" = "true" ] && return 0  # already set -> no write
+  elif [ -e "$cfg" ]; then
+    return 0                                                                       # empty (mid-write?) -> leave it
+  fi
+  tmp="$(mktemp "${cfg}.XXXXXX")" || return 0
+  if [ -f "$cfg" ]; then
+    jq --arg v "$ver" '.hasCompletedOnboarding = true
+      | (if $v != "" then .lastOnboardingVersion = $v else . end)' "$cfg" > "$tmp" 2>/dev/null \
+      && chmod 600 "$tmp" && mv "$tmp" "$cfg" || rm -f "$tmp"
+  else
+    jq -n --arg v "$ver" '{hasCompletedOnboarding: true}
+      + (if $v != "" then {lastOnboardingVersion: $v} else {} end)' > "$tmp" 2>/dev/null \
+      && chmod 600 "$tmp" && mv "$tmp" "$cfg" || rm -f "$tmp"
+  fi
+}
+ensure_onboarding
+
 # Deliberately not `exec` so we can branch on the exit code: clean quit ends the
 # pane (ttyd closes the terminal); a crash drops to a shell so the tmux session
 # isn't destroyed-and-recreated in a ttyd auto-reconnect loop.
