@@ -93,19 +93,11 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.t3_afk]
 }
 
-# issue-implementer behaviour. T3 hardcodes the claude_code system-prompt preset
-# (no API override), but loads settingSources [user,project,local] — so the
-# agent's standing instructions ride in the USER-level ~/.claude/CLAUDE.md, while
-# each target repo's own CLAUDE.md provides project context. ADR 0003.
-resource "kubernetes_config_map" "agent_claudemd" {
-  metadata {
-    name      = "issue-implementer-claudemd"
-    namespace = kubernetes_namespace.t3_afk.metadata[0].name
-  }
-  data = {
-    "CLAUDE.md" = file("${path.module}/files/issue-implementer-CLAUDE.md")
-  }
-}
+# issue-implementer behaviour is intentionally NOT mounted as ~/.claude/CLAUDE.md:
+# T3's SDK invocation doesn't honor it, and mounting a subPath into ~/.claude
+# makes that dir root-owned and breaks the agent's Bash session-env. The control
+# plane injects the behaviour as a dispatch message preamble instead;
+# files/issue-implementer-CLAUDE.md is kept as the canonical source for that text.
 
 # Auto-pair dispatcher script (run by the sidecar container below). Mirrors the
 # devvm t3-dispatch: on a cookieless, Authentik-gated page load it mints a
@@ -290,12 +282,13 @@ resource "kubernetes_deployment" "t3_afk" {
             name       = "data"
             mount_path = "/data"
           }
-          # User-level agent instructions (settingSources: user).
-          volume_mount {
-            name       = "agent-claudemd"
-            mount_path = "/home/node/.claude/CLAUDE.md"
-            sub_path   = "CLAUDE.md"
-          }
+          # NOTE: do NOT mount anything into /home/node/.claude — a subPath
+          # mount makes that dir root-owned, which blocks the agent (uid 1000)
+          # from creating its Bash session-env there and breaks ALL Bash/git for
+          # the agent (root cause of the 2026-06-15 "agent never commits"). T3's
+          # SDK invocation doesn't honor ~/.claude/CLAUDE.md anyway, so the
+          # issue-implementer behaviour is injected via the dispatch message
+          # preamble by the control plane instead.
 
           # Burstable (tier-aux). A live agent thread (node + claude) is memory
           # heavy; size for a small number of concurrent threads on this pilot
@@ -356,13 +349,6 @@ resource "kubernetes_deployment" "t3_afk" {
           name = "data"
           persistent_volume_claim {
             claim_name = module.data.claim_name
-          }
-        }
-
-        volume {
-          name = "agent-claudemd"
-          config_map {
-            name = kubernetes_config_map.agent_claudemd.metadata[0].name
           }
         }
 
