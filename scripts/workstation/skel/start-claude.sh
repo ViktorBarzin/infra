@@ -11,6 +11,14 @@ echo "  Starting Claude Code in $HOME/code ..."
 echo "  (Right-click for tmux menu, or Ctrl+B then | or - to split)"
 echo ""
 
+# The native claude install lives in ~/.local/bin. This launcher runs in tmux's non-login
+# env, which does NOT source the user's shell rc (where the native installer added it to
+# PATH) — so `claude` would appear missing here. Put it on PATH ourselves; guarded/idempotent.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
 name_args=()
 if [ -n "${TMUX:-}" ]; then
   sess="$(tmux display-message -p '#{session_name}' 2>/dev/null)"
