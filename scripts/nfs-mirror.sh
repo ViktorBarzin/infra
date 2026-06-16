@@ -93,6 +93,16 @@ EXCLUDES=(
     --exclude='*@synoeastream'
     --exclude='/.DS_Store'
     --exclude='/Thumbs.db'
+
+    # ---- transient SQLite sidecars (WAL mode) ----
+    # Created/checkpointed/deleted constantly, so they vanish mid-rsync and trip
+    # exit code 24 (root cause of NfsMirrorFailing on calibre-web-automated's
+    # queue.db, 2026-05/06). They must NEVER be in a raw mirror anyway: a -wal/-shm
+    # without an atomic .db snapshot is useless to restore from. Consistent SQLite
+    # copies are made separately by daily-backup (SQLite backup API).
+    --exclude='*-wal'
+    --exclude='*-shm'
+    --exclude='*-journal'
 )
 
 log()  { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "$LOG"; }
@@ -155,7 +165,12 @@ rsync \
 
 DST_BYTES=$(df -B1 --output=used /mnt/backup | tail -1)
 
-if [ "$RSYNC_RC" -eq 0 ]; then
+# rsync exit 24 = "some source files vanished before transfer" — benign for a
+# backup mirror: everything else copied; the vanished files are transient (e.g.
+# SQLite WAL/SHM, now mostly caught by the excludes above). Treat as success so
+# the offsite manifest still updates and NfsMirrorFailing doesn't false-fire.
+if [ "$RSYNC_RC" -eq 0 ] || [ "$RSYNC_RC" -eq 24 ]; then
+    [ "$RSYNC_RC" -eq 24 ] && warn "rsync exited 24 (source files vanished mid-transfer) — treating as success"
     # Capture files that rsync created/modified and feed them to the offsite-sync
     # manifest so daily Step 1 incremental picks them up tomorrow morning.
     # Use -cnewer (ctime), not -newer (mtime): rsync -t preserves SOURCE mtime
