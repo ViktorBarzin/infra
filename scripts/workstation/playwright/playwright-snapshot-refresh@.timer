@@ -1,0 +1,16 @@
+[Unit]
+Description=Hourly refresh of %i's playwright storage-state snapshot from chrome-service
+After=network-online.target
+
+[Timer]
+# 5 minutes after the in-cluster snapshot-harvester CronJob (runs at :23 every
+# hour) so the file we pull is the freshest one. Also once shortly after boot so
+# a freshly-booted box doesn't wait until the next :28 to populate the cache.
+OnCalendar=*-*-* *:28:00
+OnBootSec=2min
+Persistent=true
+RandomizedDelaySec=30
+Unit=playwright-snapshot-refresh@%i.service
+
+[Install]
+WantedBy=timers.target

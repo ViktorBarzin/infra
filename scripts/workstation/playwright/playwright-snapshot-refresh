@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Refresh the local cookie+localStorage snapshot served by chrome-service.
+#
+# Run per-user by the hourly playwright-snapshot-refresh@<user>.timer systemd
+# unit (as that user, so $HOME resolves to the user's home). Per-session Claude
+# Code MCP contexts (`@playwright/mcp --isolated --storage-state=…`) read this
+# file on each connection — fresh state is visible to NEW sessions, existing
+# ones keep what they were seeded with.
+#
+# Token: cached at ~/.config/playwright/token. Seeded per-user (if-absent) by
+#   t3-provision-users.sh from the root-staged /etc/t3-serve/chrome-service-token
+#   (which setup-devvm.sh writes from Vault `secret/chrome-service`
+#   api_bearer_token). Rotate by re-staging + re-copying; the snapshot endpoint
+#   reloads the token via Reloader, local caches must be refreshed.
+set -euo pipefail
+
+URL="${PLAYWRIGHT_SNAPSHOT_URL:-https://chrome.viktorbarzin.me/api/snapshot}"
+TOKEN_FILE="${PLAYWRIGHT_SNAPSHOT_TOKEN:-$HOME/.config/playwright/token}"
+DEST="${PLAYWRIGHT_SNAPSHOT_PATH:-$HOME/.cache/playwright-shared-storage-state.json}"
+
+if [ ! -r "$TOKEN_FILE" ]; then
+  echo "ERROR: token file $TOKEN_FILE missing or unreadable" >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")"
+TMP="$DEST.new.$$"
+trap 'rm -f "$TMP"' EXIT
+
+TOKEN="$(cat "$TOKEN_FILE")"
+
+HTTP_CODE=$(curl -sS \
+  -H "Authorization: Bearer $TOKEN" \
+  -o "$TMP" \
+  -w '%{http_code}' \
+  --max-time 30 \
+  "$URL")
+
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "ERROR: HTTP $HTTP_CODE from $URL" >&2
+  cat "$TMP" >&2
+  exit 1
+fi
+
+# Sanity: response must be valid JSON with at least the cookies/origins keys.
+python3 - "$TMP" <<'PY' || { echo "ERROR: response is not a valid storageState JSON" >&2; exit 1; }
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+if "cookies" not in data or "origins" not in data:
+    raise SystemExit("missing required keys")
+PY
+
+mv -f "$TMP" "$DEST"
+trap - EXIT
+chmod 600 "$DEST"
+echo "snapshot refreshed: $DEST ($(stat -c %s "$DEST") bytes)"
