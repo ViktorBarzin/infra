@@ -38,3 +38,9 @@ variable "storage_size" {
   default     = "20Gi"
   description = "Persistent volume size for /uploads."
 }
+
+variable "oauth_client_secret" {
+  type        = string
+  sensitive   = true
+  description = "Authentik OIDC client secret for Postiz generic OAuth (from authentik_provider_oauth2.postiz)."
+}
