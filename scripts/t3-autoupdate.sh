@@ -1,78 +1,229 @@
 #!/usr/bin/env bash
-# Enforce the PINNED t3 version ($T3_PIN) across the box — NOT "latest/nightly".
-# t3 is pre-1.0 and ships breaking schema-migration + bootstrap-API changes between
-# builds that our t3-dispatch can't follow blind. 2026-06-09: a nightly auto-update
-# (0.0.25) migrated every ~/.t3 state.sqlite forward (auth_pairing_links/auth_sessions
-# role->scopes) AND changed the bootstrap API, breaking mint/pairing for ALL users.
-# So we PIN; this unit just re-asserts the pin (a no-op when already correct) with a
-# health-check + auto-rollback and idle-only restarts (never kill an in-flight session).
-# To move the pin: bump T3_PIN AND first verify t3-dispatch's bootstrap flow against the
-# new build (curl the dispatch -> expect 302 + Set-Cookie t3_session). See post-mortem
-# 2026-06-09-t3-nightly-autoupdate-auth-outage.md.
-# The health-check below exercises the REAL pairing handshake (mint -> credential
-# exchange -> t3_session cookie), mirroring t3-dispatch's endpoint fallback — so a
-# build that renames or breaks the pairing API fails the check and auto-rolls-back
-# (closes the 2026-06-09 miss, where a GET / probe passed a pairing-broken build).
+# t3 GATED NIGHTLY TRACKER (daily, via t3-autoupdate.timer).
+#
+# t3 is pre-1.0 and ships breaking schema-migration + pairing-API changes between
+# builds. On 2026-06-09 a blind `npm i -g t3@nightly` migrated every ~/.t3
+# state.sqlite FORWARD and moved the bootstrap API, breaking pairing for ALL users
+# with no alert (post-mortem 2026-06-09-t3-nightly-autoupdate-auth-outage.md). We
+# pinned in response.
+#
+# 2026-06-16 (Viktor's call, risk explicitly accepted): re-enable nightly tracking,
+# but GATED so a bad nightly self-heals instead of breaking everyone. This script
+# now follows the `nightly` npm dist-tag (T3_TRACK) under these guards:
+#   - freeze switch (/etc/t3-autoupdate.freeze) + optional hard pin (T3_PIN) for
+#     instant manual revert; a canary failure also self-freezes;
+#   - downgrade-guard (the nightly tag is mutable — never move backward);
+#   - pre-bump per-user state.sqlite backup BEFORE install (rollback => restore,
+#     not sqlite surgery), via the same online VACUUM INTO as t3-backup-state;
+#   - a health-check that seeds a throwaway instance with a COPY of a real
+#     POPULATED state.sqlite, so it exercises the forward MIGRATION (the actual
+#     2026-06-09 failure class) + the real pairing handshake before trusting a build;
+#   - canary rollout: restart idle instances ONE AT A TIME, verifying pairing
+#     through the real dispatch after each, and roll back (binary + that user's DB)
+#     + self-freeze on the first failure — active-agent instances are deferred,
+#     never killed;
+#   - rollback target is the recorded LAST-GOOD build, not "whatever was installed".
+# Detection backstop (real-user pairing failure/fallback) lives in the dispatch
+# logs + Loki alerts (T3PairingBroken / T3PairFallbackHigh / T3AutoUpdate*).
+# To stop tracking: `sudo touch /etc/t3-autoupdate.freeze` (or set T3_PIN=<ver>).
+# Full procedure + manual rollback: docs/runbooks/t3-version-bump.md.
 set -uo pipefail
-T3_PIN="${T3_PIN:-0.0.26}"   # known-good, t3-dispatch-compatible (2026-06-09 post-mortem)
+
+T3_TRACK="${T3_TRACK:-nightly}"            # npm dist-tag to follow (nightly | latest)
+T3_PIN="${T3_PIN:-}"                        # optional HARD pin to an exact version (disables tracking)
+FREEZE_FILE="${T3_FREEZE_FILE:-/etc/t3-autoupdate.freeze}"
+STATE_DIR="${T3_STATE_DIR:-/var/lib/t3-autoupdate}"
+LAST_GOOD_FILE="$STATE_DIR/last-good"
+BACKUP_DIR="${T3_BACKUP_DEST:-/var/backups/t3-state}"
+SMOKE_PORT="${T3_SMOKE_PORT:-3799}"
+DISPATCH="${T3_DISPATCH:-127.0.0.1:3780}"
+USER_MAP="${T3_USER_MAP:-/etc/ttyd-user-map}"
+DRY_RUN="${T3_DRY_RUN:-0}"
+TMPROOT="${T3_TMPDIR:-/var/tmp}"           # health-check scratch on DISK — /tmp is a 2G tmpfs and a populated state.sqlite (~hundreds of MB) overflows it
+
 LOG() { logger -t t3-autoupdate "$*"; echo "t3-autoupdate: $*"; }
-
 ver() { t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//'; }
+# OS users owning a ~/.t3 (RHS of each non-comment "authentik=os_user" map line).
+osusers() { awk -F= '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$2);print $2}' "$USER_MAP" 2>/dev/null | sort -u; }
+# authentik username for an OS user (reverse map; first match) — for dispatch verify.
+ak_for() { awk -F= -v u="$1" '!/^[[:space:]]*#/&&NF==2{gsub(/[[:space:]]/,"",$1);gsub(/[[:space:]]/,"",$2);if($2==u){print $1;exit}}' "$USER_MAP" 2>/dev/null; }
+# is $1 a strictly-newer version than $2 (version-sort)?
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
 
-before=$(ver); LOG "current: ${before:-unknown}; pin: $T3_PIN"
-npm i -g "t3@$T3_PIN" >/dev/null 2>&1 || { LOG "npm install failed; staying on ${before:-current}"; exit 0; }
-after=$(ver)
+mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-if [[ -z "$after" || "$after" == "$before" ]]; then
-  LOG "already at pin $T3_PIN (${before:-?}); nothing to do"; exit 0
+# ---- 0. freeze gate -------------------------------------------------------------
+if [ -e "$FREEZE_FILE" ]; then
+  LOG "FROZEN: $FREEZE_FILE present — holding at $(ver), not tracking $T3_TRACK"; exit 0
 fi
-LOG "re-pinned to $after (was $before); health-checking…"
 
-# Health-check the NEW binary on a throwaway port/base-dir before trusting it.
-# Gate 1 = liveness (GET / -> 200); Gate 2 = the REAL pairing handshake t3-dispatch
-# performs (mint -> POST credential -> 200 + t3_session cookie), trying the same
-# endpoint fallback. Gate 2 catches a bootstrap-API rename / pairing regression.
-SMOKE_PORT=3799; SMOKE_DIR=$(mktemp -d)
-t3 serve --host 127.0.0.1 --port "$SMOKE_PORT" --base-dir "$SMOKE_DIR" >/dev/null 2>&1 &
-smoke=$!; live=0; pair_ok=0
-for _ in $(seq 1 15); do
-  [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" == "200" ]] && { live=1; break; }
-  sleep 2
-done
-if [[ "$live" == "1" ]]; then
-  cred=$(t3 auth pairing create --base-dir "$SMOKE_DIR" --ttl 5m --json 2>/dev/null \
-          | tr -d '\n ' | sed -n 's/.*"credential":"\([^"]*\)".*/\1/p')
-  if [[ -n "$cred" ]]; then
-    for ep in /api/auth/browser-session /api/auth/bootstrap; do  # mirror t3-dispatch's fallback
-      hdr=$(curl -s -i --max-time 5 -X POST -H 'Content-Type: application/json' \
-              -d "{\"credential\":\"$cred\"}" "http://127.0.0.1:$SMOKE_PORT$ep" 2>/dev/null)
-      code=$(printf '%s' "$hdr" | sed -n '1s#.* \([0-9][0-9][0-9]\).*#\1#p')
-      [[ "$code" == "404" ]] && continue   # endpoint absent in this build — try the next
-      printf '%s' "$hdr" | grep -qi '^set-cookie:[[:space:]]*t3_session=' && pair_ok=1
-      break
-    done
+current="$(ver)"
+[ -n "$current" ] || { LOG "cannot read current t3 version — aborting (is t3 installed?)"; exit 0; }
+[ -s "$LAST_GOOD_FILE" ] || echo "$current" >"$LAST_GOOD_FILE"   # seed last-good on first run
+last_good="$(tr -d '[:space:]' <"$LAST_GOOD_FILE" 2>/dev/null)"
+[ -n "$last_good" ] || last_good="$current"
+
+# ---- 1. resolve target ----------------------------------------------------------
+if [ -n "$T3_PIN" ]; then
+  target="$T3_PIN"
+  LOG "T3_PIN=$T3_PIN set — enforcing pin (tracking disabled)"
+else
+  target="$(npm view "t3@$T3_TRACK" version 2>/dev/null | tail -1 | tr -d '[:space:]')"
+  [ -n "$target" ] || { LOG "could not resolve t3@$T3_TRACK from npm — staying on $current"; exit 0; }
+fi
+
+[ "$target" = "$current" ] && { LOG "already on $T3_TRACK=$current; nothing to do"; exit 0; }
+
+# ---- 2. downgrade + channel guard (mutable nightly tag can point backward) ------
+if [ -z "$T3_PIN" ]; then
+  newer "$target" "$current" || { LOG "resolved $T3_TRACK=$target is NOT newer than installed $current — refusing downgrade"; exit 0; }
+  if [ "$T3_TRACK" = "nightly" ]; then
+    case "$target" in *-nightly.*) : ;; *) LOG "resolved nightly target '$target' is not a nightly build — refusing"; exit 0;; esac
   fi
 fi
-kill "$smoke" 2>/dev/null; wait "$smoke" 2>/dev/null; rm -rf "$SMOKE_DIR"
+LOG "candidate: $current -> $target (track=$T3_TRACK, last_good=$last_good, dry_run=$DRY_RUN)"
 
-if [[ "$live" != "1" || "$pair_ok" != "1" ]]; then
-  LOG "HEALTH-CHECK FAILED for $after (live=$live pair=$pair_ok) — rolling back to $before"
-  if [[ -n "$before" ]] && npm i -g "t3@$before" >/dev/null 2>&1; then
-    LOG "rolled back to $before"
+# ---- helpers: backup, health-check, rollback, restart-verify --------------------
+# Online consistent per-user snapshot (run AS the owner so WAL stays owned; never
+# stops the serve). Sets $ADMIN_SEED to wizard's backup for the migration health
+# check. Mirrors t3-backup-state.sh.
+ADMIN_SEED=""
+backup_all() {
+  local u src out dst ts; ts="$(date +%Y%m%d-%H%M%S)"
+  for u in $(osusers); do
+    src="/home/$u/.t3/userdata/state.sqlite"; [ -f "$src" ] || continue
+    out="$BACKUP_DIR/$u"; dst="$out/state-prebump-$target-$ts.sqlite"
+    install -d -o "$u" -g "$u" -m700 "$out" 2>/dev/null || mkdir -p "$out"
+    if runuser -u "$u" -- timeout "${T3_BACKUP_TIMEOUT:-900}" sqlite3 "$src" "VACUUM INTO '$dst'" 2>/dev/null && [ -s "$dst" ]; then
+      LOG "pre-bump backup: $u -> $dst ($(stat -c%s "$dst" 2>/dev/null) bytes)"
+      [ "$u" = "wizard" ] && ADMIN_SEED="$dst"
+    else
+      LOG "WARN: pre-bump backup FAILED for $u ($src)"; rm -f "$dst"
+    fi
+  done
+  [ -n "$ADMIN_SEED" ] || ADMIN_SEED="$(ls -1t "$BACKUP_DIR"/*/"state-prebump-$target-"*.sqlite 2>/dev/null | head -1)"
+}
+
+# newest pre-bump backup taken THIS run for a user (for restore-on-rollback).
+prebump_of() { ls -1t "$BACKUP_DIR/$1/state-prebump-$target-"*.sqlite 2>/dev/null | head -1; }
+
+# health_check <t3bin> [seed_db]: start a throwaway serve (seeded with a copy of a
+# real populated DB if given, so the forward migration runs on real data), then do
+# the real mint -> credential-exchange -> t3_session pairing handshake with the
+# dispatch's endpoint fallback, and sniff the serve log for a migration failure.
+health_check() {
+  local t3bin="$1" seed="${2:-}" dir logf pid live=0 pair=0 migerr=0 cred ep hdr code seeded=fresh
+  dir="$(mktemp -d -p "$TMPROOT")"; mkdir -p "$dir/userdata"; logf="$dir/serve.log"
+  if [ -n "$seed" ] && [ -f "$seed" ]; then cp "$seed" "$dir/userdata/state.sqlite"; seeded=populated; fi
+  "$t3bin" serve --host 127.0.0.1 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 15); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" = "200" ] && { live=1; break; }
+    sleep 2
+  done
+  if [ "$live" = "1" ]; then
+    cred="$("$t3bin" auth pairing create --base-dir "$dir" --ttl 5m --json 2>/dev/null | tr -d '\n ' | sed -n 's/.*"credential":"\([^"]*\)".*/\1/p')"
+    if [ -n "$cred" ]; then
+      for ep in /api/auth/browser-session /api/auth/bootstrap; do
+        hdr="$(curl -s -i --max-time 5 -X POST -H 'Content-Type: application/json' -d "{\"credential\":\"$cred\"}" "http://127.0.0.1:$SMOKE_PORT$ep" 2>/dev/null)"
+        code="$(printf '%s' "$hdr" | sed -n '1s#.* \([0-9][0-9][0-9]\).*#\1#p')"
+        [ "$code" = "404" ] && continue
+        printf '%s' "$hdr" | grep -qi '^set-cookie:[[:space:]]*t3_session=' && pair=1
+        break
+      done
+    fi
+  fi
+  grep -qiE 'migration failed|failed to migrate|no column named|NOT NULL constraint failed|PersistenceSqlError' "$logf" 2>/dev/null && migerr=1
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  if [ "$live" = "1" ] && [ "$pair" = "1" ] && [ "$migerr" = "0" ]; then
+    LOG "health OK ($seeded: live + pairing handshake + clean migration)"
+    rm -rf "$dir"; return 0
+  fi
+  LOG "HEALTH-CHECK FAILED ($seeded: live=$live pair=$pair migerr=$migerr); serve log: $(tail -3 "$logf" 2>/dev/null | tr '\n' '|')"
+  rm -rf "$dir"; return 1
+}
+
+# roll the GLOBAL binary back to last-good. Pre-restart failures need only this
+# (no real DB migrated yet); post-restart failures also restore the user's DB.
+rollback_binary() {
+  LOG "rolling back binary $target -> $last_good"
+  if npm i -g "t3@$last_good" >/dev/null 2>&1; then LOG "rolled back to $last_good"; return 0; fi
+  LOG "ROLLBACK FAILED — could not reinstall t3@$last_good (t3 may be broken; manual fix per runbook)"; return 1
+}
+
+# is this t3-serve@<unit> running an active agent (claude/codex/opencode)? never restart those.
+unit_busy() {
+  local unit="$1" pid; pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null)"
+  [ -n "$pid" ] && [ "$pid" != "0" ] && pgrep -aP "$pid" 2>/dev/null | grep -qiE 'claude|codex|opencode'
+}
+
+# verify a user's pairing through the REAL dispatch (mint -> exchange -> cookie).
+verify_pairing() {
+  local u="$1" ak out; ak="$(ak_for "$u")"; [ -n "$ak" ] || { LOG "no authentik mapping for $u — skipping dispatch verify"; return 0; }
+  out="$(curl -s -i --max-time 10 -H "X-authentik-username: $ak" -H 'Sec-Fetch-Dest: document' "http://$DISPATCH/" 2>/dev/null)"
+  printf '%s' "$out" | grep -qi '^set-cookie:[[:space:]]*t3_session='
+}
+
+# ---- 3. DRY RUN: preview only (install candidate to temp prefix, gate it) -------
+if [ "$DRY_RUN" = "1" ]; then
+  LOG "DRY_RUN: would back up [$(osusers | tr '\n' ' ')]; testing candidate $target in a temp prefix (no global change, no restarts)"
+  tmp="$(mktemp -d -p "$TMPROOT")"
+  if npm i --prefix "$tmp" "t3@$target" >/dev/null 2>&1; then
+    seed="$(ls -1t "$BACKUP_DIR/wizard/state-"*.sqlite 2>/dev/null | head -1)"   # reuse any existing backup as seed
+    if health_check "$tmp/node_modules/.bin/t3" "$seed"; then LOG "DRY_RUN: candidate $target PASSED the gate"; else LOG "DRY_RUN: candidate $target FAILED the gate"; fi
   else
-    LOG "ROLLBACK FAILED — manual fix needed (t3 may be broken)"
+    LOG "DRY_RUN: npm could not fetch t3@$target"
   fi
-  exit 1
+  rm -rf "$tmp"; exit 0
 fi
-LOG "health OK (live + pairing handshake); restarting idle instances"
 
-# Restart only IDLE per-user instances; defer any with an active agent child.
-for unit in $(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' | awk '{print $1}'); do
-  pid=$(systemctl show -p MainPID --value "$unit")
-  if [[ -n "$pid" && "$pid" != 0 ]] && pgrep -aP "$pid" 2>/dev/null | grep -qiE 'claude|codex|opencode'; then
-    LOG "deferring $unit (active agent) — updates next cycle when idle"
+# ---- 4. pre-bump backup, then install -------------------------------------------
+backup_all
+if ! npm i -g "t3@$target" >/dev/null 2>&1; then
+  LOG "npm install of t3@$target FAILED — staying on $current"; exit 0
+fi
+installed="$(ver)"
+[ "$installed" = "$target" ] || { LOG "post-install version is $installed, expected $target — rolling back"; rollback_binary; exit 1; }
+
+# ---- 5. gate the new binary on a POPULATED-DB migration + pairing ---------------
+if ! health_check "$(command -v t3)" "$ADMIN_SEED"; then
+  rollback_binary; exit 1   # nothing restarted yet -> binary rollback is clean
+fi
+LOG "health gate passed for $target; canary-restarting idle instances one at a time"
+
+# ---- 6. canary rollout: idle instances one-by-one, verify pairing after each ----
+restarted=0; deferred=0
+for unit in $(systemctl list-units --type=service --state=running --no-legend 't3-serve@*' 2>/dev/null | awk '{print $1}'); do
+  u="$(printf '%s' "$unit" | sed -n 's/^t3-serve@\(.*\)\.service$/\1/p')"; [ -n "$u" ] || continue
+  if unit_busy "$unit"; then
+    LOG "deferring $unit (active agent) — migrates on its next idle restart"; deferred=$((deferred+1)); continue
+  fi
+  systemctl restart "$unit" || LOG "WARN: systemctl restart $unit returned non-zero"
+  ok=0
+  for _ in $(seq 1 15); do
+    if verify_pairing "$u"; then ok=1; break; fi
+    sleep 2
+  done
+  if [ "$ok" = "1" ]; then
+    LOG "restarted $unit -> $target (pairing verified via dispatch)"; restarted=$((restarted+1))
   else
-    systemctl restart "$unit" && LOG "restarted $unit -> $after"
+    LOG "HEALTH-CHECK FAILED: $u pairing broken AFTER restart onto $target — rolling back + restoring its DB"
+    rollback_binary
+    bak="$(prebump_of "$u")"
+    if [ -n "$bak" ]; then
+      systemctl stop "$unit" 2>/dev/null
+      if install -o "$u" -g "$u" -m600 "$bak" "/home/$u/.t3/userdata/state.sqlite" 2>/dev/null; then
+        rm -f "/home/$u/.t3/userdata/state.sqlite-wal" "/home/$u/.t3/userdata/state.sqlite-shm"
+        LOG "restored $u state.sqlite from $bak"
+      fi
+      systemctl start "$unit" 2>/dev/null
+    fi
+    touch "$FREEZE_FILE" 2>/dev/null
+    LOG "FROZEN ($FREEZE_FILE) after canary $u failed on $target; last_good stays $last_good — investigate, then remove the freeze file to resume"
+    exit 1
   fi
 done
-LOG "update complete: $after"
+
+# ---- 7. success: advance last-good ----------------------------------------------
+echo "$target" >"$LAST_GOOD_FILE"
+LOG "update complete: $target (restarted=$restarted deferred=$deferred); last_good now $target"
