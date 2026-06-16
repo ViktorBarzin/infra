@@ -9,7 +9,11 @@
 # WAL/-shm files keep their owner and the running t3-serve is never perturbed.
 set -uo pipefail
 DEST="${T3_BACKUP_DEST:-/var/backups/t3-state}"
-KEEP="${T3_BACKUP_KEEP:-14}"
+# 6 (was 14): wizard's state.sqlite grew to ~1.1GB, and the gated nightly tracker
+# adds a pre-bump snapshot per bump on top of this daily one — 14 x ~1.1GB would
+# fill the devvm root fs. 6 is ample (rollback only ever needs the most recent
+# pre-bump backup). Bump per user via T3_BACKUP_KEEP if a DB is small.
+KEEP="${T3_BACKUP_KEEP:-6}"
 MAP=/etc/ttyd-user-map
 LOG() { logger -t t3-backup-state "$*"; echo "t3-backup-state: $*"; }
 
