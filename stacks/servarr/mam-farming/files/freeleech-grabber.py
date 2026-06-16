@@ -134,6 +134,7 @@ def main():
             profile_metrics
             + f'mam_grabber_skipped_reason{{reason="{reason}"}} 1\n'
             + f"mam_farming_grabbed 0\n"
+            + f"mam_grabber_last_run_timestamp {int(time.time())}\n"
         )
         return
 
@@ -153,7 +154,11 @@ def main():
         ).json()
     except Exception as e:
         print(f"qBittorrent unreachable: {e}", file=sys.stderr)
-        push(profile_metrics + "mam_farming_grabbed 0\n")
+        push(
+            profile_metrics
+            + "mam_farming_grabbed 0\n"
+            + f"mam_grabber_last_run_timestamp {int(time.time())}\n"
+        )
         sys.exit(1)
 
     farming = [t for t in all_torrents if t.get("category") == "mam-farming"]
@@ -264,6 +269,7 @@ def main():
         + f"mam_farming_grabbed {grabbed}\n"
         + f"mam_farming_total_seeding {len(farming) + grabbed}\n"
         + f"mam_farming_size_bytes {total_size}\n"
+        + f"mam_grabber_last_run_timestamp {int(time.time())}\n"
     )
     push(metrics)
     print(f"Done: grabbed={grabbed}")

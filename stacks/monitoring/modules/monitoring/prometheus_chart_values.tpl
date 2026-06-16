@@ -2840,15 +2840,22 @@ serverFiles:
             annotations:
               summary: "MAM ratio is {{ $value | printf \"%.2f\" }} for 24h (target: >= 1.0)"
           - alert: MAMFarmingStuck
+            # Heartbeat-based: fires only when the grabber CronJob has not COMPLETED
+            # a run in >4h (the original failure mode: Forbid-blocked / wedged in
+            # ContainerCreating). The grabber heartbeats mam_grabber_last_run_timestamp
+            # on every completed run — including legit dry runs that grab 0 (its random
+            # search offset lands on an empty/over-filtered page, which is normal). The
+            # old increase(mam_farming_grabbed[4h])==0 could not tell "didn't run" from
+            # "ran, nothing to grab" (Pushgateway serves the last value forever), so a
+            # dry freeleech period false-fired. Cookie-expiry and qBittorrent-down have
+            # their own alerts (MAM session cookie / QBittorrentDisconnected).
             expr: |
-              increase(mam_farming_grabbed[4h]) == 0
-              and mam_farming_total_seeding < 150
-              and mam_ratio >= 1.2
-            for: 4h
+              time() - mam_grabber_last_run_timestamp > 4 * 3600
+            for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Grabber has added 0 torrents in 4h despite healthy ratio ({{ $value | printf \"%.2f\" }})"
+              summary: "MAM freeleech grabber has not completed a run in {{ $value | humanizeDuration }} — CronJob stuck/blocked"
           - alert: MAMJanitorStuckBacklog
             expr: mam_janitor_skipped_active > 400
             for: 6h
