@@ -148,8 +148,39 @@ So the pin can move without another outage:
 
 ## References
 
-- `infra/scripts/t3-autoupdate.sh` (pinned enforcer), `.service`, `.timer`
+- `infra/scripts/t3-autoupdate.sh` (gated nightly TRACKER since 2026-06-16; was the pinned enforcer), `.service`, `.timer`
 - `infra/scripts/t3-provision-users.sh` step 5b
 - `infra/scripts/workstation/setup-devvm.sh` step 2b
 - `infra/.claude/reference/service-catalog.md` (t3 serving layer)
 - Backup of wizard's pre-repair auth tables: `/home/wizard/.t3/userdata/auth-backup-*.sql`
+
+## 2026-06-16 update: gated nightly tracking deliberately re-enabled
+
+Viktor chose to **reverse the pin** and auto-track `t3@nightly` again — accepting
+the churn risk — with the explicit requirement "make sure session auth works and
+revert if the fallback/failure rate climbs." The naive nightly tracking that
+caused this incident is now replaced by a GATED tracker that closes every gap the
+root-cause + lessons sections named:
+
+- **Detection gap (was still open)** → the dispatch now logs every pairing
+  outcome (success endpoint + fallback) and the enforcer logs rollbacks/freezes;
+  Loki alerts (`T3PairingBroken`, `T3PairFallbackHigh`, `T3AutoUpdate*`) page on
+  real breakage. The pre-existing `t3-probe` only checks `GET /api/auth/session
+  == 200`, which stays 200 even when pairing is dead — it never caught this class.
+- **"A liveness probe is not a correctness probe"** → the health-check now SEEDS
+  a throwaway serve with a COPY of a real populated `state.sqlite` and runs the
+  forward MIGRATION + real pairing handshake before trusting a build.
+- **"A binary downgrade is not a schema rollback"** → mandatory pre-bump
+  `VACUUM INTO` backup; rollback restores the DB; a canary failure auto-restores
+  + self-freezes.
+- **All-at-once blast radius** → canary rollout (idle instances one at a time,
+  pairing-verified through the dispatch; active-agent sessions deferred, never killed).
+- **`enable --now` / boot-catchup firing a missed bump mid-day** → `Persistent=true`
+  dropped from the timer.
+
+Mechanism + freeze/revert/rollback ops: `docs/runbooks/t3-version-bump.md`.
+First live cutover 2026-06-16: `0.0.26` → `0.0.28-nightly.20260616.571`, gated —
+emo + ancamilea migrated + pairing-verified, wizard deferred (active session).
+The headless `t3 serve` has **no in-app self-updater** (verified: no update-check
+/ npm shell-out in `dist/bin.mjs`), so the npm install is the sole version
+authority; the t3 UI's Stable/Nightly toggle governs the unused **desktop** app.
