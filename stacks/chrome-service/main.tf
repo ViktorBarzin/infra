@@ -445,6 +445,10 @@ resource "kubernetes_deployment" "chrome_service" {
       # clobber to the novnc image stick (chromium-not-found crashloop 2026-06-16)
       # because TF could not revert the ignored field. Removed so TF re-asserts the
       # pinned image. Keel is inert (keel.sh/policy=never) and no deploy step touches these.
+      # NOTE: the LIVE pod's container order had drifted to [novnc, chrome-service,
+      # snapshot] vs this file's [chrome-service, novnc, snapshot]; a TF apply reorders
+      # them to match here (harmless), so `containers[0]` differs between live and TF
+      # until the next apply lands — don't be alarmed reading it back mid-reconcile.
       spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
