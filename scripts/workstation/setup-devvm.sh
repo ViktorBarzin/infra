@@ -55,14 +55,18 @@ PROFILE_EOF
 chmod 0644 /etc/profile.d/10-local-bin.sh
 log "/etc/profile.d/10-local-bin.sh (~/.local/bin on PATH for login shells)"
 
-# 2b) t3 (the per-user coding surface) — PINNED, never nightly/latest. t3 is pre-1.0 and
-#     ships breaking auth-schema + bootstrap-API changes our t3-dispatch can't follow blind
-#     (2026-06-09 outage: a nightly auto-update broke pairing for ALL users). The daily
-#     t3-autoupdate ENFORCER re-asserts this same pin; install it here so a fresh box has t3
-#     immediately. Keep T3_PIN in sync with t3-autoupdate.sh.
-T3_PIN="${T3_PIN:-0.0.26}"
-if [[ "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//')" != "$T3_PIN" ]]; then
-  log "npm: installing pinned t3@$T3_PIN"; npm install -g "t3@$T3_PIN" >/dev/null
+# 2b) t3 (the per-user coding surface) — GATED NIGHTLY TRACKER (2026-06-16; was pinned).
+#     t3 is pre-1.0 and ships breaking auth-schema + bootstrap-API changes (2026-06-09
+#     outage: a blind nightly auto-update broke pairing for ALL users). The daily
+#     t3-autoupdate now FOLLOWS t3@nightly but GATES each bump (populated-DB health-check
+#     + canary + auto-rollback + self-freeze) so a bad nightly self-heals. A fresh box has
+#     no user state to migrate or sessions to break, so install the current nightly
+#     directly; the gated tracker owns it thereafter. Keep T3_TRACK in sync with
+#     t3-autoupdate.sh. To freeze/revert: `touch /etc/t3-autoupdate.freeze`.
+T3_TRACK="${T3_TRACK:-nightly}"
+want_t3="$(npm view "t3@$T3_TRACK" version 2>/dev/null | tail -1)"
+if [[ -n "$want_t3" && "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//')" != "$want_t3" ]]; then
+  log "npm: installing t3@$T3_TRACK ($want_t3)"; npm install -g "t3@$want_t3" >/dev/null
 fi
 
 # 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool).
