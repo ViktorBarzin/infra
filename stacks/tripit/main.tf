@@ -550,9 +550,14 @@ locals {
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
       extra_env = {
-        LLM_MODE            = "llamacpp"
-        LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        LLM_MODEL           = "qwen3vl-4b"
+        LLM_MODE     = "llamacpp"
+        LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+        # Text body extraction uses the 8B text model (reliably emits flight_number);
+        # boarding-pass image attachments use the 4B vision model. llama-swap loads
+        # each on demand. Was qwen3vl-4b for both, which dropped flight numbers and
+        # duplicated schedule-change emails (2026-06-16).
+        LLM_MODEL           = "qwen3-8b"
+        LLM_VISION_MODEL    = "qwen3vl-4b"
         MAIL_INGEST_ENABLED = "true"
         IMAP_HOST           = "mailserver.mailserver.svc.cluster.local"
         IMAP_PORT           = "993"
