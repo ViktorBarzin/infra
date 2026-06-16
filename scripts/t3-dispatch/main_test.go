@@ -262,6 +262,42 @@ func TestAutoPairAcrossVersions(t *testing.T) {
 	}
 }
 
+// TestExchangeCredentialReportsEndpoint: exchangeCredential must report WHICH
+// pairing endpoint accepted the credential, so the dispatch can log it and we
+// can alert on the browser-session -> bootstrap fallback rate (a non-zero rate
+// means the running t3 build moved/renamed the pairing API — contract drift, the
+// 2026-06-09 failure class). fallback = endpoint is not the first-preference one.
+func TestExchangeCredentialReportsEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name, pairPath, wantEP string
+		wantFallback           bool
+	}{
+		{"0.0.25 browser-session (primary)", "/api/auth/browser-session", "/api/auth/browser-session", false},
+		{"0.0.24 bootstrap (fallback)", "/api/auth/bootstrap", "/api/auth/bootstrap", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit string
+			ts := pairInstance(tc.pairPath, &hit)
+			defer ts.Close()
+
+			resp, ep, err := exchangeCredential(portOf(t, ts), "tok")
+			if err != nil {
+				t.Fatalf("exchangeCredential: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if ep != tc.wantEP {
+				t.Fatalf("endpoint = %q, want %q", ep, tc.wantEP)
+			}
+			if gotFallback := ep != pairEndpoints[0]; gotFallback != tc.wantFallback {
+				t.Fatalf("fallback = %v, want %v", gotFallback, tc.wantFallback)
+			}
+		})
+	}
+}
+
 func TestProbeHealthz(t *testing.T) {
 	mux := http.NewServeMux()
 	registerProbe(mux)

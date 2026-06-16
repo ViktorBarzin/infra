@@ -122,9 +122,11 @@ var pairEndpoints = []string{"/api/auth/browser-session", "/api/auth/bootstrap"}
 
 // exchangeCredential POSTs the pairing credential to the user's instance, trying
 // each pairEndpoint in turn. A 404 means "absent in this t3 version" -> try the
-// next; any other status is that endpoint's verdict, returned as-is. Caller owns
-// resp.Body.
-func exchangeCredential(port int, credential string) (*http.Response, error) {
+// next; any other status is that endpoint's verdict, returned as-is. It also
+// returns WHICH endpoint answered, so the caller can log the browser-session ->
+// bootstrap fallback rate (a non-zero rate flags that the running t3 build moved
+// the pairing API — the 2026-06-09 contract-drift class). Caller owns resp.Body.
+func exchangeCredential(port int, credential string) (*http.Response, string, error) {
 	body, _ := json.Marshal(map[string]string{"credential": credential})
 	var lastErr error
 	for _, ep := range pairEndpoints {
@@ -138,12 +140,12 @@ func exchangeCredential(port int, credential string) (*http.Response, error) {
 			resp.Body.Close() // endpoint absent in this t3 version — try the next
 			continue
 		}
-		return resp, nil
+		return resp, ep, nil
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, "", lastErr
 	}
-	return nil, fmt.Errorf("no pairing endpoint accepted the request (all returned 404)")
+	return nil, "", fmt.Errorf("no pairing endpoint accepted the request (all returned 404)")
 }
 
 // autoPair mints a one-time pairing token for the user's instance (as that OS
@@ -166,7 +168,7 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unparseable pairing output", http.StatusInternalServerError)
 		return
 	}
-	resp, err := exchangeCredential(e.Port, pc.Credential)
+	resp, ep, err := exchangeCredential(e.Port, pc.Credential)
 	if err != nil {
 		log.Printf("pairing exchange for %s failed: %v", e.OsUser, err)
 		http.Error(w, "bootstrap request failed", http.StatusBadGateway)
@@ -174,13 +176,17 @@ func autoPair(e entry, w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("pairing for %s returned %d", e.OsUser, resp.StatusCode)
+		log.Printf("pairing for %s returned %d (endpoint=%s)", e.OsUser, resp.StatusCode, ep)
 		http.Error(w, "bootstrap rejected", http.StatusBadGateway)
 		return
 	}
 	for _, c := range resp.Cookies() {
 		http.SetCookie(w, c) // relays t3_session (HttpOnly; Path=/; SameSite=Lax)
 	}
+	// Success line is the steady-state signal: endpoint= which pairing path won,
+	// fallback=true iff we fell back off the first-preference endpoint (running
+	// t3 build moved the pairing API). t3-probe / Loki alert on the fallback rate.
+	log.Printf("paired user=%s endpoint=%s fallback=%t", e.OsUser, ep, ep != pairEndpoints[0])
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
