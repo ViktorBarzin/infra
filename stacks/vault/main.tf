@@ -670,7 +670,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
     "pg-wealthfolio-sync", "pg-fire-planner",
-    "pg-postiz", "pg-instagram-poster",
+    "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
     "pg-technitium",
@@ -808,16 +808,12 @@ resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
   rotation_period = 604800
 }
 
-# Postiz uses three databases (postiz, temporal, temporal_visibility) all owned
-# by the `postiz` PG role. One static role covers all three. Migrated from the
-# bundled bitnami PG StatefulSet to CNPG on 2026-05-09.
-resource "vault_database_secret_backend_static_role" "pg_postiz" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-postiz"
-  username        = "postiz"
-  rotation_period = 604800
-}
+# pg-postiz Vault DB-engine rotation removed 2026-06-16. Postiz now uses a STATIC
+# password (Vault KV secret/postiz -> database_url) so the Helm chart can carry
+# DATABASE_URL directly with no ESO-merge race and no Reloader requirement — the
+# chart exposes neither extraEnv nor deployment annotations. The `postiz` role
+# owns postiz/temporal/temporal_visibility; its password is set out-of-band and
+# is no longer rotated. See stacks/postiz + docs/superpowers/specs/2026-06-16-postiz-*.
 
 resource "vault_database_secret_backend_static_role" "pg_payslip_ingest" {
   backend         = vault_mount.database.path

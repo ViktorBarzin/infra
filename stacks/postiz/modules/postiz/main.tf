@@ -4,17 +4,17 @@
 # Chart: oci://ghcr.io/gitroomhq/postiz-helmchart/charts/postiz (v1.0.5)
 # App  : ghcr.io/gitroomhq/postiz-app:v2.21.7
 #
-# Layout:
-#   - Bundled Postgres + Redis (chart subcharts) — fine for v1.
+# Layout (2026-06-16 — migrated off the bundled subcharts onto shared infra):
+#   - Postgres: shared CNPG cluster (pg-cluster-rw.dbaas). The `postiz` role
+#     uses a STATIC password in Vault KV secret/postiz (DB-engine rotation for
+#     pg-postiz was removed — see stacks/vault), so the chart carries
+#     DATABASE_URL directly with no ESO-merge race / no Reloader requirement.
+#   - Redis: shared standalone redis-master.redis on logical DB index 11.
 #   - Local file storage for uploads on a `proxmox-lvm` PVC mounted at /uploads.
-#   - JWT_SECRET is sourced from Vault via ESO. The chart's helper-templated
-#     Secret name is `<release>-secrets`; we pin `fullnameOverride: postiz` so
-#     the Secret resolves to `postiz-secrets`. The chart already mounts that
-#     Secret via `envFrom: secretRef: <fullname>-secrets`, so ESO patching the
-#     same Secret with `creationPolicy: Merge` injects `JWT_SECRET` into the
-#     pod env without forking the chart.
-#   - OAuth credentials for Meta/X/LinkedIn etc. are NOT pre-seeded — Postiz
-#     stores those in its own DB once the user adds providers via the UI.
+#   - All secret env (DATABASE_URL, JWT_SECRET, Meta OAuth app creds) is sourced
+#     from Vault and rendered into the chart's `secrets:` block. fullnameOverride
+#     pins the Secret/Service to `postiz` so the instagram-poster pipeline's
+#     internal URL (http://postiz.postiz.svc.cluster.local) keeps resolving.
 # ──────────────────────────────────────────────────────────────────────────────
 
 resource "kubernetes_namespace" "postiz" {
@@ -66,62 +66,101 @@ resource "kubernetes_persistent_volume_claim" "uploads" {
   }
 }
 
-# ExternalSecret: patches the chart-managed `postiz-secrets` Secret with
-# JWT_SECRET pulled from Vault. `creationPolicy: Merge` means ESO will not
-# take ownership — it just adds/updates the keys it manages, leaving the
-# Helm-owned Secret resource intact. The chart's deployment already wires
-# this Secret in via `envFrom: secretRef: postiz-secrets`.
-resource "kubernetes_manifest" "external_secret_jwt" {
-  manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
-    kind       = "ExternalSecret"
-    metadata = {
-      name      = "postiz-jwt-secret"
-      namespace = kubernetes_namespace.postiz.metadata[0].name
-    }
-    spec = {
-      refreshInterval = "15m"
-      secretStoreRef = {
-        name = "vault-kv"
-        kind = "ClusterSecretStore"
-      }
-      target = {
-        name           = "postiz-secrets"
-        creationPolicy = "Merge"
-      }
-      data = [
-        {
-          secretKey = "JWT_SECRET"
-          remoteRef = { key = "instagram-poster", property = "postiz_jwt_secret" }
-        },
-        {
-          secretKey = "FACEBOOK_APP_ID"
-          remoteRef = { key = "instagram-poster", property = "facebook_app_id" }
-        },
-        {
-          secretKey = "FACEBOOK_APP_SECRET"
-          remoteRef = { key = "instagram-poster", property = "facebook_app_secret" }
-        },
-        {
-          secretKey = "INSTAGRAM_APP_ID"
-          remoteRef = { key = "instagram-poster", property = "instagram_app_id" }
-        },
-        {
-          secretKey = "INSTAGRAM_APP_SECRET"
-          remoteRef = { key = "instagram-poster", property = "instagram_app_secret" }
-        },
-      ]
-    }
-  }
-  depends_on = [kubernetes_namespace.postiz]
+# Vault-sourced secret env for the chart's `secrets:` block. The values are
+# static, so injecting them straight into the chart-managed Secret avoids the
+# ESO-merge-vs-helm-reset race and the Reloader requirement.
+#   secret/postiz           -> database_url (shared CNPG; postiz role, static pw)
+#   secret/instagram-poster -> JWT + Facebook/Instagram OAuth app creds (the same
+#                              Vault keys the old ESO used; shared with the
+#                              instagram-poster pipeline that drives the public API)
+data "vault_kv_secret_v2" "postiz" {
+  mount = "secret"
+  name  = "postiz"
 }
 
-# helm_release.postiz is intentionally NOT managed by Terraform (2026-05-30).
-# The release is stuck in pending-install; importing it would force a helm
-# upgrade. Left Helm-managed outside TF. The bundled PG/Redis + the postiz
-# Deployment/Service it creates therefore aren't TF resources either — only
-# the wrapper resources (namespace, PVC, ESO, ingresses, temporal Service,
-# nfs backup, backup CronJob) are TF-managed.
+data "vault_kv_secret_v2" "instagram_poster" {
+  mount = "secret"
+  name  = "instagram-poster"
+}
+
+# Postiz Helm release — Terraform-managed (2026-06-16), replacing the stuck
+# out-of-band pending-install release. Bundled PG/Redis subcharts disabled; the
+# app runs against shared CNPG + shared Redis. Chart name is `postiz-app`.
+resource "helm_release" "postiz" {
+  name       = "postiz"
+  namespace  = kubernetes_namespace.postiz.metadata[0].name
+  repository = "oci://ghcr.io/gitroomhq/postiz-helmchart/charts"
+  chart      = "postiz-app"
+  version    = var.chart_version
+  # No atomic/auto-rollback on first install so a bad boot is debuggable, not
+  # silently rolled back. wait=false so the apply doesn't block on pod readiness.
+  atomic = false
+  wait   = false
+  timeout = 600
+
+  values = [yamlencode({
+    fullnameOverride = "postiz"
+    replicaCount     = 1
+    image = {
+      repository = "ghcr.io/gitroomhq/postiz-app"
+      tag        = var.image_tag
+      pullPolicy = "IfNotPresent"
+    }
+    service = {
+      type = "ClusterIP"
+      port = 80
+    }
+    # Bundled subcharts OFF — use shared CNPG + shared Redis instead.
+    postgresql = { enabled = false }
+    redis      = { enabled = false }
+
+    resources = {
+      requests = { cpu = "100m", memory = "2Gi" }
+      limits   = { memory = "3Gi" }
+    }
+
+    # Non-secret env (chart renders these into the postiz-config ConfigMap).
+    env = {
+      MAIN_URL                     = "https://postiz.viktorbarzin.me"
+      FRONTEND_URL                 = "https://postiz.viktorbarzin.me"
+      NEXT_PUBLIC_BACKEND_URL      = "https://postiz.viktorbarzin.me/api"
+      BACKEND_INTERNAL_URL         = "http://localhost:3000"
+      TEMPORAL_ADDRESS             = "temporal:7233"
+      STORAGE_PROVIDER             = "local"
+      UPLOAD_DIRECTORY             = "/uploads"
+      NEXT_PUBLIC_UPLOAD_DIRECTORY = "/uploads"
+      IS_GENERAL                   = "true"
+      NX_ADD_PLUGINS               = "false"
+      DISABLE_REGISTRATION         = "true"
+      # Only Instagram + Facebook are enabled (shared Meta app creds); every
+      # other provider stays disabled until its own OAuth app is registered.
+      DISABLED_PROVIDERS = "x,linkedin,reddit,threads,youtube,tiktok,pinterest,dribbble,slack,discord,mastodon,bluesky,lemmy,warpcast,vk,beehiiv,telegram,wordpress,nostr,farcaster"
+    }
+
+    # Secret env (chart renders these into the postiz-secrets Secret, envFrom).
+    secrets = {
+      DATABASE_URL         = data.vault_kv_secret_v2.postiz.data["database_url"]
+      REDIS_URL            = "redis://redis-master.redis.svc.cluster.local:6379/11"
+      JWT_SECRET           = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
+      FACEBOOK_APP_ID      = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
+      FACEBOOK_APP_SECRET  = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
+      INSTAGRAM_APP_ID     = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
+      INSTAGRAM_APP_SECRET = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
+    }
+
+    # Persist uploaded media on the existing proxmox-lvm PVC.
+    extraVolumes = [{
+      name                  = "uploads-volume"
+      persistentVolumeClaim = { claimName = kubernetes_persistent_volume_claim.uploads.metadata[0].name }
+    }]
+    extraVolumeMounts = [{
+      name      = "uploads-volume"
+      mountPath = "/uploads"
+    }]
+  })]
+
+  depends_on = [kubernetes_namespace.postiz, module.tls_secret]
+}
 
 # Two ingresses on the same host. /uploads/* must be reachable WITHOUT auth
 # so Meta's IG Graph API fetcher can pull the JPEG when Postiz hands it the
