@@ -2840,6 +2840,7 @@ serverFiles:
             annotations:
               summary: "MAM ratio is {{ $value | printf \"%.2f\" }} for 24h (target: >= 1.0)"
           - alert: MAMFarmingStuck
+            # Metric source: stacks/servarr/mam-farming/files/freeleech-grabber.py
             # Heartbeat-based: fires only when the grabber CronJob has not COMPLETED
             # a run in >4h (the original failure mode: Forbid-blocked / wedged in
             # ContainerCreating). The grabber heartbeats mam_grabber_last_run_timestamp
