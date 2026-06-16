@@ -1,5 +1,5 @@
 [Unit]
-Description=Presence-aware IPMI fan controller (Dell R730, garage)
+Description=IPMI fan actuator (Dell R730) — applies the HA-computed setpoint
 Documentation=https://github.com/ViktorBarzin/infra/blob/master/scripts/fan-control.sh
 After=network-online.target
 Wants=network-online.target

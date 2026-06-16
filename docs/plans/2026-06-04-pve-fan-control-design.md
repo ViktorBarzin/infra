@@ -1,9 +1,31 @@
 # PVE R730 presence-aware fan control — design
 
 **Date:** 2026-06-04
-**Status:** implemented
+**Status:** implemented; **redesigned 2026-06-08, anti-flap 2026-06-15** (see update below)
 **Scripts:** `infra/scripts/fan-control.{sh,service,env.example}`, `test-fan-control.sh`
 **Runbook:** `infra/docs/runbooks/fan-control.md`
+
+> ## Update — control moved to HA; host is a thin actuator
+>
+> - **2026-06-07:** presence/two-curve scheme replaced by a single linear curve;
+>   all garage-presence logic removed.
+> - **2026-06-08:** **all control moved into Home Assistant.** HA owns the curve
+>   thresholds, duty %, an additive **bias** (replaces the ease-down hysteresis),
+>   plus manual/lock, and publishes `sensor.r730_fan_command_pct =
+>   clamp(curve(temp)+bias, 0..100)` with an asymmetric output deadband. The host
+>   `fan-control.sh` is now a **thin actuator**: read that one number, validate,
+>   apply over IPMI — no local math. Independent host safety (CPU≥83 °C, IPMI
+>   fail, HA loss) hands the fans to Dell auto. It's a P controller, so the curve
+>   slope/offset set the steady-state equilibrium temperature (not a setpoint).
+> - **2026-06-15:** daemon **anti-flap** — on a transient HA miss it HOLDS the
+>   last applied % for `HA_GRACE_SECS` (300 s) instead of dumping to Dell auto,
+>   and `STALE_SECS` loosened 120→1800 (staleness only happens at flat temp,
+>   where the held value is still valid). Killed a ~14%-of-the-time flap to the
+>   Dell floor; verified fallback 14%→0%, command std 16→3 over 8 h.
+>
+> The HA objects (sliders, command template, display/equilibrium sensors,
+> Lock/Override, dashboard cards, REST sensors) live on ha-sofia, not this repo.
+> Sections below are retained as historical context.
 
 ## Problem
 
