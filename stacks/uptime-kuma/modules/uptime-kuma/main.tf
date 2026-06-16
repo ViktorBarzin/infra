@@ -503,8 +503,27 @@ except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
 
 print(f"Loaded {len(targets)} external monitor targets (source={source})")
 
-api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
-api.login("admin", UPTIME_KUMA_PASS)
+api = None
+for _login_try in range(1, 6):
+    try:
+        api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
+        api.login("admin", UPTIME_KUMA_PASS)
+        break
+    except Exception as _login_err:
+        # kuma 2.x's single Node event loop intermittently stalls under its
+        # ~300 monitors, so the socket.io login handshake times out. Retry a
+        # few times across a ~60s window to ride out the stall instead of
+        # failing the whole sync job (which fired JobFailed -> Slack noise).
+        print(f"WARN: Kuma login attempt {_login_try}/5 failed: {_login_err!r}")
+        if api is not None:
+            try:
+                api.disconnect()
+            except Exception:
+                pass
+            api = None
+        if _login_try == 5:
+            raise
+        time.sleep(15)
 
 monitors = api.get_monitors()
 existing_external = {}
@@ -818,8 +837,27 @@ UPTIME_KUMA_PASS = os.environ["UPTIME_KUMA_PASSWORD"]
 with open("/config/targets.json") as f:
     targets = json.load(f)
 
-api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
-api.login("admin", UPTIME_KUMA_PASS)
+api = None
+for _login_try in range(1, 6):
+    try:
+        api = UptimeKumaApi(UPTIME_KUMA_URL, timeout=120, wait_events=0.2)
+        api.login("admin", UPTIME_KUMA_PASS)
+        break
+    except Exception as _login_err:
+        # kuma 2.x's single Node event loop intermittently stalls under its
+        # ~300 monitors, so the socket.io login handshake times out. Retry a
+        # few times across a ~60s window to ride out the stall instead of
+        # failing the whole sync job (which fired JobFailed -> Slack noise).
+        print(f"WARN: Kuma login attempt {_login_try}/5 failed: {_login_err!r}")
+        if api is not None:
+            try:
+                api.disconnect()
+            except Exception:
+                pass
+            api = None
+        if _login_try == 5:
+            raise
+        time.sleep(15)
 
 existing = {m["name"]: m for m in api.get_monitors()}
 

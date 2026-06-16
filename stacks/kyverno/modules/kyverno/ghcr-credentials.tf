@@ -27,6 +27,10 @@ locals {
     # openclaw's install-recruiter-plugin init container pulls the PRIVATE
     # ghcr.io/viktorbarzin/recruiter-responder:latest image (infra#27).
     "openclaw",
+    # k8s-portal: last in-cluster image build, migrated to GHA→ghcr (ADR-0002,
+    # "no local builds"). ghcr.io/viktorbarzin/k8s-portal:latest is PRIVATE
+    # (infra repo default); the deployment references the cloned secret.
+    "k8s-portal",
   ]
 }
 

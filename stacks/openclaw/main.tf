@@ -553,7 +553,7 @@ resource "kubernetes_deployment" "openclaw" {
           # IfNotPresent: a cached stale :latest meant the plugin manifest
           # (configSchema fix) never got pulled. An uncached SHA forces the
           # pull. Bump this when the openclaw plugin in nextcloud-todos changes.
-          image             = "forgejo.viktorbarzin.me/viktor/nextcloud-todos:f85c6de1"
+          image             = "ghcr.io/viktorbarzin/nextcloud-todos:latest"
           image_pull_policy = "Always"
           command = ["sh", "-c", <<-EOT
             set -eu

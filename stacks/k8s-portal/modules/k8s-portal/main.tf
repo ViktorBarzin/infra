@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "k8s_portal" {
   metadata {
     name = "k8s-portal"
     labels = {
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
   }
@@ -40,6 +40,15 @@ resource "kubernetes_deployment" "k8s_portal" {
   metadata {
     name      = "k8s-portal"
     namespace = kubernetes_namespace.k8s_portal.metadata[0].name
+    # ADR-0002 / no-local-builds: image now GHA-built -> ghcr:latest
+    # (.github/workflows/build-k8s-portal.yml). Keel polls ghcr:latest and rolls
+    # this deployment (replaces the removed Woodpecker in-cluster build+deploy).
+    annotations = {
+      "keel.sh/policy"       = "force"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 5m"
+      "keel.sh/match-tag"    = "true"
+    }
     labels = {
       app  = "k8s-portal"
       tier = var.tier
@@ -66,9 +75,16 @@ resource "kubernetes_deployment" "k8s_portal" {
       }
 
       spec {
+        # GHCR pull secret: the ghcr-credentials Secret in this namespace is
+        # cloned in by the kyverno stack's sync-ghcr-credentials ClusterPolicy
+        # (allowlisted private-ghcr namespaces only — ADR-0002). Source of
+        # truth: stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
           name  = "portal"
-          image = "viktorbarzin/k8s-portal:latest"
+          image = "ghcr.io/viktorbarzin/k8s-portal:latest"
           port {
             container_port = 3000
           }
@@ -121,7 +137,8 @@ resource "kubernetes_deployment" "k8s_portal" {
     # DRIFT_WORKAROUND: CI pipeline owns image tag (kubectl set image from Woodpecker/GHA); Kyverno mutates dns_config for ndots. Reviewed 2026-04-18.
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # CI updates image tag
+      spec[0].template[0].spec[0].container[0].image, # Keel manages ghcr:latest digest
+      metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 (Keel stamps on roll)
     ]
   }
 }
@@ -172,5 +189,5 @@ module "ingress_setup_script" {
   ingress_path    = ["/setup/script", "/agent"]
   tls_secret_name = var.tls_secret_name
   # auth = "none": Setup script + agent endpoint must be curl-able without auth (no cookies preserved in automation).
-  auth            = "none"
+  auth = "none"
 }

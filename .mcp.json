@@ -3,10 +3,6 @@
     "ha": {
       "type": "http",
       "url": "${HA_MCP_URL}"
-    },
-    "paperless": {
-      "type": "http",
-      "url": "http://paperless-mcp.paperless-mcp.svc.cluster.local/mcp"
     }
   }
 }

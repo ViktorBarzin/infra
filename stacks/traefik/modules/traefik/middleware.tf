@@ -344,6 +344,31 @@ resource "kubernetes_manifest" "middleware_tripit_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# Health-specific rate limit. The redesigned, data-dense SPA loads the shell
+# (JS chunks + two self-hosted Geist woff2) plus a 5-8 call API burst per page,
+# and fast tab-to-tab navigation from one client IP blows past the default
+# 10/50 limiter — 429ing the tail so cards/pages render empty (fifth instance
+# of the burst pattern, after ha-sofia, ActualBudget, noVNC and tripit). Burst
+# absorbs a couple of full page loads back-to-back.
+resource "kubernetes_manifest" "middleware_health_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "health-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:

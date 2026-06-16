@@ -38,7 +38,7 @@ Violations cause state drift, which causes future applies to break or silently r
   - **DNS**: `dns_type = "proxied"` (Cloudflare CDN) or `"non-proxied"` (direct A/AAAA). DNS records are auto-created — no need to edit `config.tfvars`. Smoke-test target: `echo.viktorbarzin.me` (auth=public, header-reflecting backend).
 - **Anubis PoW challenge** (`modules/kubernetes/anubis_instance/`): per-site reverse proxy that issues a 30-day JWT cookie after a tiny PoW solve. Use for **public, content-bearing sites without app-level auth** (blog, docs, wikis, static landing pages). Pattern: declare `module "anubis" { source = "../../modules/kubernetes/anubis_instance"; name = "X"; namespace = ...; target_url = "http://<backend>.<ns>.svc.cluster.local" }`, then in `ingress_factory` set `service_name = module.anubis.service_name`, `port = module.anubis.service_port`, `anti_ai_scraping = false`. Shared ed25519 key in Vault `secret/viktor` -> `anubis_ed25519_key`; cookie scoped to `viktorbarzin.me` so one solve covers all Anubis-fronted subdomains. **DO NOT put Anubis in front of Git/API/WebDAV/CLI endpoints** — clients without JS can't solve PoW. **Replicas default to 1** because Anubis stores in-flight challenges in process memory; a challenge issued by pod A and solved against pod B errors with `store: key not found` (HTTP 500). Bumping replicas requires wiring a shared Redis store (TODO). For path-level carve-outs (e.g. wrongmove has `/` behind Anubis but `/api` direct, blog has `/net-diag.sh` direct), declare a second `ingress_factory` with `ingress_path = ["/<path>"]` pointing at the bare backend service. Active on: blog (except `/net-diag.sh`), www, kms, travel, f1, cc, json, pb (privatebin), home (homepage), wrongmove (UI only). See `.claude/reference/patterns.md` "Anti-AI Scraping" for full layering.
 - **Docker images**: Always build for `linux/amd64`. SHA-tag rule is being phased out — see `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`. New model: CI pushes `:latest` (optionally also `:<8-char-sha>` for traceability), Keel polls and triggers rollouts. Cache-staleness concern from the old rule is resolved at the nginx layer (URL-split — manifests pass through, blobs cached). Until Phase 1 of the migration completes (per the plan), follow the SHA-tag rule for new services to match existing pattern.
-- **Private registry**: `forgejo.viktorbarzin.me/viktor/<name>` (Forgejo packages, OAuth-style PAT auth). Use `image: forgejo.viktorbarzin.me/viktor/<name>:<tag>` + `imagePullSecrets: [{name: registry-credentials}]`. Kyverno auto-syncs the Secret to all namespaces. **Kubelet pulls** are kept off the hairpin **at the resolver, with zero node-side DNS config**: pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium (added 2026-06-10, `docs/runbooks/pfsense-unbound.md`), whose split-horizon zone CNAMEs every ingress host (auto-synced hourly by `technitium-ingress-dns-sync`) to the zone apex whose A record tracks the **live** Traefik LB IP (canary: `viktorbarzin-apex-probe`, alerts ViktorBarzinApexDrift). Nodes are stock — link DNS `10.0.20.1 94.140.14.14` via `qm set --nameserver`, no `/etc/hosts` pins, no resolved drop-ins (two same-day interim approaches on 2026-06-10 were removed the same day). The containerd `hosts.toml` mirror (`[host."https://10.0.20.203"]`, `skip_verify = true`) still exists but is **vestigial** — it can NOT keep pulls internal on its own: Traefik routes by Host/SNI and 404s the mirror's bare-IP requests, and the registry's Bearer auth realm is the absolute `https://forgejo.viktorbarzin.me/v2/token` URL fetched outside the mirror — without internal DNS every fresh pull degrades to public DNS → hairpin → intermittent `dial tcp 176.12.22.76:443: i/o timeout` ImagePullBackOff (tuya-bridge 7.5h outage 2026-06-10, tripit 2026-06-09; see `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`). **In-cluster pods are ordinary internal clients too** (since 2026-06-10 evening) — CoreDNS's dedicated `viktorbarzin.me:53` block (Corefile in `stacks/technitium/modules/technitium/main.tf`) forwards to the Technitium ClusterIP `10.96.0.53`, so pods get the same split-horizon answers as everyone else; forgejo stays pinned to Traefik's **ClusterIP** in that block (TF-interpolated from the live Service) so CI pushes survive a Technitium outage. This relies on a k8s-1.34 behavior verified 2026-06-10: **pods CAN reach the ETP=Local Traefik LB IP** (kube-proxy short-circuits in-cluster traffic to LB IPs via the cluster path) — re-verify after major k8s upgrades; canary = the uptime-kuma `[External]` fleet going red. (The block briefly forwarded to `8.8.8.8/1.1.1.1` earlier that day, which kept pods on the WAN IP and the broken TP-Link NAT loopback — 27 non-proxied `[External]` monitors dark; beads code-yh33.) **Was `.200` until 2026-06-01** — Traefik's 2026-05-30 move to its dedicated `.203` left the mirror pointing at the now-dead `.200:443`, silently breaking every *fresh* forgejo pull; a future LB renumber is now handled by DNS (apex record + drift probe) — only the vestigial hosts.toml literal would go stale. Mirror source lives in `modules/create-template-vm/k8s-node-containerd-setup.sh` (new nodes) and `scripts/setup-forgejo-containerd-mirror.sh` (existing nodes; also cleans up the legacy 2026-06-10 node-DNS customization). Push-side: viktor PAT in Vault `secret/ci/global/forgejo_push_token` (Forgejo container packages are scoped per-user; only the package owner can push, ci-pusher cannot write to viktor/*). Pull-side: cluster-puller PAT in Vault `secret/viktor/forgejo_pull_token`. Retention CronJob (`forgejo-cleanup` in `forgejo` ns, daily 04:00) keeps newest 10 versions + always `:latest` + any buildkit `*cache*` tag — **REVERTED to DRY_RUN 2026-06-10 after its first live run orphaned OCI index children** (multi-arch/attestation children are separate *untagged* sha256 versions that sort outside the newest-10 window while their parent index is kept; broke `kms-website:latest`+`:dfc83fb`, caught by the integrity probe, healed by re-tagging latest→a794d1a + deleting the corrupt version; see `docs/post-mortems/2026-06-10-forgejo-retention-orphaned-indexes.md`). Do NOT re-enable deletes until the keep-set resolves kept indexes' child digests (or skips untagged versions, or moves to Forgejo's native container-aware cleanup rules). The registry PVC remains at its 50Gi autoresize ceiling on the HDD (we did NOT move it to SSD, see beads code-oflt), so a container-aware retention is still needed. Integrity probed every 15min by `forgejo-integrity-probe` in `monitoring` ns (catalog walk + manifest HEAD on every blob). See `docs/plans/2026-05-07-forgejo-registry-consolidation-{design,plan}.md` for the migration history. Pull-through caches for upstream registries (DockerHub, GHCR, Quay, k8s.gcr, Kyverno) stay on the registry VM at `10.0.20.10` ports 5000/5010/5020/5030/5040 — the old port-5050 R/W private registry was decommissioned 2026-05-07.
+- **Image registry**: **Owned images now live on `ghcr.io/viktorbarzin/<name>`** (ADR-0002, built by GHA — see the CI/CD Architecture section). The **Forgejo container registry is FROZEN + emptied** (break-glass only — `docs/runbooks/forgejo-registry-breakglass.md`); nothing pushes to it. The rest of this bullet documents the **still-live forgejo-pull DNS/mirror machinery** (it remains in place for the break-glass path + because `registry-credentials` is still Kyverno-synced; the hairpin lessons apply to any internal-registry pull). Historical usage was `image: forgejo.viktorbarzin.me/viktor/<name>:<tag>` + `imagePullSecrets: [{name: registry-credentials}]`. **Kubelet pulls** are kept off the hairpin **at the resolver, with zero node-side DNS config**: pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium (added 2026-06-10, `docs/runbooks/pfsense-unbound.md`), whose split-horizon zone CNAMEs every ingress host (auto-synced hourly by `technitium-ingress-dns-sync`) to the zone apex whose A record tracks the **live** Traefik LB IP (canary: `viktorbarzin-apex-probe`, alerts ViktorBarzinApexDrift). Nodes are stock — link DNS `10.0.20.1 94.140.14.14` via `qm set --nameserver`, no `/etc/hosts` pins, no resolved drop-ins (two same-day interim approaches on 2026-06-10 were removed the same day). The containerd `hosts.toml` mirror (`[host."https://10.0.20.203"]`, `skip_verify = true`) still exists but is **vestigial** — it can NOT keep pulls internal on its own: Traefik routes by Host/SNI and 404s the mirror's bare-IP requests, and the registry's Bearer auth realm is the absolute `https://forgejo.viktorbarzin.me/v2/token` URL fetched outside the mirror — without internal DNS every fresh pull degrades to public DNS → hairpin → intermittent `dial tcp 176.12.22.76:443: i/o timeout` ImagePullBackOff (tuya-bridge 7.5h outage 2026-06-10, tripit 2026-06-09; see `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`). **In-cluster pods are ordinary internal clients too** (since 2026-06-10 evening) — CoreDNS's dedicated `viktorbarzin.me:53` block (Corefile in `stacks/technitium/modules/technitium/main.tf`) forwards to the Technitium ClusterIP `10.96.0.53`, so pods get the same split-horizon answers as everyone else; forgejo stays pinned to Traefik's **ClusterIP** in that block (TF-interpolated from the live Service) so CI pushes survive a Technitium outage. This relies on a k8s-1.34 behavior verified 2026-06-10: **pods CAN reach the ETP=Local Traefik LB IP** (kube-proxy short-circuits in-cluster traffic to LB IPs via the cluster path) — re-verify after major k8s upgrades; canary = the uptime-kuma `[External]` fleet going red. (The block briefly forwarded to `8.8.8.8/1.1.1.1` earlier that day, which kept pods on the WAN IP and the broken TP-Link NAT loopback — 27 non-proxied `[External]` monitors dark; beads code-yh33.) **Was `.200` until 2026-06-01** — Traefik's 2026-05-30 move to its dedicated `.203` left the mirror pointing at the now-dead `.200:443`, silently breaking every *fresh* forgejo pull; a future LB renumber is now handled by DNS (apex record + drift probe) — only the vestigial hosts.toml literal would go stale. Mirror source lives in `modules/create-template-vm/k8s-node-containerd-setup.sh` (new nodes) and `scripts/setup-forgejo-containerd-mirror.sh` (existing nodes; also cleans up the legacy 2026-06-10 node-DNS customization). Push-side: viktor PAT in Vault `secret/ci/global/forgejo_push_token` (Forgejo container packages are scoped per-user; only the package owner can push, ci-pusher cannot write to viktor/*). Pull-side: cluster-puller PAT in Vault `secret/viktor/forgejo_pull_token`. Retention CronJob (`forgejo-cleanup` in `forgejo` ns, daily 04:00) keeps newest 10 versions + always `:latest` + any buildkit `*cache*` tag — **REVERTED to DRY_RUN 2026-06-10 after its first live run orphaned OCI index children** (multi-arch/attestation children are separate *untagged* sha256 versions that sort outside the newest-10 window while their parent index is kept; broke `kms-website:latest`+`:dfc83fb`, caught by the integrity probe, healed by re-tagging latest→a794d1a + deleting the corrupt version; see `docs/post-mortems/2026-06-10-forgejo-retention-orphaned-indexes.md`). Do NOT re-enable deletes until the keep-set resolves kept indexes' child digests (or skips untagged versions, or moves to Forgejo's native container-aware cleanup rules). The registry PVC remains at its 50Gi autoresize ceiling on the HDD (we did NOT move it to SSD, see beads code-oflt), so a container-aware retention is still needed. Integrity probed every 15min by `forgejo-integrity-probe` in `monitoring` ns (catalog walk + manifest HEAD on every blob). See `docs/plans/2026-05-07-forgejo-registry-consolidation-{design,plan}.md` for the migration history. Pull-through caches for upstream registries (DockerHub, GHCR, Quay, k8s.gcr, Kyverno) stay on the registry VM at `10.0.20.10` ports 5000/5010/5020/5030/5040 — the old port-5050 R/W private registry was decommissioned 2026-05-07.
 - **LinuxServer.io containers**: `DOCKER_MODS` runs apt-get on every start — bake slow mods into a custom image (`RUN /docker-mods || true` then `ENV DOCKER_MODS=`). Set `NO_CHOWN=true` to skip recursive chown that hangs on NFS mounts.
 - **Node memory changes**: When changing VM memory on any k8s node, update kubelet `systemReserved`, `kubeReserved`, and eviction thresholds accordingly. Config: `/var/lib/kubelet/config.yaml`. Template: `stacks/infra/main.tf`. Current values: systemReserved=512Mi, kubeReserved=512Mi, evictionHard=500Mi, evictionSoft=1Gi.
 - **Node OS disk tuning** (in `stacks/infra/main.tf`): kubelet `imageGCHighThresholdPercent=70` (was 85), `imageGCLowThresholdPercent=60` (was 80), ext4 `commit=60` in fstab (was default 5s), journald `SystemMaxUse=200M` + `MaxRetentionSec=3day`.
@@ -87,62 +87,110 @@ Violations cause state drift, which causes future applies to break or silently r
 - **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
 - **Quarterly right-sizing**: Run `krr` (Dockerized, against Prometheus) for recommendations; compare to current requests and adjust in TF. (Goldilocks dashboard removed 2026-06-12.)
 
-## CI/CD Architecture — GHA Builds + Woodpecker Deploy
+## CI/CD Architecture — GHA Builds → ghcr + Woodpecker Deploy
 
-**Doctrine (ADR-0002): leverage external infra for ALL CI compute.** Builds,
-tests, lint, and release jobs run on GitHub Actions hosted runners (public
-repos: unlimited free; private: 2000 free min/mo) — never on cluster nodes.
-In-cluster pipelines are reserved for cluster-touching steps only: Woodpecker
-deploys (`kubectl set image`), terragrunt applies, certbot. Do not
-(re)introduce in-cluster image builds or CI test runs — the fallback-build
-pattern was deliberately removed (clean cut). **Watch what you trigger**:
-after any push that fires a build chain, monitor it to completion (GHA run →
-Woodpecker deploy → `rollout status`) and fix failures immediately; verify
-via live state, not the checkmark. Fleet migration: PRD infra#10 (ADR-0002).
+**Doctrine (ADR-0002, fleet-wide as of 2026-06-13): ALL image builds + CI
+compute run OFF-infra.** Every owned image is built/linted/tested on GitHub
+Actions (public repos: free; private: 2000 free min/mo) and pushed to
+`ghcr.io/viktorbarzin/<name>`. **No in-cluster image builds or CI test runs
+exist anywhere** — the in-cluster Woodpecker buildkit and the fallback-build
+pattern were removed (clean cut). Woodpecker is **deploy-only** (plus infra
+applies + maintenance crons). Canonical CI/CD reference:
+`docs/architecture/ci-cd.md`; decision: `docs/adr/0002-all-image-builds-off-infra-gha-ghcr.md`.
+**Watch what you trigger**: after a push that fires a build chain, follow it to
+completion (GHA run → Woodpecker deploy → `rollout status`) and fix failures;
+verify via live state, not the checkmark.
 
-**Owned-app deploy model (build triggers the rollout — 2026-06-02):** For
-self-hosted apps **we build** (Forgejo `viktor/<name>` + Dockerfile +
-`.woodpecker.yml`), the build pipeline ALSO drives the rollout — atomic +
-deterministic, no wait for Keel's poll. Pattern (`build-and-push` tags `latest`
-+ `${CI_COMMIT_SHA:0:8}`, then a `deploy` step): `kubectl set image
-deployment/<app> <container>=<repo>:${CI_COMMIT_SHA:0:8} -n <ns>` +
-`kubectl rollout status ... --timeout=300s`. The `woodpecker-agent` SA is
-`cluster-admin`, so the `bitnami/kubectl` step needs no kubeconfig/RBAC (uses
-its in-cluster SA). **Keel stays enrolled in parallel** as a redundant net
-(finds the deployed SHA already running → no-op). Requires the Deployment to
-have `ignore_changes` on `…container[0].image` (KEEL_IGNORE_IMAGE) so CI
-`set image` doesn't fight `terragrunt apply`. CronJobs in owned apps use
-`:latest` + `imagePullPolicy: Always` (fresh pod each run) instead of a deploy
-step. **Never** `set image`/`rollout restart` operator-managed StatefulSets
-(memory id=740). Reference impls: `tuya_bridge/.woodpecker.yml`,
-`job-hunter`, `f1-stream` (viktor/f1-stream, extracted from this monorepo
-2026-06-05). This reverses decision #12 of
-`docs/plans/2026-05-16-auto-upgrade-apps-design.md` for owned (not upstream)
-images.
+**The fleet pattern (every owned app):** Forgejo `viktor/<repo>` (canonical)
+push-mirrors (`sync_on_commit`) → GitHub `ViktorBarzin/<repo>` → GHA
+`.github/workflows/build.yml` (committed on Forgejo, mirrors over): `on: push:
+branches:[master]` ONLY (feature branches mirror but build/deploy nothing — the
+safety valve). The `build` job: lint/test → `svu` cuts the next `vX.Y.Z` tag to
+CANONICAL Forgejo (GHA secret `FORGEJO_GIT_TOKEN` = write:repository PAT) + bakes
+`VERSION` → `buildx` `linux/amd64` `provenance:false` (single-manifest, dodges
+the orphaned-index-children class) → push `ghcr.io/viktorbarzin/<name>:<sha8>` +
+`:latest` → `delete-package-versions` keep-10. The `deploy` job POSTs
+`ci.viktorbarzin.me/api/repos/<id>/pipelines` (the GitHub-mirror's Woodpecker
+registration, github-forge; GHA secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` +
+`IMAGE_NAME` → `.woodpecker/deploy.yml` (event:**manual** ONLY, so the raw
+Forgejo→GitHub mirror pushes don't fire a tag-less deploy) runs `kubectl set
+image deployment/<app> …` in-cluster (woodpecker-agent SA = cluster-admin, no
+kubeconfig). Deployment image is `ignore_changes`/KEEL_IGNORE_IMAGE so the SHA
+sticks vs `terragrunt apply`; CronJobs track `:latest` + `imagePullPolicy:
+Always`. **Keel stays enrolled** as a redundant net (sees the SHA already
+running → no-op). **Never** `set image`/`rollout restart` operator-managed
+StatefulSets (memory id=740). Onboarding tool: `scripts/offinfra-onboard` +
+`scripts/offinfra-templates/`; mirror + workflow commits via the Forgejo API over
+the internal Traefik LB (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`).
+Reference impls: tripit (the original pilot), f1-stream, job-hunter, tuya_bridge.
 
-**Flow (GHA-migrated apps)**: `git push → GHA build+push DockerHub (8-char SHA) → POST Woodpecker API → kubectl set image`
+**Migrated apps (issues #13–#27):** f1-stream, job-hunter, tuya_bridge,
+beadboard, nextcloud-todos, claude-agent-service, **claude-memory-mcp** (GHA →
+ghcr, NOT DockerHub), kms-website, Freedify, instagram-poster, payslip-ingest,
+broker-sync (image `wealthfolio-sync`), fire-planner, recruiter-responder,
+x402-gateway — plus tripit. Earlier public-repo apps already on GHA (Website,
+apple-health-data, audiblez-web, plotting-book, insta2spotify,
+audiobook-search, council-complaints) now also land on ghcr.
+- **PUBLIC ghcr packages:** beadboard, nextcloud-todos, claude-agent-service,
+  claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
+  chrome-service-novnc, android-emulator.
+- **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
+  wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
+  infra-ci, k8s-portal. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
+  (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
+  = Vault `secret/viktor/ghcr_pull_token`, a dedicated classic PAT scoped to
+  `read:packages` (UI-minted 2026-06-15; no longer the admin `github_pat`
+  alias). GitHub has no token-mint API, so rotation is manual: re-mint →
+  `vault kv patch secret/viktor ghcr_pull_token=…` → targeted apply
+  `module.kyverno.kubernetes_secret.ghcr_credentials` (reads Vault, dodges the
+  git-crypt tls-secret-sync landmine), Kyverno re-syncs the allowlist).
 
-**Migrated to GHA** (9): Website, k8s-portal, claude-memory-mcp, apple-health-data, audiblez-web, plotting-book, insta2spotify, audiobook-search, council-complaints
-**Woodpecker-native owned-app build** (Forgejo registry, build->deploy in one `.woodpecker.yml`): tuya_bridge, job-hunter, f1-stream (extracted to viktor/f1-stream 2026-06-05; Woodpecker repo id 166; the old github source is archived + its GHA repo-id-10 deactivated)
-**Woodpecker-only**: travel_blog (1.4GB content too large for GHA), infra pipelines (terragrunt apply, certbot, build-cli — need cluster access)
-**Private Forgejo repo → off-infra GHA → GHCR** (NEW 2026-06-09 — gentler builds: keeps build IO **and** the registry push OFF the homelab/sdc; replaces in-cluster Woodpecker buildkit for private repos): **tripit** is the pilot. Forgejo `viktor/tripit` (canonical) push-mirrors → PRIVATE `ViktorBarzin/tripit` GitHub repo (`sync_on_commit`); `.github/workflows/build.yml` (committed on Forgejo, mirrors over) builds + pushes `ghcr.io/viktorbarzin/tripit:<sha>+latest` on GHA (free, ~2min, GHA-native cache). Cluster pulls of PRIVATE ghcr images use the `ghcr-credentials` dockerconfigjson, cloned by the kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit ALLOWLIST of private-ghcr namespaces only (ADR-0002; source `stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; cred = Vault `secret/viktor/ghcr_pull_token`, currently an alias of the admin `github_pat` — GitHub has no token-mint API, swap the alias value if a scoped token is ever UI-minted). **Auto-deploy** (verified 2026-06-09): the GHA `deploy` job POSTs `ci.viktorbarzin.me/api/repos/167/pipelines` (Woodpecker repo **167** = the GitHub mirror, registered github-forge; GHA secret `WOODPECKER_TOKEN`) with `IMAGE_TAG`+`IMAGE_NAME` → `.woodpecker/deploy.yml` (event:**manual** ONLY, so the Forgejo→GitHub mirror's raw pushes don't fire a tag-less deploy) runs `kubectl set image deployment/tripit tripit=… alembic-migrate=…` in-cluster (woodpecker-agent SA = cluster-admin, no kubeconfig). Image is KEEL_IGNORE_IMAGE so the SHA tag sticks; worker CronJobs track `:latest`. **Semver** (parallel layer): the GHA `build` job runs `svu` v3.4.1 over conventional commits, auto-cuts the next `vX.Y.Z` git tag pushed to CANONICAL Forgejo (GHA secret `FORGEJO_GIT_TOKEN` = write:repository PAT, NOT the package-scoped push token) and bakes `VERSION` → app reports it at `/api/version` (verified 0.2.1). Deploy tag stays the 8-char SHA. The old in-cluster `.woodpecker/build.yml` was DELETED (only `.woodpecker/deploy.yml` remains). GitHub default branch must be `master`. **Replicate to f1-stream, tuya_bridge, job-hunter** (currently Woodpecker-native in-cluster builds). Mirror + workflow-file commits are done via the Forgejo API over the internal Traefik LB (`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`) since the devvm can't reach forgejo's public hairpin.
+**Infra-owned images (issues #29/#30)** build on GHA workflows IN the infra
+repo's own `.github/workflows/` (added to the GitHub lineage via PR; the
+github↔forgejo divergence was deliberately NOT reconciled):
+`build-chrome-service-novnc.yml` + `build-android-emulator.yml` → public ghcr;
+`build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
+`build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
+PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (Keel-deployed; the LAST in-cluster
+Woodpecker build, migrated 2026-06-13 — completes "no local builds"). **infra-ci**
+is the image the `.woodpecker/default.yml` apply step + `drift-detection.yml` run
+in (proven by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.
+The Woodpecker `build-ci-image.yml` + `build-cli.yml` pipelines were REMOVED;
+infra-ci break-glass is a manual `.woodpecker/breakglass-infra-ci.yml` (ghcr
+pull-and-save to the registry VM).
 
-**Per-project files**:
-- `.github/workflows/build-and-deploy.yml` — GHA: checkout, build, push DockerHub, POST Woodpecker API
-- `.woodpecker/deploy.yml` — Woodpecker: `kubectl set image` + Slack notify (event: `[manual, push]`)
-- `.woodpecker/build-fallback.yml` — Old full build pipeline preserved (event: `deployment` — never auto-fires)
+**Forgejo container registry: FROZEN + emptied** (issue #32 wiped all `viktor/*`
+container packages). Break-glass-only now; nothing pushes. `forgejo-cleanup`
+stays DRY_RUN. Pull-through caches on `10.0.20.10` are unchanged. Runbook:
+`docs/runbooks/forgejo-registry-breakglass.md`.
 
-**Woodpecker API**: Uses **numeric repo IDs** (`/api/repos/2/pipelines`), NOT owner/name paths (those return HTML).
-Repo IDs: infra=1, Website=2, finance=3, health=4, travel_blog=5, webhook-handler=6, audiblez-web=9, plotting-book=43, claude-memory-mcp=78, infra-onboarding=79, council-complaints=TBD (f1-stream's old GHA-era github repo id 10 is deactivated; it's now a Woodpecker-native Forgejo build at repo id 166)
+**Woodpecker now runs only:** per-app `deploy.yml` (manual, `kubectl set
+image`), `default.yml` (terragrunt apply), `renew-tls.yml` (certbot),
+maintenance crons (drift-detection, provision-user, registry-config-sync,
+pve-nfs-exports-sync, issue-automation, postmortem-todos), and the
+manual `breakglass-infra-ci.yml`. **No build/test pipeline on any repo — do not
+(re)introduce one.** (`.woodpecker/k8s-portal.yml`, the last in-cluster image
+build, was removed 2026-06-13 — k8s-portal now builds on GHA → ghcr, see
+Infra-owned images above.)
+
+**Decommissioned (issue #31):** travel_blog (stack destroyed + dir removed), 6
+dead builders' pipelines (terminal-lobby, webhook-handler, hmrc-sync,
+trading-bot, travel-agent, trip-planner), and all `build-fallback.yml` files
+(only Website had one).
+
+**Woodpecker API**: numeric repo IDs (`/api/repos/<id>/pipelines`), NOT
+owner/name (those return HTML). The deploy registration for each app is the
+**GitHub mirror** repo (github-forge). Infra: Forgejo forge = repo 82, legacy
+GitHub forge = repo 1.
 
 **Woodpecker YAML gotchas**:
 - Commands with `${VAR}:${VAR}` must be **quoted** — unquoted `:` triggers YAML map parsing when vars are empty
 - Use `bitnami/kubectl:latest` (not pinned versions — entrypoint compatibility issues)
 - Global secrets must have `manual` in their events list for API-triggered pipelines
 
-**GitHub repo secrets** (set on all repos): `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `WOODPECKER_TOKEN`
-
-**Infra pipelines unchanged**: `default.yml` (terragrunt apply), `renew-tls.yml` (certbot cron), `build-cli.yml` (dual registry push), `k8s-portal.yml` (path-filtered build), `provision-user.yml` — all stay on Woodpecker.
+**GitHub repo secrets** (per repo): `WOODPECKER_TOKEN` (POST deploy pipeline),
+`FORGEJO_GIT_TOKEN` (write:repository PAT for the svu tag push). ghcr push uses
+the workflow's built-in `GITHUB_TOKEN` (`packages: write`).
 
 ## Database Host
 
