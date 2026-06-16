@@ -36,7 +36,11 @@ set -uo pipefail
 : "${HA_URL:=http://192.168.1.8:8123}"
 : "${HA_TOKEN:=}"                    # long-lived ha-sofia token; empty => Dell auto (no control)
 : "${COMMAND_ENTITY:=sensor.r730_fan_command_pct}"  # HA-computed fan %; we only apply it
-: "${STALE_SECS:=120}"               # command older than this => stale => Dell auto
+: "${STALE_SECS:=1800}"              # command older than this => stale. Loose on purpose:
+                                     # staleness only happens when CPU temp is flat (so the
+                                     # held value is still valid); a rising temp re-renders it.
+: "${HA_GRACE_SECS:=300}"            # on a transient HA miss, HOLD the last applied % for this
+                                     # long before handing the fans to Dell auto (anti-flap)
 : "${PUSHGATEWAY_URL:=}"             # optional Prometheus Pushgateway base URL
 : "${MAX_IPMI_FAILS:=3}"
 : "${MIN_STEP:=3}"                   # min fan-% change worth an IPMI write (anti-jitter)
@@ -155,7 +159,7 @@ EOF
 main() {
   log "fan-control start (actuator; loop=${LOOP_INTERVAL}s ceiling=${CEILING}C cmd=${COMMAND_ENTITY} stale=${STALE_SECS}s dry_run=${DRY_RUN})"
   trap 'log "exit — restoring Dell auto fan control"; restore_auto' EXIT
-  local current=-1 fails=0 in_fallback=0 cool_since=0 ha_down=0
+  local current=-1 fails=0 in_fallback=0 cool_since=0 ha_down=0 ha_misses=0
   while true; do
     local rpm fan_w; rpm="$(read_fan_rpm)"; rpm="${rpm:-0}"; fan_w="$(fc_fan_watts "$rpm")"
 
@@ -190,10 +194,22 @@ main() {
     # The setpoint is whatever HA computed. No local math — just apply it.
     local cmd; cmd="$(ha_command_pct)"
     if [[ -z "$cmd" ]]; then
-      (( ha_down == 0 )) && { log "HA command unavailable/stale — Dell auto until it returns"; restore_auto; current=-1; ha_down=1; }
-      push_metrics "$temp" 0 fallback 0 1 "$rpm" "$fan_w"
+      ha_misses=$((ha_misses + 1))
+      if (( current >= 0 && ha_misses * LOOP_INTERVAL < HA_GRACE_SECS )); then
+        # Transient HA loss — HOLD the last applied %; do NOT touch the fans. A brief
+        # command blip (sensor unavailable / stale / fetch hiccup) must not dump the
+        # fans to Dell auto. The 83C CEILING above (our own IPMI read) is the real
+        # overheat safety, so holding the last good % is safe.
+        (( ha_misses == 1 )) && log "HA command miss — holding ${current}% (grace ${HA_GRACE_SECS}s)"
+        push_metrics "$temp" "$current" applied 0 0 "$rpm" "$fan_w"
+      else
+        # Sustained loss (or nothing applied yet) — hand the fans to Dell auto.
+        (( ha_down == 0 )) && { log "HA command lost (${ha_misses} misses) — Dell auto"; restore_auto; current=-1; ha_down=1; }
+        push_metrics "$temp" 0 fallback 0 1 "$rpm" "$fan_w"
+      fi
       (( RUN_ONCE == 1 )) && break || { sleep "$LOOP_INTERVAL"; continue; }
     fi
+    ha_misses=0
     (( ha_down == 1 )) && { log "HA command back (${cmd}%) — resuming"; ha_down=0; }
 
     # Only write when first-run or the change clears MIN_STEP (kills 1-2% jitter).
