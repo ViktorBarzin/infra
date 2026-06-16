@@ -144,6 +144,16 @@ if command -v vault >/dev/null; then
   else
     log "WARN: secret/workstation codex_shared_auth_json absent -> shared Codex auth not staged"
   fi
+  # 8c) chrome-service snapshot bearer token -> root file the provisioner copies
+  #     per-user (if-absent) to ~/.config/playwright/token, which the per-user
+  #     playwright-snapshot-refresh reads. One token for all users (single shared
+  #     warm profile, by design). 0600: the snapshot it fetches holds cookies.
+  if cs_tok="$(vault kv get -field=api_bearer_token secret/chrome-service 2>/dev/null)"; then
+    install -m 0600 /dev/stdin /etc/t3-serve/chrome-service-token <<<"$cs_tok"
+    log "staged /etc/t3-serve/chrome-service-token (playwright snapshot auth)"
+  else
+    log "WARN: secret/chrome-service api_bearer_token absent -> playwright snapshot refresh will 401"
+  fi
 fi
 
 # 9) service layer: install + enable the machine-wide systemd units (sources in
@@ -181,6 +191,16 @@ for u in t3-serve@.service \
          t3-dispatch.service; do
   install -m 0644 "$SCRIPTS/$u" "/etc/systemd/system/$u"
 done
+# 9e) per-user playwright-mcp browser MCP: system-level TEMPLATE units (one
+#     instance per OS user) + the snapshot-refresh script. Reproducible-from-git
+#     replacement for the hand-made ~/.config/systemd/user/playwright-* units
+#     (no systemd --user / linger needed). Enabled per-user by the provisioner;
+#     PLAYWRIGHT_PORT (roster_engine) + the chrome-service token (8c) feed them.
+install -m 0755 "$HERE/playwright/playwright-snapshot-refresh" /usr/local/bin/playwright-snapshot-refresh
+for u in playwright-mcp@.service playwright-snapshot-refresh@.service playwright-snapshot-refresh@.timer; do
+  install -m 0644 "$HERE/playwright/$u" "/etc/systemd/system/$u"
+done
+log "playwright: template units + snapshot-refresh script installed (per-user enable in provisioner)"
 systemctl daemon-reload
 systemctl enable --now t3-dispatch.service \
   t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer >/dev/null 2>&1 || \

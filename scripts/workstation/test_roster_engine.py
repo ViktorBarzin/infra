@@ -297,6 +297,53 @@ def test_derive_is_deterministic():
 
 
 # --------------------------------------------------------------------------
+# derive_desired_state: per-user playwright-mcp ports (reproducible browser MCP)
+# --------------------------------------------------------------------------
+
+# wizard (admin) IS a roster user, so playwright ports are allocated for every
+# user incl. the admin, from PLAYWRIGHT_BASE_PORT=8931. The live in-session
+# assignment is wizard 8931, emo 8932, ancamilea 8933.
+LIVE_PLAYWRIGHT_PORTS = {"wizard": 8931, "emo": 8932, "ancamilea": 8933}
+
+
+def test_derive_allocates_playwright_ports_for_all_users_incl_admin():
+    ds = eng.derive_desired_state(_roster(THREE), {})
+    # fresh box: sorted os_user order (ancamilea, emo, wizard) from 8931
+    assert ds.playwright_ports == {"ancamilea": 8931, "emo": 8932, "wizard": 8933}
+
+
+def test_derive_preserves_existing_sticky_playwright_ports():
+    # Seeded with the live assignment -> preserved exactly (nobody's port moves).
+    ds = eng.derive_desired_state(
+        _roster(THREE), {}, existing_playwright_ports=LIVE_PLAYWRIGHT_PORTS
+    )
+    assert ds.playwright_ports == LIVE_PLAYWRIGHT_PORTS
+
+
+def test_derive_allocates_next_free_playwright_port_for_new_user():
+    # Existing users sticky; a brand-new user gets the next free port from 8931.
+    ds = eng.derive_desired_state(
+        _roster(THREE), {}, existing_playwright_ports={"wizard": 8931, "emo": 8932}
+    )
+    assert ds.playwright_ports["wizard"] == 8931
+    assert ds.playwright_ports["emo"] == 8932
+    assert ds.playwright_ports["ancamilea"] == 8933  # next free, skipping 8931/8932
+
+
+def test_playwright_ports_are_disjoint_from_t3_ports():
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS, LIVE_PLAYWRIGHT_PORTS)
+    assert set(ds.ports.values()).isdisjoint(ds.playwright_ports.values())
+
+
+def test_desired_state_dict_includes_playwright_ports():
+    # The JSON adapter is the contract the bash provisioner consumes via jq.
+    d = eng._desired_state_to_dict(
+        eng.derive_desired_state(_roster(THREE), {}, LIVE_PLAYWRIGHT_PORTS)
+    )
+    assert d["playwright_ports"] == LIVE_PLAYWRIGHT_PORTS
+
+
+# --------------------------------------------------------------------------
 # groups_to_add: the additive-only invariant (module #1)
 # --------------------------------------------------------------------------
 

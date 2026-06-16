@@ -11,8 +11,36 @@ external Claude Code sessions on the dev box. Architecture in
 | chrome-service Deployment | `chrome-service` ns | always-on | headed chromium, CDP :9222, persistent /profile/chromium-data |
 | snapshot-server sidecar | same pod | always-on | serves `/api/snapshot`, bearer-gated, port 8088 |
 | snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | dumps `storage_state()` via CDP → `/profile/snapshots/storage-state.json` |
-| dev-box refresh timer | each dev box | hourly | curls `chrome.viktorbarzin.me/api/snapshot` → `~/.cache/playwright-shared-storage-state.json` |
-| dev-box `playwright-mcp.service` | each dev box | always-on | `@playwright/mcp --isolated --storage-state=…` per-MCP-connection contexts |
+| dev-box refresh timer | each dev box, per OS user | hourly (`*:28`) | `playwright-snapshot-refresh@<user>.timer` curls `chrome.viktorbarzin.me/api/snapshot` → `~/.cache/playwright-shared-storage-state.json` |
+| dev-box `playwright-mcp@<user>.service` | each dev box, per OS user | always-on | pinned `@playwright/mcp@<ver> --isolated --storage-state=…` on the user's `PLAYWRIGHT_PORT`; per-MCP-connection (per-session) contexts |
+
+## Provisioning (reproducible from git)
+
+The dev-box side is **per-OS-user** and fully reproducible — no hand-setup.
+Each user gets their own isolated `@playwright/mcp` server (multiple concurrent
+Claude sessions per user, isolated by `--isolated`), wired into their Claude in
+**every directory** via a user-scope `~/.claude.json` entry
+(`playwright → http://localhost:<PLAYWRIGHT_PORT>/mcp`).
+
+- **System-level template units** (NOT `systemd --user`, so no linger needed):
+  `playwright-mcp@.service` + `playwright-snapshot-refresh@.{service,timer}`,
+  sourced from `infra/scripts/workstation/playwright/`, installed to
+  `/etc/systemd/system/` by `setup-devvm.sh` (§9e). `User=%i`; per-user
+  `PLAYWRIGHT_PORT` from `/etc/t3-serve/playwright-<user>.env`.
+- **Port allocation**: `roster_engine.py` (`PLAYWRIGHT_BASE_PORT=8931`, sticky)
+  — emitted in the derive JSON, written per-user by `t3-provision-users.sh` (§5c).
+- **Snapshot token**: `setup-devvm.sh` (§8c) stages Vault
+  `secret/chrome-service` `api_bearer_token` → root file
+  `/etc/t3-serve/chrome-service-token`; the provisioner copies it (if-absent,
+  0600) to each user's `~/.config/playwright/token` (the hourly root reconcile
+  has no Vault token, hence the staging — mirrors the Claude OAuth token in §8a).
+- **MCP wiring + enablement**: `t3-provision-users.sh` `install_playwright()` runs
+  `claude mcp add --scope user … playwright` AS the user (clobber-proof, if-absent)
+  and `systemctl enable --now` the system instances. Idempotent; never restarts a
+  running instance or rewrites an existing `~/.claude.json` entry.
+- **Pinned version**: bump `@playwright/mcp@<ver>` in
+  `scripts/workstation/playwright/playwright-mcp@.service` (the `@latest` →
+  silent-fleet-roll footgun is why; see the `T3_PIN` rationale in `setup-devvm.sh`).
 
 ## Day-to-day
 
@@ -43,14 +71,14 @@ Expected: `wrote snapshot (… bytes) to /profile/snapshots/storage-state.json`.
 ### Trigger dev-box refresh manually
 
 ```bash
-# On the dev box, as the user whose Claude Code sessions need the new state:
-systemctl --user start playwright-snapshot-refresh.service
+# On the dev box, refresh a specific user's snapshot (system template instance):
+sudo systemctl start playwright-snapshot-refresh@<user>.service
 
-# Or directly:
-/usr/local/bin/playwright-snapshot-refresh
+# Or run the script directly AS that user:
+sudo -u <user> /usr/local/bin/playwright-snapshot-refresh
 
 # Verify
-ls -la ~/.cache/playwright-shared-storage-state.json
+sudo ls -la /home/<user>/.cache/playwright-shared-storage-state.json
 ```
 
 ### Inspect the current snapshot
@@ -108,12 +136,14 @@ The bearer token in `~/.config/playwright/token` doesn't match the
 server's. Almost always means the Vault secret was rotated and the
 local cache is stale.
 
-**Fix**:
+**Fix** (re-stage centrally so a rebuild stays correct, then re-copy to the user):
 ```bash
 vault login -method=oidc  # if needed
-vault kv get -field=api_bearer_token secret/chrome-service > ~/.config/playwright/token
-chmod 600 ~/.config/playwright/token
-systemctl --user start playwright-snapshot-refresh.service
+sudo install -m 0600 <(vault kv get -field=api_bearer_token secret/chrome-service) \
+  /etc/t3-serve/chrome-service-token
+sudo install -o <user> -g <user> -m 0600 \
+  /etc/t3-serve/chrome-service-token /home/<user>/.config/playwright/token
+sudo systemctl start playwright-snapshot-refresh@<user>.service
 ```
 
 ### Dev-box `playwright-snapshot-refresh` returns 404 with "snapshot not yet available"
@@ -129,9 +159,9 @@ new context with it. **Existing MCP sessions don't hot-reload** — they
 keep the cookies they were seeded with at session start. New sessions
 get the fresh snapshot.
 
-**Fix**: restart the MCP server on the dev box to pick up the new file:
+**Fix**: restart the user's MCP server on the dev box to pick up the new file:
 ```bash
-systemctl --user restart playwright-mcp.service
+sudo systemctl restart playwright-mcp@<user>.service
 ```
 
 ### Snapshot file is suspiciously small or empty cookies array
@@ -158,13 +188,18 @@ vault kv put secret/chrome-service \
 
 # Reloader auto-restarts chrome-service pod (snapshot-server picks up new token).
 
-# On EVERY dev box that pulls the snapshot:
-vault kv get -field=api_bearer_token secret/chrome-service > ~/.config/playwright/token
-chmod 600 ~/.config/playwright/token
+# On EVERY dev box: re-stage the root file, then overwrite each user's copy
+# (the provisioner's per-user copy is if-absent, so a ROTATION must overwrite).
+sudo install -m 0600 <(vault kv get -field=api_bearer_token secret/chrome-service) \
+  /etc/t3-serve/chrome-service-token
+for u in $(ls /etc/t3-serve/playwright-*.env 2>/dev/null | sed 's#.*/playwright-##;s#\.env##'); do
+  sudo install -o "$u" -g "$u" -m 0600 \
+    /etc/t3-serve/chrome-service-token /home/"$u"/.config/playwright/token
+done
 
-# Verify the next refresh succeeds:
-systemctl --user start playwright-snapshot-refresh.service
-journalctl --user -u playwright-snapshot-refresh.service -n 20
+# Verify the next refresh succeeds for a user:
+sudo systemctl start playwright-snapshot-refresh@<user>.service
+sudo journalctl -u playwright-snapshot-refresh@<user>.service -n 20
 ```
 
 ## Restore from a backup tarball

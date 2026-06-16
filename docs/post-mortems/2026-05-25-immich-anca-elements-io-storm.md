@@ -178,6 +178,16 @@ During the recovery, a second cascade was discovered that compounded the outage:
 
 **Still the real fix (from this PM, still TODO):** the P0 import-side cap, and especially the **IO-isolation** items — move k8s-master **etcd** + node OS disks off sdc onto SSD (generalize P3), and/or give the Immich library its own spindle (P1). Concurrency caps are a band-aid; sdc remains a single shared failure domain that every storm finds. Tracked in beads (see Follow-up Implementation).
 
+## Update 2026-06-16 — 6th IO-pressure incident (same `anca-elements-import` Job re-triggered)
+
+**Same direct trigger as 2026-05-25.** The original `kubernetes_job_v1.anca_elements_import` resource block was never removed from `stacks/immich/main.tf` after the 2026-05-25 import completed — despite the in-code comment instructing "After successful completion: REMOVE this resource block + apply again." Every subsequent `terragrunt apply` of the immich stack re-created the Job. On 2026-06-16 ~20:50 UTC it ran again with the original `--concurrent-tasks 20`, scanning all 21,643 Immich assets in pure read-scan mode (`Uploaded 0`) for ~51 min. Result mirrored 2026-06-01: 62 of 64 nfsd threads in D-state on `folio_wait_bit_common`, sdc 80–82% util, **etcd starved → kube-apiserver crash-loop with `start-service-ip-repair-controllers failed: unable to perform initial IP and Port allocation check`**. Cluster unreachable; PVE host load peaked at 102 of 44 threads. The 2026-06-01 server-side job concurrency caps (`thumbnailGeneration=2, metadataExtraction=2, library=2`) held — the storm was on the import side, not the ML side.
+
+**Immediate recovery**: `nfsd` throttled `64 → 8` threads on the PVE host (gave apiserver enough headroom to come back), then `kubectl delete job -n immich anca-elements-import` + force-delete the pod. Storm cleared instantly: sdc 80% → 30% util, all nfsd threads idle, apiserver `/readyz: ok`. nfsd restored to 64.
+
+**Permanent fix (this commit)**: Removed `kubernetes_job_v1.anca_elements_import` AND the `module "nfs_anca_elements_host"` PVC from `stacks/immich/main.tf`. The photo batch is complete; per user, the videos batch is not on the near roadmap, so the PVC + the comment scaffold around it are gone too. The on-disk dump at `/srv/nfs/anca-elements` on the PVE host is **kept** (browseable via Nextcloud's admin-only "PVE NFS Pool" mount); decision on deletion deferred to user. A future import would re-add the PVC + a fresh Job (or, better, a one-shot manual `kubectl create job` invocation that does not live in Terraform — see Lessons below).
+
+**Updated lesson — one-shot Jobs do NOT belong in `kubernetes_job_v1`.** TF treats Jobs as long-lived resources and re-creates them on every apply if state drift is detected. A truly one-shot import either (a) becomes a `kubernetes_cron_job_v1` with `suspend = true` (Viktor can un-suspend → run → re-suspend) or (b) lives outside TF entirely as a `kubectl create job --from=...` ad-hoc invocation captured in `docs/runbooks/`. The "REMOVE this resource block + apply again" comment failed as a control because nobody noticed it for 22 days.
+
 ## Related
 
 - 2026-05-09 IO post-mortem: `docs/post-mortems/2026-05-09-io-pressure-stale-nfs.md`

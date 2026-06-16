@@ -1,0 +1,35 @@
+[Unit]
+# Per-user isolated playwright-mcp HTTP server — the browser MCP each user's
+# Claude Code sessions connect to (user-scope `.claude.json` entry "playwright"
+# -> http://localhost:<PLAYWRIGHT_PORT>/mcp). System-level TEMPLATE unit (one
+# committed file, one instance per OS user: playwright-mcp@<user>.service), so
+# it is reproducible from git and root-manageable WITHOUT systemd --user / linger.
+# Installed to /etc/systemd/system by setup-devvm.sh; enabled per-user by
+# t3-provision-users.sh. Supersedes the hand-made ~/.config/systemd/user units.
+Description=Per-user isolated playwright-mcp HTTP server (%i)
+After=network-online.target playwright-snapshot-refresh@%i.service
+Wants=network-online.target playwright-snapshot-refresh@%i.service
+
+[Service]
+Type=simple
+User=%i
+# PLAYWRIGHT_PORT is written per-user by t3-provision-users.sh from roster_engine
+# (PLAYWRIGHT_BASE_PORT, sticky allocation). Required (no `-`): a missing port
+# file should fail loudly rather than start npx with an empty --port.
+EnvironmentFile=/etc/t3-serve/playwright-%i.env
+Restart=on-failure
+RestartSec=5
+# --isolated: each MCP HTTP connection (= each Claude Code session) gets a fresh
+#   ephemeral BrowserContext, so a single user's concurrent sessions never share
+#   tabs. --storage-state seeds each context from the hourly cookie snapshot
+#   harvested from in-cluster chrome-service (warm logged-in state).
+# Version PINNED (see the T3_PIN rationale in setup-devvm.sh): @latest re-resolves
+#   on every restart, so an upstream breaking release would silently roll the
+#   whole fleet. Bump deliberately in git. %h is NOT used (it resolves to /root
+#   in a system unit even with User=); the home path is spelled out as /home/%i.
+ExecStart=/usr/bin/npx -y @playwright/mcp@0.0.76 --port ${PLAYWRIGHT_PORT} --host localhost --headless --browser chrome --isolated --storage-state /home/%i/.cache/playwright-shared-storage-state.json
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
