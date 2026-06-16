@@ -439,8 +439,12 @@ resource "kubernetes_deployment" "chrome_service" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      # container[1]=novnc now TF-managed on ghcr:latest (ADR-0002 #29) — was KEEL_IGNORE
+      # container[0]=chrome-service (MS Playwright, pinned via local.image) and
+      # container[1]=novnc (ghcr:latest, ADR-0002 #29) are BOTH TF-managed now.
+      # container[0].image was previously KEEL_IGNORE'd here; that let a stray
+      # clobber to the novnc image stick (chromium-not-found crashloop 2026-06-16)
+      # because TF could not revert the ignored field. Removed so TF re-asserts the
+      # pinned image. Keel is inert (keel.sh/policy=never) and no deploy step touches these.
       spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
