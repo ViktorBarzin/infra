@@ -195,6 +195,88 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # t3 session-auth + auto-upgrade health (devvm host scripts → journald →
+          # Loki). Backstops the gated-nightly t3 tracker: the dispatch logs every
+          # real-user pairing outcome (success endpoint + fallback) and the enforcer
+          # logs every rollback/freeze. These catch a bad nightly that broke pairing
+          # for real users between the tracker's own bump-time gate runs — the
+          # 2026-06-09 failure class (mint/bootstrap broke, all users on the pair
+          # prompt). Route: Loki ruler → Alertmanager → default #alerts Slack.
+          # Runbook: docs/runbooks/t3-version-bump.md.
+          name = "t3 Auth & Upgrades"
+          rules = [
+            {
+              # Real users failing to pair: mint error, exchange transport error, or
+              # a non-2xx from the instance pairing API. Threshold >3/10m rides out a
+              # benign single-instance restart race; sustained = pairing is broken.
+              alert  = "T3PairingBroken"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", unit=\"t3-dispatch.service\"} |~ \"mint for .* failed|pairing exchange for .* failed|pairing for .* returned [0-9]\" [10m])) > 3"
+              for    = "5m"
+              labels = { severity = "critical" }
+              annotations = {
+                summary     = "t3 dispatch pairing is failing for real users (>3/10m)"
+                description = "t3-dispatch is failing to mint/exchange session cookies — users land on the t3 pair prompt instead of their workspace. Likely a bad t3 build broke the pairing API/schema (2026-06-09 class). Freeze the tracker (touch /etc/t3-autoupdate.freeze) and roll back per the runbook."
+                runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+            {
+              # The dispatch fell back off its first-preference pairing endpoint
+              # (browser-session) to the legacy one — the running build moved/renamed
+              # the pairing API. Pin-compatible today (the fallback works), but it
+              # signals contract drift that a future build could break entirely.
+              alert  = "T3PairFallbackHigh"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", unit=\"t3-dispatch.service\"} |~ \"paired .* fallback=true\" [30m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "t3 dispatch is using the FALLBACK pairing endpoint — t3 moved the pairing API"
+                description = "A t3 build is pairing via the legacy /api/auth/bootstrap because the preferred /api/auth/browser-session 404s. Still works via fallback, but add the new endpoint to pairEndpoints in scripts/t3-dispatch/main.go before a future build drops the legacy one."
+                runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+            {
+              # The enforcer's health-check failed a build and auto-rolled-back the
+              # binary. The gate worked — but a bad nightly shipped, so you should know.
+              alert  = "T3AutoUpdateRolledBack"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"rolling back|rolled back\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "t3 auto-update rolled back a bad build (gate worked)"
+                description = "The t3 enforcer installed a new build, its pairing health-check failed, and it auto-rolled-back. Investigate the bad build before the next cycle retries it; pin T3_PIN to a known-good if it recurs."
+                runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+            {
+              # Rollback itself failed (npm couldn't reinstall the previous build):
+              # the box may be left on a broken t3. Manual fix needed.
+              alert  = "T3AutoUpdateRollbackFailed"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "critical" }
+              annotations = {
+                summary     = "t3 auto-update rollback FAILED — t3 may be broken on the devvm"
+                description = "The enforcer detected a bad build but could not reinstall the previous version. t3 may be broken for all users. Fix manually per the runbook (set T3_PIN to last-good, npm i -g, restore state if migrated)."
+                runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+            {
+              # The tracker refused to advance (pre-run auth gate tripped, or the
+              # /etc/t3-autoupdate.freeze switch is set). Surfaces a stuck-on-purpose
+              # tracker so it isn't silently frozen forever.
+              alert  = "T3AutoUpdateFrozen"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"FROZEN\" [25h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "t3 auto-update is FROZEN (not tracking nightly)"
+                description = "The t3 tracker froze — either the pre-run pairing gate tripped or /etc/t3-autoupdate.freeze is set. t3 is held at the last-good pin and is NOT picking up new builds until cleared. Confirm pairing is healthy, then remove the freeze."
+                runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+          ]
+        },
+        {
           # Wave 1 security alerts (beads code-8ywc). Routed via Loki ruler →
           # prometheus-alertmanager → #security Slack receiver. Allowlist CIDRs:
           # 10.0.20.0/22, 192.168.1.0/24, K8s pod CIDR 10.10.0.0/16, K8s service
