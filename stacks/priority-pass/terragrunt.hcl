@@ -21,5 +21,5 @@ inputs = {
   # priority-pass repo HEAD — auto-bumped by GHA `build-and-deploy.yml`
   # on every successful build. Manual edits welcome for local trials,
   # but CI will overwrite on the next push to main.
-  image_tag = "63e118c3"
+  image_tag = "4ce9e8e8"
 }
