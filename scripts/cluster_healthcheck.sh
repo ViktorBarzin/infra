@@ -1093,7 +1093,7 @@ check_helm_releases() {
     section 18 "Helm Release Health"
     local releases detail="" had_issue=false status="PASS"
 
-    releases=$(helm list -A --kubeconfig "$KUBECONFIG_PATH" -o json 2>/dev/null) || {
+    releases=$(helm list -A -a --kubeconfig "$KUBECONFIG_PATH" -o json 2>/dev/null) || {
         [[ "$QUIET" == true ]] && section_always 18 "Helm Release Health"
         warn "Cannot list Helm releases"
         json_add "helm_releases" "WARN" "Cannot list"
@@ -1108,9 +1108,14 @@ for r in data:
     name = r.get("name", "?")
     ns = r.get("namespace", "?")
     st = r.get("status", "unknown")
-    if st != "deployed":
-        level = "FAIL" if st.startswith("pending") else "WARN"
-        print(f"{level}:{ns}/{name}:{st}")
+    # helm list -a (above) surfaces pending-*/failed releases that plain
+    # `helm list` HIDES; a stuck pending-upgrade silently blocks every
+    # terragrunt apply of the stack (2026-06-16 prometheus incident, ~4 days
+    # of frozen monitoring config). Ignore deployed/uninstalled/superseded.
+    if st.startswith("pending"):
+        print(f"FAIL:{ns}/{name}:{st}")
+    elif st == "failed":
+        print(f"WARN:{ns}/{name}:{st}")
 ' 2>/dev/null) || true
 
     if [[ -z "$bad_releases" ]]; then
