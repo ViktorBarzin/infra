@@ -307,18 +307,76 @@ install_user_claude_native() {
   fi
 }
 
+# Per-user playwright-mcp browser MCP — ALL tiers incl. admin (every user's Claude
+# sessions connect to their OWN isolated server; a user's concurrent sessions are
+# kept apart by the unit's --isolated). Idempotent + if-absent, so a routine
+# reconcile never disturbs a live user: (1) seed the chrome-service snapshot token
+# if the user has none; (2) wire the user-scope `playwright` MCP entry by running
+# `claude mcp add` AS the user (writes THEIR ~/.claude.json, never reads another's;
+# the CLI merges one key and REFUSES to clobber an existing one, so it's safe on a
+# populated config), guarded by `claude mcp get`; (3) `enable --now` the system
+# template instances (idempotent — does NOT restart an already-running server).
+# Needs PLAYWRIGHT_PORT already in the per-user playwright env (written by the
+# section-5c loop) + the token staged by setup-devvm.sh (section 8c).
+install_playwright() {
+  local user="$1" home port token_staged=/etc/t3-serve/chrome-service-token
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  port="$(grep -oE 'PLAYWRIGHT_PORT=[0-9]+' "$ENVDIR/playwright-$user.env" 2>/dev/null | cut -d= -f2 || true)"
+  [[ -n "$port" ]] || { log "WARN: no PLAYWRIGHT_PORT for $user -> skip playwright"; return 0; }
+
+  # (1) chrome-service snapshot token, if-absent (0600, owned by the user)
+  if [[ ! -f "$home/.config/playwright/token" && -r "$token_staged" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] seed playwright token -> $user"; else
+      install -d -o "$user" -g "$user" -m 0700 "$home/.config/playwright"
+      install -o "$user" -g "$user" -m 0600 "$token_staged" "$home/.config/playwright/token"
+      log "seeded playwright snapshot token -> $user"
+    fi
+  fi
+
+  # (2) wire user-scope ~/.claude.json (AS the user, login shell so the native
+  #     ~/.local/bin/claude is on PATH; clobber-proof + if-absent via `mcp get`)
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "[dry-run] wire playwright MCP (:$port) if-absent -> $user"
+  elif runuser -u "$user" -- bash -lc 'command -v claude >/dev/null 2>&1'; then
+    if ! runuser -u "$user" -- bash -lc 'claude mcp get playwright >/dev/null 2>&1'; then
+      runuser -u "$user" -- bash -lc "claude mcp add --scope user --transport http playwright 'http://localhost:$port/mcp' >/dev/null 2>&1" \
+        && log "wired playwright MCP (user scope, :$port) -> $user" \
+        || log "WARN: claude mcp add playwright failed for $user (retries next run)"
+    fi
+  else
+    log "WARN: claude not found for $user -> playwright MCP not wired (retries next run)"
+  fi
+
+  # (3) enable the system template instances. `enable --now` is idempotent and
+  #     does NOT restart a running unit, so a live user is undisturbed.
+  run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+  run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
 install -d -m 0755 "$ENVDIR"
 
 # 1) current sticky ports from existing .env files -> {os_user: port}
-ports_file="$(mktemp)"; trap 'rm -f "$ports_file" "${desired_file:-}"' EXIT
+ports_file="$(mktemp)"; pw_ports_file="$(mktemp)"
+trap 'rm -f "$ports_file" "$pw_ports_file" "${desired_file:-}"' EXIT
 { echo "{}"; for f in "$ENVDIR"/*.env; do
     [[ -e "$f" ]] || continue
-    u="$(basename "$f" .env)"; p="$(grep -oE 'T3_PORT=[0-9]+' "$f" | cut -d= -f2)"
+    case "$(basename "$f")" in playwright-*) continue;; esac   # not a t3-serve env (handled below)
+    # `|| true`: grep returns non-zero on no-match, which would abort under `set -e -o pipefail`.
+    u="$(basename "$f" .env)"; p="$(grep -oE 'T3_PORT=[0-9]+' "$f" | cut -d= -f2 || true)"
     [[ -n "$p" ]] && jq -n --arg u "$u" --argjson p "$p" '{($u): $p}'
   done; } | jq -s 'add' > "$ports_file"
+# sticky PLAYWRIGHT ports from playwright-<os_user>.env (skipped by the loop above).
+# Seeds roster_engine so the live per-user assignments stick across reconciles.
+{ echo "{}"; for f in "$ENVDIR"/playwright-*.env; do
+    [[ -e "$f" ]] || continue
+    u="$(basename "$f" .env)"; u="${u#playwright-}"
+    p="$(grep -oE 'PLAYWRIGHT_PORT=[0-9]+' "$f" | cut -d= -f2 || true)"
+    [[ -n "$p" ]] && jq -n --arg u "$u" --argjson p "$p" '{($u): $p}'
+  done; } | jq -s 'add' > "$pw_ports_file"
 
 # 2) tier validation vs live k8s_users (best-effort; aborts only on a real conflict)
 if command -v vault >/dev/null; then
@@ -336,7 +394,7 @@ fi
 
 # 3) derive desired state
 desired_file="$(mktemp)"
-python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" > "$desired_file"
+python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" --playwright-ports-json "$pw_ports_file" > "$desired_file"
 jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced invalid JSON" >&2; exit 1; }
 
 # 3b) machine-wide Claude managed config (repo -> /etc; per-user codex mirrors in the loop below)
@@ -395,6 +453,16 @@ while IFS=$'\t' read -r os_user port; do
   env_set "$envf" T3_PORT "$port"   # update-or-append; preserves CLAUDE_CODE_OAUTH_TOKEN
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
+
+# 5c) per-user playwright-mcp (ALL tiers incl. admin): write the sticky
+#     PLAYWRIGHT_PORT to the per-user playwright env, then seed token + wire
+#     ~/.claude.json + enable the system template instances. if-absent /
+#     idempotent — never disturbs a live user's running server or existing config.
+while IFS=$'\t' read -r os_user pw_port; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  env_set "$ENVDIR/playwright-$os_user.env" PLAYWRIGHT_PORT "$pw_port"
+  install_playwright "$os_user"
+done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
 # 5b) machine-wide (once, not per-user): keep the t3 pinned-version ENFORCER enabled (it
 #     re-asserts T3_PIN daily; a no-op when already correct). NOT --now: with Persistent=true

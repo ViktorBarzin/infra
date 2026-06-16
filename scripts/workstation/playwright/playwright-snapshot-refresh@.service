@@ -1,0 +1,22 @@
+[Unit]
+# Per-user oneshot that pulls the warm cookie+localStorage snapshot from
+# in-cluster chrome-service into ~/.cache/playwright-shared-storage-state.json,
+# which playwright-mcp@%i seeds every new session from. System-level TEMPLATE
+# (one instance per user); runs the shared /usr/local/bin script as the user.
+Description=Refresh %i's playwright storage-state snapshot from chrome-service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+# Runs as %i, so the script's $HOME-relative paths (token, cache dest) resolve to
+# the user's home. $HOME/$USER are set by systemd because User= is set.
+ExecStart=/usr/local/bin/playwright-snapshot-refresh
+StandardOutput=journal
+StandardError=journal
+# Don't hang if chrome-service is unreachable — the timer retries next hour.
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -21,6 +21,12 @@ from typing import Iterable
 import yaml
 
 BASE_PORT = 3773
+# Per-user playwright-mcp HTTP port (the browser MCP each user's Claude sessions
+# connect to). Distinct range from T3_PORT, allocated for EVERY roster user incl.
+# the admin (wizard is listed). Sticky from existing, so the live in-session
+# assignments (wizard 8931, emo 8932, ancamilea 8933) are preserved across
+# reconciles once seeded; a fresh box allocates from 8931 in sorted order.
+PLAYWRIGHT_BASE_PORT = 8931
 VALID_TIERS = ("admin", "power-user", "namespace-owner")
 # single    - ~/code IS the locked infra clone (the original non-admin layout)
 # workspace - ~/code is a plain directory of per-project clones; the locked
@@ -82,6 +88,7 @@ class DesiredState:
     ttyd_user_map: str
     dispatch: dict[str, dict]
     ports: dict[str, int]
+    playwright_ports: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -203,13 +210,18 @@ def has_blocking_errors(issues: list[ValidationIssue]) -> bool:
 # --------------------------------------------------------------------------
 
 
-def _allocate_ports(roster: Roster, existing_ports: dict[str, int]) -> dict[str, int]:
+def _allocate_ports(
+    roster: Roster, existing_ports: dict[str, int], base: int = BASE_PORT
+) -> dict[str, int]:
+    """Sticky port allocation: keep every roster user's existing port, then assign
+    each new user the next free port from `base`. Used for both T3_PORT (base 3773)
+    and the per-user playwright-mcp port (base 8932)."""
     ports = {u: existing_ports[u] for u in roster.users if u in existing_ports}
     used = set(ports.values())
     for os_user in sorted(roster.users):
         if os_user in ports:
             continue
-        candidate = BASE_PORT
+        candidate = base
         while candidate in used:
             candidate += 1
         ports[os_user] = candidate
@@ -224,9 +236,14 @@ _TTYD_MAP_HEADER = (
 
 
 def derive_desired_state(
-    roster: Roster, existing_ports: dict[str, int]
+    roster: Roster,
+    existing_ports: dict[str, int],
+    existing_playwright_ports: dict[str, int] | None = None,
 ) -> DesiredState:
     ports = _allocate_ports(roster, existing_ports)
+    playwright_ports = _allocate_ports(
+        roster, existing_playwright_ports or {}, base=PLAYWRIGHT_BASE_PORT
+    )
     ordered = sorted(roster.users.values(), key=lambda u: ports[u.os_user])
     ttyd_lines = [f"{u.authentik_user}={u.os_user}" for u in ordered]
     ttyd_user_map = _TTYD_MAP_HEADER + "\n".join(ttyd_lines) + "\n"
@@ -246,7 +263,7 @@ def derive_desired_state(
         )
         for u in roster.users.values()
     }
-    return DesiredState(accounts, ttyd_user_map, dispatch, ports)
+    return DesiredState(accounts, ttyd_user_map, dispatch, ports, playwright_ports)
 
 
 def groups_to_add(desired: Iterable[str], current: Iterable[str]) -> list[str]:
@@ -303,6 +320,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
         "ttyd_user_map": ds.ttyd_user_map,
         "dispatch": ds.dispatch,
         "ports": ds.ports,
+        "playwright_ports": ds.playwright_ports,
     }
 
 
@@ -318,7 +336,11 @@ def _main(argv: list[str]) -> int:
     pv.add_argument("--k8s-users-json", required=True, help="JSON map {k8s_user: tier}")
     pd = sub.add_parser("derive", help="emit desired state as JSON")
     pd.add_argument("--roster", required=True)
-    pd.add_argument("--ports-json", required=True, help="JSON map {os_user: port}")
+    pd.add_argument("--ports-json", required=True, help="JSON map {os_user: T3_PORT}")
+    pd.add_argument(
+        "--playwright-ports-json",
+        help="JSON map {os_user: PLAYWRIGHT_PORT} (optional; sticky allocation)",
+    )
     args = parser.parse_args(argv)
 
     roster = load_roster_file(args.roster)
@@ -329,7 +351,12 @@ def _main(argv: list[str]) -> int:
             print(f"{issue.severity.upper()}: {issue.message}", file=sys.stderr)
         return 1 if has_blocking_errors(issues) else 0
     with open(args.ports_json, encoding="utf-8") as fh:
-        desired = derive_desired_state(roster, json.load(fh))
+        existing_ports = json.load(fh)
+    existing_playwright_ports = {}
+    if args.playwright_ports_json:
+        with open(args.playwright_ports_json, encoding="utf-8") as fh:
+            existing_playwright_ports = json.load(fh)
+    desired = derive_desired_state(roster, existing_ports, existing_playwright_ports)
     json.dump(_desired_state_to_dict(desired), sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0

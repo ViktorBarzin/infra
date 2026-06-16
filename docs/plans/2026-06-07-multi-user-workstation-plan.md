@@ -129,6 +129,21 @@ users:
 
 ### Task 2.3: Inject per-user MCP + auth secrets (new users only; never clobber)
 
+> **PARTIAL — per-user playwright browser MCP DONE (2026-06-16), reproducible from git.**
+> Implemented NOT via the "write a fresh `~/.claude.json`" step below (that skips
+> EXISTING users who have a `.claude.json` lacking the entry — emo + anca were
+> exactly this: server running, never wired). Instead: `roster_engine.py` allocates
+> a sticky per-user `PLAYWRIGHT_PORT` (`PLAYWRIGHT_BASE_PORT=8931`); `setup-devvm.sh`
+> (§8c/§9e) stages the chrome-service token + installs **system-level template units**
+> (`scripts/workstation/playwright/playwright-mcp@.service` + `…-snapshot-refresh@.{service,timer}`,
+> no systemd --user / linger); `t3-provision-users.sh` `install_playwright()` (ALL
+> tiers incl. admin) seeds the token if-absent, runs `claude mcp add --scope user
+> playwright` AS the user (clobber-proof → fixes existing + new + admin), and
+> `enable --now`s the instances. Replaced the hand-made `~/.config/systemd/user/playwright-*`
+> units (one-time idle-gated migration). Runbook: `../runbooks/chrome-service-snapshot.md`
+> → "Provisioning". **Still TODO in this task:** `ha`, `claude_memory`,
+> `.credentials.json`, and the beads Dolt credential.
+
 **Files:** Modify `infra/scripts/t3-provision-users.sh` (add `install_user_secrets`)
 
 - [ ] **Step 1:** For each non-admin **without** an existing `~/.claude.json` (NEW users only — NEVER touch an existing one): write `~/.claude.json` with `playwright-shared` (localhost), `ha` (shared `ha_sofia_mcp_url` from Vault `secret/openclaw`) if HA-eligible, and `claude_memory` using a **shared/simple key (per-user memory isolation is DEFERRED — not a risk now)**. Seed `~/.claude/.credentials.json` with the shared Claude token (Vault) **or** leave absent for interactive login. **Drop the beads Dolt credential** into `~/code/.beads/` (`.beads-credential-key`, from Vault, or set `DOLT_REMOTE_PASSWORD`) so `bd` authenticates — it's git-ignored, so a fresh clone lacks it. All `0600`, owned by the user. Per-user `playwright-mcp` systemd unit on its own port (existing pattern, id=4015).
