@@ -225,8 +225,11 @@ module "ingress_ro" {
 #   https://forgejo.viktorbarzin.me/viktor/terminal-lobby
 #
 # That repo's ./scripts/deploy.sh ships everything to wizard@10.0.10.10
-# and restarts ttyd / ttyd-ro / tmux-api / clipboard-upload. This stack
-# only owns the Kubernetes side: Services, Endpoints pointing at
+# and restarts ttyd / ttyd-ro / tmux-api / clipboard-upload. Deploy is
+# MANUAL via that script — there is no CI pipeline (the lobby's
+# .woodpecker.yml was removed under ADR-0002, issue #31; it builds no
+# image, so it is not part of the GHA->ghcr fleet). This stack only owns
+# the Kubernetes side: Services, Endpoints pointing at
 # 10.0.10.10:{7681,7682,7683,7684}, the IngressRoutes, and the Traefik
 # middlewares that gate everything behind Authentik forward-auth.
 #

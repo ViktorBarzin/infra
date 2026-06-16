@@ -108,6 +108,31 @@ All new users must use an invitation link to register. The invitation-enrollment
 
 Group membership is auto-assigned from the invitation's `fixed_data` field. This prevents open registration while maintaining SSO convenience.
 
+### TripIt External self-signup (open enrollment, fenced)
+
+Unlike every other app, **TripIt allows open public self-signup** for people
+outside the homelab (ADR-0020 in the tripit repo; runbook
+`docs/runbooks/tripit-external-signup.md`). A dedicated public `tripit-enrollment`
+flow (email + passkey, no password) creates the account and stamps it into the
+parentless **`TripIt External`** group. Containment is two-layered:
+
+- **Forward-auth apps**: a branch prepended to the `admin-services-restriction`
+  catch-all policy admits `TripIt External` to `tripit.viktorbarzin.me` only and
+  denies every other `auth="required"` host.
+- **OIDC apps**: that branch does NOT cover OIDC (OIDC bypasses forward-auth).
+  External users are contained because every sensitive OIDC app already requires a
+  trusted group they do not hold — audited 2026-06-15:
+  Immich/Grafana/Linkwarden/Cloudflare Access → `Home Server Admins`, Forgejo →
+  `Task Submitters`/`Forgejo Users`, Headscale → `Headscale Users`, wrongmove →
+  `Wrongmove Users`. **Vault** was OPEN (any OIDC identity got a powerless
+  `default`-policy token) and is bound to **`Allow Login Users`** as part of this
+  change. The Kubernetes OIDC clients are OPEN but idle (apiserver rejects OIDC).
+
+**Invariants**: keep `TripIt External` parentless (never under `Allow Login
+Users`); keep the catch-all branch first; never co-assign `TripIt External` to a
+trusted/internal user; the `tripit-enrollment` user_write "Create users group"
+setting is the keystone that tags every signup.
+
 ### OIDC Applications
 
 Authentik provides OIDC for 10 applications:

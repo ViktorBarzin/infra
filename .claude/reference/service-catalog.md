@@ -42,12 +42,13 @@
 | webhook_handler | Webhook processing | webhook_handler |
 | tuya-bridge | Smart home bridge | tuya-bridge |
 | android-emulator | Shared Android 16 test emulator (adb 10.0.20.200:5555, noVNC android-emulator.viktorbarzin.lan) | android-emulator |
+| anisette | Self-hosted Apple anisette-data server (Dadoum/anisette-v3-server, digest-pinned) for sideloading the TripIt iOS Shell via SideStore; internal-only http://anisette.viktorbarzin.lan, auth=none, LAN-only, stateless | anisette |
 | dawarich | Location history | dawarich |
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
 | onlyoffice | Document editing | onlyoffice |
-| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05), Woodpecker-native build->deploy (repo id 166) | f1-stream |
+| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002) | f1-stream |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |

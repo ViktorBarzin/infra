@@ -2,334 +2,378 @@
 
 ## Overview
 
-The CI/CD pipeline uses a hybrid approach: GitHub Actions for building Docker images (providing free compute for public repos) and Woodpecker CI for deployments (leveraging cluster-internal access). Git pushes trigger GHA builds that produce Docker images with 8-character SHA tags, push to DockerHub, then POST to Woodpecker's API to trigger deployments that update Kubernetes workloads via `kubectl set image`.
+**Doctrine (ADR-0002): all image builds and CI compute run OFF-infra.** Every
+owned image is built, tested, and linted on **GitHub Actions** (free on public
+repos; 2000 free min/mo on private) and pushed to **`ghcr.io/viktorbarzin/<name>`**.
+Woodpecker is **deploy-only** — a GHA job POSTs its API with the freshly-built
+image tag and Woodpecker runs `kubectl set image` from inside the cluster.
+There are **no in-cluster image builds or CI test runs anywhere** — the
+in-cluster Woodpecker buildkit and the fallback-build pattern were removed as a
+clean cut (ADR-0002, 2026-06-13). The Forgejo container registry is **frozen
+and emptied** — break-glass only.
+
+This breaks the old circular dependency (images needed to repair the cluster
+used to be built and stored *inside* it) and keeps build IO + registry pushes
+off the homelab spindle.
 
 ## Architecture Diagram
 
 ```mermaid
 graph LR
-    A[Git Push] --> B[GitHub Actions]
-    B --> C[Build Docker Image<br/>linux/amd64, 8-char SHA tag]
-    C --> D[Push to DockerHub]
-    D --> E[POST Woodpecker API]
-    E --> F[Woodpecker Pipeline]
-    F --> G[Vault K8s Auth<br/>SA JWT]
-    G --> H[kubectl set image]
-    H --> I[K8s Deployment]
-    I --> J[Pull from DockerHub<br/>or Pull-Through Cache]
+    A[git push Forgejo<br/>viktor/&lt;repo&gt; canonical] --> B[push-mirror sync_on_commit]
+    B --> C[GitHub mirror<br/>ViktorBarzin/&lt;repo&gt;]
+    C --> D[GitHub Actions<br/>.github/workflows/build.yml]
+    D --> E[lint / test]
+    E --> F[buildx linux/amd64<br/>provenance:false]
+    F --> G[push ghcr.io/viktorbarzin/&lt;name&gt;<br/>:sha8 + :latest]
+    G --> H[svu tag -> Forgejo canonical]
+    G --> I[POST Woodpecker deploy repo]
+    I --> J[.woodpecker/deploy.yml<br/>event: manual]
+    J --> K[kubectl set image<br/>in-cluster SA cluster-admin]
+    K --> L[K8s Deployment<br/>pulls from ghcr]
 
-    K[Pull-Through Cache<br/>10.0.20.10] -.-> J
-    L[forgejo.viktorbarzin.me<br/>Private Registry on Forgejo] -.-> J
-
-    style B fill:#2088ff
-    style F fill:#4c9e47
-    style K fill:#f39c12
+    style D fill:#2088ff
+    style J fill:#4c9e47
+    style G fill:#f39c12
 ```
 
 ## Components
 
-| Component | Version | Location | Purpose |
-|-----------|---------|----------|---------|
-| GitHub Actions | Cloud | `.github/workflows/build-and-deploy.yml` | Build Docker images, push to DockerHub |
-| Woodpecker CI | Self-hosted | `ci.viktorbarzin.me` | Deploy to Kubernetes cluster |
-| DockerHub | Cloud | `viktorbarzin/*` | Public image registry |
-| Private Registry | Forgejo Packages | `forgejo.viktorbarzin.me/viktor` | Private container images (PAT auth, retention CronJob) — migrated from registry.viktorbarzin.me 2026-05-07 |
-| Pull-Through Cache | Custom | `10.0.20.10:5000` (docker.io)<br/>`10.0.20.10:5010` (ghcr.io) | LAN cache for remote registries |
-| Kyverno | Cluster | `kyverno` namespace | Auto-sync registry credentials to all namespaces |
-| Vault | Cluster | `vault.viktorbarzin.me` | K8s auth for Woodpecker pipelines |
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| GitHub Actions | `.github/workflows/build.yml` (per repo) | Build + lint + test + push image; trigger deploy; cut semver tag |
+| ghcr.io | `ghcr.io/viktorbarzin/*` | Container registry for ALL owned images (public + private packages) |
+| Woodpecker CI | `ci.viktorbarzin.me` | **Deploy-only** — `kubectl set image` in-cluster; plus infra applies + maintenance crons |
+| Forgejo | `forgejo.viktorbarzin.me/viktor/<repo>` | **Canonical** git source (push-mirrors to GitHub). Container registry **FROZEN** (break-glass only) |
+| Pull-Through Cache | `10.0.20.10:5000/5010/5020/5030/5040` | LAN cache for upstream registries (DockerHub, ghcr, Quay, k8s.gcr, Kyverno) |
+| Kyverno | `kyverno` namespace | Syncs `ghcr-credentials` (private-ghcr allowlist) + `registry-credentials` to namespaces |
+| Vault | `vault.viktorbarzin.me` | K8s auth for Woodpecker deploy pipelines; CI tokens in `secret/ci/global` + `secret/viktor` |
 
 ## How It Works
 
-### Build Flow (GitHub Actions)
+### The fleet pattern (every owned app)
 
-1. **Trigger**: Git push to main/master branch
-2. **Build**: GHA builds Docker image for `linux/amd64` platform only
-3. **Tag**: Image tagged with 8-character commit SHA (e.g., `viktorbarzin/app:a1b2c3d4`)
-   - `:latest` tags are **never used** to prevent stale pull-through cache issues
-4. **Push**: Image pushed to DockerHub public registry
-5. **Trigger Deploy**: POST request to Woodpecker API with repo ID and commit SHA
+1. **Canonical source = Forgejo** `viktor/<repo>`. A **push-mirror**
+   (`sync_on_commit`) pushes every commit to the GitHub mirror
+   `ViktorBarzin/<repo>`. The `.github/workflows/build.yml` is committed on
+   Forgejo and mirrors over.
+2. **GHA `build` job** (triggers `on: push: branches: [master]` ONLY — feature
+   branches mirror but build/deploy nothing, the safety valve):
+   - lint + test
+   - `svu` computes the next `vX.Y.Z` from conventional commits and pushes the
+     tag back to **canonical Forgejo** (GHA secret `FORGEJO_GIT_TOKEN` =
+     write:repository PAT); `VERSION` is baked into the image
+   - `docker buildx` `linux/amd64`, **`provenance: false`** (single-manifest —
+     avoids the orphaned-index-children failure class), push
+     `ghcr.io/viktorbarzin/<name>:<sha8>` + `:latest`
+   - `delete-package-versions` keeps the newest ~10 ghcr versions
+3. **GHA `deploy` job** POSTs `ci.viktorbarzin.me/api/repos/<id>/pipelines`
+   (the Woodpecker registration for the **GitHub mirror**, github-forge; GHA
+   secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` + `IMAGE_NAME`.
+4. **`.woodpecker/deploy.yml`** (event: **manual** only, so the raw
+   Forgejo→GitHub mirror pushes don't fire a tag-less deploy) runs `kubectl set
+   image deployment/<app> <container>=<image>` in-cluster. The `woodpecker-agent`
+   SA is `cluster-admin`, so the `bitnami/kubectl` step needs no
+   kubeconfig/RBAC. The Deployment image is in `lifecycle.ignore_changes`
+   (`KEEL_IGNORE_IMAGE`) so the SHA tag sticks and `terragrunt apply` doesn't
+   fight it. CronJobs in owned apps track `:latest` + `imagePullPolicy: Always`
+   instead of a deploy step.
 
-### Deploy Flow (Woodpecker CI)
+**Keel stays enrolled** as a redundant net (finds the deployed SHA already
+running → no-op).
 
-1. **Receive Webhook**: Woodpecker API receives deployment trigger from GHA
-2. **Authenticate**: Pipeline uses Kubernetes ServiceAccount JWT to authenticate with Vault via K8s auth
-3. **Deploy**: `kubectl set image deployment/<name> <container>=viktorbarzin/<app>:<sha>`
-4. **Notify**: Slack notification on success/failure
+**Tooling**: `infra/scripts/offinfra-onboard` + `infra/scripts/offinfra-templates/`
+scaffold a repo onto this pattern (mirror, workflow, Woodpecker deploy repo,
+old-pipeline removal, default-branch flip). Mirror + workflow commits go via
+the Forgejo API over the internal Traefik LB
+(`curl --resolve forgejo.viktorbarzin.me:443:10.0.20.203`) since the devvm
+can't reach Forgejo's public hairpin.
 
-### Project Migration Status
+### ghcr package visibility
 
-**Migrated to GHA (8 projects)**:
-- Website
-- k8s-portal
-- claude-memory-mcp
-- apple-health-data
-- audiblez-web
-- plotting-book
-- insta2spotify
-- book-search (audiobook-search)
+| Visibility | Packages | Pull mechanism |
+|------------|----------|----------------|
+| **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, chrome-service-novnc, android-emulator | Anonymous |
+| **Private** | f1-stream, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci | `ghcr-credentials` dockerconfigjson |
 
-**Woodpecker-native owned-app builds** (build + push to the Forgejo private
-registry + `kubectl set image` rollout, all in one `.woodpecker.yml`; Keel
-stays enrolled as a redundant net): `tuya_bridge`, `job-hunter`, `f1-stream`.
-`f1-stream` was extracted from this monorepo to `viktor/f1-stream` on
-2026-06-05 (Woodpecker repo id 166); the old github source is archived and its
-GHA-era Woodpecker repo (id 10) is deactivated.
+Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
+kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit
+**ALLOWLIST** of private-ghcr namespaces only (NOT cluster-wide; source
+`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`). Cred = Vault
+`secret/viktor/ghcr_pull_token` (a dedicated classic PAT scoped to
+`read:packages`, UI-minted 2026-06-15 — no longer the admin `github_pat` alias.
+GitHub has no token-mint API, so rotation is manual: re-mint the classic
+`read:packages` PAT → `vault kv patch secret/viktor ghcr_pull_token=…` →
+targeted apply `module.kyverno.kubernetes_secret.ghcr_credentials` (reads Vault;
+avoids the git-crypt `tls-secret-sync` landmine on a locked clone), which
+Kyverno then re-syncs to the allowlisted namespaces).
 
-**Woodpecker-only (infra + large apps)**:
-- `travel_blog`: 5.7GB content directory exceeds GHA limits
-- Infra pipelines: require cluster access (terragrunt apply, certbot, build-cli)
+### Migrated apps (issues #13–#27)
 
-### Woodpecker Pipeline Files
+f1-stream, job-hunter, tuya_bridge, beadboard, nextcloud-todos,
+claude-agent-service, claude-memory-mcp, kms-website, Freedify,
+instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
+fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
+pilot, 2026-06-09). Earlier public-repo apps already on GHA (Website,
+k8s-portal, apple-health-data, audiblez-web, plotting-book, insta2spotify,
+audiobook-search, council-complaints) now also land on ghcr.
 
-Each project contains:
-- `.woodpecker/deploy.yml`: kubectl set image + Slack notification
-- `.woodpecker/build-fallback.yml`: Legacy full build pipeline (event: deployment, never auto-fires)
+### Infra-owned images (issues #29 / #30)
 
-### Woodpecker Repository IDs
+Images owned by the infra repo build on GHA workflows **in the infra repo's own
+`.github/workflows/`** (the github↔forgejo divergence was deliberately NOT
+reconciled — the workflows were added to the GitHub lineage via PR):
 
-Woodpecker API uses numeric IDs (not owner/name):
+| Image | Workflow | Destination |
+|-------|----------|-------------|
+| chrome-service-novnc | `build-chrome-service-novnc.yml` | public `ghcr.io/viktorbarzin/chrome-service-novnc` |
+| android-emulator | `build-android-emulator.yml` | public `ghcr.io/viktorbarzin/android-emulator` |
+| infra CLI | `build-cli.yml` | DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli` |
+| infra-ci | `build-infra-ci.yml` | private `ghcr.io/viktorbarzin/infra-ci` |
 
-| Repo | ID |
-|------|------|
-| infra | 1 |
-| Website | 2 |
-| finance | 3 |
-| health | 4 |
-| travel_blog | 5 |
-| webhook-handler | 6 |
-| audiblez-web | 9 |
-| plotting-book | 43 |
-| claude-memory-mcp | 78 |
-| infra-onboarding | 79 |
+**`infra-ci`** is the image the `.woodpecker/default.yml` apply step and
+`drift-detection.yml` run in (proven by pipelines 165/166). `chatterbox-tts` is
+already built by tripit's GHA → ghcr.
 
-### Image Registry Flow
+The Woodpecker `build-ci-image.yml` and `build-cli.yml` pipelines were
+**REMOVED**. Break-glass for infra-ci is now a manual
+`.woodpecker/breakglass-infra-ci.yml` (ghcr pull-and-save to the registry VM).
 
-1. **Containerd hosts.toml** redirects pulls from docker.io and ghcr.io to pull-through cache at `10.0.20.10`
-2. **Pull-through cache** serves cached images from LAN, fetches from upstream on cache miss
-3. **Kyverno ClusterPolicy** auto-syncs `registry-credentials` Secret to all namespaces for private registry access
-4. **Private registry** has been Forgejo's built-in OCI registry at `forgejo.viktorbarzin.me/viktor/<image>` since 2026-05-07. Auth via PAT (Vault `secret/ci/global/forgejo_push_token` for push, `secret/viktor/forgejo_pull_token` for pull). The pre-migration `registry:2.8.3`-based private registry on `registry.viktorbarzin.me:5050` was the root cause of three orphan-index incidents in three weeks (2026-04-13, 2026-04-19, 2026-05-04 — see `docs/post-mortems/2026-04-19-registry-orphan-index.md` and the full migration writeup at `docs/plans/2026-05-07-forgejo-registry-consolidation-{design,plan}.md`). The five pull-through caches on `10.0.20.10` (ports 5000/5010/5020/5030/5040) stay in place for upstream registries.
-5. **Integrity probe** (`registry-integrity-probe` CronJob in `monitoring` ns, every 15m) walks `/v2/_catalog` → tags → indexes → child manifests via HEAD and pushes `registry_manifest_integrity_failures` to Pushgateway; alerts `RegistryManifestIntegrityFailure` / `RegistryIntegrityProbeStale` / `RegistryCatalogInaccessible` page on broken state. Authoritative check (HTTP API, not filesystem).
+### Forgejo container registry — FROZEN
 
-### Infra Pipelines (Woodpecker-only)
+Issue #32 wiped all `viktor/*` container packages (~19G reclaimed, `/data`
+58%→20%). The registry is **break-glass-only** now; nothing pushes to it. The
+`forgejo-cleanup` CronJob stays in `DRY_RUN` (nothing to clean). Pull-through
+caches on the registry VM (`10.0.20.10`) are unchanged. See
+`docs/runbooks/forgejo-registry-breakglass.md`.
+
+### Image registry / pull path
+
+1. **Containerd `hosts.toml`** redirects pulls from docker.io and ghcr.io to the
+   pull-through cache at `10.0.20.10` (5000 = docker.io, 5010 = ghcr.io).
+2. **Pull-through cache** serves cached images from the LAN, fetches upstream on
+   a miss.
+3. **Kyverno ClusterPolicies** sync `ghcr-credentials` (private-ghcr allowlist)
+   and `registry-credentials` to namespaces.
+
+## Woodpecker — what it still runs
+
+Woodpecker is **deploy + cluster-touching steps only**:
 
 | Pipeline | File | Purpose |
 |----------|------|---------|
-| default | `.woodpecker/default.yml` | Terragrunt apply on push |
-| renew-tls | `.woodpecker/renew-tls.yml` | Certbot renewal cron |
-| build-cli | `.woodpecker/build-cli.yml` | Build and push to dual registries |
-| build-ci-image | `.woodpecker/build-ci-image.yml` | Build `infra-ci` tooling image (triggered by `ci/Dockerfile` change or manual); post-push HEADs every blob via `verify-integrity` step to catch orphan-index pushes |
-| k8s-portal | `.woodpecker/k8s-portal.yml` | Path-filtered build for k8s-portal subdirectory |
-| registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` to `/opt/registry/` on `10.0.20.10` when any managed file changes; bounces containers + nginx per `docs/runbooks/registry-vm.md` |
-| pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE host |
-| postmortem-todos | `.woodpecker/postmortem-todos.yml` | Auto-resolve safe TODOs from new `docs/post-mortems/*.md` via headless Claude agent |
-| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift detection |
-| issue-automation | `.woodpecker/issue-automation.yml` | Triage + respond to `ViktorBarzin/infra` GitHub issues |
+| per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
+| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`) |
+| certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron |
+| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift (runs in `infra-ci`) |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
+| registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
+| pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
+| issue-automation | `.woodpecker/issue-automation.yml` | Triage + respond to `ViktorBarzin/infra` GitHub issues |
+| postmortem-todos | `.woodpecker/postmortem-todos.yml` | Auto-resolve safe TODOs from new post-mortems |
+| k8s-portal | `.woodpecker/k8s-portal.yml` | Path-filtered deploy for the portal |
+| breakglass-infra-ci | `.woodpecker/breakglass-infra-ci.yml` | **Manual** ghcr pull-and-save of infra-ci to the registry VM |
+
+**No build/test pipeline exists on any repo.** Do not (re)introduce one.
+
+### Woodpecker API
+
+Uses **numeric repo IDs** (`/api/repos/<id>/pipelines`), NOT owner/name paths
+(those return HTML). The deploy registration for each app is the **GitHub
+mirror** repo (registered github-forge). IDs are stable across renames and must
+be looked up from the Woodpecker UI/DB.
+
+### Woodpecker YAML gotchas
+
+- Commands with `${VAR}:${VAR}` must be **quoted** — an unquoted `:` triggers
+  YAML map parsing when the vars are empty.
+- Use `bitnami/kubectl:latest` (not pinned versions — entrypoint compatibility).
+- Global secrets must include `manual` in their events list for API-triggered
+  pipelines.
+
+### GitHub repo secrets
+
+Per repo: `WOODPECKER_TOKEN` (POST the deploy pipeline), `FORGEJO_GIT_TOKEN`
+(write:repository PAT for the `svu` tag push). ghcr push uses the workflow's
+built-in `GITHUB_TOKEN` (`packages: write`).
+
+## Infra repo CI topology
+
+The infra repo runs on Woodpecker via **two** forge registrations: the Forgejo
+forge (repo id 82, registered 2026-06-08) and the legacy GitHub forge (repo id
+1). Pushes to **Forgejo** `master` fire `.woodpecker/default.yml`
+(changed-stacks terragrunt apply, in `infra-ci`) plus the `notify-nonadmin-push`
+Slack audit step. Operational facts (2026-06-10):
+
+- **Webhook URL is the IN-CLUSTER service**:
+  `http://woodpecker-server.woodpecker.svc.cluster.local/api/hook?...` (PATCHed
+  via the Forgejo API). The Woodpecker default (`https://ci.viktorbarzin.me/...`)
+  resolves to the non-proxied public A record from pods → NAT hairpin →
+  intermittent `context deadline exceeded`, silently dropping push events. If
+  Woodpecker "repairs" the repo it rewrites the hook back to `ci.viktorbarzin.me`
+  — re-apply the in-cluster URL.
+- **Repo-scoped secrets must exist on BOTH repos**: pipelines reference
+  repo-level secrets (`registry_ssh_key`, `pve_ssh_key`, `CLOUDFLARE_TOKEN`, …).
+  When registering a new forge repo for infra, clone the secret set too.
+- **Empty commits defeat path filters**: a commit with no changed files makes
+  Woodpecker include ALL workflow files (path conditions can't exclude), so every
+  repo secret must resolve. Normal commits with real files only compile the
+  matching workflows.
+
+The Forgejo trigger is not fully dependable — land infra changes by pushing
+Forgejo master (as viktor), use `[ci skip]` for docs/no-op commits, and verify
+deploys via `scripts/tg` + live cluster state rather than trusting the CI
+checkmark. The two remotes have **diverged** (parallel histories under
+different SHAs); expect github pushes to reject non-fast-forward and leave them
+— never force-push.
 
 ## Configuration
 
-### GitHub Actions
-
-**File**: `.github/workflows/build-and-deploy.yml`
+### GitHub Actions (per-app `.github/workflows/build.yml`)
 
 ```yaml
-name: Build and Deploy
+name: build
 on:
   push:
-    branches: [main, master]
+    branches: [master]
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # svu tag push
+      packages: write    # ghcr push
     steps:
-      - name: Build Docker image
-        run: docker build --platform linux/amd64 -t viktorbarzin/app:${SHORT_SHA} .
-      - name: Push to DockerHub
-        run: docker push viktorbarzin/app:${SHORT_SHA}
-      - name: Trigger Woodpecker Deploy
+      - uses: actions/checkout@v4
+      - name: lint + test
+        run: make lint test
+      - name: svu tag -> Forgejo
         run: |
-          curl -X POST https://ci.viktorbarzin.me/api/repos/<REPO_ID>/pipelines \
-            -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}"
+          VERSION=$(svu next)
+          # ... push tag to canonical Forgejo with FORGEJO_GIT_TOKEN
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/<name>:${{ github.sha }}
+            ghcr.io/viktorbarzin/<name>:latest
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Woodpecker deploy
+        run: |
+          curl -X POST https://ci.viktorbarzin.me/api/repos/<DEPLOY_REPO_ID>/pipelines \
+            -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}" \
+            -d '{"branch":"master","variables":{"IMAGE_TAG":"...","IMAGE_NAME":"..."}}'
 ```
 
-**Required GitHub Secrets**:
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-- `WOODPECKER_TOKEN`
-
-### Woodpecker Deploy Pipeline
-
-**File**: `.woodpecker/deploy.yml`
+### Woodpecker deploy pipeline (per-app `.woodpecker/deploy.yml`)
 
 ```yaml
 when:
-  event: [deployment]
+  event: manual
 
 steps:
   deploy:
-    image: bitnami/kubectl:latest
+    image: bitnami/kubectl:latest   # uses the in-cluster woodpecker-agent SA (cluster-admin)
     commands:
-      - kubectl set image deployment/app app=viktorbarzin/app:${CI_COMMIT_SHA:0:8}
-    secrets: [k8s_token]
-
+      - "kubectl set image deployment/app app=${IMAGE_NAME}:${IMAGE_TAG} -n <ns>"
+      - "kubectl rollout status deployment/app -n <ns> --timeout=300s"
   notify:
     image: plugins/slack
-    settings:
-      webhook: ${SLACK_WEBHOOK}
     when:
       status: [success, failure]
 ```
 
-**YAML Gotchas**:
-- Commands with `${VAR}:${VAR}` syntax must be quoted to prevent YAML map parsing when vars are empty
-- Use `bitnami/kubectl:latest` (not pinned versions)
-- Global secrets must be manually added to `secrets:` list in pipeline
+### CI/CD secrets sync
 
-### Vault Configuration
-
-**K8s Auth for Woodpecker**:
-- Woodpecker pipelines authenticate using ServiceAccount JWT
-- Vault K8s auth mount validates JWT and issues token
-- Policies grant access to secrets and dynamic credentials
-
-### CI/CD Secrets Sync
-
-**CronJob**: Pushes `secret/ci/global` from Vault → Woodpecker API every 6 hours
-- Keeps Woodpecker global secrets in sync with Vault
-- Runs in `woodpecker` namespace
-
-## Infra repo CI (Woodpecker repo 82 — Forgejo forge)
-
-The infra repo itself runs on Woodpecker via the **Forgejo** forge (repo id 82,
-registered 2026-06-08; the GitHub-side repo id 1 also remains registered).
-Pushes to `master` fire `.woodpecker/default.yml` (changed-stacks terragrunt
-apply) plus the `notify-nonadmin-push` Slack audit step (allow-then-audit
-contribution model — see `multi-tenancy.md`). Operational facts (2026-06-10):
-
-- **Webhook URL is the IN-CLUSTER service**: `http://woodpecker-server.woodpecker.svc.cluster.local/api/hook?...`
-  (PATCHed via the Forgejo API). The Woodpecker-generated default
-  (`https://ci.viktorbarzin.me/...`) resolves to the non-proxied public A
-  record from pods → NAT hairpin → intermittent `context deadline exceeded`,
-  silently dropping push events (found when a push produced no pipeline).
-  If Woodpecker ever "repairs" the repo it will rewrite the hook back to
-  `ci.viktorbarzin.me` — re-apply the in-cluster URL (or pin `ci.viktorbarzin.me`
-  in the CoreDNS pod carve-out alongside forgejo).
-- **Repo-scoped secrets must exist on BOTH repos**: pipelines reference
-  repo-level secrets (`registry_ssh_key`, `pve_ssh_key`, `CLOUDFLARE_TOKEN`,
-  …). Repo 82 was registered without them and every all-workflow compile
-  errored with `secret "registry_ssh_key" not found`. Fixed by cloning repo-1
-  rows to repo 82 in the Woodpecker DB (`insert into secrets … select … where
-  repo_id=1`). When registering a new forge repo for infra, clone the secret
-  set too.
-- **Empty commits defeat path filters**: a commit with no changed files makes
-  Woodpecker include ALL workflow files (path conditions can't exclude), so
-  every repo secret must resolve. Normal commits with real files only compile
-  the matching workflows.
+A CronJob in the `woodpecker` namespace pushes `secret/ci/global` from Vault →
+the Woodpecker API every 6h, keeping global secrets in sync. Woodpecker deploy
+pipelines authenticate to the cluster via the in-cluster `woodpecker-agent` SA
+(cluster-admin); Vault K8s auth backs any secret reads.
 
 ## Decisions & Rationale
 
-### Why GitHub Actions + Woodpecker?
+### Why all builds off-infra (ADR-0002)?
 
-**Alternatives considered**:
-1. **Woodpecker-only**: Simple, but wastes cluster resources on builds
-2. **GHA-only**: No cluster access, requires kubectl from outside (security risk)
-3. **Hybrid (chosen)**: GHA for compute-heavy builds (free), Woodpecker for privileged deployments (secure cluster access)
+- **Breaks the circular dependency** — the images needed to repair the cluster
+  no longer live inside it (they're on ghcr, an external registry).
+- **Removes build IO + registry push load** from the contended homelab spindle.
+- GHA is free on public repos and generous on private; buildx provenance:false
+  sidesteps the orphaned-index-children failure class that plagued the
+  in-cluster registry.
+- **Clean cut** — no in-cluster fallback builds anywhere; one pattern,
+  fleet-wide.
 
-**Benefits**:
-- Free compute for builds on public repos
-- Cluster access stays internal (Woodpecker has direct K8s access)
-- Separation of concerns: build vs deploy
+### Why ghcr (not push back to Forgejo)?
 
-### Why 8-Character SHA Tags (Not :latest)?
+Forgejo's container registry repeatedly orphaned OCI index children
+(2026-04-13/19, 2026-05-04, 2026-06-10) and its retention is not container-aware.
+ghcr is external (DR-safe), free for this scale, and has native multi-arch
+handling. The Forgejo registry was frozen + emptied (issue #32).
 
-- Pull-through cache serves stale `:latest` tags indefinitely
-- SHA tags ensure every deployment pulls the correct image
-- 8 characters provide sufficient collision resistance (16^8 = 4.3 billion combinations)
+### Why Woodpecker stays for deploy?
 
-### Why Numeric Repo IDs for Woodpecker API?
+`kubectl set image` needs in-cluster privileged access; doing it from GHA would
+mean exposing kube-apiserver or a long-lived kubeconfig. Woodpecker's
+`woodpecker-agent` SA is already cluster-admin in-cluster — the deploy step
+needs no credentials.
 
-- Woodpecker API requires numeric IDs (not owner/name slugs)
-- IDs are stable across repo renames
-- Must be manually looked up from Woodpecker UI or database
+### Why `event: manual` on deploy.yml?
 
-### Why linux/amd64 Only?
+The Forgejo→GitHub push-mirror sends raw, tag-less pushes to the GitHub mirror.
+If `deploy.yml` fired on `push`, every mirror sync would trigger a deploy with no
+image tag. `manual` means only the GHA `deploy` job's explicit API POST (with
+`IMAGE_TAG`) deploys.
 
-- Cluster runs on x86_64 nodes only
-- ARM builds would waste time and storage
-- Multi-arch images add complexity without benefit
+### Why linux/amd64 only?
+
+The cluster runs on x86_64 nodes only; ARM builds waste time and storage.
 
 ## Troubleshooting
 
-### GHA Build Fails: "denied: requested access to the resource is denied"
+### GHA build fails: ghcr push "denied"
 
-**Cause**: DockerHub credentials expired or incorrect
+The workflow `GITHUB_TOKEN` needs `packages: write` permission and the package
+must allow the repo to push. Check the workflow `permissions:` block and the
+package's "Manage Actions access" settings.
 
-**Fix**:
+### Image pull fails: "ErrImagePull" / "ImagePullBackOff"
+
 ```bash
-# Regenerate DockerHub token
-# Update GitHub repo secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+# Public image — check the pull-through cache is up
+curl http://10.0.20.10:5010/v2/_catalog
+
+# Private image — verify the ghcr-credentials Secret exists in the namespace
+kubectl get secret ghcr-credentials -n <namespace>
+# It's Kyverno-synced to an allowlist; if missing, the namespace isn't on the
+# allowlist in stacks/kyverno/modules/kyverno/ghcr-credentials.tf
 ```
 
-### Woodpecker Deploy Fails: "Unauthorized"
+If the cause is the internal-DNS hairpin (fresh pulls timing out on the public
+Forgejo path), see the CoreDNS `viktorbarzin.me` carve-out in
+`docs/architecture/networking.md` and `docs/runbooks/registry-vm.md`.
 
-**Cause**: Vault K8s auth token expired or invalid
+### Deploy didn't happen after a push
 
-**Fix**:
-```bash
-# Restart Woodpecker pipeline (token auto-renewed)
-# Check Vault K8s auth role exists: vault read auth/kubernetes/role/woodpecker-deployer
-```
+Confirm the push was to **master** (feature branches build/deploy nothing).
+Check the GHA run completed the `deploy` job, then check Woodpecker received the
+manual pipeline (`ci.viktorbarzin.me`, the GitHub-mirror deploy repo). Verify
+live with `kubectl rollout status` — not the CI checkmark.
 
-### Image Pull Fails: "ErrImagePull"
+### Woodpecker deploy fails: "YAML: did not find expected key"
 
-**Cause**: Pull-through cache or registry credentials issue
-
-**Fix**:
-```bash
-# Check pull-through cache is running
-curl http://10.0.20.10:5000/v2/_catalog
-
-# Verify registry-credentials Secret exists in namespace
-kubectl get secret registry-credentials -n <namespace>
-
-# Manually sync credentials if missing
-kubectl get secret registry-credentials -n default -o yaml | \
-  sed 's/namespace: default/namespace: <namespace>/' | kubectl apply -f -
-```
-
-### Woodpecker Pipeline: "YAML: did not find expected key"
-
-**Cause**: Unquoted command with `${VAR}:${VAR}` syntax when VAR is empty
-
-**Fix**: Quote the command:
-```yaml
-commands:
-  - "kubectl set image deployment/app app=viktorbarzin/app:${SHORT_SHA}"
-```
-
-### travel_blog Build Times Out on GHA
-
-**Cause**: 5.7GB content directory exceeds GHA disk/time limits
-
-**Fix**: Keep on Woodpecker (no migration). Build uses cluster storage and resources.
-
-### CI/CD Secrets Out of Sync
-
-**Cause**: CronJob failed to sync Vault → Woodpecker
-
-**Fix**:
-```bash
-# Check CronJob status
-kubectl get cronjob -n woodpecker
-
-# Manually trigger sync
-kubectl create job --from=cronjob/sync-secrets manual-sync -n woodpecker
-```
+Unquoted command with `${VAR}:${VAR}` syntax when a VAR is empty. Quote the
+command (see the deploy.yml example above).
 
 ## Related
 
-- [Databases Architecture](./databases.md) — Database credentials via Vault
-- [Multi-Tenancy](./multi-tenancy.md) — Per-user Woodpecker access
-- Runbook: `../runbooks/deploy-new-app.md` — How to set up CI/CD for a new app
-- Runbook: `../runbooks/troubleshoot-image-pull.md` — Debug image pull issues
-- Vault documentation: K8s auth configuration
-- Woodpecker documentation: API reference
+- ADR: `../adr/0002-all-image-builds-off-infra-gha-ghcr.md` — the decision
+- [Databases Architecture](./databases.md) — database credentials via Vault
+- [Multi-Tenancy](./multi-tenancy.md) — per-user Woodpecker access
+- Runbook: `../runbooks/forgejo-registry-breakglass.md` — using the frozen registry
+- Runbook: `../runbooks/registry-vm.md` — pull-through cache VM + image-pull debugging
+- Onboarding tool: `../../scripts/offinfra-onboard` + `../../scripts/offinfra-templates/`

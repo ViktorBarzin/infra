@@ -11,11 +11,37 @@ resource "kubernetes_namespace" "forgejo" {
       "istio-injection" : "disabled"
       tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
+      # Opt out of the auto-generated tier-3-edge ResourceQuota (caps
+      # requests.memory at 4Gi). Forgejo's own pod requests 4Gi (the
+      # git + OCI-registry backbone, Guaranteed QoS), which pegged that
+      # tier quota at 100% and fired KubeQuotaAlmostFull. The
+      # forgejo-specific quota below gives headroom. Same pattern as dbaas.
+      "resource-governance/custom-quota" = "true"
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Custom ResourceQuota — replaces the tier-3-edge auto quota (opted out via the
+# resource-governance/custom-quota label above). requests.memory is 8Gi so the
+# 4Gi Forgejo pod sits at ~50% (clears KubeQuotaAlmostFull + the healthcheck
+# resourcequota check) with room for a transient migration/sidecar pod. To
+# raise Forgejo's memory limit past 4Gi later, bump requests.memory here too.
+resource "kubernetes_resource_quota" "forgejo" {
+  metadata {
+    name      = "forgejo-quota"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "4"
+      "requests.memory" = "8Gi"
+      "limits.memory"   = "32Gi"
+      pods              = "30"
+    }
   }
 }
 
@@ -168,19 +194,29 @@ resource "kubernetes_deployment" "forgejo" {
             name       = "data"
             mount_path = "/data"
           }
-          # Bumped 1Gi -> 3Gi 2026-06-09: Forgejo was OOMKilled (exit 137)
-          # under registry-push load from in-cluster CI builds (tripit
-          # buildkit pushes large layers into the OCI registry). VPA
-          # upperBound reads ~1.5Gi, but that's suppressed by the 1Gi cap it
-          # kept OOMing against — size for the push spike, not steady-state.
+          # Bumped 1Gi -> 3Gi 2026-06-09, then 3Gi -> 4Gi 2026-06-13.
+          # OOMKilled again (exit 137) at the 3Gi cap on 2026-06-13 (2
+          # restarts; briefly took the git remote + OCI registry down and
+          # spiked ingress TTFB/4xx). Steady-state ~2.2Gi but it spiked past
+          # the 3Gi cap. 4Gi is the CEILING here: the forgejo namespace
+          # tier-quota caps requests.memory at 4Gi and Guaranteed QoS means
+          # request == limit, so a pod can request at most 4Gi. A first
+          # attempt at 6Gi was REJECTED (FailedCreate: exceeded quota) and
+          # left forgejo with 0 pods until reverted -- do NOT raise memory
+          # past 4Gi without ALSO raising the tier-quota. The 6/9 OOM driver
+          # (tripit buildkit registry pushes) is gone now that the Forgejo
+          # registry was frozen + emptied 2026-06-13 (ADR-0002, ghcr), so the
+          # remaining spike is git ops / integrity-probe catalog walk / a
+          # possible leak; 4Gi should suffice. If it still OOMs, raise the
+          # tier-quota and this limit together.
           # requests=limits (Guaranteed QoS) per the repo memory convention.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "3Gi"
+              memory = "4Gi"
             }
             limits = {
-              memory = "3Gi"
+              memory = "4Gi"
             }
           }
           port {

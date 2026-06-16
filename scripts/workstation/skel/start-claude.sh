@@ -11,6 +11,14 @@ echo "  Starting Claude Code in $HOME/code ..."
 echo "  (Right-click for tmux menu, or Ctrl+B then | or - to split)"
 echo ""
 
+# The native claude install lives in ~/.local/bin. This launcher runs in tmux's non-login
+# env, which does NOT source the user's shell rc (where the native installer added it to
+# PATH) — so `claude` would appear missing here. Put it on PATH ourselves; guarded/idempotent.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
 name_args=()
 if [ -n "${TMUX:-}" ]; then
   sess="$(tmux display-message -p '#{session_name}' 2>/dev/null)"
@@ -42,14 +50,48 @@ else
   done
 fi
 
-# Prefer the system-wide `claude` (installed by setup-devvm.sh); fall back to npx.
+# Run the NATIVE `claude` (the recommended install: ~/.local/bin/claude, self-updating).
+# No npm/npx. If the native binary is missing (a fresh account before the hourly reconcile
+# has provisioned it), bootstrap it with the official native installer, then run it.
 launch() {
-  if command -v claude >/dev/null 2>&1; then
-    claude "$@"
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "  Installing Claude Code (native) for $(id -un) …"
+    curl -fsSL https://claude.ai/install.sh | bash || return 127
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+  claude "$@"
+}
+
+# Re-assert Claude Code's first-run onboarding flag before launch. ~/.claude.json is a
+# SINGLE file that ALL of a user's concurrent claude processes (this terminal, their
+# t3-serve instance, agent/SDK sessions) read-modify-write; a stale writer periodically
+# drops top-level keys — including hasCompletedOnboarding — which throws the next
+# interactive session back to the "Choose the text style" wizard even though the user is
+# fully logged in (credentials live in the SEPARATE ~/.claude/.credentials.json, which is
+# never affected). Idempotent, runs as the user right before launch, never clobbers other
+# keys. Best-effort: no-op if jq is missing or the file is empty/corrupt (claude self-heals).
+ensure_onboarding() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local cfg="$HOME/.claude.json" ver tmp
+  ver="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [ -s "$cfg" ]; then
+    jq -e . "$cfg" >/dev/null 2>&1 || return 0                                     # corrupt -> leave for claude
+    [ "$(jq -r '.hasCompletedOnboarding // false' "$cfg")" = "true" ] && return 0  # already set -> no write
+  elif [ -e "$cfg" ]; then
+    return 0                                                                       # empty (mid-write?) -> leave it
+  fi
+  tmp="$(mktemp "${cfg}.XXXXXX")" || return 0
+  if [ -f "$cfg" ]; then
+    jq --arg v "$ver" '.hasCompletedOnboarding = true
+      | (if $v != "" then .lastOnboardingVersion = $v else . end)' "$cfg" > "$tmp" 2>/dev/null \
+      && chmod 600 "$tmp" && mv "$tmp" "$cfg" || rm -f "$tmp"
   else
-    npx @anthropic-ai/claude-code "$@"
+    jq -n --arg v "$ver" '{hasCompletedOnboarding: true}
+      + (if $v != "" then {lastOnboardingVersion: $v} else {} end)' > "$tmp" 2>/dev/null \
+      && chmod 600 "$tmp" && mv "$tmp" "$cfg" || rm -f "$tmp"
   fi
 }
+ensure_onboarding
 
 # Deliberately not `exec` so we can branch on the exit code: clean quit ends the
 # pane (ttyd closes the terminal); a crash drops to a shell so the tmux session

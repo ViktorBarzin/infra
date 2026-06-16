@@ -270,6 +270,43 @@ install_user_claude_token() {
   log "shared Claude token -> $user (t3-serve env; restart needed to take effect)"
 }
 
+# Re-deploy the managed per-user Claude launcher to ~/start-claude.sh. /etc/skel only
+# seeds it at account creation (setup-devvm.sh), so without this a launcher edit never
+# reaches EXISTING users — they keep running a stale copy. Copy-if-changed from the repo's
+# skel/, owned by the user, 0755. (We deliberately do NOT re-copy .tmux.conf: terminal-lobby
+# appends a managed persistence section to each user's ~/.tmux.conf that a re-copy would clobber.)
+deploy_user_launcher() {
+  local user="$1" home src dst
+  src="$WORKSTATION_DIR/skel/start-claude.sh"
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" && -f "$src" ]] || return 0
+  dst="$home/start-claude.sh"
+  cmp -s "$src" "$dst" 2>/dev/null && return 0          # already current -> no churn
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] deploy launcher -> $dst"; return 0; fi
+  install -m 0755 "$src" "$dst"
+  chown "$user:$user" "$dst"
+  log "deployed start-claude.sh -> $user"
+}
+
+# Ensure the per-user NATIVE claude install (the recommended runtime: ~user/.local/bin/claude,
+# self-updating) — used by BOTH the terminal launcher AND the user's t3-serve instance. We do
+# NOT npm-install claude system-wide (npm/npx isn't the recommended runtime); each user gets
+# their own native install. Idempotent: skip if already present. Runs the official native
+# installer AS the user (into their ~/.local). Best-effort: a failure WARNs and retries next
+# reconcile (start-claude.sh also self-bootstraps the terminal path).
+install_user_claude_native() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  [[ -x "$home/.local/bin/claude" ]] && return 0          # already native -> done
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] native claude install -> $user"; return 0; fi
+  if runuser -u "$user" -- bash -lc 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null 2>&1; then
+    log "installed native claude -> $user"
+  else
+    log "WARN: native claude install failed for $user (retries next reconcile)"
+  fi
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -346,8 +383,10 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
     fi
     install_user_kubeconfig "$os_user"
     install_user_claude_token "$os_user"
+    deploy_user_launcher "$os_user"          # keep ~/start-claude.sh current (skel only seeds new accounts)
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
+  install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
