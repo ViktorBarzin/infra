@@ -752,21 +752,54 @@ resource "kubernetes_service" "tripit" {
 # Kyverno ClusterPolicy `sync-tls-secret` auto-clones the wildcard TLS
 # secret into every namespace, so we don't need a setup_tls_secret module.
 
-# Main host — Authentik forward-auth gates every request. The backend reads
-# the injected X-authentik-email header (AUTH_MODE=forwardauth) for multi-user
-# SSO; it ships no own login, so Authentik is the gate.
+# Main host — the SPA shell is served PUBLICLY so an unauthenticated visitor
+# gets the app's own landing page (Log in / Sign up) instead of a forced
+# Authentik 302 (tripit ADR-0020). The app gates itself (it probes /api/me); all
+# data + the authenticated surface live under /api, which module.ingress_app_api
+# below keeps behind forward-auth. The static SPA assets carry no secrets and no
+# auth-trusting code, and strip-auth-headers ensures a spoofed X-authentik-* can
+# never reach the backend through this public path.
 module "ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": serves the public SPA shell + landing page; the app gates
+  # itself and every data route lives behind /api (kept under forward-auth by
+  # module.ingress_app_api). Static assets are non-sensitive.
+  auth             = "none"
+  anti_ai_scraping = false # installable PWA, not scrapable content — Anubis PoW would break it
+  dns_type         = "proxied"
+  namespace        = kubernetes_namespace.tripit.metadata[0].name
+  name             = "tripit"
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
+  # Photos tab bursts hundreds of thumbnail GETs (now via the gated /api host);
+  # keep the dedicated 100/1000 limiter here too for the SPA's own asset bursts.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-strip-auth-headers@kubernetescrd",
+    "traefik-tripit-rate-limit@kubernetescrd",
+  ]
+}
+
+# Authenticated API + metrics on the SAME host stay behind Authentik forward-auth
+# (tripit ADR-0020). The SPA above is public, but every /api route trusts the
+# X-authentik-email the outpost injects (AUTH_MODE=hybrid) — so /api MUST remain
+# gated; this is the security boundary. /metrics is gated too (it is scraped
+# in-cluster via the Service and never needs to be public). These prefixes are
+# longer than "/" so Traefik routes them here; the auth=none carve-outs below
+# (calendar, emails/confirm, planner/slack) are longer still and keep winning for
+# their own sub-paths.
+module "ingress_app_api" {
   source          = "../../modules/kubernetes/ingress_factory"
   auth            = "required"
-  dns_type        = "proxied"
+  dns_type        = "none" # main module.ingress owns the DNS record for this host
   namespace       = kubernetes_namespace.tripit.metadata[0].name
-  name            = "tripit"
+  name            = "tripit-app-api"
+  service_name    = "tripit"
+  full_host       = "tripit.viktorbarzin.me"
+  ingress_path    = ["/api", "/metrics"]
   port            = 8080
   tls_secret_name = var.tls_secret_name
-  # The Photos tab proxies Immich thumbnails through /api — a trip-gallery
-  # scroll is hundreds of parallel image GETs, far past the default 10/50
-  # limiter. Dedicated 100/1000 middleware (stacks/traefik middleware.tf);
-  # the calendar/email carve-out ingresses below stay on the default.
+  # Same photo-thumbnail burst profile as before — keep the dedicated limiter.
   skip_default_rate_limit = true
   extra_middlewares       = ["traefik-tripit-rate-limit@kubernetescrd"]
 }
