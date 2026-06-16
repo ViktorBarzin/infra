@@ -17,15 +17,18 @@ resource "kubernetes_config_map" "mailserver_config" {
     "Settings.yml" = <<-EOF
     General:
         Layout: single
-        Interval: 10
-        ImageZoom: false
+        Interval: 30
+        ImageZoom: true
         ShowAlbumName: false
         ShowProgressBar: false
+        WeatherApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_weather_api_key"]}
+        UnitSystem: metric
+        WeatherLatLong: "51.5074,-0.1278"
+        Language: en
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key"]}
-          Albums: 
-            - 1aa98849-bbd5-452b-aac0-310b210a8597 # china
+          ImagesFromDays: 730
     EOF
   }
 }
