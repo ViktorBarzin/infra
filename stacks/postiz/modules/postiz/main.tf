@@ -115,7 +115,9 @@ resource "helm_release" "postiz" {
     redis      = { enabled = false }
 
     resources = {
-      requests = { cpu = "100m", memory = "2Gi" }
+      # request lowered 2Gi->1Gi so the tier-4-aux ns requests.memory quota (3Gi)
+      # fits postiz + temporal + the new Elasticsearch; limit stays 3Gi (Burstable).
+      requests = { cpu = "100m", memory = "1Gi" }
       limits   = { memory = "3Gi" }
     }
 
@@ -135,17 +137,31 @@ resource "helm_release" "postiz" {
       # Only Instagram + Facebook are enabled (shared Meta app creds); every
       # other provider stays disabled until its own OAuth app is registered.
       DISABLED_PROVIDERS = "x,linkedin,reddit,threads,youtube,tiktok,pinterest,dribbble,slack,discord,mastodon,bluesky,lemmy,warpcast,vk,beehiiv,telegram,wordpress,nostr,farcaster"
+
+      # Authentik OIDC ("Login with Authentik") — provider/app in authentik.tf.
+      # This Postiz version reads only the AUTH/TOKEN/USERINFO URLs + client
+      # id/secret (scope is hardcoded openid/profile/email; redirect is fixed to
+      # ${FRONTEND_URL}/settings). The NEXT_PUBLIC display name drives the login
+      # button label (best-effort: baked at image build, set here in case the
+      # image re-injects NEXT_PUBLIC vars at start).
+      POSTIZ_GENERIC_OAUTH                  = "true"
+      POSTIZ_OAUTH_AUTH_URL                 = "https://authentik.viktorbarzin.me/application/o/authorize/"
+      POSTIZ_OAUTH_TOKEN_URL                = "https://authentik.viktorbarzin.me/application/o/token/"
+      POSTIZ_OAUTH_USERINFO_URL             = "https://authentik.viktorbarzin.me/application/o/userinfo/"
+      POSTIZ_OAUTH_CLIENT_ID                = "postiz"
+      NEXT_PUBLIC_POSTIZ_OAUTH_DISPLAY_NAME = "Authentik"
     }
 
     # Secret env (chart renders these into the postiz-secrets Secret, envFrom).
     secrets = {
-      DATABASE_URL         = data.vault_kv_secret_v2.postiz.data["database_url"]
-      REDIS_URL            = "redis://redis-master.redis.svc.cluster.local:6379/11"
-      JWT_SECRET           = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
-      FACEBOOK_APP_ID      = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
-      FACEBOOK_APP_SECRET  = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
-      INSTAGRAM_APP_ID     = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
-      INSTAGRAM_APP_SECRET = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
+      DATABASE_URL              = data.vault_kv_secret_v2.postiz.data["database_url"]
+      REDIS_URL                 = "redis://redis-master.redis.svc.cluster.local:6379/11"
+      JWT_SECRET                = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
+      FACEBOOK_APP_ID           = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
+      FACEBOOK_APP_SECRET       = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
+      INSTAGRAM_APP_ID          = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
+      INSTAGRAM_APP_SECRET      = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
+      POSTIZ_OAUTH_CLIENT_SECRET = var.oauth_client_secret
     }
 
     # Persist uploaded media on the existing proxmox-lvm PVC.
@@ -203,13 +219,262 @@ module "ingress" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Temporal — Postiz's scheduled-post backend. The Deployment is intentionally
-# NOT managed here: it was removed from the cluster and postiz currently runs
-# without it (immediate posting works; scheduled posting does not). Only the
-# Service below is retained/adopted so the in-cluster `temporal:7233` name
-# still resolves. To restore scheduled posting, re-add a temporalio/auto-setup
-# Deployment (see git history: removed 2026-05-30 during postiz state adoption).
+# Temporal — Postiz's workflow backend. RESTORED 2026-06-16 (#44). Postiz's
+# backend REFUSES to start its HTTP server unless temporal:7233 is reachable at
+# boot — so this is required for Postiz to serve ANYTHING (login + the public
+# API), not just scheduled posting. Runs temporalio/auto-setup against the shared
+# CNPG cluster with the SQL/Postgres visibility store (no Elasticsearch). The
+# `temporal` + `temporal_visibility` DBs already exist and are owned by the
+# `postiz` role, so SKIP_DB_CREATE=true + the role's static password is enough
+# (auto-setup only creates/updates schema, which the DB owner can do; it is NOT
+# superuser and must not attempt CREATE DATABASE).
 # ──────────────────────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Elasticsearch — Temporal's VISIBILITY store (#44). Required: Postiz registers
+# >3 custom Text search attributes, which Temporal's Postgres visibility caps at
+# 3 ("cannot have more than 3 search attribute of type Text"). Postiz's upstream
+# docker-compose uses ES for exactly this reason. Single-node, security off.
+# `node.store.allow_mmap=false` avoids the vm.max_map_count bootstrap check so we
+# don't need a privileged sysctl init-container (blocked by Kyverno wave-1).
+# ──────────────────────────────────────────────────────────────────────────────
+
+resource "kubernetes_persistent_volume_claim" "es" {
+  wait_until_bound = false
+  metadata {
+    name      = "postiz-es-data"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = { storage = "8Gi" }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+resource "kubernetes_deployment_v1" "es" {
+  metadata {
+    name      = "elasticsearch"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    labels    = { app = "elasticsearch" }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = "elasticsearch" } }
+    strategy { type = "Recreate" }
+    template {
+      metadata { labels = { app = "elasticsearch" } }
+      spec {
+        security_context { fs_group = 1000 } # ES runs as uid 1000; make the PVC writable
+        # proxmox-lvm CSI doesn't honor fsGroup, so the PVC mounts root-owned and
+        # ES (uid 1000) can't write its data dir. Chown it via a root init-container
+        # (not privileged → passes Kyverno deny-privileged).
+        init_container {
+          name    = "fix-data-perms"
+          image   = "busybox:1.36"
+          command = ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
+          security_context { run_as_user = 0 }
+          volume_mount {
+            name       = "data"
+            mount_path = "/usr/share/elasticsearch/data"
+          }
+        }
+        container {
+          name = "elasticsearch"
+          # docker.io/ prefix → matches the Kyverno-trusted `docker.io/*` allowlist
+          # (Elastic also publishes the official image to Docker Hub). ES 7.17 == Temporal ES_VERSION=v7.
+          image = "docker.io/library/elasticsearch:7.17.24"
+          env {
+            name  = "discovery.type"
+            value = "single-node"
+          }
+          env {
+            name  = "xpack.security.enabled"
+            value = "false"
+          }
+          env {
+            name  = "node.store.allow_mmap"
+            value = "false"
+          }
+          env {
+            name  = "cluster.routing.allocation.disk.threshold_enabled"
+            value = "false"
+          }
+          env {
+            name  = "ingest.geoip.downloader.enabled"
+            value = "false"
+          }
+          env {
+            name  = "ES_JAVA_OPTS"
+            value = "-Xms512m -Xmx512m"
+          }
+          port {
+            name           = "http"
+            container_port = 9200
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/usr/share/elasticsearch/data"
+          }
+          resources {
+            requests = { cpu = "100m", memory = "1Gi" }
+            limits   = { memory = "1536Mi" }
+          }
+          readiness_probe {
+            http_get {
+              path = "/_cluster/health?local=true"
+              port = 9200
+            }
+            initial_delay_seconds = 20
+            period_seconds        = 10
+            failure_threshold     = 18
+          }
+        }
+        volume {
+          name = "data"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.es.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+resource "kubernetes_service" "es" {
+  metadata {
+    name      = "elasticsearch"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  spec {
+    selector = { app = "elasticsearch" }
+    port {
+      name        = "http"
+      port        = 9200
+      target_port = 9200
+    }
+  }
+}
+
+resource "kubernetes_secret" "temporal_db" {
+  metadata {
+    name      = "temporal-db"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  data = {
+    POSTGRES_PWD = data.vault_kv_secret_v2.postiz.data["db_password"]
+  }
+}
+
+resource "kubernetes_deployment_v1" "temporal" {
+  metadata {
+    name      = "temporal"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    labels    = { app = "temporal" }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = "temporal" } }
+    strategy { type = "Recreate" }
+    template {
+      metadata { labels = { app = "temporal" } }
+      spec {
+        container {
+          name  = "temporal"
+          image = "temporalio/auto-setup:1.28.1"
+
+          env {
+            name  = "DB"
+            value = "postgres12"
+          }
+          env {
+            name  = "SKIP_DB_CREATE"
+            value = "true"
+          }
+          env {
+            name  = "DBNAME"
+            value = "temporal"
+          }
+          # Visibility = Elasticsearch (Postiz needs >3 Text search attributes,
+          # which SQL visibility can't hold). Persistence stays on CNPG (DBNAME).
+          env {
+            name  = "ENABLE_ES"
+            value = "true"
+          }
+          env {
+            name  = "ES_SEEDS"
+            value = "elasticsearch.postiz.svc.cluster.local"
+          }
+          env {
+            name  = "ES_VERSION"
+            value = "v7"
+          }
+          env {
+            name  = "ES_PORT"
+            value = "9200"
+          }
+          env {
+            name  = "ES_SCHEME"
+            value = "http"
+          }
+          env {
+            name  = "POSTGRES_SEEDS"
+            value = "pg-cluster-rw.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "DB_PORT"
+            value = "5432"
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "postiz"
+          }
+          env {
+            name = "POSTGRES_PWD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.temporal_db.metadata[0].name
+                key  = "POSTGRES_PWD"
+              }
+            }
+          }
+
+          port {
+            name           = "grpc"
+            container_port = 7233
+          }
+          resources {
+            requests = { cpu = "50m", memory = "256Mi" }
+            limits   = { memory = "512Mi" }
+          }
+          readiness_probe {
+            tcp_socket { port = 7233 }
+            initial_delay_seconds = 20
+            period_seconds        = 10
+            failure_threshold     = 12
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_deployment_v1.es, kubernetes_service.es]
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
 
 resource "kubernetes_service" "temporal" {
   metadata {
