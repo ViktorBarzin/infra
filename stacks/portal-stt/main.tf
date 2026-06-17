@@ -55,11 +55,6 @@
 # pins tier-2-gpu precisely so chatterbox IS evicted first.)
 # =============================================================================
 
-variable "tls_secret_name" {
-  type      = string
-  sensitive = true
-}
-
 variable "nfs_server" {
   type        = string
   description = "NFS server (Proxmox host). From config.tfvars (192.168.1.127)."
@@ -122,11 +117,10 @@ resource "kubernetes_namespace" "portal_stt" {
   }
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.portal_stt.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# portal-stt is ClusterIP-only (no ingress) — the Gateway is the sole
+# externally-exposed component (ADR-0001), so there is NO TLS secret / no
+# setup_tls_secret module here (it would demand secrets/fullchain.pem that this
+# stack does not ship).
 
 # Model + HF cache on NFS-SSD (fast first-load, persists across restarts). Path
 # /srv/nfs-ssd/portal-stt on the Proxmox host (192.168.1.127). Mirrors the
