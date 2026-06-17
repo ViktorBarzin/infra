@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 #
 # Universal upgrade-step body. Each Job in the k8s-version-upgrade chain runs
-# this once, dispatching on $PHASE. On success it computes the next phase and
-# spawns the next Job. The chain is:
+# this once, dispatching on $PHASE. On success it computes the next phase from
+# LIVE cluster state and spawns the next Job. The chain is:
 #
-#   preflight  (run on k8s-node1)
+#   preflight  (run on the first worker)
 #     ↓
-#   master     (drains k8s-master; run on k8s-node1)
+#   master     (drains k8s-master; run on the first worker = the "runner")
 #     ↓
-#   worker k8s-node4   (run on k8s-node1)
-#     ↓
-#   worker k8s-node3   (run on k8s-node1)
-#     ↓
-#   worker k8s-node2   (run on k8s-node1)
-#     ↓
-#   worker k8s-node1   (drains k8s-node1; run on k8s-master with control-plane toleration)
-#     ↓
+#   worker <W> (drains <W>; run on k8s-master w/ control-plane toleration)   ── repeats
+#     ↓         for EVERY worker still off-target, enumerated from kubectl
 #   postflight (no node pinning)
 #
-# k8s-node1 hosts every Job except the one that drains k8s-node1 itself.
-# k8s-node1 is therefore upgraded LAST.
+# The worker list is derived dynamically (worker_nodes / next_pending_worker),
+# so newly-added nodes are upgraded with no script change — the old hardcoded
+# master→node4→3→2→1 chain silently skipped node5/node6 (added 2026-05-26).
+# Self-preemption invariant: a Job never runs on the node it drains — the
+# master-drain Job runs on a worker; each worker-drain Job runs on the
+# already-upgraded master. SSH targets are node InternalIPs (no DNS dependency).
 #
 # Required env vars (set on the Job pod by job-template.yaml):
 #   PHASE              preflight | master | worker | postflight
@@ -39,13 +37,11 @@ KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
 
-# Pod-side DNS: the cluster's CoreDNS has search domains
-# `<ns>.svc.cluster.local svc.cluster.local cluster.local` (plus ndots=2 via
-# Kyverno mutation). Unqualified `k8s-master` falls through all of these and
-# then queries the upstream DNS (Technitium) for bare `k8s-master`, which
-# returns NXDOMAIN. The FQDN `k8s-master.viktorbarzin.lan` is what Technitium
-# actually serves. Suffix every node SSH target with this domain.
-NODE_DOMAIN=".viktorbarzin.lan"
+# SSH targets are node InternalIPs, resolved live from `kubectl get nodes` (see
+# ssh_target() below) — the pipeline has NO dependency on node DNS records
+# (`k8s-node<N>.viktorbarzin.lan`). This is what lets a freshly-joined node be
+# upgraded with zero DNS/Kea provisioning. (Was FQDN-based until 2026-06-17:
+# node5/node6 had no .viktorbarzin.lan records, which blocked the 1.34.9 chain.)
 
 # SSH key must be 0400 — refresh from secret mount (defaultMode does this but
 # bind-mount semantics can preserve loose perms; chmod is idempotent).
@@ -183,36 +179,66 @@ drain_node() {
 }
 
 # ---------------------------------------------------------------------------
-# Chain definition — what comes after the current phase
+# Cluster topology — derived live so new nodes are covered automatically
+# ---------------------------------------------------------------------------
+# The old chain hardcoded master→node4→3→2→1 and silently skipped node5/node6
+# (added 2026-05-26). Everything below enumerates nodes from `kubectl get nodes`
+# instead, and SSHes by InternalIP (no .viktorbarzin.lan DNS record needed), so
+# a freshly-joined worker is upgraded with ZERO pipeline changes.
+#
+# Self-preemption invariant preserved: a phase Job never runs on the node it
+# drains. The master-drain Job runs on a worker (the "runner"); every
+# worker-drain Job runs on the (already-upgraded) master.
+worker_nodes() { $KUBECTL get nodes -l '!node-role.kubernetes.io/control-plane' \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort; }
+all_nodes() { { echo k8s-master; worker_nodes; } | sed '/^$/d'; }
+# SSH target = the node's InternalIP (avoids any DNS dependency).
+ssh_target() { echo "wizard@$($KUBECTL get node "$1" \
+  -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"; }
+# First worker not yet on $TARGET_VERSION, excluding $1 (the node the current
+# phase is upgrading — still pending when this runs). Empty → all workers done.
+next_pending_worker() {
+  local n v exclude="${1:-}"
+  while read -r n; do
+    [ -z "$n" ] && continue
+    [ "$n" = "$exclude" ] && continue
+    v=$($KUBECTL get node "$n" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
+    [ "$v" != "$TARGET_VERSION" ] && { echo "$n"; return 0; }
+  done < <(worker_nodes)
+  # No worker left off-target. Explicit success — the loop's final `read` exits
+  # 1 at EOF, and `next_w="$(next_pending_worker …)"` under `set -e` would abort
+  # the chain BEFORE the postflight branch (cluster upgraded but no cleanup /
+  # in_flight reset / success). Verified blocker — keep this return 0.
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Chain definition — what comes after the current phase (dynamic)
 # ---------------------------------------------------------------------------
 
 NEXT_PHASE=""
 NEXT_TARGET_NODE=""
 NEXT_RUN_ON=""
 
-case "${PHASE}:${TARGET_NODE:-}" in
-  preflight:)
+case "$PHASE" in
+  preflight)
+    # master upgrade drains the control-plane node → its Job runs on a worker.
     NEXT_PHASE=master
-    NEXT_RUN_ON=k8s-node1 ;;
-  master:)
-    NEXT_PHASE=worker; NEXT_TARGET_NODE=k8s-node4
-    NEXT_RUN_ON=k8s-node1 ;;
-  worker:k8s-node4)
-    NEXT_PHASE=worker; NEXT_TARGET_NODE=k8s-node3
-    NEXT_RUN_ON=k8s-node1 ;;
-  worker:k8s-node3)
-    NEXT_PHASE=worker; NEXT_TARGET_NODE=k8s-node2
-    NEXT_RUN_ON=k8s-node1 ;;
-  worker:k8s-node2)
-    NEXT_PHASE=worker; NEXT_TARGET_NODE=k8s-node1
-    NEXT_RUN_ON=k8s-master ;;  # control-plane toleration required
-  worker:k8s-node1)
-    NEXT_PHASE=postflight
-    NEXT_RUN_ON="" ;;          # no node pinning for postflight
-  postflight:)
-    NEXT_PHASE="" ;;           # end of chain
+    NEXT_RUN_ON="$(worker_nodes | head -1)" ;;
+  master | worker)
+    # Next worker still off-target (excluding the one this phase handled). Its
+    # Job runs on the already-upgraded master (k8s-master, control-plane
+    # toleration). Dynamic → every worker incl. node5/6 + any future node.
+    next_w="$(next_pending_worker "${TARGET_NODE:-}")"
+    if [ -n "$next_w" ]; then
+      NEXT_PHASE=worker; NEXT_TARGET_NODE="$next_w"; NEXT_RUN_ON=k8s-master
+    else
+      NEXT_PHASE=postflight; NEXT_RUN_ON=""   # all workers on target
+    fi ;;
+  postflight)
+    NEXT_PHASE="" ;;                          # end of chain
   *)
-    echo "ERROR: unknown phase/target combo: ${PHASE}/${TARGET_NODE:-}" >&2
+    echo "ERROR: unknown phase: $PHASE" >&2
     exit 2 ;;
 esac
 
@@ -331,7 +357,7 @@ phase_preflight() {
   # aborts this whole check. Ignore the two CoreDNS checks here too so plan
   # still emits its "kubeadm upgrade apply vX.Y.Z" line. (See update_k8s.sh.)
   local plan_target
-  plan_target=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
+  plan_target=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
     | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
   if [ "$plan_target" != "$TARGET_VERSION" ]; then
@@ -372,16 +398,18 @@ phase_preflight() {
 
   # 7. Containerd skew fix on master (if master < workers)
   local master_ctr worker_max=0.0.0
-  master_ctr=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" "containerd --version | awk '{print \$3}' | tr -d v")
-  for n in k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
+  master_ctr=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" "containerd --version | awk '{print \$3}' | tr -d v")
+  local n
+  while read -r n; do
+    [ -z "$n" ] && continue
     local v
-    v=$(ssh "${SSH_OPTS[@]}" "wizard@$n$NODE_DOMAIN" "containerd --version | awk '{print \$3}' | tr -d v")
+    v=$(ssh "${SSH_OPTS[@]}" "$(ssh_target "$n")" "containerd --version | awk '{print \$3}' | tr -d v")
     [ "$(printf '%s\n%s' "$v" "$worker_max" | sort -V | tail -1)" = "$v" ] && worker_max="$v"
-  done
+  done < <(worker_nodes)
   if [ "$(printf '%s\n%s' "$master_ctr" "$worker_max" | sort -V | head -1)" = "$master_ctr" ] \
      && [ "$master_ctr" != "$worker_max" ]; then
     slack "Master containerd $master_ctr < workers $worker_max — bumping"
-    ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" \
+    ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
       "sudo apt-mark unhold containerd.io && sudo apt-get install -y containerd.io='$worker_max-1' \
        && sudo apt-mark hold containerd.io && sudo systemctl restart containerd"
     wait_for_node_ready k8s-master "$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' | tr -d v)" \
@@ -392,14 +420,15 @@ phase_preflight() {
   # 8. Apt repo URL rewrite (minor only)
   if [ "$KIND" = "minor" ]; then
     local target_minor="${TARGET_VERSION%.*}"
-    for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4; do
-      ssh "${SSH_OPTS[@]}" "wizard@$n$NODE_DOMAIN" \
+    while read -r n; do
+      [ -z "$n" ] && continue
+      ssh "${SSH_OPTS[@]}" "$(ssh_target "$n")" \
         "echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$target_minor/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list \
          && curl -fsSL 'https://pkgs.k8s.io/core:/stable:/v$target_minor/deb/Release.key' \
               | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --batch --yes \
          && sudo apt-get update"
-    done
-    slack "Apt repo rewritten to v$target_minor/deb on all 5 nodes"
+    done < <(all_nodes)
+    slack "Apt repo rewritten to v$target_minor/deb on all nodes"
   fi
 
   slack "Preflight clean. Snapshot at nfs://...$snap_file ($size bytes). Dispatching master Job."
@@ -449,7 +478,7 @@ phase_master() {
   drain_node k8s-master
 
   slack "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
-  ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'bash -s' \
+  ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role master --release "$TARGET_VERSION"
 
   $KUBECTL uncordon k8s-master
@@ -507,7 +536,7 @@ phase_worker() {
   drain_node "$TARGET_NODE"
 
   slack "Running update_k8s.sh on $TARGET_NODE (--role worker --release $TARGET_VERSION)"
-  ssh "${SSH_OPTS[@]}" "wizard@$TARGET_NODE$NODE_DOMAIN" 'bash -s' \
+  ssh "${SSH_OPTS[@]}" "$(ssh_target "$TARGET_NODE")" 'bash -s' \
     < "$UPDATE_K8S_SH" -- --role worker --release "$TARGET_VERSION"
 
   $KUBECTL uncordon "$TARGET_NODE"
@@ -539,7 +568,7 @@ phase_worker() {
 phase_postflight() {
   slack "Running postflight"
 
-  # All 5 nodes at target
+  # All nodes at target
   local versions wrong
   versions=$($KUBECTL get nodes -o jsonpath='{range .items[*]}{.metadata.name}:{.status.nodeInfo.kubeletVersion}{"\n"}{end}')
   # `grep -v` returns 1 when all nodes are on target (the happy path —
