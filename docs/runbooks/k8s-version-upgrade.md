@@ -118,6 +118,26 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 - **`K8sUpgradeChainJobFailed`** — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL).
 - All four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
 
+### CoreDNS is NOT upgraded by kubeadm here
+
+CoreDNS runs a **custom split-horizon Corefile** (owned by the technitium stack)
+and its image is tracked separately — it must NOT be touched by kubeadm. The
+master `kubeadm upgrade apply` therefore runs with
+`--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins
+--skip-phases=addon/coredns` (in `scripts/update_k8s.sh`), so kubeadm upgrades
+the control plane but leaves CoreDNS 100% untouched (image + Corefile). Without
+the `--skip-phases`, forcing past the preflight makes kubeadm overwrite the
+Corefile with its default and downgrade the image (verified via
+`kubeadm upgrade apply --dry-run`).
+
+**Keep CoreDNS off Keel.** On 2026-06-12 Keel had auto-bumped CoreDNS
+v1.12.1 → v1.12.4 (kube-system out-of-band annotation from the 2026-05-26 Keel
+cascade), and 1.12.4 is ahead of kubeadm 1.34.9's corefile-migration table —
+which is what blocked the 1.34.9 upgrade. CoreDNS is now `keel.sh/policy=never`
+(`kubectl -n kube-system annotate deploy/coredns keel.sh/policy=never`). If a
+future kubeadm minor ships a CoreDNS that DOES know the running version, drop the
+`--skip-phases` for that run to let kubeadm re-take ownership.
+
 ### Vault secrets
 
 - `secret/k8s-upgrade/ssh_key` — ed25519 PRIVATE key, used by Jobs to SSH `wizard@<node>`

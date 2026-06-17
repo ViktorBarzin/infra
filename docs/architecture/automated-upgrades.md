@@ -309,7 +309,11 @@ each Job's pod and its drain target are always different nodes.
   ConfigMap, and a `template` ConfigMap into each Job pod.
 - **Per-node script**: `infra/scripts/update_k8s.sh`. Caller passes
   `--role master|worker --release X.Y.Z`. Piped via SSH into each node by
-  upgrade-step.sh.
+  upgrade-step.sh. The master path runs `kubeadm upgrade apply` with
+  `--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins
+  --skip-phases=addon/coredns` so kubeadm never touches CoreDNS (custom Corefile
+  + separately-tracked image; CoreDNS is pinned off Keel via `keel.sh/policy=never`).
+  See the runbook's "CoreDNS is NOT upgraded by kubeadm here".
 - **Four Upgrade Gates alerts**:
   - `K8sVersionSkew` — kubelet/apiserver `gitVersion` count >1 for 30m. Catches a half-done rollout.
   - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently.
