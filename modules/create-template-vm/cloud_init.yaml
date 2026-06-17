@@ -8,6 +8,13 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - ${authorized_ssh_key}
+      # k8s-upgrade pipeline key (matches Vault secret/k8s-upgrade/ssh_key_pub).
+      # The automated k8s-version-upgrade chain SSHes in as `wizard` to drain +
+      # upgrade each node; WITHOUT this a freshly-provisioned node is invisible
+      # to the upgrade pipeline (node4/5/6 hit exactly this — Permission denied —
+      # 2026-06-17). Hardcoded: it's a public key and the keypair is stable; if
+      # it's ever rotated, update this line and Vault together.
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIElH9x76UNA8UNxrxTjREYz4hz1fbCdRwAXbOkJ5FnSM k8s-upgrade-pipeline
     passwd: ${passwd}
     lock_passwd: false # enable passwd login
     shell: /bin/bash
