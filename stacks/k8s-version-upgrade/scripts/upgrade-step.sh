@@ -466,16 +466,21 @@ phase_master() {
   # keeps running unchanged — only the OPERATOR (a config reconciler) goes away
   # briefly. Restored at the end of the phase below.
   #
-  # If the chain dies between quiesce and restore (e.g. kubeadm fails),
-  # manually restore with:
-  #   kubectl -n tigera-operator scale deploy tigera-operator --replicas=1
-  #
   # Long-term fix: HA control plane (3 masters) so apiserver never goes down
   # — see docs/plans/2026-05-21-ha-control-plane-{design,plan}.md (beads code-n0ow).
-  echo "Quiescing tigera-operator before master upgrade (it crashes on apiserver outage)"
-  $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=0 2>&1 || true
-
   drain_node k8s-master
+
+  # Quiesce tigera-operator ONLY for the kubeadm window. Drain happens FIRST (it
+  # doesn't blip the apiserver — only the static-pod swaps in `kubeadm upgrade
+  # apply` do), then quiesce right before that. The EXIT trap GUARANTEES the
+  # operator is restored even if any step below aborts: on 2026-06-17 the master
+  # run aborted on a post-upgrade gate AFTER quiescing, the idempotent retry then
+  # skipped the (now already-on-target) master phase, and the operator sat at 0
+  # for ~1.5h. The trap is set AFTER drain_node so drain_node's own EXIT trap
+  # (background predrain-watcher cleanup) can't clobber it.
+  echo "Quiescing tigera-operator for the kubeadm window (it crashes on apiserver outage)"
+  $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=0 2>&1 || true
+  trap '$KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true' EXIT
 
   slack "Running update_k8s.sh on k8s-master (--role master --release $TARGET_VERSION)"
   ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
@@ -499,9 +504,10 @@ phase_master() {
   alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
 
-  # Restore tigera-operator (quiesced before drain). It reconciles in seconds.
+  # Restore tigera-operator (happy path) + clear the safety-net EXIT trap.
   echo "Restoring tigera-operator"
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 2>&1 || true
+  trap - EXIT
 
   slack "Master on v$TARGET_VERSION, control-plane Running. Dispatching worker chain."
 }
@@ -567,6 +573,12 @@ phase_worker() {
 
 phase_postflight() {
   slack "Running postflight"
+
+  # Belt-and-suspenders: ensure tigera-operator is back to 1 at chain end. The
+  # master phase's EXIT trap already restores it, but a master phase that was
+  # skipped-on-retry (master already on target) never quiesces OR restores, so
+  # if an earlier aborted attempt left it down this is the final guarantee.
+  $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 >/dev/null 2>&1 || true
 
   # All nodes at target
   local versions wrong
