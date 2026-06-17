@@ -2224,29 +2224,29 @@ serverFiles:
               severity: critical
             annotations:
               summary: "K8s upgrade has been in flight for >90 min — chain is stuck. Check: kubectl -n k8s-upgrade get jobs"
-          # K8sUpgradeChainJobFailed: catches a FAILED phase Job even when it
-          # aborts BEFORE pushing k8s_upgrade_in_flight=1. The preflight gates
-          # (nodes-ready, halt-on-alert, settle-window, kubeadm-plan) all exit
-          # pre-metric, so a failed preflight is invisible to K8sUpgradeStalled
-          # and EtcdPreUpgradeSnapshotMissing (both need in_flight=1) AND to
-          # upgrade_state.sh — exactly how a transient critical alert wedged the
-          # 1.34.9 preflight for 5 days (2026-06-17). With the retry-on-failure
-          # idempotency guard the next detection cycle deletes + re-spawns it, so
-          # this firing for 15m means it re-failed: investigate the root cause.
-          # NB: keyed on failed-pod count (bare >0, matching the file's other
-          # job-failure alerts) not the terminal Failed *condition* — so a phase
-          # whose 1st pod failed but whose retry succeeded keeps this firing until
-          # the Job's 7d TTL expires. Accepted: warning-only + alert-on-change
-          # (notifies once) + send_resolved, and upgrade_state.sh uses the precise
-          # Failed condition. A false-positive here beats missing a real wedge.
+          # K8sUpgradeChainJobFailed: catches a TERMINALLY-failed phase Job even
+          # when it aborts BEFORE pushing k8s_upgrade_in_flight=1 (the preflight
+          # gates — nodes-ready, halt-on-alert, settle-window, kubeadm-plan — all
+          # exit pre-metric). K8sUpgradeStalled and EtcdPreUpgradeSnapshotMissing
+          # both need in_flight=1, and upgrade_state.sh was metric-blind too, so a
+          # failed preflight was invisible: exactly how a transient critical alert
+          # wedged 1.34.9 for 5 days (2026-06-12). Scoped to the terminal
+          # job-condition reasons (BackoffLimitExceeded/DeadlineExceeded), NOT a
+          # bare failed-pod count, so a phase whose 1st pod failed but whose retry
+          # SUCCEEDED does not fire — important because every firing alert also
+          # halts kured (OS-reboot pipeline), and a bare-count false-positive would
+          # block all node reboots for the Job's 7d TTL. With the retry-on-failure
+          # idempotency guard the next detection cycle deletes + re-spawns the
+          # Failed Job (clearing this within ~24h); a sustained firing means it
+          # re-failed — investigate the root cause.
           - alert: K8sUpgradeChainJobFailed
-            expr: kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*"} > 0
+            expr: kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0
             for: 15m
             labels:
               severity: warning
               subsystem: k8s-upgrade
             annotations:
-              summary: "K8s upgrade chain Job {{ $labels.job_name }} has failed pods — pipeline likely wedged. kubectl -n k8s-upgrade get jobs ; kubectl -n k8s-upgrade describe job {{ $labels.job_name }}"
+              summary: "K8s upgrade chain Job {{ $labels.job_name }} terminally failed ({{ $labels.reason }}) — pipeline wedged. kubectl -n k8s-upgrade get jobs ; kubectl -n k8s-upgrade describe job {{ $labels.job_name }}"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown

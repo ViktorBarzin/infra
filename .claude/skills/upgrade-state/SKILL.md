@@ -61,8 +61,11 @@ Pushgateway (`prometheus-prometheus-pushgateway.monitoring:9091`):
 - `k8s_upgrade_in_flight` — 0/1
 - `k8s_upgrade_started_timestamp` — when the current chain started (0 when idle)
 
-`K8sUpgradeStalled` alert fires when `in_flight=1` and the chain has
-been running >90 minutes. The script raises `✗` in the same window.
+`K8sUpgradeStalled` fires when `in_flight=1` and the chain has been running
+>90 minutes. `K8sUpgradeChainJobFailed` fires when a phase Job terminally
+failed — including a **preflight that aborted before `in_flight` was set**
+(the gates exit pre-metric). The script raises `✗` for either, and reads the
+Jobs directly, so it also catches a Failed preflight that left no metric.
 
 ## Status-icon legend
 
@@ -72,7 +75,7 @@ been running >90 minutes. The script raises `✗` in the same window.
 | `→` | Update available, not yet applied (K8s patch/minor) |
 | `…` | In flight — chain currently running |
 | `⚠` | Attention: held-with-bumps, recent errors, pending approvals |
-| `✗` | Broken: pod down, alert firing, chain stalled |
+| `✗` | Broken: pod down, alert firing, chain stalled, or a chain Job failed |
 
 ## Drill-down — when a row trips, what to do
 
@@ -175,6 +178,31 @@ kubectl -n monitoring exec deploy/prometheus-server -c prometheus-server -- sh -
     "printf 'k8s_upgrade_in_flight 0\nk8s_upgrade_started_timestamp 0\n' | \
      wget -qO- --post-file=- 'http://prometheus-prometheus-pushgateway:9091/metrics/job/k8s-version-upgrade' \
        --header='Content-Type: text/plain'"
+```
+
+### K8s `✗ chain failed` — a phase Job terminally failed
+
+`K8sUpgradeChainJobFailed` would fire. Most often a **preflight** that aborted
+on a gate (a critical alert firing, a node not Ready, a kubeadm-plan mismatch) —
+these exit before `in_flight` is set, so `K8sUpgradeStalled` never sees them, and
+the deterministic name + 7d TTL blocked re-spawn (the 2026-06-12 5-day wedge).
+
+```bash
+kubectl -n k8s-upgrade get jobs
+kubectl -n k8s-upgrade describe job <failed-job>    # check the Failed reason
+# Preflight abort reasons post to Slack ONLY (not stdout), so Loki won't have
+# them. Replay the gate instead — which critical alerts were firing at the
+# failure time? (ALERTS{severity="critical"} in Prometheus, query at that ts.)
+```
+
+Recovery is now mostly automatic: the detection CronJob and `spawn_next`
+re-spawn a terminally-Failed Job on the next cycle (retry-on-failure), so a
+transient gate clears within ~24h. To expedite, delete the Failed Job and
+trigger detection:
+
+```bash
+kubectl -n k8s-upgrade delete job <failed-job>
+kubectl -n k8s-upgrade create job --from=cronjob/k8s-version-check manual-detect-$(date +%s)
 ```
 
 ### K8s `✗ detection stale` — last detection >9 days

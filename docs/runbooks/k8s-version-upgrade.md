@@ -115,7 +115,8 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 - **`K8sVersionSkew`** — distinct kubelet/apiserver `gitVersion` count > 1 for 30m. Catches a half-done rollout.
 - **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently.
 - **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a Job in the chain dying without spawning its successor.
-- All three alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
+- **`K8sUpgradeChainJobFailed`** — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL).
+- All four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
 
 ### Vault secrets
 
@@ -202,8 +203,18 @@ EOF
 ```
 
 ### Kill a stuck Job (chain halted mid-flight)
-The chain stalls if any Job dies without spawning its successor. `K8sUpgradeStalled`
-fires after 90 min. Recovery:
+A phase Job that dies without spawning its successor halts the chain. Two alerts
+surface it: `K8sUpgradeStalled` (a mid-chain Job that died with `in_flight=1`,
+after 90 min) and `K8sUpgradeChainJobFailed` (any phase that terminally failed,
+after 15 min — including a **preflight** that aborted before `in_flight` was set,
+which `K8sUpgradeStalled` cannot see).
+
+**Preflight failures now self-heal** (since 2026-06-17): the detection CronJob and
+`spawn_next` delete + re-spawn a terminally-Failed Job instead of skipping it on
+name-existence (retry-on-failure), so a transient preflight gate — e.g. a spurious
+critical alert like the ttyd web-terminal probe that wedged 1.34.9 for 5 days —
+clears on the next daily cycle. A mid-chain phase that keeps failing still needs
+manual recovery: fix the root cause, then:
 
 ```bash
 # 1. Identify the failed Job
