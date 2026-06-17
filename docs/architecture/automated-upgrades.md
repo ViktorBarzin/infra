@@ -274,8 +274,13 @@ Job 6 — postflight      (no pinning)
 Each Job runs `scripts/upgrade-step.sh`, which dispatches on `$PHASE` and ends
 by spawning the next Job (`envsubst < /template/job-template.yaml | kubectl
 apply -f -`). Job names are deterministic (`k8s-upgrade-<phase>-<target_version>[-<node>]`)
-so `apply` reconciles to a single Job per run — re-running a failed Job
-won't duplicate downstream Jobs.
+so `apply` reconciles to a single Job per run — re-running won't duplicate
+downstream Jobs. The detection CronJob and `spawn_next` additionally delete +
+re-spawn a terminally-**Failed** Job of the same name (rather than skipping it
+on existence), so a transient preflight gate self-heals on the next cycle
+instead of wedging the pipeline until the dead Job's 7d TTL expires
+(retry-on-failure, added 2026-06-17 after a spurious critical alert stalled
+1.34.9 for 5 days).
 
 ### Self-preemption history (the reason for the Job-chain rewrite)
 
@@ -305,10 +310,11 @@ each Job's pod and its drain target are always different nodes.
 - **Per-node script**: `infra/scripts/update_k8s.sh`. Caller passes
   `--role master|worker --release X.Y.Z`. Piped via SSH into each node by
   upgrade-step.sh.
-- **Three Upgrade Gates alerts**:
+- **Four Upgrade Gates alerts**:
   - `K8sVersionSkew` — kubelet/apiserver `gitVersion` count >1 for 30m. Catches a half-done rollout.
   - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently.
   - `K8sUpgradeStalled` — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a chain Job dying without spawning its successor.
+  - `K8sUpgradeChainJobFailed` — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that terminally failed **before `in_flight` was set** (the preflight gates exit pre-metric) — invisible to the two `in_flight`-based alerts above; this was the blind spot behind the 5-day 1.34.9 preflight wedge. Reason-scoped so a retry-success doesn't false-positive (and so it doesn't needlessly block kured).
 - **Pushgateway metrics**:
   - `k8s_upgrade_in_flight` (set in preflight, cleared in postflight)
   - `k8s_upgrade_snapshot_taken` (set after etcd snapshot Job completes with ≥1 KiB)
