@@ -98,7 +98,20 @@ if [[ "$ROLE" == "master" ]]; then
     # right version (which is the only case where this timeout fires).
     attempt=1
     extra_flags=""
-    while ! sudo kubeadm upgrade apply "v$RELEASE" -y $extra_flags; do
+    # CoreDNS is managed OUTSIDE kubeadm on this cluster: the Corefile is a
+    # custom split-horizon config owned by the technitium stack, and the image
+    # is intentionally tracked separately. kubeadm's bundled corefile-migration
+    # library rejects CoreDNS versions it doesn't know (e.g. 1.12.4 -> "start
+    # version not supported"), which HARD-FAILS `upgrade apply` at preflight.
+    # Forcing past preflight with --ignore alone is NOT enough — kubeadm would
+    # then overwrite our custom Corefile with its default AND downgrade the
+    # image (verified via `kubeadm upgrade apply --dry-run`, 2026-06-17). So we
+    # also skip the coredns addon phase entirely: kubeadm leaves CoreDNS 100%
+    # untouched and only upgrades the control-plane components. (Root fix: keep
+    # CoreDNS off Keel — keel.sh/policy=never — so it stops drifting ahead of
+    # kubeadm's migration table.)
+    coredns_flags="--ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins --skip-phases=addon/coredns"
+    while ! sudo kubeadm upgrade apply "v$RELEASE" -y $coredns_flags $extra_flags; do
         if (( attempt >= 3 )); then
             echo "ERROR: kubeadm upgrade apply failed after 3 attempts" >&2
             exit 1

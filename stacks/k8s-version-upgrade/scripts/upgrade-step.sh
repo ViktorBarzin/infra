@@ -306,11 +306,19 @@ phase_preflight() {
   # reboot for an hour. 10min is sufficient for kubelet/control-plane to
   # stabilise; the kured-sentinel-gate DaemonSet enforces the broader
   # 24h-between-cluster-reboots invariant.
-  local recent=0
+  local recent=0 now_ep ts_ep
+  now_ep=$(date -u +%s)
   while IFS= read -r ts; do
     [ -z "$ts" ] && continue
-    local diff=$(( $(date +%s) - $(date -d "$ts" +%s) ))
-    if [ "$diff" -lt 600 ]; then recent=1; break; fi
+    # Portable ISO8601(UTC) -> epoch. GNU `date -d` parses ISO8601 directly;
+    # busybox `date` (the ghcr claude-agent-service base) does NOT and needs an
+    # explicit -D format. Before 2026-06-17 the bare `date -d "$ts"` silently
+    # failed on busybox, making this whole settle-window check a no-op. On
+    # parse failure, warn + skip the node (never silently treat it as quiet).
+    ts_ep=$(date -u -d "$ts" +%s 2>/dev/null || true)
+    if [ -z "$ts_ep" ]; then ts_ep=$(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "$ts" +%s 2>/dev/null || true); fi
+    if [ -z "$ts_ep" ]; then echo "WARN quiet-baseline: cannot parse Ready ts '$ts' (date impl?); skipping"; continue; fi
+    if [ "$(( now_ep - ts_ep ))" -lt 600 ]; then recent=1; break; fi
   done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
   if [ "$recent" -eq 1 ]; then
     slack "ABORT preflight — node transitioned Ready <10min ago (settle window)"
