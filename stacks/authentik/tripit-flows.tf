@@ -87,17 +87,17 @@ resource "authentik_stage_user_write" "tripit_enroll_write" {
   user_creation_mode = "always_create"
 }
 
-resource "authentik_stage_email" "tripit_enroll_verify" {
-  name = "tripit-enrollment-verify"
-  # Use AUTHENTIK_EMAIL__* (noreply@viktorbarzin.me via mail.viktorbarzin.me).
-  use_global_settings = true
-  # THE security gate: a user becomes active (and thus loginable / trusted by
-  # tripit's X-authentik-email) only after clicking the link sent to their inbox.
-  activate_user_on_success = true
-  subject                  = "Confirm your TripIt account"
-  template                 = "email/account_confirmation.html"
-  token_expiry             = 1440 # minutes = 24h
-}
+# NOTE: the two email-verification stages (enrollment + recovery) AND their flow
+# bindings are deliberately NOT defined here — they live in an Authentik
+# BLUEPRINT (tripit-email-blueprint.tf), applied server-side. Reason: the
+# globally-pinned provider (goauthentik 2024.x, terragrunt.hcl) models
+# EmailStage.token_expiry as an INTEGER, but the live server (2026.2.x) requires
+# a duration STRING ("hours=24") and 400s any number — the provider cannot send
+# a valid value (confirmed: even the unset default `30` is rejected). The
+# blueprint is parsed by the server, which accepts the string. Bumping the
+# provider would be a global terragrunt.hcl change that re-applies every platform
+# stack and breaks 3 other authentik-using app stacks' lockfiles — out of all
+# proportion to two stages. See tripit ADR-0020.
 
 resource "authentik_flow" "tripit_enrollment" {
   name           = "Sign up for TripIt"
@@ -118,11 +118,7 @@ resource "authentik_flow_stage_binding" "tripit_enroll_20_write" {
   stage  = authentik_stage_user_write.tripit_enroll_write.id
   order  = 20
 }
-resource "authentik_flow_stage_binding" "tripit_enroll_30_verify" {
-  target = authentik_flow.tripit_enrollment.uuid
-  stage  = authentik_stage_email.tripit_enroll_verify.id
-  order  = 30
-}
+# order 30 (email-verification binding) is in tripit-email-blueprint.tf — see note above
 resource "authentik_flow_stage_binding" "tripit_enroll_40_passkey" {
   target = authentik_flow.tripit_enrollment.uuid
   stage  = authentik_stage_authenticator_webauthn.tripit_passkey.id
@@ -143,13 +139,7 @@ resource "authentik_stage_identification" "tripit_recover_ident" {
   pretend_user_exists = true
 }
 
-resource "authentik_stage_email" "tripit_recover_email" {
-  name                = "tripit-recovery-email"
-  use_global_settings = true
-  subject             = "Recover your TripIt access"
-  template            = "email/account_confirmation.html"
-  token_expiry        = 60 # minutes = 1h
-}
+# (recovery email-verification stage is in tripit-email-blueprint.tf — see note above)
 
 resource "authentik_flow" "tripit_recovery" {
   name           = "Recover TripIt access"
@@ -165,11 +155,7 @@ resource "authentik_flow_stage_binding" "tripit_recover_10_ident" {
   stage  = authentik_stage_identification.tripit_recover_ident.id
   order  = 10
 }
-resource "authentik_flow_stage_binding" "tripit_recover_20_email" {
-  target = authentik_flow.tripit_recovery.uuid
-  stage  = authentik_stage_email.tripit_recover_email.id
-  order  = 20
-}
+# order 20 (email-verification binding) is in tripit-email-blueprint.tf — see note above
 resource "authentik_flow_stage_binding" "tripit_recover_30_passkey" {
   target = authentik_flow.tripit_recovery.uuid
   stage  = authentik_stage_authenticator_webauthn.tripit_passkey.id
