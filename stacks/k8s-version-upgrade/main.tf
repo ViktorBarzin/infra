@@ -162,6 +162,17 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
     resources  = ["pods"]
     verbs      = ["get", "list", "delete"]
   }
+  # Read the etcd-snapshot Job's pod logs — preflight verifies the snapshot
+  # size by parsing the backup Job's log (`kubectl logs job/...`). `pods/log`
+  # is a SEPARATE subresource not covered by the `pods` rule above. Missing
+  # this grant aborts preflight step 6 with a Forbidden on pods/log in the
+  # `default` ns (2026-06-17 — surfaced after a stale out-of-band grant was
+  # reconciled away by `terragrunt apply`).
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
+  }
   # Read PDBs to find drain-blocking pods
   rule {
     api_groups = ["policy"]
