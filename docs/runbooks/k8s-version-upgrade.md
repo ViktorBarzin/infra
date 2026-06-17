@@ -7,7 +7,7 @@ VMs are upgraded automatically by a weekly detection CronJob that seeds a
 chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
 drain target** — so no pod in the chain can preempt itself.
 
-The chain (Sun 12:00 UTC weekly):
+The chain (23:00 UTC nightly):
 
 ```
 detection CronJob → preflight Job → master Job → one worker Job per worker (enumerated live) → postflight Job
@@ -16,7 +16,7 @@ detection CronJob → preflight Job → master Job → one worker Job per worker
 This is **independent** of the OS-side `unattended-upgrades + kured`
 pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts.
 Schedules can overlap (kured runs daily 02:00-06:00 London; detection
-here runs Sun 12:00 UTC) — when a kured reboot lands within 24h of the
+here runs 23:00 UTC nightly) — when a kured reboot lands within 24h of the
 Sunday detection, the `RecentNodeReboot` alert in the Upgrade Gates
 group blocks the version-upgrade preflight, so the chain self-defers
 to the next Sunday rather than rolling on top of a half-fresh node.
@@ -24,7 +24,7 @@ to the next Sunday rather than rolling on top of a half-fresh node.
 ## Architecture
 
 ```
-k8s-version-check CronJob   (Sun 12:00 UTC, k8s-upgrade ns, SA: k8s-upgrade-job)
+k8s-version-check CronJob   (23:00 UTC nightly, k8s-upgrade ns, SA: k8s-upgrade-job)
   │ kubectl get nodes  → running version
   │ ssh master 'apt-cache madison kubeadm'  → latest patch (within current minor)
   │ HEAD pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release  → next minor available?
@@ -97,7 +97,7 @@ Job 6 — postflight       (no pinning)
 | **ConfigMap `k8s-upgrade-job-template`** | Mounts `/template/job-template.yaml` — universal Job manifest with envsubst placeholders. Rendered by upgrade-step.sh and the detection CronJob via `envsubst | kubectl apply`. |
 | **ServiceAccount `k8s-upgrade-job`** | Used by both the detection CronJob and every chain Job. ClusterRole binding grants: nodes get/list/patch, pods/eviction create, pods delete, batch/jobs CRUD, PDB list (for predrain_unstick), CronJob get (snapshot trigger), namespaces patch on `k8s-upgrade` only. Namespace-scoped Role binding grants secrets:get on `k8s-upgrade-creds`. |
 | **ExternalSecret `k8s-upgrade-creds`** | Syncs `secret/k8s-upgrade/{ssh_key, slack_webhook}` from Vault. Mounted into every Job at `/secrets/k8s-upgrade`. |
-| **CronJob `k8s-version-check`** | Sun 12:00 UTC. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
+| **CronJob `k8s-version-check`** | 23:00 UTC nightly. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
 
 ### Pushgateway metrics
 

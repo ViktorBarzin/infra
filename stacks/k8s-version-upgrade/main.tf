@@ -27,12 +27,13 @@
 
 variable "schedule" {
   type = string
-  # Daily 12:00 UTC — outside kured window (kured runs 02:00-06:00
-  # London). Was weekly Sunday until 2026-05-18; daily picks up upstream
-  # patch releases the same day they land. Concurrency is bounded by the
-  # CronJob's Forbid policy + Job-name idempotency (the detection job
-  # skips spawning a preflight Job if one already exists).
-  default = "0 12 * * *"
+  # Nightly 23:00 UTC (00:00 London) — overnight / low cluster usage, and clear
+  # of the kured OS-reboot window (01:00-05:00 UTC = 02:00-06:00 London) so the
+  # two drain-pipelines never overlap. Moved from 12:00 UTC noon on 2026-06-17
+  # (Viktor: disruptive node drains should run overnight). Was weekly Sunday
+  # until 2026-05-18. Concurrency bounded by the CronJob's Forbid policy +
+  # retry-on-failure Job-name idempotency.
+  default = "0 23 * * *"
 }
 
 variable "enabled" {
