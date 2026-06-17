@@ -9,8 +9,9 @@
 #     change anyone's authorization (contrast authentik_group "T3 Users", which
 #     is created WITH members atomically because THAT gate's safety property is
 #     the opposite). Membership is assigned at RUNTIME by the tripit-enrollment
-#     flow's user_write "Create users group" option (UI-managed per the ADR
-#     management split). Terraform owns only the group's EXISTENCE.
+#     flow's user_write "Create users group" option (authentik_stage_user_write
+#     in tripit-flows.tf). Terraform owns the group's EXISTENCE and the flow that
+#     assigns it.
 #   * PARENTLESS — do NOT make this a child of "Allow Login Users". The sensitive
 #     OIDC apps gate on "Home Server Admins" / "Headscale Users" / "Wrongmove
 #     Users" (children of "Allow Login Users") or, for Vault, on "Allow Login
