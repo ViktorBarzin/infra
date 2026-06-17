@@ -2224,6 +2224,29 @@ serverFiles:
               severity: critical
             annotations:
               summary: "K8s upgrade has been in flight for >90 min — chain is stuck. Check: kubectl -n k8s-upgrade get jobs"
+          # K8sUpgradeChainJobFailed: catches a FAILED phase Job even when it
+          # aborts BEFORE pushing k8s_upgrade_in_flight=1. The preflight gates
+          # (nodes-ready, halt-on-alert, settle-window, kubeadm-plan) all exit
+          # pre-metric, so a failed preflight is invisible to K8sUpgradeStalled
+          # and EtcdPreUpgradeSnapshotMissing (both need in_flight=1) AND to
+          # upgrade_state.sh — exactly how a transient critical alert wedged the
+          # 1.34.9 preflight for 5 days (2026-06-17). With the retry-on-failure
+          # idempotency guard the next detection cycle deletes + re-spawns it, so
+          # this firing for 15m means it re-failed: investigate the root cause.
+          # NB: keyed on failed-pod count (bare >0, matching the file's other
+          # job-failure alerts) not the terminal Failed *condition* — so a phase
+          # whose 1st pod failed but whose retry succeeded keeps this firing until
+          # the Job's 7d TTL expires. Accepted: warning-only + alert-on-change
+          # (notifies once) + send_resolved, and upgrade_state.sh uses the precise
+          # Failed condition. A false-positive here beats missing a real wedge.
+          - alert: K8sUpgradeChainJobFailed
+            expr: kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*"} > 0
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: k8s-upgrade
+            annotations:
+              summary: "K8s upgrade chain Job {{ $labels.job_name }} has failed pods — pipeline likely wedged. kubectl -n k8s-upgrade get jobs ; kubectl -n k8s-upgrade describe job {{ $labels.job_name }}"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
@@ -3076,10 +3099,15 @@ serverFiles:
           - alert: WebterminalTtydUnreachable
             # In-cluster probe to ttyd Service. Bypasses Cloudflare/Traefik/
             # Authentik, so non-200 means ttyd itself is down on the DevVM.
+            # severity=warning (was critical until 2026-06-17): ttyd is a DevVM
+            # developer-convenience web terminal, not cluster infrastructure.
+            # As `critical` it tripped the k8s-upgrade preflight's halt-on-alert
+            # gate and — with the old no-retry idempotency — wedged the 1.34.9
+            # upgrade for 5 days. It is not upgrade-blocking; warning is correct.
             expr: webterminal_probe_ttyd_status{job="webterminal-probe"} != 200 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
             labels:
-              severity: critical
+              severity: warning
               subsystem: webterminal
             annotations:
               summary: "ttyd in-cluster probe got HTTP {{ $value }} (expected 200) — ttyd on the DevVM (10.0.10.10:7681) is down. `systemctl status ttyd` on devvm."

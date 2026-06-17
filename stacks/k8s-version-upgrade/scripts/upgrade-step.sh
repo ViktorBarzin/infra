@@ -222,9 +222,23 @@ spawn_next() {
   local job_name="k8s-upgrade-${NEXT_PHASE}-${TARGET_VERSION//./-}"
   [ -n "${NEXT_TARGET_NODE:-}" ] && job_name="${job_name}-${NEXT_TARGET_NODE}"
 
+  # Retry-on-failure idempotency: skip an existing next-Job ONLY if it is
+  # Active or Complete. A *Failed* Job (a phase that aborted on a transient
+  # gate) is deleted and re-created — otherwise its deterministic name plus
+  # ttlSecondsAfterFinished (7d) would block the whole chain from re-running
+  # that phase until the dead Job aged out. (Stuck-pipeline fix 2026-06-17:
+  # a transient critical alert wedged the 1.34.9 preflight for 5 days.)
   if $KUBECTL -n "$NS" get job "$job_name" >/dev/null 2>&1; then
-    echo "Next Job $job_name already exists; idempotent skip."
-    return 0
+    local job_failed
+    job_failed=$($KUBECTL -n "$NS" get job "$job_name" \
+      -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+    if [ "$job_failed" = "True" ]; then
+      echo "Next Job $job_name exists but FAILED — deleting and re-spawning."
+      $KUBECTL -n "$NS" delete job "$job_name" --wait=true >/dev/null 2>&1 || true
+    else
+      echo "Next Job $job_name already exists (active/complete); idempotent skip."
+      return 0
+    fi
   fi
 
   local scheduling_block=""

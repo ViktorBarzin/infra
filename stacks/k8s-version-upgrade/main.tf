@@ -451,9 +451,22 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 #    Idempotency: deterministic name reconciles via `apply`.
                 JOB_NAME="k8s-upgrade-preflight-$${TARGET//./-}"
 
+                # Retry-on-failure idempotency: skip only if an existing preflight
+                # Job is Active/Complete. A *Failed* preflight (aborted on a
+                # transient gate, e.g. a spurious critical alert) is deleted and
+                # re-spawned — otherwise its deterministic name + 7d TTL wedges
+                # the entire pipeline until it ages out. (Stuck-pipeline fix
+                # 2026-06-17: a transient critical alert wedged 1.34.9 for 5 days.)
                 if /usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" >/dev/null 2>&1; then
-                  slack "Preflight Job $JOB_NAME already exists (rerunning detection mid-flight?)"
-                  exit 0
+                  JOB_FAILED=$(/usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" \
+                    -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+                  if [ "$JOB_FAILED" = "True" ]; then
+                    slack "Preflight Job $JOB_NAME exists but FAILED — deleting and re-spawning"
+                    /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
+                  else
+                    slack "Preflight Job $JOB_NAME already exists (active/complete) — skipping"
+                    exit 0
+                  fi
                 fi
 
                 export JOB_NAME PHASE_NEXT=preflight TARGET_NODE_NEXT="" \

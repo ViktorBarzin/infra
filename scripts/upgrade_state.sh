@@ -445,6 +445,17 @@ collect_k8s() {
 
     K8S_NEXT="$(next_daily_noon_utc)"
 
+    # Failed chain-Job detection. A preflight/phase Job can abort BEFORE pushing
+    # k8s_upgrade_in_flight=1 (the preflight gates exit pre-metric), so in-flight
+    # / stalled stay clean while the pipeline is actually wedged: the
+    # deterministic-name + 7d-TTL Job blocks re-spawn. Surface it directly.
+    # (2026-06-17: a transient critical alert wedged the 1.34.9 preflight for 5
+    # days, invisible to every metric-based check.)
+    local failed_jobs
+    failed_jobs=$($KUBECTL -n k8s-upgrade get jobs \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Failed")].status}{"\n"}{end}' 2>/dev/null \
+        | awk -F'\t' '$2=="True" && $1 ~ /^k8s-upgrade-/{print $1}' | paste -sd' ' - || true)
+
     # Status logic.
     local stalled=0
     if [[ "${in_flight:-0}" == "1" && "$started_int" -gt 0 ]]; then
@@ -462,6 +473,10 @@ collect_k8s() {
     elif [[ "$last_run_age" -gt $((9*86400)) ]]; then
         K8S_STATUS_ICON="✗"; K8S_STATUS_TEXT="detection stale"
         K8S_NOTES="last detection >9d ago"
+        raise_exit 2
+    elif [[ -n "$failed_jobs" ]]; then
+        K8S_STATUS_ICON="✗"; K8S_STATUS_TEXT="chain failed"
+        K8S_NOTES="failed upgrade Job(s): $failed_jobs — pipeline wedged. Inspect: kubectl -n k8s-upgrade describe job <name> (the retry-on-failure guard re-spawns on the next detection cycle)"
         raise_exit 2
     elif [[ "${in_flight:-0}" == "1" ]]; then
         K8S_STATUS_ICON="…"; K8S_STATUS_TEXT="in-flight"
