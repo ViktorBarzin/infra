@@ -164,6 +164,7 @@ Single **standalone** instance shared by all consumers (Immich, Authentik, Nextc
 - woodpecker
 - claude_memory
 - tripit (Vault static role `pg-tripit`)
+- portal_assistant (Vault static role `pg-portal-assistant`; Portal voice gateway)
 
 **MySQL Rotation**:
 - speedtest

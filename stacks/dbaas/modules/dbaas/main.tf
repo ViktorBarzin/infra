@@ -1457,6 +1457,39 @@ resource "null_resource" "pg_instagram_poster_db" {
   }
 }
 
+# Create portal_assistant database + role for the Portal voice gateway
+# (FastAPI; per-client conversation/session store — portal-assistant#4/#7).
+# Role password is managed by the Vault Database Secrets Engine (static role
+# `pg-portal-assistant`, 7d rotation). The gateway is client-agnostic and keeps
+# a persistent per-device conversation; tables live in schema `portal_assistant`
+# (the app/alembic creates them on first migrate). We create the schema
+# explicitly + pin the role's search_path to it (same as nextcloud_todos) so the
+# gateway's unqualified tables land in `portal_assistant` rather than `public`.
+resource "null_resource" "pg_portal_assistant_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "portal_assistant"
+    username = "portal_assistant"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'portal_assistant'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE portal_assistant WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'portal_assistant'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE portal_assistant OWNER portal_assistant"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE portal_assistant TO portal_assistant"
+          psql -U postgres -c "ALTER ROLE portal_assistant SET search_path TO portal_assistant"
+          psql -U postgres -d portal_assistant -c "CREATE SCHEMA IF NOT EXISTS portal_assistant AUTHORIZATION portal_assistant"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {

@@ -673,6 +673,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-postiz", "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
+    "pg-portal-assistant",
     "pg-technitium",
   ]
 
@@ -880,6 +881,14 @@ resource "vault_database_secret_backend_static_role" "pg_tripit" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-tripit"
   username        = "tripit"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_portal_assistant" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-portal-assistant"
+  username        = "portal_assistant"
   rotation_period = 604800
 }
 
