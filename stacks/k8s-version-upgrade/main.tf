@@ -4,11 +4,12 @@
 # Job's pod runs on a node that is NOT its drain target — eliminates the
 # self-preemption bug that killed the agent-based v1 (2026-05-11 incident).
 #
-# Chain (Job 0 → Job 6):
-#   preflight  (pinned: k8s-node1)
-#   master     (pinned: k8s-node1; drains k8s-master)
-#   worker     (pinned: k8s-node1; drains k8s-node4 → 3 → 2)
-#   worker     (pinned: k8s-master + control-plane toleration; drains k8s-node1 last)
+# Chain (dynamic length — one worker Job per worker node, enumerated live):
+#   preflight  (pinned: first worker)
+#   master     (pinned: first worker; drains k8s-master)
+#   worker     (pinned: k8s-master + control-plane toleration; drains each worker)
+#              ↳ repeats for EVERY worker still off-target (kubectl-derived, so
+#                new nodes like node5/node6 are included automatically)
 #   postflight (no pinning)
 #
 # Each phase Job's container runs scripts/upgrade-step.sh which:

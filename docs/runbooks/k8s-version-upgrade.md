@@ -10,7 +10,7 @@ drain target** — so no pod in the chain can preempt itself.
 The chain (Sun 12:00 UTC weekly):
 
 ```
-detection CronJob → preflight Job → master Job → worker × 4 Jobs → postflight Job
+detection CronJob → preflight Job → master Job → one worker Job per worker (enumerated live) → postflight Job
 ```
 
 This is **independent** of the OS-side `unattended-upgrades + kured`
@@ -76,14 +76,16 @@ Job 6 — postflight       (no pinning)
   └── Slack: ✅ K8s upgrade complete
 ```
 
-**Pin choices summarised:**
-- k8s-node1 hosts every Job that drains master or another worker. k8s-node1
-  itself is upgraded **last**.
-- k8s-master hosts Job 5 (which drains k8s-node1). Job 5's spec includes a
-  toleration for `node-role.kubernetes.io/control-plane:NoSchedule`.
-- If anyone reorders the worker sequence, the pin for Job 5 needs to track
-  whatever worker is upgraded last. The mapping is in `scripts/upgrade-step.sh`
-  → the `case "${PHASE}:${TARGET_NODE:-}"` block.
+**Pin choices summarised** (dynamic since 2026-06-17 — no hardcoded node list):
+- The **master-drain Job** runs on the first worker (the "runner"); since it
+  drains the control-plane node, it must not run there.
+- **Every worker-drain Job** runs on **k8s-master** (already upgraded by then),
+  with a `node-role.kubernetes.io/control-plane:NoSchedule` toleration — so a
+  Job never runs on the node it drains (self-preemption invariant).
+- The worker set + order come from `kubectl get nodes` at runtime
+  (`worker_nodes` / `next_pending_worker` in `scripts/upgrade-step.sh`), so
+  **adding a node needs no change** — the chain upgrades every worker still
+  off-target, then runs postflight. SSH uses node InternalIPs (no DNS needed).
 
 ## Components
 

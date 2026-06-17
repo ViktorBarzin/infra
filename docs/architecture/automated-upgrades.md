@@ -4,7 +4,7 @@ This doc covers three independent automation paths:
 
 1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
 2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
-3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — weekly detection CronJob → chain of phase Jobs (preflight → master → worker × 4 → postflight). See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
+3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — daily detection CronJob → chain of phase Jobs (preflight → master → one worker Job per worker, enumerated live → postflight). See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
 
 ## Overview
 
@@ -262,13 +262,14 @@ envsubst on /template/job-template.yaml | kubectl apply -f -
   │ spawns Job 0 = k8s-upgrade-preflight-<target_version>
   ▼
 
-Job 0 — preflight       (pinned: k8s-node1)
-Job 1 — master upgrade  (pinned: k8s-node1)        drains k8s-master
-Job 2 — worker          (pinned: k8s-node1)        drains k8s-node4
-Job 3 — worker          (pinned: k8s-node1)        drains k8s-node3
-Job 4 — worker          (pinned: k8s-node1)        drains k8s-node2
-Job 5 — worker          (pinned: k8s-master)       drains k8s-node1  ← control-plane toleration
-Job 6 — postflight      (no pinning)
+Job 0 — preflight       (pinned: first worker)
+Job 1 — master upgrade  (pinned: first worker)     drains k8s-master
+Job 2..N — worker       (pinned: k8s-master)       drains each worker still off-target
+                                                   ← control-plane toleration; one Job
+                                                     per worker, enumerated live from
+                                                     `kubectl get nodes` (covers node5/6
+                                                     + any future node automatically)
+Job N+1 — postflight    (no pinning)
 ```
 
 Each Job runs `scripts/upgrade-step.sh`, which dispatches on `$PHASE` and ends
@@ -344,7 +345,7 @@ The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply`
 
 - **Mandatory etcd snapshot before every run** (even patch). Recovery point if master breaks.
 - **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Three gate alerts catch upgrade-specific half-states (version skew, missing snapshot, stalled chain).
-- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target. k8s-node1 hosts every Job except the one that drains it (which runs on k8s-master with a control-plane toleration).
+- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target: the master-drain Job runs on the first worker; every worker-drain Job runs on k8s-master (already upgraded, control-plane toleration). The worker set is enumerated live from `kubectl get nodes`, so new nodes are covered with no script change; SSH targets are node InternalIPs (no DNS dependency).
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
