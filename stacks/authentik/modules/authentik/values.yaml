@@ -47,13 +47,19 @@ server:
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
-    # SMTP for signup verification + recovery email (tripit ADR-0020): send via
-    # the in-cluster mailserver as noreply@viktorbarzin.me (SASL, 587/STARTTLS);
-    # password from the authentik-email ExternalSecret (Vault
-    # secret/authentik.smtp_password). Set on server AND worker — the worker
-    # runs the email tasks, the server validates the Email stage config.
+    # SMTP for signup verification + recovery email (tripit ADR-0020): send as
+    # noreply@viktorbarzin.me (SASL, 587/STARTTLS); password from the
+    # authentik-email ExternalSecret (Vault secret/authentik.smtp_password). Set
+    # on server AND worker — the worker runs the email tasks, the server
+    # validates the Email stage config.
+    # HOST is the PUBLIC name mail.viktorbarzin.me, NOT the in-cluster svc
+    # (mailserver.mailserver.svc): the mailserver serves the *.viktorbarzin.me
+    # wildcard cert, which does not cover the svc DNS name, and Authentik
+    # verifies the STARTTLS hostname strictly (unlike most of our apps' SMTP
+    # clients) — the svc name fails CERTIFICATE_VERIFY_FAILED. mail.viktorbarzin.me
+    # resolves in-cluster (10.0.20.1) and matches the cert.
     - name: AUTHENTIK_EMAIL__HOST
-      value: "mailserver.mailserver.svc.cluster.local"
+      value: "mail.viktorbarzin.me"
     - name: AUTHENTIK_EMAIL__PORT
       value: "587"
     - name: AUTHENTIK_EMAIL__USE_TLS
@@ -141,11 +147,12 @@ worker:
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
-    # SMTP (same as server.env) — the worker runs Authentik's email tasks, so it
-    # needs the transport too (tripit ADR-0020). noreply@viktorbarzin.me via the
-    # in-cluster mailserver; password from the authentik-email ExternalSecret.
+    # SMTP (same as server.env, incl. the mail.viktorbarzin.me-not-svc-name cert
+    # reason) — the worker runs Authentik's email tasks, so it needs the
+    # transport too (tripit ADR-0020). noreply@viktorbarzin.me; password from the
+    # authentik-email ExternalSecret.
     - name: AUTHENTIK_EMAIL__HOST
-      value: "mailserver.mailserver.svc.cluster.local"
+      value: "mail.viktorbarzin.me"
     - name: AUTHENTIK_EMAIL__PORT
       value: "587"
     - name: AUTHENTIK_EMAIL__USE_TLS
