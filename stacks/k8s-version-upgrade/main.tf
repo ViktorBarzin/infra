@@ -534,3 +534,8 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# CI retrigger 2026-06-17 — apply D1 retry-on-failure. The two-commit landing
+# of fb638cd8 left the changed-stack detection diffing against HEAD~1 (commit 2,
+# monitoring-only), so this stack's changes (commit 1) were never applied; a
+# fresh single commit guarantees the diff includes stacks/k8s-version-upgrade.
