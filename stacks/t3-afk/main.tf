@@ -151,7 +151,11 @@ resource "kubernetes_deployment" "t3_afk" {
   }
 
   spec {
-    replicas = 1
+    # PARKED 2026-06-15: scaled to 0 — no current plans to run the AFK executor.
+    # Everything else is preserved (the SSD PVC with state.sqlite + repo
+    # checkouts, the Service, Ingress, and ExternalSecret), so reviving the
+    # in-cluster T3 cockpit is just flipping this back to 1 and applying.
+    replicas = 0
     # Single-writer state.sqlite — never run two pods against the same base dir.
     strategy {
       type = "Recreate"
