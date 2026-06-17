@@ -10,7 +10,7 @@
 #              keel.sh/policy. Metrics on container :9300/metrics.
 #   2. OS    — unattended-upgrades patches in-release per node; kured
 #              reboots within a daily 02:00-06:00 London window.
-#   3. K8s   — k8s-version-check CronJob (Sun 12:00 UTC) detects new
+#   3. K8s   — k8s-version-check CronJob (23:00 UTC nightly) detects new
 #              kubeadm patch/minor releases; Job-chain drains+upgrades
 #              node-by-node. Pushgateway holds k8s_upgrade_* gauges.
 #
@@ -443,7 +443,7 @@ collect_k8s() {
         fi
     fi
 
-    K8S_NEXT="$(next_daily_noon_utc)"
+    K8S_NEXT="$(next_scheduled_run_utc)"
 
     # Failed chain-Job detection. A preflight/phase Job can abort BEFORE pushing
     # k8s_upgrade_in_flight=1 (the preflight gates exit pre-metric), so in-flight
@@ -496,15 +496,15 @@ collect_k8s() {
     fi
 }
 
-# Next daily 12:00 UTC — pure bash date math, no croniter. Schedule was
-# weekly Sunday until 2026-05-18; now `0 12 * * *` in the
-# k8s-version-upgrade stack. If we're still before today's 12:00 UTC,
-# the next run is today; otherwise it's tomorrow.
-next_daily_noon_utc() {
+# Next daily 23:00 UTC — pure bash date math, no croniter. Schedule is
+# `0 23 * * *` in the k8s-version-upgrade stack (overnight; moved from 12:00 UTC
+# on 2026-06-17). If we're still before today's 23:00 UTC the next run is today;
+# otherwise tomorrow.
+next_scheduled_run_utc() {
     local hr days_ahead
     hr=$(date -u +%H)
-    if [[ "$hr" -lt 12 ]]; then days_ahead=0; else days_ahead=1; fi
-    date -u -d "+$days_ahead days" +"%a %Y-%m-%d 12:00 UTC"
+    if [[ "$hr" -lt 23 ]]; then days_ahead=0; else days_ahead=1; fi
+    date -u -d "+$days_ahead days" +"%a %Y-%m-%d 23:00 UTC"
 }
 
 # --- Renderers ---

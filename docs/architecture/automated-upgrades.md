@@ -252,7 +252,7 @@ kubeadm/kubelet/kubectl bumps (patch + minor) on all 5 K8s VMs.
 ### Architecture
 
 ```
-k8s-version-check CronJob   (Sun 12:00 UTC, k8s-upgrade ns)
+k8s-version-check CronJob   (23:00 UTC nightly, k8s-upgrade ns)
   │ probe apt-cache madison kubeadm (master) → latest available patch
   │ probe HEAD https://pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release → next minor?
   │ push k8s_upgrade_available metric to Pushgateway
