@@ -117,7 +117,34 @@ resource "authentik_flow_stage_binding" "tripit_enroll_20_write" {
   target = authentik_flow.tripit_enrollment.uuid
   stage  = authentik_stage_user_write.tripit_enroll_write.id
   order  = 20
+  # Run the username-from-email policy (below) at stage-execution time, when
+  # prompt_data is populated — not at plan time. Mirrors guest.tf's pre-stage
+  # context-mutation pattern.
+  evaluate_on_plan     = false
+  re_evaluate_policies = true
 }
+
+# Passwordless, email-only signup collects no username, but user_write aborts on
+# an empty username ("Aborting write to empty username"). Derive the username
+# from the entered email just before user_write runs. Mutating flow_plan.context
+# is the canonical mutable path — a plain request.context mutation would not
+# propagate to the stage (see guest.tf's pending_user note).
+resource "authentik_policy_expression" "tripit_username_from_email" {
+  name = "tripit-enrollment-username-from-email"
+  expression = trimspace(<<-EOT
+    pd = request.context["flow_plan"].context.setdefault("prompt_data", {})
+    pd["username"] = pd.get("email", "")
+    return True
+  EOT
+  )
+}
+
+resource "authentik_policy_binding" "tripit_username_before_write" {
+  target = authentik_flow_stage_binding.tripit_enroll_20_write.id
+  policy = authentik_policy_expression.tripit_username_from_email.id
+  order  = 0
+}
+
 # order 30 (email-verification binding) is in tripit-email-blueprint.tf — see note above
 resource "authentik_flow_stage_binding" "tripit_enroll_40_passkey" {
   target = authentik_flow.tripit_enrollment.uuid
