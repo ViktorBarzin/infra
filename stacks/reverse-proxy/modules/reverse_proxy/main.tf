@@ -238,8 +238,10 @@ resource "kubernetes_manifest" "ha_sofia_rate_limit" {
     }
     spec = {
       rateLimit = {
-        average = 100
-        burst   = 200
+        # Bumped 100/200 -> 200/500 (2026-06-17): a cold HA-frontend load from a
+        # new, empty-cache client bursts dozens of JS/icon chunks and 429'd.
+        average = 200
+        burst   = 500
       }
     }
   }
@@ -342,6 +344,27 @@ module "music-assistant" {
   }
 }
 
+# Rate limit for ha-london — cold HA-frontend loads from a new, empty-cache
+# client (e.g. the repurposed Portal) burst dozens of JS/icon chunks at once;
+# the global 10/50 default 429'd them, blanking the dashboards. Generous own
+# limit, mirroring ha-sofia. (2026-06-17)
+resource "kubernetes_manifest" "ha_london_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "ha-london-rate-limit"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      rateLimit = {
+        average = 200
+        burst   = 500
+      }
+    }
+  }
+}
+
 # https://ha-london.viktorbarzin.me/
 module "ha-london" {
   source          = "./factory"
@@ -350,8 +373,17 @@ module "ha-london" {
   external_name   = "ha-london.viktorbarzin.lan"
   port            = 8123
   tls_secret_name = var.tls_secret_name
-  depends_on      = [kubernetes_namespace.reverse-proxy]
-  protected       = false
+  # depends_on on the rate-limit manifest avoids a dangling-reference window
+  # that would 404 ha-london traffic (see ha-sofia / memory 768).
+  depends_on = [
+    kubernetes_namespace.reverse-proxy,
+    kubernetes_manifest.ha_london_rate_limit,
+  ]
+  protected              = false
+  skip_global_rate_limit = true
+  extra_middlewares = [
+    "reverse-proxy-ha-london-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Home Assistant London"
