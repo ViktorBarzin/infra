@@ -47,6 +47,26 @@ server:
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
+    # SMTP for signup verification + recovery email (tripit ADR-0020): send via
+    # the in-cluster mailserver as noreply@viktorbarzin.me (SASL, 587/STARTTLS);
+    # password from the authentik-email ExternalSecret (Vault
+    # secret/authentik.smtp_password). Set on server AND worker — the worker
+    # runs the email tasks, the server validates the Email stage config.
+    - name: AUTHENTIK_EMAIL__HOST
+      value: "mailserver.mailserver.svc.cluster.local"
+    - name: AUTHENTIK_EMAIL__PORT
+      value: "587"
+    - name: AUTHENTIK_EMAIL__USE_TLS
+      value: "true"
+    - name: AUTHENTIK_EMAIL__USERNAME
+      value: "noreply@viktorbarzin.me"
+    - name: AUTHENTIK_EMAIL__FROM
+      value: "TripIt <noreply@viktorbarzin.me>"
+    - name: AUTHENTIK_EMAIL__PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: authentik-email
+          key: AUTHENTIK_EMAIL__PASSWORD
     # Do NOT set AUTHENTIK_POSTGRESQL__CONN_MAX_AGE here. With PgBouncer in
     # session mode every persistent Django connection pins a server connection
     # 1:1, so the 3x(20+5) pool saturated during the 2026-06-10 rolling
@@ -121,6 +141,24 @@ worker:
       value: "1800"
     - name: AUTHENTIK_CACHE__TIMEOUT_POLICIES
       value: "900"
+    # SMTP (same as server.env) — the worker runs Authentik's email tasks, so it
+    # needs the transport too (tripit ADR-0020). noreply@viktorbarzin.me via the
+    # in-cluster mailserver; password from the authentik-email ExternalSecret.
+    - name: AUTHENTIK_EMAIL__HOST
+      value: "mailserver.mailserver.svc.cluster.local"
+    - name: AUTHENTIK_EMAIL__PORT
+      value: "587"
+    - name: AUTHENTIK_EMAIL__USE_TLS
+      value: "true"
+    - name: AUTHENTIK_EMAIL__USERNAME
+      value: "noreply@viktorbarzin.me"
+    - name: AUTHENTIK_EMAIL__FROM
+      value: "TripIt <noreply@viktorbarzin.me>"
+    - name: AUTHENTIK_EMAIL__PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: authentik-email
+          key: AUTHENTIK_EMAIL__PASSWORD
   strategy:
     type: RollingUpdate
     rollingUpdate:
