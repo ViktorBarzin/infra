@@ -82,7 +82,10 @@ sudo apt-get install -y "kubeadm=$RELEASE-*"
 
 if [[ "$ROLE" == "master" ]]; then
     echo "==> Master path: kubeadm upgrade plan + apply"
-    sudo kubeadm upgrade plan
+    # `plan` runs the same CoreDNS preflight as `apply`, so once master's kubeadm
+    # is on the new version it fails here too (under set -e) — ignore the same
+    # two CoreDNS checks. See the apply block below for the full rationale.
+    sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins
     # The first apply may fail with "static Pod hash for component <X> did
     # not change after 5m0s" — kubeadm's 5min wait for the kubelet to reload
     # a static pod is too tight on our cluster (apiserver-to-kubelet status
