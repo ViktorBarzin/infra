@@ -325,9 +325,13 @@ phase_preflight() {
     exit 1
   fi
 
-  # 4. kubeadm upgrade plan matches target
+  # 4. kubeadm upgrade plan matches target. `plan` runs the same CoreDNS
+  # preflight as `apply`; once master's kubeadm is on the new version it errors
+  # on a Keel-drifted CoreDNS (start version unsupported) and, under pipefail,
+  # aborts this whole check. Ignore the two CoreDNS checks here too so plan
+  # still emits its "kubeadm upgrade apply vX.Y.Z" line. (See update_k8s.sh.)
   local plan_target
-  plan_target=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'sudo kubeadm upgrade plan' \
+  plan_target=$(ssh "${SSH_OPTS[@]}" "wizard@k8s-master$NODE_DOMAIN" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
     | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
   if [ "$plan_target" != "$TARGET_VERSION" ]; then
