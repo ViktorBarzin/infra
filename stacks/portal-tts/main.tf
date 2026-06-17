@@ -43,7 +43,9 @@ variable "edge_tts_image" {
   # bundles ffmpeg so response_format=wav (PCM16) works. Floating tag (no semver
   # discipline upstream) — the namespace is Keel-enrolled so digest bumps roll in
   # automatically; TF owns only the tag string.
-  default     = "travisvn/openai-edge-tts:latest-ffmpeg"
+  # docker.io/ prefix is REQUIRED: Kyverno require-trusted-registries blanket-
+  # trusts docker.io/* but a bare `travisvn/...` is unenumerated → blocked.
+  default     = "docker.io/travisvn/openai-edge-tts:latest-ffmpeg"
   description = "openai-edge-tts image (ffmpeg variant — needed for wav output)."
 }
 
