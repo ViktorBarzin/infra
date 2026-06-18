@@ -2,9 +2,9 @@
 
 ## Overview
 
-Kubernetes component versions (`kubeadm`/`kubelet`/`kubectl`) on the 5 K8s
-VMs are upgraded automatically by a weekly detection CronJob that seeds a
-chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
+Kubernetes component versions (`kubeadm`/`kubelet`/`kubectl`) on the 7 K8s
+nodes (k8s-master + k8s-node1..6) are upgraded automatically by a nightly
+detection CronJob that seeds a chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
 drain target** — so no pod in the chain can preempt itself.
 
 The chain (23:00 UTC nightly):
@@ -39,11 +39,11 @@ Job 0 — preflight       (pinned: k8s-node1)
   ├── All nodes Ready + no Mem/Disk pressure
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
-  ├── kubeadm upgrade plan matches target
+  ├── kubeadm upgrade plan matches target (skipped when master already at target — partial-resume)
   ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
   ├── Trigger backup-etcd Job, wait, verify snapshot byte count
   ├── SSH master: containerd skew fix (if master < workers)
-  ├── SSH all 5 nodes: apt repo URL rewrite (only kind=minor)
+  ├── SSH all 7 nodes: apt repo URL rewrite (only kind=minor)
   └── spawn_next → k8s-upgrade-master-<target_version>
   ▼
 
@@ -355,6 +355,13 @@ kill %1
 4. ESO refreshes within 15 min — or force: `kubectl -n k8s-upgrade annotate externalsecret k8s-upgrade-creds force-sync=$(date +%s) --overwrite`
 
 ## Past Incidents
+
+### 2026-06-18 — Preflight gate-4 wedged a partial (master-ahead) chain
+- A prior 1.34.9 run upgraded k8s-master + k8s-node1, then stopped; node2-6 stayed on 1.34.8.
+- Every nightly preflight then aborted at the **kubeadm-plan-target gate**: `kubeadm upgrade plan` runs on k8s-master, already on 1.34.9, so it emitted no `kubeadm upgrade apply vX.Y.Z` line → empty `plan_target` → `'' != '1.34.9'` → `exit 1`. Deterministic, not transient (gates 1-3 all green; no critical alert was firing). The failed preflight self-cleaned each night (2026-06-17 retry-on-failure) but re-failed identically.
+- The two `in_flight`-based alerts stayed blind (preflight aborts pre-metric); `K8sUpgradeChainJobFailed` (warning) surfaced it.
+- **Collateral**: the earlier master bump had also dropped apiserver `--authentication-config` (SSO broke); restored separately via the `rbac` stack's `apiserver_oidc_config`.
+- **Mitigation**: `phase_preflight` now **skips the kubeadm-plan-target gate when k8s-master is already on TARGET_VERSION** (mirrors the at-target self-skip already in `phase_master`/`phase_worker`). Remaining workers are validated by their own phases; the detector's apt-cache probe already confirmed the target is installable.
 
 ### 2026-05-11 — Self-preemption (agent → Job-chain rewrite)
 - The v1 agent ran inside the `claude-agent-service` Deployment (replicas=1, no nodeSelector) and was scheduled to k8s-node4.
