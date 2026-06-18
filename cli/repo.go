@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strings"
 )
 
@@ -60,4 +63,39 @@ func gitRemotes(dir string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+// isGitCryptRepo reports whether the repo at repoRoot uses git-crypt.
+func isGitCryptRepo(repoRoot string) bool {
+	b, err := os.ReadFile(filepath.Join(repoRoot, ".gitattributes"))
+	if err != nil {
+		return false
+	}
+	return hasGitCryptAttr(string(b))
+}
+
+// cryptFlagsFor returns the git-crypt filter flags when repoRoot is encrypted,
+// else nil. These are injected per-command and never persisted.
+func cryptFlagsFor(repoRoot string) []string {
+	if isGitCryptRepo(repoRoot) {
+		return gitCryptFlags()
+	}
+	return nil
+}
+
+// gitStream runs `git [cryptFlags] -C repoRoot <args>` with live output.
+func gitStream(repoRoot string, cryptFlags []string, args ...string) error {
+	full := append(append([]string{}, cryptFlags...), append([]string{"-C", repoRoot}, args...)...)
+	return runStreamingIn("", "git", full...)
+}
+
+// currentUser returns the OS username for branch naming (<user>/<topic>).
+func currentUser() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return "user"
 }
