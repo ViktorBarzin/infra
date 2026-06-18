@@ -12,6 +12,7 @@ var version = "dev"
 func buildRegistry() []Command {
 	var reg []Command
 	reg = append(reg, claimCommands()...)
+	reg = append(reg, tfCommands()...)
 	return reg
 }
 
