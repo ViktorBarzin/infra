@@ -142,13 +142,16 @@ resource "kubernetes_deployment" "paperless_ai" {
             name           = "rag"
           }
 
-          # NOTE on configuration model: paperless-ai persists its RUNTIME
-          # config (Paperless URL/token, AI provider, processing flags) plus
-          # the app-admin account to /app/data/.env + SQLite on the PVC,
-          # written once via its setup flow (POST /setup). The env vars below
-          # are consumed by the Node layer and serve as setup-form pre-fill;
-          # the authoritative runtime config is the PVC's .env. App-admin
-          # creds + the Paperless token live in Vault secret/paperless-ai.
+          # Configuration model: paperless-ai persists ALL behavioural config
+          # (Paperless URL, AI provider, scan interval, tagging flags) + the
+          # app-admin account to /app/data/.env + SQLite on the PVC, written
+          # once via its setup flow. The PVC .env is the SINGLE source of truth
+          # for behaviour — we deliberately do NOT set those as container env,
+          # because the image's dotenv loader does NOT override process.env, so
+          # a container env silently shadows the .env (PROCESS_PREDEFINED_DOCUMENTS
+          # set here once forced the scan to no-op). Only infrastructural env +
+          # the Vault-sourced secrets (which mirror the .env copies) are set.
+          # App-admin creds + Paperless token live in Vault secret/paperless-ai.
           env {
             name  = "PUID"
             value = "1000"
@@ -182,15 +185,7 @@ resource "kubernetes_deployment" "paperless_ai" {
             value = "/app/data/st-cache"
           }
 
-          # --- Paperless-ngx connection (internal service, no edge hop) ---
-          env {
-            name  = "PAPERLESS_API_URL"
-            value = "http://paperless-ngx.paperless-ngx.svc.cluster.local/api"
-          }
-          env {
-            name  = "PAPERLESS_USERNAME"
-            value = "paperless-ai"
-          }
+          # Vault-sourced secrets (mirror the .env copies the setup flow wrote).
           env {
             name = "PAPERLESS_API_TOKEN"
             value_from {
@@ -201,19 +196,6 @@ resource "kubernetes_deployment" "paperless_ai" {
             }
           }
 
-          # --- LLM backend: in-cluster llama-swap (OpenAI-compatible) ---
-          env {
-            name  = "AI_PROVIDER"
-            value = "custom"
-          }
-          env {
-            name  = "CUSTOM_BASE_URL"
-            value = "http://llama-swap.llama-cpp.svc.cluster.local:8080/v1"
-          }
-          env {
-            name  = "CUSTOM_MODEL"
-            value = "qwen3-8b"
-          }
           env {
             name = "CUSTOM_API_KEY"
             value_from {
@@ -233,24 +215,6 @@ resource "kubernetes_deployment" "paperless_ai" {
                 key  = "api_key"
               }
             }
-          }
-
-          # --- Processing: auto-analyze + tag every document ---
-          env {
-            name  = "SCAN_INTERVAL"
-            value = "*/30 * * * *"
-          }
-          env {
-            name  = "PROCESS_PREDEFINED_DOCUMENTS"
-            value = "yes"
-          }
-          env {
-            name  = "ADD_AI_PROCESSED_TAG"
-            value = "yes"
-          }
-          env {
-            name  = "AI_PROCESSED_TAG_NAME"
-            value = "ai-processed"
           }
 
           volume_mount {
