@@ -150,7 +150,11 @@ resource "kubernetes_deployment" "claude-memory" {
     }
   }
   spec {
-    replicas = 1
+    # 2 replicas (stateless FastAPI over shared CNPG PG) so node drains, Keel
+    # bumps, Reloader restarts (7d DB rotation), CI deploys, and descheduler
+    # evictions become zero-downtime rolling events instead of hard outages —
+    # the latter were surfacing as recurring memory-MCP "disconnects".
+    replicas = 2
     selector {
       match_labels = {
         app = "claude-memory"
@@ -163,6 +167,10 @@ resource "kubernetes_deployment" "claude-memory" {
         }
         annotations = {
           "dependency.kyverno.io/wait-for" = "postgresql.dbaas:5432"
+          # Skip descheduler eviction — it bounced this pod every ~5min
+          # (LowNodeUtilization). The PDB below keeps drains/Keel/CI safe at
+          # 2 replicas; this just stops the needless churn of the MCP backend.
+          "descheduler.alpha.kubernetes.io/evict" = "false"
         }
       }
       spec {
@@ -261,8 +269,24 @@ resource "kubernetes_deployment" "claude-memory" {
   }
 }
 
-# PDB removed — single replica with minAvailable=1 blocks all node drains.
-# claude-memory is non-critical and recovers quickly after rescheduling.
+# PDB restored alongside replicas=2 (2026-06-18). The old reason for removing it
+# — a 1-replica minAvailable=1 PDB deadlocks node drains — no longer applies at
+# 2 replicas: minAvailable=1 lets one pod be drained/evicted while the other
+# serves, so voluntary disruptions never take the MCP backend to zero.
+resource "kubernetes_pod_disruption_budget_v1" "claude-memory" {
+  metadata {
+    name      = "claude-memory"
+    namespace = kubernetes_namespace.claude-memory.metadata[0].name
+  }
+  spec {
+    min_available = "1"
+    selector {
+      match_labels = {
+        app = "claude-memory"
+      }
+    }
+  }
+}
 
 resource "kubernetes_service" "claude-memory" {
   metadata {
