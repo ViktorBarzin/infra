@@ -98,6 +98,15 @@ locals {
     # keep serving), so the env landed AFTER that image rolled out.
     FARE_PROVIDER = "playwright"
     FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Live lodging-price scrape (tripit ADR-0025, issue #78): the lodging twin of
+    # FARE_PROVIDER — Playwright driving the SHARED chrome-service browser over CDP
+    # to read Booking.com + Airbnb nightly rates. Same rate-limit/cache/back-off +
+    # degrade-to-manual contract; reuses the chrome-service NetworkPolicy admission
+    # on the namespace below (no per-pod browser). LodgingMode `playwright` only
+    # exists in images >= the #78 slice (live in 03973b5), so this env lands after
+    # that rollout — same image-first hold-order as FARE/CALENDAR/RESEARCH above.
+    LODGING_PROVIDER = "playwright"
+    LODGING_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
     # Calendar-conflict column (tripit issue #19): read the owner's Nextcloud
     # calendar over CalDAV to flag date clashes on a planning Option. Base +
     # user are non-secret; the app-password arrives via tripit-secrets. Same
