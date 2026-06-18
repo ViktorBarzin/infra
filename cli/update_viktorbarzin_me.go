@@ -103,6 +103,6 @@ func notifyForIPChange(oldIP, newIP net.IP) error {
 	if err != nil {
 		return errors.Wrapf(err, "Error reading response")
 	}
-	glog.Infof("Response:", string(responseBody))
+	glog.Infof("Response: %s", string(responseBody))
 	return nil
 }
