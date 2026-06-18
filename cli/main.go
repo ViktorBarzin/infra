@@ -26,8 +26,16 @@ var (
 )
 
 func main() {
-	err := run()
-	if err != nil {
+	// homelab verb surface (work/tf/claim/...) is tried first; if the args are
+	// not a homelab verb, fall through to the legacy webhook -use-case path.
+	if handled, err := dispatchTop(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "homelab: "+err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+	if err := run(); err != nil {
 		glog.Errorf("run failed: %s", err.Error())
 		os.Exit(255)
 	}
