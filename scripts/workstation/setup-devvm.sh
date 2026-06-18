@@ -175,6 +175,18 @@ if [[ ! -x /usr/local/bin/t3-dispatch ]]; then
     log "WARN: go absent -> cannot build t3-dispatch; install golang-go or deploy the binary"
   fi
 fi
+# 9b2) homelab: unified infra-ops CLI (agent-facing verbs + the in-cluster
+#      infra-cli webhook image). Rebuilt from cli/ each run so it tracks the
+#      repo; version stamped from cli/VERSION. See cli/README.md + docs/adr/0004-0006.
+if command -v go >/dev/null; then
+  _hl_src="$SCRIPTS/../cli"
+  _hl_ver="$(cat "$_hl_src/VERSION" 2>/dev/null || echo dev)"
+  log "building homelab CLI ($_hl_ver)"
+  ( cd "$_hl_src" && go build -ldflags "-X main.version=$_hl_ver" -o /usr/local/bin/homelab . ) \
+    || log "WARN: homelab CLI build failed"
+else
+  log "WARN: go absent -> cannot build homelab CLI"
+fi
 # 9c) sudoers: t3-dispatch may run ONLY t3-mint as root. A malformed file in
 #     /etc/sudoers.d breaks ALL sudo, so validate with visudo when available.
 if ! command -v visudo >/dev/null || visudo -cf "$SCRIPTS/sudoers-t3-autopair" >/dev/null; then
