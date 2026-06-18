@@ -32,6 +32,30 @@ homelab version
 | `work land [--verify-cmd "…"] [--no-verify]` | write | merge master in → verify → push `HEAD:master` (non-ff retry; PR fallback) |
 | `work clean <topic>` | write | remove a task's worktree + branch (run from the main checkout) |
 
+### v0.2 verbs — Kubernetes
+
+Built on an **app→namespace→pod resolver**: `<app>` defaults to the namespace
+(most namespaces hold one app); the target defaults to `deploy/<app>` and lets
+kubectl resolve the pod. Override with `-n`/`--pod`/`-c`/`-l`/`--tty`. Uses the
+ambient kubeconfig.
+
+| Command | Tier | What it does |
+|---|---|---|
+| `k8s status [ns]` | read | pods (wide) + recent non-Normal events (`-A` if no ns) |
+| `k8s get <ns> <resource> […]` | read | `kubectl -n <ns> get …` passthrough |
+| `k8s logs <app>` | read | logs for `deploy/<app>` (`--tail` default 200; `-c`/`--previous`/`--since`/`-l`) |
+| `k8s describe <app> [resource]` | read | describe the deployment (or an explicit resource) |
+| `k8s debug <app>` | read | one-shot triage: pods + workloads + describe + recent logs + events |
+| `k8s pf <app> <local:remote> [target]` | read | port-forward to `svc/<app>` (or an explicit target) |
+| `k8s rollout-status <app>` | read | `rollout status deploy/<app>` |
+| `k8s db <app> [--mysql] [--db N] -- "<SQL>"` | write | exec into the dbaas DB (PG `pg-cluster-rw`, or MySQL with env-password wrapper) |
+| `k8s exec <app> [--tty] -- <cmd>` | write | exec in the app's pod |
+| `k8s restart <app>` | write | `rollout restart deploy/<app>` then wait for status |
+| `k8s rm-pod <name> -n <ns> [--job] [--force]` | write | delete a stuck **pod/job only** |
+
+Config-mutation verbs (`apply`/`edit`/`patch`/`scale`/`create`) are intentionally
+**not** exposed — they stay raw `kubectl`, per the Terraform-only policy.
+
 `tf` resolves the stack dir by walking up from cwd to the infra root and
 delegates to `scripts/tg` (which owns state decrypt/encrypt, the Vault lock, and
 the ingress auth-comment check). git-crypt filter flags are auto-injected on git
@@ -65,4 +89,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0006` for the architecture decisions.
+See `infra/docs/adr/0004`–`0007` for the architecture decisions.
