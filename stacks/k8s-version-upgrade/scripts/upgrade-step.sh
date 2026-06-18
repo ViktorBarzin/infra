@@ -356,13 +356,30 @@ phase_preflight() {
   # on a Keel-drifted CoreDNS (start version unsupported) and, under pipefail,
   # aborts this whole check. Ignore the two CoreDNS checks here too so plan
   # still emits its "kubeadm upgrade apply vX.Y.Z" line. (See update_k8s.sh.)
-  local plan_target
-  plan_target=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
-    | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
-    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
-  if [ "$plan_target" != "$TARGET_VERSION" ]; then
-    slack "ABORT preflight — kubeadm plan target $plan_target ≠ requested $TARGET_VERSION"
-    exit 1
+  #
+  # SKIP this gate when k8s-master is ALREADY on TARGET_VERSION — a partial-chain
+  # resume (master + earlier workers done, later workers still pending). `kubeadm
+  # upgrade plan` run on an at-target master prints NO "kubeadm upgrade apply
+  # vX.Y.Z" line, so the parse below yields an EMPTY plan_target and the `!=`
+  # check aborts every run — even though the chain just needs to finish the
+  # remaining workers (phase_master self-skips an at-target master the same way,
+  # below). Confirmed root cause of the 1.34.9 preflight aborts (2026-06-18):
+  # master was already on 1.34.9 while node2-6 lagged on 1.34.8, so every nightly
+  # preflight died here with an empty `plan target  ≠ requested 1.34.9`.
+  local master_kubelet_v
+  master_kubelet_v=$($KUBECTL get node k8s-master -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null | tr -d v)
+  if [ "$master_kubelet_v" = "$TARGET_VERSION" ]; then
+    slack "preflight — k8s-master already on v$TARGET_VERSION; skipping kubeadm-plan-target gate (workers still pending)"
+    echo "k8s-master already on v$TARGET_VERSION — skipping kubeadm-plan-target gate"
+  else
+    local plan_target
+    plan_target=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
+      | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
+      | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
+    if [ "$plan_target" != "$TARGET_VERSION" ]; then
+      slack "ABORT preflight — kubeadm plan target $plan_target ≠ requested $TARGET_VERSION"
+      exit 1
+    fi
   fi
 
   # 5. Push in-flight + started_timestamp metrics + ns annotations
