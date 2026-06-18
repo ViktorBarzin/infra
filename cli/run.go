@@ -9,7 +9,13 @@ import (
 // the caller sees live output, and returns the command's error (non-nil on
 // non-zero exit — preserved so homelab's own exit code reflects the child's).
 func runStreaming(name string, args ...string) error {
+	return runStreamingIn("", name, args...)
+}
+
+// runStreamingIn is runStreaming with a working directory (empty = inherit).
+func runStreamingIn(dir, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
