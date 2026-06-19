@@ -521,6 +521,33 @@ phase_master() {
   alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
 
+  # Re-apply apiserver OIDC. `kubeadm upgrade apply` regenerates the apiserver
+  # static-pod manifest and DROPS --authentication-config, silently breaking SSO
+  # (kubectl/kubelogin + the dashboard) until re-applied — historically a manual
+  # `tg apply` of the rbac stack after every control-plane bump. Automate it here
+  # while tigera-operator is STILL quiesced, so the flag-add apiserver restart
+  # cannot crashloop the operator. Single source of truth: the rbac stack
+  # publishes the exact script its own null_resource runs to a kube-system
+  # ConfigMap; it is idempotent and health-gates /livez with auto-rollback, and a
+  # failure here is NON-FATAL (the version upgrade already succeeded — only SSO
+  # would lag until the next rbac apply).
+  local oidc_restore
+  oidc_restore=$($KUBECTL -n kube-system get configmap apiserver-oidc-restore \
+    -o jsonpath='{.data.restore\.sh}' 2>/dev/null || true)
+  if [ -n "$oidc_restore" ]; then
+    slack "Re-applying apiserver OIDC after master upgrade"
+    printf '%s' "$oidc_restore" | ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'bash -s' \
+      || slack "WARN: apiserver OIDC re-apply exited non-zero — verify SSO"
+    if ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
+         'sudo grep -q -- "--authentication-config=" /etc/kubernetes/manifests/kube-apiserver.yaml'; then
+      slack "apiserver OIDC restored (--authentication-config present)"
+    else
+      slack "WARN: --authentication-config absent after re-apply — SSO down; run the rbac apiserver_oidc_config apply"
+    fi
+  else
+    slack "WARN: apiserver-oidc-restore ConfigMap missing — skipping OIDC re-apply (apply the rbac stack)"
+  fi
+
   # Restore tigera-operator (happy path) + clear the safety-net EXIT trap.
   echo "Restoring tigera-operator"
   $KUBECTL -n tigera-operator scale deploy tigera-operator --replicas=1 2>&1 || true

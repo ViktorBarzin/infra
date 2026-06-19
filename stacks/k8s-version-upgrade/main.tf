@@ -221,6 +221,15 @@ resource "kubernetes_cluster_role" "k8s_upgrade_job" {
     resource_names = [local.namespace]
     verbs          = ["get", "patch", "update"]
   }
+  # Read the apiserver-OIDC restore script (published by the rbac stack to
+  # kube-system) so phase_master can re-apply --authentication-config after a
+  # kubeadm control-plane upgrade drops it. Name-scoped get only.
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["apiserver-oidc-restore"]
+    verbs          = ["get"]
+  }
 }
 
 resource "kubernetes_cluster_role_binding" "k8s_upgrade_job" {
