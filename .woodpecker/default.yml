@@ -19,6 +19,7 @@ clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
+      partial: false
       depth: 2
       attempts: 5
       backoff: 10s

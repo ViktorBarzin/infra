@@ -5,6 +5,7 @@ clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
+      partial: false
       depth: 2
 
 steps:
