@@ -199,9 +199,15 @@ resource "kubernetes_manifest" "middleware_crowdsec" {
           crowdsecLapiHost           = "crowdsec-service.crowdsec.svc.cluster.local:8080"
           crowdsecMode               = "stream"
           updateMaxFailure           = -1 # fail-open: serve from cache when LAPI is unreachable
-          redisCacheEnabled          = true
-          redisCacheHost             = var.redis_host
-          redisCacheUnreachableBlock = false                            # don't block traffic if Redis is also unreachable
+          # Redis cache DISABLED: the plugin's redis client does not work under
+          # Traefik's Yaegi interpreter — it logs `cache:unreachable` even though
+          # redis-master is reachable+writable from the traefik ns (verified). With
+          # the redis cache enabled + redisCacheUnreachableBlock=false the bouncer
+          # therefore failed open and enforced nothing. In-memory cache (the
+          # default when disabled) holds the streamed decision set per-pod and
+          # works under Yaegi. Trade-off: captcha "already-solved" grace is
+          # per-pod across the 3 Traefik replicas (at worst an occasional re-solve).
+          redisCacheEnabled          = false
           clientTrustedIPs           = ["10.0.20.0/24", "10.10.0.0/16"] # node + pod CIDRs bypass CrowdSec
           # Captcha remediation: serve a Cloudflare Turnstile challenge for
           # `captcha`-type LAPI decisions instead of falling through to a 403
