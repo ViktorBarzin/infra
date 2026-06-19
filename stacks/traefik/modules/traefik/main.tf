@@ -70,6 +70,12 @@ resource "helm_release" "traefik" {
   name             = "traefik"
   repository       = "https://traefik.github.io/charts"
   chart            = "traefik"
+  # Pin to the deployed chart version. Was unpinned, so a refreshed helm repo
+  # index silently tries to upgrade to the latest chart on the next apply —
+  # chart 41.0.0 rejects this values block's `logs` key ("Additional property
+  # logs is not allowed"). Bump deliberately (with values migration), never
+  # implicitly. Deployed since 2026-05-30 (release rev 57).
+  version          = "40.2.0"
   atomic           = true
   timeout          = 600
 
