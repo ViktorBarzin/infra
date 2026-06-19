@@ -70,6 +70,30 @@ Tiers are recorded per verb so a future PreToolUse classifier can auto-allow
 reads / prompt writes; v0.1 allows everything and relies on existing gates
 (permission mode, presence claims, plan approval).
 
+### v0.3 verbs — memory
+
+A thin HTTP client over the **claude-memory** service (the same backend the
+memory MCP wraps), authed with `CLAUDE_MEMORY_API_KEY` against
+`CLAUDE_MEMORY_API_URL` (the env the hooks already set; defaults to the
+ingress). Because it hits the HTTP API directly, it **works even when the MCP
+frontend is down**.
+
+| Command | Tier | What it does |
+|---|---|---|
+| `memory recall "<context>" [--query --category --sort --limit]` | read | semantic search (server-side ranking) — the navigate workhorse |
+| `memory list [--category --tag --limit]` | read | recent memories |
+| `memory categories` / `memory tags` / `memory stats` | read | enumerate the store |
+| `memory secret <id>` | read | reveal a sensitive memory's content |
+| `memory store "<content>" [--category --tags --keywords --importance --sensitive]` | write | store a memory |
+| `memory update <id> [--content --tags --importance]` | write | edit a memory |
+| `memory delete <id>` | write | delete a memory |
+
+All read/write paths are validated against the live API (incl. a
+store→recall→delete round-trip). This gives full data-plane parity with the MCP;
+the eventual deprecation (rewiring the per-prompt auto-recall + auto-learn hooks
+to the CLI, then uninstalling the MCP) is a **separate, deliberate follow-up** —
+see `docs/adr/0008`.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -89,4 +113,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0007` for the architecture decisions.
+See `infra/docs/adr/0004`–`0008` for the architecture decisions.
