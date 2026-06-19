@@ -65,6 +65,13 @@ resource "authentik_provider_oauth2" "tripit_app" {
       matching_mode = "strict"
       url           = "me.viktorbarzin.tripit://callback"
     },
+    {
+      # "Log in with Authentik" on the website: TripIt is the OIDC client and
+      # mints its own session on callback (tripit ADR-0028, #90). Same public
+      # tripit-app provider as the Shell — just the web redirect URI added.
+      matching_mode = "strict"
+      url           = "https://tripit.viktorbarzin.me/api/auth/callback/authentik"
+    },
   ]
 
   access_token_validity      = "hours=1"
