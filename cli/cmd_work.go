@@ -104,8 +104,15 @@ func workLand(args []string) error {
 		return landFallback(repoRoot, flags, remote, branch, err)
 	}
 	fmt.Printf("homelab: landed %s -> %s/master.\n", branch, remote)
-	fmt.Println("homelab: CI was triggered by the push — watch it to completion before calling the work done")
-	fmt.Println("         (the ci/deploy watch verbs arrive in a later version; for now follow the pipeline manually).")
+	if containsArg(args, "--no-ci-watch") {
+		fmt.Println("homelab: --no-ci-watch set; not waiting for CI.")
+		return nil
+	}
+	landed, _ := gitOutput(repoRoot, "rev-parse", "HEAD")
+	fmt.Fprintln(os.Stderr, "homelab: watching CI for the landed commit...")
+	if err := ciWatch([]string{landed}); err != nil {
+		return fmt.Errorf("landed, but CI did not go green: %w", err)
+	}
 	return nil
 }
 
