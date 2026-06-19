@@ -34,7 +34,9 @@ func TestK8sTargetObjectRef(t *testing.T) {
 
 func TestPlanDBExecPostgresDefault(t *testing.T) {
 	p := planDBExec("fire-planner", "", "SELECT 1", false)
-	if p.ns != "dbaas" || p.pod != "pg-cluster-rw" || p.container != "postgres" {
+	// pg-cluster-rw is a Service, so the PG plan resolves the primary POD by
+	// label rather than naming an (un-exec-able) Service.
+	if p.ns != "dbaas" || p.pod != "" || p.selector != "cnpg.io/instanceRole=primary" || p.container != "postgres" {
 		t.Fatalf("unexpected pg target: %+v", p)
 	}
 	// db name defaults to the app; SQL passed via -tAc

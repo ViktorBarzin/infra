@@ -152,11 +152,19 @@ func k8sDB(args []string) error {
 		return fmt.Errorf(`usage: homelab k8s db <app> [--mysql] [--db NAME] -- "<SQL>"`)
 	}
 	p := planDBExec(app, dbName, sql, mysql)
+	pod := p.pod
+	if pod == "" && p.selector != "" {
+		resolved, err := kubectlCapture(p.ns, "get", "pod", "-l", p.selector, "-o", "jsonpath={.items[0].metadata.name}")
+		if err != nil || resolved == "" {
+			return fmt.Errorf("could not resolve db pod in %s (selector %q): %v", p.ns, p.selector, err)
+		}
+		pod = resolved
+	}
 	exec := []string{"exec"}
 	if sql == "" {
 		exec = append(exec, "-it") // interactive client when no SQL given
 	}
-	exec = append(exec, p.pod)
+	exec = append(exec, pod)
 	if p.container != "" {
 		exec = append(exec, "-c", p.container)
 	}
