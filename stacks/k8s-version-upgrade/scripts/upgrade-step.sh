@@ -88,6 +88,19 @@ push() {
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 }
 
+# Auto-upgrade safety: a preflight compat-gate refusal is a BLOCK, not a crash —
+# the cluster simply isn't ready for this target yet (an addon / in-use API /
+# containerd is too old). Record it (k8s_upgrade_blocked=1 -> K8sUpgradeBlocked
+# alert), Slack the reasons, and halt so a human clears the blocker (or a later
+# run proceeds once it's cleared). This is the "upgrade when we can, alert when
+# we can't" contract.
+block() {
+  push k8s_upgrade_blocked 1
+  slack "BLOCKED preflight (target v$TARGET_VERSION) — auto-upgrade halted, needs attention:\n$1"
+  echo "BLOCKED: $1" >&2
+  exit 1
+}
+
 halt_on_alert_query() {
   local extra_ignore="${1:-}"
   # ALLOWLIST design (refactored 2026-05-23 from a denylist): halt only on
@@ -298,6 +311,19 @@ spawn_next() {
 
 phase_preflight() {
   slack "Starting preflight (target v$TARGET_VERSION, kind=$KIND)"
+
+  # 0. Auto-upgrade compat gate (compat-gate.py): refuse the upgrade if a critical
+  #    addon, an in-use deprecated API, or a node's containerd is too old for the
+  #    target. Runs FIRST — before any mutation (etcd snapshot, drains) — so a
+  #    block is cheap. Reset the blocked gauge for this run; block() sets it to 1
+  #    only on a refusal. This is what makes unattended minor upgrades safe: the
+  #    chain proceeds when the cluster supports the target and halts+alerts when
+  #    it doesn't (e.g. Calico/ESO/kyverno behind, or a removed API still in use).
+  push k8s_upgrade_blocked 0
+  local gate_out gate_rc=0
+  gate_out=$(python3 /scripts/compat-gate.py "$TARGET_VERSION" < /scripts/addon-compat.json 2>&1) || gate_rc=$?
+  if [ "$gate_rc" -ne 0 ]; then block "$gate_out"; fi
+  echo "compat-gate passed for v$TARGET_VERSION"
 
   # 1. All nodes Ready + no pressure
   local bad_nodes
