@@ -80,11 +80,22 @@ CrowdSec operates in a hub-and-agent model:
 - Reports malicious IPs to LAPI
 - Shares threat intel with CrowdSec community (anonymized)
 
-**Traefik Bouncer Plugin**:
-- Integrated as Traefik middleware
+**Traefik Bouncer Plugin** (`crowdsec-bouncer-traefik-plugin`, `stacks/traefik/modules/traefik/middleware.tf`):
+- Integrated as Traefik middleware (in the default ingress chain)
 - Queries LAPI for IP reputation on each request
 - **Fail-open mode**: If LAPI unreachable, allows traffic (graceful degradation)
-- Blocks IPs on ban list, allows others
+- Honours two LAPI remediation types (profiles in `stacks/crowdsec/modules/crowdsec/values.yaml`):
+  - **`ban`** → HTTP 403 (serious attacks: CVE exploits, scanners, brute force)
+  - **`captcha`** → **Cloudflare Turnstile challenge** so the flagged user can
+    self-unblock (lower-severity abuse: `http-429-abuse`, `http-403-abuse`,
+    `http-crawl-non_statics`, `http-sensitive-files`). The plugin is configured
+    with `captchaProvider=turnstile` + the widget keys; the `captcha.html`
+    template is mounted into the Traefik pod at `/captcha`. The widget is
+    Terraform-managed in `stacks/traefik/main.tf`
+    (`cloudflare_turnstile_widget.crowdsec_captcha`, scoped to `viktorbarzin.me`
+    so it covers every subdomain). **Before 2026-06-19 no captcha provider was
+    configured, so `captcha` decisions silently degraded to a 403 ban** — users
+    had no way to self-unblock; wiring Turnstile fixed that.
 
 **Metabase** (disabled by default):
 - Dashboard for CrowdSec analytics
