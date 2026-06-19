@@ -11,7 +11,7 @@ layers:
    user clicks an activation link emailed to the address they registered with.
 
 Two external login sources also work alongside local accounts: the pre-existing
-**Authentik OAuth2 login** (SSO) and **Sign in with GitHub** (see the GitHub
+**Sign in with GitHub** OAuth2 login (the **Authentik OAuth2 source is now DISABLED** — see the GitHub section below) (see the GitHub
 section below). Opening local signups was additive — it did not touch SSO.
 
 Most of this is Terraform-managed in `stacks/forgejo/`. The one exception is the
@@ -81,8 +81,9 @@ the `/user/sign_up` HTML afterwards.
 
 ## GitHub sign-in (OAuth2 source)
 
-People can **sign up / sign in with GitHub** — a second Forgejo OAuth2 source
-alongside Authentik.
+People can **sign up / sign in with GitHub** — the active Forgejo OAuth2 source. GitHub sign-up is **zero-click** (auto-registration creates the account on first login).
+
+> **Authentik is DISABLED on purpose** (2026-06-19). `ENABLE_AUTO_REGISTRATION` is GLOBAL across OAuth sources, and Authentik's `preferred_username` claim is the user's **email** — invalid as a Forgejo username, which 500'd auto-create. Viktor's Forgejo email (`me@viktorbarzin.me`) does not match his Authentik email (`vbarzin@gmail.com`), so account-linking can't bridge it. Per his directive GitHub was prioritised; the Authentik source was deactivated via `UPDATE login_source SET is_active=0 WHERE name='Authentik'` in the forgejo MySQL DB. **Re-enable** with `is_active=1` after fixing Authentik's username claim.
 
 - **Source** (Forgejo DB, *not* Terraform — added via CLI, same as Authentik):
   ```
