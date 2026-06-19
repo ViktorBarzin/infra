@@ -158,3 +158,22 @@ resource "null_resource" "apiserver_oidc_config" {
     auth_config = sha256(local.apiserver_auth_config_yaml)
   }
 }
+
+# Publish the restore script to a ConfigMap so the k8s-version-upgrade chain can
+# re-apply apiserver OIDC on master immediately after a `kubeadm upgrade` (which
+# regenerates the apiserver manifest and drops --authentication-config → breaks
+# SSO). This is the SAME script the null_resource above runs over SSH, so the
+# rbac stack stays the single source of truth — the chain just re-runs it
+# post-upgrade (phase_master in
+# stacks/k8s-version-upgrade/scripts/upgrade-step.sh) instead of waiting for a
+# manual `tg apply`. Content is config (issuer URLs + claim mappings), not
+# secrets, so a ConfigMap is appropriate.
+resource "kubernetes_config_map_v1" "apiserver_oidc_restore" {
+  metadata {
+    name      = "apiserver-oidc-restore"
+    namespace = "kube-system"
+  }
+  data = {
+    "restore.sh" = local.apiserver_auth_remote_script
+  }
+}

@@ -150,27 +150,42 @@ Exposed in K8s via ExternalSecret `k8s-upgrade-creds` in the `k8s-upgrade` names
 
 ## Common Operations
 
-### Post-upgrade: restore apiserver OIDC (REQUIRED after any control-plane bump)
+### Post-upgrade: apiserver OIDC restore (AUTOMATED by the chain since 2026-06-19)
 
 `kubeadm upgrade apply` **regenerates `/etc/kubernetes/manifests/kube-apiserver.yaml`
 and drops the `--authentication-config` flag**, silently disabling apiserver
 OIDC (kubectl/kubelogin CLI **and** the web dashboard SSO break — tokens get
-401). This is not auto-detected (the `rbac` stack's `null_resource` trigger is a
-content hash that doesn't change). After any control-plane upgrade, re-apply:
+401). This used to require a manual re-apply after **every** control-plane bump.
+
+**Now automated:** the `rbac` stack publishes its OIDC restore script to the
+`kube-system/apiserver-oidc-restore` ConfigMap, and the version-upgrade chain's
+`phase_master` re-runs it on master immediately after `kubeadm upgrade apply`
+(while tigera-operator is still quiesced, so the flag-add apiserver restart can't
+crashloop the operator). It's idempotent, health-gates `/livez` with
+auto-rollback, and is **non-fatal** — a failure only lags SSO until the next rbac
+apply (the version upgrade itself already succeeded). So a chain-driven
+control-plane bump no longer breaks SSO. The master phase self-skips when master
+is already at target, so this only runs when master was actually upgraded.
+
+**Manual fallback** — only for an out-of-band/manual `kubeadm` upgrade, or if the
+chain logged `WARN: --authentication-config absent after re-apply`:
 
 ```bash
 cd stacks/rbac
 TF_VAR_ssh_private_key="$(cat ~/.ssh/id_ed25519)" \
   VAULT_ADDR=https://vault.viktorbarzin.me ../../scripts/tg apply \
-  --non-interactive -target=module.rbac.null_resource.apiserver_oidc_config
+  --non-interactive -target=module.rbac.null_resource.apiserver_oidc_config \
+  -replace=module.rbac.null_resource.apiserver_oidc_config
 ```
 
-(`ssh_private_key` must be a key authorized for `wizard@<master>`; it is not yet
-wired from Vault.) The provisioner re-writes `/etc/kubernetes/pki/auth-config.yaml`
-(both `kubernetes` + `k8s-dashboard` issuers), re-adds the flag, and
-health-gates `/livez` with auto-rollback. Verify: `curl -sk
-https://localhost:6443/livez` on the master = `ok`, and the apiserver manifest
-contains `--authentication-config`. See `docs/plans/2026-06-04-k8s-dashboard-sso-design.md`.
+(`-replace` is **required** — the `null_resource` trigger is a content hash that
+doesn't change, so a plain `-target` apply is a no-op. `ssh_private_key` must be a
+key authorized for `wizard@<master>`.) The provisioner re-writes
+`/etc/kubernetes/pki/auth-config.yaml` (both `kubernetes` + `k8s-dashboard`
+issuers), re-adds the flag, and health-gates `/livez` with auto-rollback. Verify:
+`curl -sk https://localhost:6443/livez` on the master = `ok`, and the apiserver
+manifest contains `--authentication-config`. See
+`docs/plans/2026-06-04-k8s-dashboard-sso-design.md`.
 
 ### Verify the pipeline is healthy
 ```bash
