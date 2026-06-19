@@ -23,6 +23,7 @@ clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
+      partial: false
       depth: 1
       attempts: 3
 
