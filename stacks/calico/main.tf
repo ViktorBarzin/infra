@@ -131,3 +131,31 @@ resource "kubectl_manifest" "wave1_egress_observe_tier34" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# ---------------------------------------------------------------------------
+# tigera-operator under Terraform via the official Helm chart (chart vX.Y.Z ==
+# Calico vX.Y.Z). Manages ONLY the operator: installation.enabled=false keeps
+# the live Installation CR operator-managed, so Helm NEVER touches the data
+# plane (calico-node). Adopted in place at the running 3.26.1 (existing operator
+# Deployment/SA/ClusterRole/ClusterRoleBinding pre-stamped with Helm ownership
+# metadata 2026-06-19 — a transient migration step), then upgraded by bumping
+# `version` one step at a time: 3.26 -> 3.28 -> 3.30 (restores a SUPPORTED k8s
+# 1.34 pairing) -> 3.32 (supports k8s 1.36). The ~22 Calico CRDs live in the
+# chart's crds/ dir, which `helm upgrade` never modifies (pre-3.32). resources
+# preserves the operator's existing 256Mi limit. Apply MANUALLY + supervised
+# (watch calico-node roll, maxUnavailable:1); gate each hop on tigerastatus +
+# calico-node 7/7 + cross-pod connectivity. See docs/runbooks/k8s-version-upgrade.md.
+resource "helm_release" "tigera_operator" {
+  name             = "calico"
+  namespace        = kubernetes_namespace.tigera_operator.metadata[0].name
+  create_namespace = false
+  repository       = "https://docs.tigera.io/calico/charts"
+  chart            = "tigera-operator"
+  version          = "v3.26.1"
+
+  values = [yamlencode({
+    installation = { enabled = false }
+    apiServer    = { enabled = false }
+    resources    = { limits = { memory = "256Mi" } }
+  })]
+}
