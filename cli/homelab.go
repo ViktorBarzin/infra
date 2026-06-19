@@ -15,6 +15,7 @@ func buildRegistry() []Command {
 	reg = append(reg, tfCommands()...)
 	reg = append(reg, workCommands()...)
 	reg = append(reg, k8sCommands()...)
+	reg = append(reg, memoryCommands()...)
 	return reg
 }
 
