@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -17,6 +18,12 @@ func kubectlBase(ns string, args ...string) []string {
 
 func kubectlStream(ns string, args ...string) error {
 	return runStreamingIn("", "kubectl", kubectlBase(ns, args...)...)
+}
+
+// kubectlCapture runs kubectl and returns trimmed stdout (for resolving pods).
+func kubectlCapture(ns string, args ...string) (string, error) {
+	out, err := exec.Command("kubectl", kubectlBase(ns, args...)...).Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 // k8sTarget is the parsed `<app>` + selectors shared by the k8s verbs.
@@ -96,13 +103,15 @@ func (t k8sTarget) objectRef() string {
 
 type dbPlan struct {
 	ns        string
-	pod       string
+	pod       string   // explicit pod (e.g. mysql-standalone-0)
+	selector  string   // resolve the pod by this label when pod == "" (CNPG primary)
 	container string   // "" = default container
 	argv      []string // command + args to run inside the pod
 }
 
 // planDBExec builds the in-pod command to run sql against app's database.
-// PG (default): CNPG primary pg-cluster-rw, psql -U postgres -d <db>.
+// PG (default): CNPG primary POD (resolved by label — pg-cluster-rw is a
+// Service, not an exec target), psql -U postgres -d <db>.
 // MySQL: mysql-standalone-0, password from env (never on the command line).
 // dbName defaults to app. sql empty => interactive client.
 func planDBExec(app, dbName, sql string, mysql bool) dbPlan {
@@ -120,7 +129,7 @@ func planDBExec(app, dbName, sql string, mysql bool) dbPlan {
 	if sql != "" {
 		argv = append(argv, "-tAc", sql)
 	}
-	return dbPlan{ns: "dbaas", pod: "pg-cluster-rw", container: "postgres", argv: argv}
+	return dbPlan{ns: "dbaas", selector: "cnpg.io/instanceRole=primary", container: "postgres", argv: argv}
 }
 
 // shellQuote single-quotes s for safe embedding in a bash -c string.
