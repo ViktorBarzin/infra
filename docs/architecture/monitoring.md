@@ -146,7 +146,7 @@ Query examples (Grafana → Loki): `{job="rpi-sofia-journal"}`, `{job="rpi-sofia
 
 **Dashboard** — `dashboards/rpi-sofia.json` ("RPi Sofia", Hardware folder): status, undervoltage/throttle, SoC temp, load, memory, root-fs free + read-only, network.
 
-**Alerts** (group `RPi Sofia` in `prometheus_chart_values.tpl`): `RpiSofiaDown` (`up==0`), `RpiSofiaFilesystemReadonly` (`node_filesystem_readonly{mountpoint="/"}==1` — the SD-failure signature), `RpiSofiaUndervoltage` (`rpi_under_voltage_occurred==1`), `RpiSofiaHighTemp`.
+**Alerts** (group `RPi Sofia` in `prometheus_chart_values.tpl`): `RpiSofiaDown` (`up==0`), `RpiSofiaFilesystemReadonly` (`node_filesystem_readonly{mountpoint="/"}==1` — the SD-failure signature), `RpiSofiaUndervoltage` (`increase(rpi_under_voltage_occurred[1h])>0` — edge-triggered on the sticky bit; the live `rpi_under_voltage_now` bit is too transient to catch at 1-min sampling, so it fires on a *new* brown-out and auto-resolves ~1h later instead of latching until reboot), `RpiSofiaHighTemp`.
 
 **Recovery** — a systemd hardware watchdog (`RuntimeWatchdogSec=14s`, bcm2835 max ~15s) auto-reboots the Pi on a hard hang instead of leaving it dead for hours.
 

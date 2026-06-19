@@ -879,12 +879,17 @@ serverFiles:
             annotations:
               summary: "rpi-sofia rootfs is READ-ONLY — failing SD card (the silent-journal failure mode from this incident). Reflash/replace the card."
           - alert: RpiSofiaUndervoltage
-            expr: rpi_under_voltage_occurred{instance="rpi-sofia"} == 1
+            # Edge-trigger on the sticky firmware bit (rpi_under_voltage_now is too
+            # transient to catch at 1-min sampling — 0 hits in 14d). Fires on a NEW latch
+            # and auto-resolves ~1h later instead of latching until reboot; counter-reset
+            # handling makes a clean reboot a no-op. Since-boot state + history: Grafana "RPi Sofia".
+            expr: increase(rpi_under_voltage_occurred{instance="rpi-sofia"}[1h]) > 0
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "rpi-sofia under-voltage detected since last boot — check PSU/USB power cable"
+              summary: "rpi-sofia under-voltage event in the last hour — check PSU/USB power cable + SD card"
+              description: "A new under-voltage brown-out latched on rpi-sofia within the last 1h (repeat/sustained events risk SD-card corruption). Sticky since-boot flag + history on Grafana 'RPi Sofia' (Hardware)."
           - alert: RpiSofiaHighTemp
             expr: rpi_soc_temp_celsius{instance="rpi-sofia"} > 75
             for: 10m
