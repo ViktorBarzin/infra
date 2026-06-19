@@ -2252,6 +2252,26 @@ serverFiles:
               subsystem: k8s-upgrade
             annotations:
               summary: "K8s upgrade chain Job {{ $labels.job_name }} terminally failed ({{ $labels.reason }}) — pipeline wedged. kubectl -n k8s-upgrade get jobs ; kubectl -n k8s-upgrade describe job {{ $labels.job_name }}"
+          # K8sUpgradeBlocked: the k8s-version-upgrade chain pushes
+          # `k8s_upgrade_blocked=1` when the preflight compat gate REFUSES the
+          # target version — the cluster isn't ready (a critical addon lags the
+          # target's support window, an in-use API is deprecated/removed at the
+          # target, or a node's containerd predates the target's minimum). This
+          # is the designed "halt + alert" outcome, NOT a crash: the chain stops
+          # cleanly and the specific blocking reasons are posted to Slack by the
+          # upgrade chain. Same bare-metric pushgateway selector as
+          # K8sUpgradeStalled (job label "k8s-version-upgrade"). To clear: bump
+          # the named addon / migrate the deprecated API usage / upgrade the
+          # node's containerd, then the next nightly run proceeds automatically.
+          - alert: K8sUpgradeBlocked
+            expr: k8s_upgrade_blocked == 1
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: k8s-upgrade
+            annotations:
+              summary: "K8s auto-upgrade refused by the preflight compat gate — cluster not ready for the target version. Blocking reasons were posted to Slack by the upgrade chain."
+              description: "An automated Kubernetes upgrade was REFUSED (not crashed) by the preflight compatibility gate because the cluster isn't ready for the target version — a critical addon lags the target's support window, an in-use deprecated API would be removed at the target, or a node's containerd is too old. The specific reasons were posted to Slack by the k8s-version-upgrade chain. This is the intended halt-and-alert. To clear it: bump the named addon / migrate the deprecated API usage / upgrade the node's containerd, then the next nightly run proceeds automatically."
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown

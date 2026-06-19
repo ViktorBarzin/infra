@@ -1,0 +1,57 @@
+{
+  "_comment": "Addon -> highest k8s minor each addon version supports. The preflight compat-gate (compat-gate.py) reads the RUNNING version of each addon and blocks a k8s upgrade whose target minor exceeds what that running version supports — so the chain auto-halts + alerts instead of breaking on an unsupported addon. Keep current; sources are the addons' own k8s compat matrices (last refreshed 2026-06-19 for the 1.34->1.36 catch-up). max_k8s keys are addon-version floors (major.minor); value is the highest k8s minor that floor supports.",
+  "addons": [
+    {
+      "name": "calico",
+      "namespace": "calico-system",
+      "kind": "daemonset",
+      "resource": "calico-node",
+      "image_re": "node:v?([0-9]+\\.[0-9]+)",
+      "max_k8s": {
+        "3.26": "1.28",
+        "3.27": "1.29",
+        "3.28": "1.30",
+        "3.29": "1.32",
+        "3.30": "1.35",
+        "3.31": "1.35",
+        "3.32": "1.36"
+      }
+    },
+    {
+      "name": "external-secrets",
+      "namespace": "external-secrets",
+      "kind": "deployment",
+      "resource": "external-secrets",
+      "image_re": "external-secrets:v?([0-9]+\\.[0-9]+)",
+      "max_k8s": {
+        "0.12": "1.31",
+        "2.0": "1.35"
+      }
+    },
+    {
+      "name": "kyverno",
+      "namespace": "kyverno",
+      "kind": "deployment",
+      "resource": "kyverno-admission-controller",
+      "image_re": "kyverno:v?([0-9]+\\.[0-9]+)",
+      "max_k8s": {
+        "1.16": "1.34",
+        "1.18": "1.35"
+      }
+    },
+    {
+      "name": "gpu-operator",
+      "namespace": "nvidia",
+      "kind": "deployment",
+      "resource": "gpu-operator",
+      "image_re": "gpu-operator:v?([0-9]+\\.[0-9]+)",
+      "max_k8s": {
+        "25.10": "1.35",
+        "26.3": "1.36"
+      }
+    }
+  ],
+  "containerd_min": {
+    "1.37": "2.0"
+  }
+}

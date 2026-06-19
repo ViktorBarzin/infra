@@ -297,8 +297,10 @@ resource "kubernetes_config_map" "k8s_upgrade_scripts" {
     labels    = local.labels
   }
   data = {
-    "upgrade-step.sh" = file("${path.module}/scripts/upgrade-step.sh")
-    "update_k8s.sh"   = file("${path.module}/../../scripts/update_k8s.sh")
+    "upgrade-step.sh"   = file("${path.module}/scripts/upgrade-step.sh")
+    "update_k8s.sh"     = file("${path.module}/../../scripts/update_k8s.sh")
+    "compat-gate.py"    = file("${path.module}/scripts/compat-gate.py")
+    "addon-compat.json" = file("${path.module}/scripts/addon-compat.json")
   }
 }
 
@@ -418,7 +420,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 NEXT_MINOR_NUM=$(( $(echo "$RUNNING_MINOR" | cut -d. -f2) + 1 ))
                 NEXT_MINOR="1.$NEXT_MINOR_NUM"
                 NEXT_MINOR_AVAILABLE="no"
-                if curl -sIo /dev/null -w '%%{http_code}' \
+                if curl -sILo /dev/null -w '%%{http_code}' \
                     "https://pkgs.k8s.io/core:/stable:/v$NEXT_MINOR/deb/Release" \
                     | grep -q '^200$'; then
                   NEXT_MINOR_AVAILABLE="yes"
