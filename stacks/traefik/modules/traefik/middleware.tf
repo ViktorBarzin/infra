@@ -203,12 +203,23 @@ resource "kubernetes_manifest" "middleware_crowdsec" {
           redisCacheHost             = var.redis_host
           redisCacheUnreachableBlock = false                            # don't block traffic if Redis is also unreachable
           clientTrustedIPs           = ["10.0.20.0/24", "10.10.0.0/16"] # node + pod CIDRs bypass CrowdSec
+          # Captcha remediation: serve a Cloudflare Turnstile challenge for
+          # `captcha`-type LAPI decisions instead of falling through to a 403
+          # (the pre-2026-06 behaviour — no provider configured → handleBan).
+          # captcha.html is mounted at /captcha in the Traefik pod
+          # (kubernetes_config_map.captcha_template + the helm `volumes` value);
+          # keys come from the Turnstile widget in the stack root (main.tf).
+          captchaProvider           = "turnstile"
+          captchaSiteKey            = var.captcha_site_key
+          captchaSecretKey          = var.captcha_secret_key
+          captchaGracePeriodSeconds = 1800 # how long a solved challenge is honoured
+          captchaHTMLFilePath       = "/captcha/captcha.html"
         }
       }
     }
   }
 
-  depends_on = [helm_release.traefik]
+  depends_on = [helm_release.traefik, kubernetes_config_map.captcha_template]
 }
 
 # TLS option for mTLS (client certificate auth)

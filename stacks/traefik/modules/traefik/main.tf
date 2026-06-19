@@ -21,6 +21,16 @@ variable "x402_notify_webhook_url" {
   description = "Slack-compatible incoming-webhook URL the gateway POSTs to on every successful payment. Empty = no notifications."
   sensitive   = true
 }
+variable "captcha_site_key" {
+  type        = string
+  sensitive   = true
+  description = "Cloudflare Turnstile site key (public) for the CrowdSec captcha remediation. Sourced from cloudflare_turnstile_widget in the stack root."
+}
+variable "captcha_secret_key" {
+  type        = string
+  sensitive   = true
+  description = "Cloudflare Turnstile secret key for the CrowdSec captcha remediation — validated server-side by the bouncer plugin against Cloudflare siteverify."
+}
 
 resource "kubernetes_namespace" "traefik" {
   metadata {
@@ -35,6 +45,22 @@ resource "kubernetes_namespace" "traefik" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# captcha.html template served by the CrowdSec bouncer plugin for Turnstile
+# challenges. The pulled Yaegi plugin does NOT expose its bundled template to
+# Traefik, so we vendor it (captcha.html in this module) and mount it into the
+# Traefik container at /captcha via the `volumes` Helm value below. The template
+# is provider-agnostic: the plugin fills {{ .FrontendJS }}/{{ .FrontendKey }}/
+# {{ .SiteKey }} with Turnstile's JS URL + `cf-turnstile` class + the site key.
+resource "kubernetes_config_map" "captcha_template" {
+  metadata {
+    name      = "crowdsec-captcha-template"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+  }
+  data = {
+    "captcha.html" = file("${path.module}/captcha.html")
   }
 }
 
@@ -92,6 +118,15 @@ resource "helm_release" "traefik" {
         maxSurge       = 1
       }
     }
+
+    # Mount the CrowdSec captcha template into the Traefik container at
+    # /captcha/captcha.html (chart `volumes` creates the volume + container
+    # mount from one entry). Referenced by captchaHTMLFilePath in middleware.tf.
+    volumes = [{
+      name      = kubernetes_config_map.captcha_template.metadata[0].name
+      mountPath = "/captcha"
+      type      = "configMap"
+    }]
 
     ingressClass = {
       enabled        = true
