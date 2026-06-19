@@ -36,6 +36,7 @@ envsubst on /template/job-template.yaml  | kubectl apply -f -
   ▼
 
 Job 0 — preflight       (pinned: k8s-node1)
+  ├── compat-gate: addon/API/containerd support for target (else BLOCK+alert)
   ├── All nodes Ready + no Mem/Disk pressure
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
@@ -87,6 +88,46 @@ Job 6 — postflight       (no pinning)
   **adding a node needs no change** — the chain upgrades every worker still
   off-target, then runs postflight. SSH uses node InternalIPs (no DNS needed).
 
+### Auto-upgrade compat gate
+
+The chain now attempts **patch AND minor** upgrades autonomously — but before any
+mutation, `phase_preflight` runs `compat-gate.py` **FIRST** and **REFUSES (blocks)
+the upgrade** if any of these hold for the detected target:
+
+- a **critical addon's running version doesn't support the target k8s minor**
+  (running version > the addon's highest-supported minor in the compat matrix),
+- an **in-use deprecated API is removed at/before the target** — measured live
+  from `apiserver_requested_deprecated_apis` (something is still calling a
+  group/version that the target k8s drops), or
+- a **node's containerd is below the target's floor** (the minimum containerd the
+  target k8s requires).
+
+This is the **"auto-upgrade when we can, halt + alert when we can't"** contract.
+
+**On a block**, the gate:
+- pushes `k8s_upgrade_blocked=1` to Pushgateway (→ the `K8sUpgradeBlocked`
+  Prometheus alert),
+- Slacks the **specific reasons** (which addon/API/node, current vs required), and
+- **halts the chain** — it exits **non-fatal** (the upgrade simply isn't safe yet,
+  this is not a failure). Because the block happens **before any mutation, no
+  rollback is involved**; nothing was changed.
+
+**To clear a block**: upgrade the named addon (or migrate the API caller off the
+deprecated group/version, or bump containerd on the named node) so the offending
+condition no longer holds. The **next nightly run then proceeds automatically** —
+no manual chain restart needed.
+
+The **compat matrix** lives in
+`stacks/k8s-version-upgrade/scripts/addon-compat.json` — a map of `addon → highest
+supported k8s minor`, populated from each addon's own compatibility docs. **Keep
+it current**; the gate reads it on every run. Gate logic:
+`stacks/k8s-version-upgrade/scripts/compat-gate.py`.
+
+> The detector's minor-probe was **fixed** (the `HEAD pkgs.k8s.io/.../v<NEXT_MINOR>`
+> curl now follows the 302 from `pkgs.k8s.io` via `-L`), so **minor versions are
+> finally detected** — and are gated behind the compat check above before the
+> chain will act on them.
+
 ## Components
 
 ### Shared resources (one-time, Terraform-managed)
@@ -118,7 +159,8 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 - **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently.
 - **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a Job in the chain dying without spawning its successor.
 - **`K8sUpgradeChainJobFailed`** — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL).
-- All four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
+- **`K8sUpgradeBlocked`** — `k8s_upgrade_blocked == 1` (warning). A k8s **auto-upgrade was refused** by the compat gate because a critical addon, an in-use deprecated API, or a node's containerd is too old for the detected target. The **specific reasons are in Slack**; clear it by upgrading the named addon / migrating the API caller / bumping containerd, after which the next nightly run proceeds (see "Auto-upgrade compat gate"). No upgrade was attempted, so this is not a half-done-rollout alert.
+- The first four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
 
 ### CoreDNS is NOT upgraded by kubeadm here
 
@@ -391,6 +433,8 @@ kill %1
 |------|-------|
 | Stack (CronJob + ConfigMaps + SA/RBAC + ExternalSecret) | `infra/stacks/k8s-version-upgrade/main.tf` |
 | Universal phase body | `infra/stacks/k8s-version-upgrade/scripts/upgrade-step.sh` |
+| Compat gate (addon/API/containerd block logic) | `infra/stacks/k8s-version-upgrade/scripts/compat-gate.py` |
+| Compat matrix (addon → highest supported k8s minor) | `infra/stacks/k8s-version-upgrade/scripts/addon-compat.json` |
 | Job template | `infra/stacks/k8s-version-upgrade/job-template.yaml` |
 | Per-node upgrade script | `infra/scripts/update_k8s.sh` |
 | Upgrade Gates alerts | `infra/stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |

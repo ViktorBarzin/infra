@@ -88,6 +88,19 @@ push() {
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 }
 
+# Auto-upgrade safety: a preflight compat-gate refusal is a BLOCK, not a crash —
+# the cluster simply isn't ready for this target yet (an addon / in-use API /
+# containerd is too old). Record it (k8s_upgrade_blocked=1 -> K8sUpgradeBlocked
+# alert), Slack the reasons, and halt so a human clears the blocker (or a later
+# run proceeds once it's cleared). This is the "upgrade when we can, alert when
+# we can't" contract.
+block() {
+  push k8s_upgrade_blocked 1
+  slack "BLOCKED preflight (target v$TARGET_VERSION) — auto-upgrade halted, needs attention:\n$1"
+  echo "BLOCKED: $1" >&2
+  exit 1
+}
+
 halt_on_alert_query() {
   local extra_ignore="${1:-}"
   # ALLOWLIST design (refactored 2026-05-23 from a denylist): halt only on
@@ -298,6 +311,19 @@ spawn_next() {
 
 phase_preflight() {
   slack "Starting preflight (target v$TARGET_VERSION, kind=$KIND)"
+
+  # 0. Auto-upgrade compat gate (compat-gate.py): refuse the upgrade if a critical
+  #    addon, an in-use deprecated API, or a node's containerd is too old for the
+  #    target. Runs FIRST — before any mutation (etcd snapshot, drains) — so a
+  #    block is cheap. Reset the blocked gauge for this run; block() sets it to 1
+  #    only on a refusal. This is what makes unattended minor upgrades safe: the
+  #    chain proceeds when the cluster supports the target and halts+alerts when
+  #    it doesn't (e.g. Calico/ESO/kyverno behind, or a removed API still in use).
+  push k8s_upgrade_blocked 0
+  local gate_out gate_rc=0
+  gate_out=$(python3 /scripts/compat-gate.py "$TARGET_VERSION" < /scripts/addon-compat.json 2>&1) || gate_rc=$?
+  if [ "$gate_rc" -ne 0 ]; then block "$gate_out"; fi
+  echo "compat-gate passed for v$TARGET_VERSION"
 
   # 1. All nodes Ready + no pressure
   local bad_nodes
@@ -647,6 +673,60 @@ phase_postflight() {
   ratio=$(curl -sf "$PROM/api/v1/query" \
             --data-urlencode 'query=sum(kube_pod_status_ready{condition="true"}) / sum(kube_pod_status_phase{phase="Running"})' \
           | jq -r '.data.result[0].value[1] // "0"')
+
+  # ---------------------------------------------------------------------------
+  # Deeper smoke tests — catch a cluster that's "all pods Running" but actually
+  # broken after the upgrade (dead apiserver health endpoints, broken
+  # CoreDNS/in-cluster DNS, or a control-plane component that's only superficially
+  # up). Uses ONLY the chain's existing permissions: read-only kubectl raw API
+  # reads + this pod's own resolver. No new pods/exec/images/RBAC. We do NOT
+  # rollback — kubeadm can't downgrade — we halt loudly for a human.
+  local smoke_failed=0
+
+  # 1. apiserver health endpoints. `kubectl get --raw` exits non-zero on a
+  #    non-200, which under `set -e` would abort — capture rc explicitly.
+  local readyz_out readyz_rc=0 livez_out livez_rc=0
+  readyz_out=$($KUBECTL get --raw='/readyz' 2>&1) || readyz_rc=$?
+  if [ "$readyz_rc" -ne 0 ] || [ "$readyz_out" != "ok" ]; then
+    smoke_failed=1
+    slack "postflight smoke FAIL — apiserver /readyz not ok (rc=$readyz_rc, body='${readyz_out:0:200}')"
+  fi
+  livez_out=$($KUBECTL get --raw='/livez' 2>&1) || livez_rc=$?
+  if [ "$livez_rc" -ne 0 ] || [ "$livez_out" != "ok" ]; then
+    smoke_failed=1
+    slack "postflight smoke FAIL — apiserver /livez not ok (rc=$livez_rc, body='${livez_out:0:200}')"
+  fi
+
+  # 2. In-cluster DNS resolution from THIS pod's resolver. If CoreDNS / kube-dns
+  #    is broken after the upgrade, resolving the apiserver's cluster service
+  #    name fails here even though pods may still look Running.
+  local dns_rc=0
+  python3 -c 'import socket; socket.gethostbyname("kubernetes.default.svc.cluster.local")' >/dev/null 2>&1 || dns_rc=$?
+  if [ "$dns_rc" -ne 0 ]; then
+    smoke_failed=1
+    slack "postflight smoke FAIL — in-cluster DNS broken (could not resolve kubernetes.default.svc.cluster.local; CoreDNS down?)"
+  fi
+
+  # 3. Core kube-system pods Running: control-plane statics (apiserver,
+  #    controller-manager, scheduler, etcd) AND CoreDNS. `grep -v Running`
+  #    returns 1 when everything is Running (the happy path) → wrap in `|| true`
+  #    so pipefail doesn't abort us at the moment of success.
+  local comp not_running
+  for comp in kube-apiserver kube-controller-manager kube-scheduler etcd coredns; do
+    not_running=$($KUBECTL -n kube-system get pods --no-headers 2>/dev/null \
+      | { grep -E "(^|[[:space:]])${comp}-" || true; } \
+      | { grep -v Running || true; } | wc -l)
+    if [ "$not_running" -gt 0 ]; then
+      smoke_failed=1
+      slack "postflight smoke FAIL — $not_running kube-system '$comp' pod(s) not Running after upgrade"
+    fi
+  done
+
+  if [ "$smoke_failed" -ne 0 ]; then
+    slack "postflight smoke tests FAILED — upgrade left the cluster unhealthy, halting for a human (no rollback; kubeadm can't downgrade)"
+    exit 1
+  fi
+  echo "postflight smoke tests passed (apiserver health + DNS + core kube-system pods)"
 
   # Clear annotations + gauges
   $KUBECTL annotate ns "$NS" \
