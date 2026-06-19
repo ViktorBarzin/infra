@@ -197,8 +197,16 @@ resource "kubernetes_manifest" "middleware_crowdsec" {
         crowdsec-bouncer = {
           crowdsecLapiKey            = var.crowdsec_api_key
           crowdsecLapiHost           = "crowdsec-service.crowdsec.svc.cluster.local:8080"
-          crowdsecMode               = "stream"
-          updateMaxFailure           = -1 # fail-open: serve from cache when LAPI is unreachable
+          # LIVE mode (synchronous per-request LAPI query), not stream: under
+          # Traefik's Yaegi interpreter the plugin's stream cache updates (it logs
+          # `handleStreamCache:updated`) but does NOT enforce the cached decisions
+          # — verified by a ban that was present in the LAPI stream AND pulled by
+          # the plugin yet still let the banned IP through. Live mode queries LAPI
+          # per request (result cached per-IP for defaultDecisionSeconds), enforces
+          # reliably, and picks up new decisions immediately. LAPI is 3-replica +
+          # in-cluster; fail-open preserved via updateMaxFailure=-1.
+          crowdsecMode               = "live"
+          updateMaxFailure           = -1 # fail-open if LAPI is unreachable
           # Redis cache DISABLED: the plugin's redis client does not work under
           # Traefik's Yaegi interpreter — it logs `cache:unreachable` even though
           # redis-master is reachable+writable from the traefik ns (verified). With
