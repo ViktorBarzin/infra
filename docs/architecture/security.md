@@ -83,7 +83,17 @@ CrowdSec operates in a hub-and-agent model:
 **Traefik Bouncer Plugin** (`crowdsec-bouncer-traefik-plugin`, `stacks/traefik/modules/traefik/middleware.tf`):
 - Integrated as Traefik middleware (in the default ingress chain)
 - Queries LAPI for IP reputation on each request
+- **Registered with LAPI** via `BOUNCER_KEY_traefik` env on the LAPI container
+  (`stacks/crowdsec/modules/crowdsec/values.yaml`), seeded from the same Vault key
+  the middleware presents (`ingress_crowdsec_api_key`). **Before 2026-06-19 the
+  bouncer was never registered → LAPI returned 403 → the plugin failed open and
+  enforced nothing (no bans, no captcha).** The seed re-registers automatically on
+  every LAPI start, so a DB wipe (e.g. the MySQL→PostgreSQL migration that lost the
+  original registration) can't silently disable enforcement again.
 - **Fail-open mode**: If LAPI unreachable, allows traffic (graceful degradation)
+- **Only sees non-proxied (direct) apps' real client IPs** (ETP=Local). Proxied
+  apps arrive from cloudflared's pod IP (in `clientTrustedIPs`) and are bypassed —
+  extending enforcement to proxied apps needs `forwardedHeadersTrustedIPs` (future).
 - Honours two LAPI remediation types (profiles in `stacks/crowdsec/modules/crowdsec/values.yaml`):
   - **`ban`** → HTTP 403 (serious attacks: CVE exploits, scanners, brute force)
   - **`captcha`** → **Cloudflare Turnstile challenge** so the flagged user can

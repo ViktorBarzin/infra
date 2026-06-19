@@ -126,6 +126,15 @@ lapi:
         secretKeyRef:
           name: crowdsec-lapi-secrets
           key: dbPassword
+    # Register the Traefik bouncer at LAPI startup with the SAME API key the
+    # traefik-stack middleware uses (Vault `ingress_crowdsec_api_key`). Before
+    # this the bouncer was never registered → LAPI returned 403 → the plugin
+    # failed open (updateMaxFailure=-1) and enforced NOTHING (no bans, no
+    # captcha). Idempotent across the 3 LAPI replicas / restarts, and
+    # re-registers automatically if the LAPI DB is ever wiped (the root cause:
+    # the prior manual registration was lost in the MySQL→PostgreSQL migration).
+    - name: BOUNCER_KEY_traefik
+      value: "${INGRESS_CROWDSEC_API_KEY}"
   dashboard:
     enabled: true
     env:
