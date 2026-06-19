@@ -280,19 +280,6 @@ resource "kubernetes_deployment" "forgejo" {
               }
             }
           }
-          # Auto-create a local account on first GitHub (OAuth2) sign-in, so
-          # "Sign in with GitHub" is a real sign-up path rather than a
-          # link-to-existing detour. The GitHub identity is the trust gate for
-          # this OAuth path (the Turnstile captcha + email confirmation apply to
-          # the native form, not OAuth). The GitHub OAuth2 source itself is added
-          # out-of-band via `forgejo admin auth add-oauth` (it lives in Forgejo's
-          # DB, not Terraform — same as the Authentik source); credentials are in
-          # Vault secret/viktor (forgejo_github_oauth_client_id / _secret). See
-          # docs/runbooks/forgejo-open-signups.md.
-          env {
-            name  = "FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION"
-            value = "true"
-          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
