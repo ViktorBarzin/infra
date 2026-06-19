@@ -216,6 +216,10 @@ resource "kubernetes_manifest" "external_secret" {
         }
       }
       data = [
+        # HS256 key signing TripIt's OWN session JWTs (tripit ADR-0028, #90).
+        # Delivered via env_from -> SESSION_SIGNING_KEY env; the app fails closed
+        # (TripIt sessions disabled) until this real key replaces the dev default.
+        { secretKey = "SESSION_SIGNING_KEY", remoteRef = { key = "tripit", property = "SESSION_SIGNING_KEY" } },
         { secretKey = "VAPID_PUBLIC_KEY", remoteRef = { key = "tripit", property = "VAPID_PUBLIC_KEY" } },
         { secretKey = "VAPID_PRIVATE_KEY", remoteRef = { key = "tripit", property = "VAPID_PRIVATE_KEY" } },
         { secretKey = "VAPID_SUBJECT", remoteRef = { key = "tripit", property = "VAPID_SUBJECT" } },
