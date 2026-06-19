@@ -10,12 +10,14 @@ layers:
 2. **Mandatory email confirmation** — a new account stays inactive until the
    user clicks an activation link emailed to the address they registered with.
 
-The pre-existing **Authentik OAuth2 login** ("Sign in with …") is unchanged and
-still works alongside local accounts. This is additive — opening local signups
-did not touch SSO.
+Two external login sources also work alongside local accounts: the pre-existing
+**Authentik OAuth2 login** (SSO) and **Sign in with GitHub** (see the GitHub
+section below). Opening local signups was additive — it did not touch SSO.
 
-Everything is Terraform-managed in `stacks/forgejo/`. There is no dashboard or
-manual cluster state.
+Most of this is Terraform-managed in `stacks/forgejo/`. The one exception is the
+OAuth2 login *sources* (Authentik, GitHub), which live in Forgejo's own DB and
+are added via `forgejo admin auth` — there is no clean Terraform resource for
+them (their secrets are mirrored to Vault for recovery).
 
 ## What is configured (and where)
 
@@ -33,6 +35,7 @@ env vars):
 | `service.CF_TURNSTILE_SECRET` | from `forgejo-turnstile` Secret | Server-side verification |
 | `service.REGISTER_EMAIL_CONFIRM` | `true` | Account inactive until email is confirmed |
 | `mailer.*` | see below | Sends the activation email |
+| `oauth2_client.ENABLE_AUTO_REGISTRATION` | `true` | First GitHub (OAuth2) sign-in auto-creates the account |
 
 Captcha guards **registration only** — `REQUIRE_CAPTCHA_FOR_LOGIN` is left at the
 default `false`, so existing users are not captcha'd on every login.
@@ -75,6 +78,42 @@ the `/user/sign_up` HTML afterwards.
   `forgejo-email` K8s Secret (key `PASSWD`), referenced by `FORGEJO__mailer__PASSWD`.
 - The deployment carries `reloader.stakater.com/auto: "true"`, so a rotation of
   either secret rolls the pod automatically.
+
+## GitHub sign-in (OAuth2 source)
+
+People can **sign up / sign in with GitHub** — a second Forgejo OAuth2 source
+alongside Authentik.
+
+- **Source** (Forgejo DB, *not* Terraform — added via CLI, same as Authentik):
+  ```
+  forgejo admin auth add-oauth --name github --provider github --key <client-id> --secret <client-secret>
+  ```
+  The source **name must stay `github`** — it is part of the callback URL
+  (`/user/oauth2/github/callback`) registered on the GitHub side, so renaming it
+  breaks the callback. `forgejo admin auth list` shows it (ID 2).
+- **GitHub OAuth App**: a classic OAuth App under the ViktorBarzin GitHub account
+  (Settings → Developer settings → OAuth Apps). Homepage
+  `https://forgejo.viktorbarzin.me`, callback
+  `https://forgejo.viktorbarzin.me/user/oauth2/github/callback`. GitHub has **no
+  API to create OAuth Apps** — creating it is a browser-only step.
+- **Credentials**: Vault `secret/viktor` → `forgejo_github_oauth_client_id` /
+  `forgejo_github_oauth_client_secret` (kept for recovery; the live values are in
+  Forgejo's DB).
+- **Auto-registration**: `FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true`
+  (`main.tf`) makes a first GitHub login create the account directly. The GitHub
+  identity is the trust gate for this path — the Turnstile captcha + email
+  confirmation only apply to the **native** signup form, not OAuth.
+
+**Rotate the GitHub client secret** — generate a new one in the GitHub OAuth App, then:
+```
+vault kv patch secret/viktor forgejo_github_oauth_client_secret=<new>
+POD=$(kubectl -n forgejo get pod -l app=forgejo -o jsonpath='{.items[0].metadata.name}')
+kubectl -n forgejo exec "$POD" -- su-exec git forgejo admin auth update-oauth --id 2 --secret <new>
+```
+(Source id from `forgejo admin auth list`.)
+
+**Recreate after a Forgejo DB loss**: the source is not in Terraform, so after a
+from-scratch restore, re-run the `add-oauth` command above with the Vault creds.
 
 ## Re-closing / tightening signups
 

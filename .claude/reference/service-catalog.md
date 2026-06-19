@@ -96,7 +96,7 @@
 | n8n | Workflow automation | n8n |
 | real-estate-crawler | Property crawler | real-estate-crawler |
 | tor-proxy | Tor proxy | tor-proxy |
-| forgejo | Git forge. Open native self-signup (Turnstile captcha + email confirm) alongside Authentik OAuth; see `docs/runbooks/forgejo-open-signups.md` | forgejo |
+| forgejo | Git forge. Open native self-signup (Turnstile captcha + email confirm) + Authentik & GitHub OAuth sign-in; see `docs/runbooks/forgejo-open-signups.md` | forgejo |
 | freshrss | RSS reader | freshrss |
 | navidrome | Music streaming | navidrome |
 | networking-toolbox | Network tools | networking-toolbox |
