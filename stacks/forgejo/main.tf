@@ -92,8 +92,16 @@ resource "kubernetes_deployment" "forgejo" {
       # from 11.0.14 → 1.18 on 2026-05-24 (same bug as memory id=1933).
       # TF owns the tag now; bump it manually here when upgrading.
       "keel.sh/policy" = "never"
+      # Roll the pod when the signup secrets (forgejo-email password from Vault,
+      # forgejo-turnstile secret) change — env vars are read at boot, not
+      # hot-reloaded. Stakater Reloader watches all referenced secrets/CMs.
+      "reloader.stakater.com/auto" = "true"
     }
   }
+  # The forgejo-email Secret is materialised by the External Secrets operator
+  # from the forgejo-email ExternalSecret (email-secret.tf); ensure the CR
+  # exists before this deployment references it on a from-scratch apply.
+  depends_on = [kubernetes_manifest.forgejo_email_secret]
   spec {
     replicas = 1
     strategy {
@@ -142,14 +150,21 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__server__ROOT_URL"
             value = "https://forgejo.viktorbarzin.me"
           }
-          # Disable local registration — only allow OAuth2 (Authentik)
+          # Open self-service registration. Native local sign-up is allowed
+          # (ALLOW_ONLY_EXTERNAL_REGISTRATION=false) alongside the existing
+          # Authentik OAuth2 login. Bot abuse is gated by Cloudflare Turnstile
+          # (ENABLE_CAPTCHA below) + mandatory email confirmation
+          # (REGISTER_EMAIL_CONFIRM below). To re-close signups: set
+          # DISABLE_REGISTRATION=true, or flip ALLOW_ONLY_EXTERNAL_REGISTRATION
+          # back to "true" for OAuth-only. Runbook:
+          # docs/runbooks/forgejo-open-signups.md
           env {
             name  = "FORGEJO__service__DISABLE_REGISTRATION"
             value = "false"
           }
           env {
             name  = "FORGEJO__service__ALLOW_ONLY_EXTERNAL_REGISTRATION"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "FORGEJO__openid__ENABLE_OPENID_SIGNIN"
@@ -189,6 +204,81 @@ resource "kubernetes_deployment" "forgejo" {
           env {
             name  = "FORGEJO__repository__DISABLE_DOWNLOAD_SOURCE_ARCHIVES"
             value = "true"
+          }
+          # --- Open-signup bot prevention + mailer (appended so the diff vs the
+          # pre-signup deployment stays purely additive). ---
+          # Cloudflare Turnstile captcha on the registration form (widget
+          # managed in turnstile.tf). Sitekey is public (rendered in the page);
+          # the secret is injected from the forgejo-turnstile Secret. Guards
+          # registration only — not every login (REQUIRE_CAPTCHA_FOR_LOGIN left
+          # at the default false).
+          env {
+            name  = "FORGEJO__service__ENABLE_CAPTCHA"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__service__CAPTCHA_TYPE"
+            value = "cfturnstile"
+          }
+          env {
+            name  = "FORGEJO__service__CF_TURNSTILE_SITEKEY"
+            value = cloudflare_turnstile_widget.forgejo_signup.id
+          }
+          env {
+            name = "FORGEJO__service__CF_TURNSTILE_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.forgejo_turnstile.metadata[0].name
+                key  = "cf-turnstile-secret"
+              }
+            }
+          }
+          # Mandatory email confirmation: new accounts stay inactive until the
+          # user clicks an emailed activation link (kills throwaway-email bots).
+          env {
+            name  = "FORGEJO__service__REGISTER_EMAIL_CONFIRM"
+            value = "true"
+          }
+          # Mailer: reuse the noreply@viktorbarzin.me mailserver SASL account
+          # (same as Authentik). MUST use the public host mail.viktorbarzin.me,
+          # NOT mailserver.mailserver.svc — the mailserver serves the
+          # *.viktorbarzin.me wildcard cert which does not cover the svc DNS
+          # name, so STARTTLS verification would fail. mail.viktorbarzin.me
+          # resolves in-cluster (10.0.20.1) and matches the cert. Password from
+          # the forgejo-email ESO Secret (Vault secret/authentik ->
+          # smtp_password; see email-secret.tf).
+          env {
+            name  = "FORGEJO__mailer__ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__mailer__PROTOCOL"
+            value = "smtp+starttls"
+          }
+          env {
+            name  = "FORGEJO__mailer__SMTP_ADDR"
+            value = "mail.viktorbarzin.me"
+          }
+          env {
+            name  = "FORGEJO__mailer__SMTP_PORT"
+            value = "587"
+          }
+          env {
+            name  = "FORGEJO__mailer__FROM"
+            value = "Forgejo <noreply@viktorbarzin.me>"
+          }
+          env {
+            name  = "FORGEJO__mailer__USER"
+            value = "noreply@viktorbarzin.me"
+          }
+          env {
+            name = "FORGEJO__mailer__PASSWD"
+            value_from {
+              secret_key_ref {
+                name = "forgejo-email"
+                key  = "PASSWD"
+              }
+            }
           }
           volume_mount {
             name       = "data"
