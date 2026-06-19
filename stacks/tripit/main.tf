@@ -798,28 +798,56 @@ module "ingress" {
   ]
 }
 
-# Authenticated API + metrics on the SAME host stay behind Authentik forward-auth
-# (tripit ADR-0020). The SPA above is public, but every /api route trusts the
-# X-authentik-email the outpost injects (AUTH_MODE=hybrid) — so /api MUST remain
-# gated; this is the security boundary. /metrics is gated too (it is scraped
-# in-cluster via the Service and never needs to be public). These prefixes are
-# longer than "/" so Traefik routes them here; the auth=none carve-outs below
-# (calendar, emails/confirm, planner/slack) are longer still and keep winning for
-# their own sub-paths.
+# /api is served by TripIt's OWN authentication now (ADR-0028 #96 cutover):
+# Authentik forward-auth is REMOVED so the website can carry a TripIt session
+# cookie (the outpost would 302 a cookie-only request away). The app
+# self-authenticates — get_current_user accepts a TripIt session FIRST; a request
+# with no session 401s and the SPA shows the landing page. strip-auth-headers is
+# REQUIRED here: with forward-auth gone, AUTH_MODE=hybrid's forward-auth arm would
+# otherwise trust a client-injected X-authentik-email — stripping inbound
+# X-authentik-* closes that header-injection bypass. (The Shell keeps using
+# Authentik bearers on the separate tripit-api.* host until #94; the full
+# AUTH_MODE collapse to TripIt-session-only follows then.) anti_ai_scraping=false
+# so Anubis PoW doesn't break programmatic API calls. The auth=none carve-outs
+# below (calendar, emails/confirm, planner/slack) are longer prefixes and keep
+# winning for their own sub-paths.
 module "ingress_app_api" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  dns_type        = "none" # main module.ingress owns the DNS record for this host
-  namespace       = kubernetes_namespace.tripit.metadata[0].name
-  name            = "tripit-app-api"
-  service_name    = "tripit"
-  full_host       = "tripit.viktorbarzin.me"
-  ingress_path    = ["/api", "/metrics"]
-  port            = 8080
-  tls_secret_name = var.tls_secret_name
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": /api self-authenticates via TripIt's own session (ADR-0028 #96);
+  # strip-auth-headers (below) blocks any client-injected X-authentik-* so the
+  # hybrid forward-auth arm cannot be tricked. No session => 401 => SPA landing.
+  auth             = "none"
+  anti_ai_scraping = false
+  dns_type         = "none" # main module.ingress owns the DNS record for this host
+  namespace        = kubernetes_namespace.tripit.metadata[0].name
+  name             = "tripit-app-api"
+  service_name     = "tripit"
+  full_host        = "tripit.viktorbarzin.me"
+  ingress_path     = ["/api"]
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
   # Same photo-thumbnail burst profile as before — keep the dedicated limiter.
   skip_default_rate_limit = true
-  extra_middlewares       = ["traefik-tripit-rate-limit@kubernetescrd"]
+  extra_middlewares = [
+    "traefik-strip-auth-headers@kubernetescrd",
+    "traefik-tripit-rate-limit@kubernetescrd",
+  ]
+}
+
+# /metrics stays gated behind forward-auth (it is scraped in-cluster via the
+# Service and never needs to be public); split out of the /api ingress by the
+# #96 cutover, which made /api self-authenticated.
+module "ingress_metrics" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required"
+  dns_type        = "none"
+  namespace       = kubernetes_namespace.tripit.metadata[0].name
+  name            = "tripit-metrics"
+  service_name    = "tripit"
+  full_host       = "tripit.viktorbarzin.me"
+  ingress_path    = ["/metrics"]
+  port            = 8080
+  tls_secret_name = var.tls_secret_name
 }
 
 # Calendar feed carve-out for the same host: path /api/calendar served by the
