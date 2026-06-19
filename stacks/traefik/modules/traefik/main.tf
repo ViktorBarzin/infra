@@ -101,12 +101,12 @@ resource "helm_release" "traefik" {
           "set -e; ",
           "STORAGE=/plugins-storage; ",
           "mkdir -p \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\"; ",
-          "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.4.2.zip\" ",
-          "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.4.2.zip\"; ",
+          "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.6.0.zip\" ",
+          "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.6.0.zip\"; ",
           "mkdir -p \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware\"; ",
           "wget -q -T 30 -O \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware/v0.1.4.zip\" ",
           "\"https://github.com/Aetherinox/traefik-api-token-middleware/archive/refs/tags/v0.1.4.zip\"; ",
-          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.4.2\",\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
+          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.6.0\",\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
           "> \"$STORAGE/archives/state.json\"; ",
           "echo \"Plugins pre-downloaded successfully\"",
         ])]
@@ -232,7 +232,7 @@ resource "helm_release" "traefik" {
       plugins = {
         crowdsec-bouncer = {
           moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
-          version    = "v1.4.2"
+          version    = "v1.6.0"
         }
         # Static-token bearer/header auth middleware. Used by services that
         # need gateway-level API-key/bearer enforcement without app-layer auth
