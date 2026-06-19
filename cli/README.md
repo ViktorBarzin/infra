@@ -112,6 +112,25 @@ remote, with retries that ride Woodpecker's intermittent empty responses.
 step) is deferred to v0.4.1 — Woodpecker's per-pipeline detail/log endpoints were
 the least reliable; `status`/`watch` use the list endpoint that works.
 
+### v0.5 verbs — net / dns / metrics / logs
+
+Reachability + observability probes. Their value is *endpoint resolution* — the
+non-obvious "which host, public or LB, what auth, what URL shape" reasoning you'd
+otherwise re-derive every time — not the HTTP call itself. All reach internal
+ingresses through the Traefik LB (the Go form of `curl --resolve host:443:10.0.20.203`).
+
+| Command | Tier | What it does |
+|---|---|---|
+| `net check <host> [path]` | read | probes the host two ways — external (public DNS → Cloudflare) vs internal (Traefik LB) — with status + latency, so you can tell *where* a break is (CF? app? the LB path?) |
+| `dns lookup <name> [type]` | read | resolves via Technitium (`10.0.20.201`) and public (`1.1.1.1`), diffed — surfaces split-horizon vs propagation gaps |
+| `metrics query "<promql>"` | read | Prometheus instant query (`prometheus-query.viktorbarzin.lan`); prints `value {labels}` or `--json` |
+| `metrics alerts` | read | currently-firing alerts (via the synthetic `ALERTS` series — the query frontend has no `/api/v1/alerts`) |
+| `logs query "<logql>" [--since 1h] [--limit N]` | read | Loki range query (`loki.viktorbarzin.lan`); prints log lines or `--json` |
+
+Quote the PromQL/LogQL. These hit auth-free internal ingresses — no port-forward,
+no kubectl. (In-cluster-only endpoints like Alertmanager stay out of scope; the
+firing set is reachable via `ALERTS` instead.)
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -131,4 +150,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0009` for the architecture decisions.
+See `infra/docs/adr/0004`–`0010` for the architecture decisions.

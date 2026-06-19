@@ -18,6 +18,8 @@ func buildRegistry() []Command {
 	reg = append(reg, memoryCommands()...)
 	reg = append(reg, ciCommands()...)
 	reg = append(reg, deployCommands()...)
+	reg = append(reg, netCommands()...)
+	reg = append(reg, obsCommands()...)
 	return reg
 }
 
