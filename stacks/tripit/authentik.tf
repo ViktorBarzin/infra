@@ -20,9 +20,12 @@ data "authentik_flow" "default_authorization_implicit_consent" {
   slug = "default-provider-authorization-implicit-consent"
 }
 
-data "authentik_flow" "default_provider_invalidation" {
-  slug = "default-provider-invalidation-flow"
-}
+# NOTE: invalidation_flow is pinned to the literal UUID on tripit_app below,
+# not read via this data source — under the goauthentik 2024.x provider vs
+# 2026.2 server skew the flow data source intermittently resolves null in CI
+# (pipeline 244: "invalidation_flow is required, but no definition was found"),
+# which silently blocked every tripit-stack apply. The pinned UUID is exactly
+# what this slug ("default-provider-invalidation-flow") resolves to.
 
 data "authentik_certificate_key_pair" "signing" {
   name = "authentik Self-signed Certificate"
@@ -58,7 +61,7 @@ resource "authentik_provider_oauth2" "tripit_app" {
   sub_mode = "user_email"
 
   authorization_flow = data.authentik_flow.default_authorization_implicit_consent.id
-  invalidation_flow  = data.authentik_flow.default_provider_invalidation.id
+  invalidation_flow  = "b0a43377-0fa6-45d1-89fc-ed298bb1bb53" # default-provider-invalidation-flow (pinned; see note above)
 
   allowed_redirect_uris = [
     {
