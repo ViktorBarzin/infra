@@ -280,6 +280,17 @@ resource "kubernetes_deployment" "forgejo" {
               }
             }
           }
+          # Zero-click sign-up for GitHub (OAuth2): auto-create the local
+          # account on first login (GitHub's username claim is valid). This is a
+          # GLOBAL [oauth2_client] setting, so the Authentik OAuth2 source is kept
+          # DISABLED (login_source.is_active=0, set out-of-band — sources are
+          # DB-managed, not TF): Authentik's preferred_username is the user's email,
+          # an invalid Forgejo username that 500'd auto-create. Re-enable Authentik
+          # only after fixing its username claim. docs/runbooks/forgejo-open-signups.md
+          env {
+            name  = "FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION"
+            value = "true"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
