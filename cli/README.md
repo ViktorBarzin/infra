@@ -63,8 +63,8 @@ operations in the encrypted infra repo.
 
 **`work land` refuses to push when it cannot verify** (no `--verify-cmd` and no
 auto-detected suite) unless you pass `--no-verify` — landing to master unverified
-must be deliberate. It does not yet block on CI to green (that arrives with the
-ci/deploy watch verbs); it reminds you to follow the pipeline.
+must be deliberate. After pushing it **watches CI to green** (`ci watch` on the
+landed commit) and fails if the pipeline does; pass `--no-ci-watch` to skip.
 
 Tiers are recorded per verb so a future PreToolUse classifier can auto-allow
 reads / prompt writes; v0.1 allows everything and relies on existing gates
@@ -94,6 +94,24 @@ the eventual deprecation (rewiring the per-prompt auto-recall + auto-learn hooks
 to the CLI, then uninstalling the MCP) is a **separate, deliberate follow-up** —
 see `docs/adr/0008`.
 
+### v0.4 verbs — ci / deploy
+
+Watch what you trigger, without hand-rolling Woodpecker/kubectl polling. `ci`
+talks to the Woodpecker API (token from `WOODPECKER_TOKEN` or Vault
+`secret/ci/global`) via the internal Traefik LB, resolving the repo from the cwd
+remote, with retries that ride Woodpecker's intermittent empty responses.
+
+| Command | Tier | What it does |
+|---|---|---|
+| `ci status [commit]` | read | pipeline status for HEAD (or a commit) |
+| `ci watch [commit]` | read | poll the pipeline to terminal; exit non-zero on failure |
+| `deploy wait <ns>/<deploy> [--sha SHA]` | read | wait for the deployment image to match the sha, *then* rollout status (rollout status alone lies on the old ReplicaSet) |
+
+`work land` now calls `ci watch` on the landed commit automatically (skip with
+`--no-ci-watch`), closing the v0.1 "doesn't wait for CI" gap. `ci logs` (failing
+step) is deferred to v0.4.1 — Woodpecker's per-pipeline detail/log endpoints were
+the least reliable; `status`/`watch` use the list endpoint that works.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -113,4 +131,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0008` for the architecture decisions.
+See `infra/docs/adr/0004`–`0009` for the architecture decisions.

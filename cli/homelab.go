@@ -16,6 +16,8 @@ func buildRegistry() []Command {
 	reg = append(reg, workCommands()...)
 	reg = append(reg, k8sCommands()...)
 	reg = append(reg, memoryCommands()...)
+	reg = append(reg, ciCommands()...)
+	reg = append(reg, deployCommands()...)
 	return reg
 }
 
