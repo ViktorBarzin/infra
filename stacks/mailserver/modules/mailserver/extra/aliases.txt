@@ -10,3 +10,12 @@ vaultwarden@viktorbarzin.me me@viktorbarzin.me
 # catch-all does NOT, so an explicit entry is required). Also keeps inbound
 # plans@ routing to spam@ for the tripit mail-ingest poller.
 plans@viktorbarzin.me spam@viktorbarzin.me
+
+# trips@ -> spam@: same send-as grant for tripit's NATIVE auth email (ADR-0028 —
+# signup-verification + account-recovery mail). tripit authenticates SMTP as
+# spam@ and sends From: trips@viktorbarzin.me; SPOOF_PROTECTION's
+# smtpd_sender_login_maps union exact-matches this alias to spam@ (the @domain
+# catch-all does NOT). MUST be applied + verified BEFORE tripit flips SMTP_FROM
+# to trips@, or every verification/recovery send is rejected (550 sender). Also
+# routes any inbound trips@ to spam@.
+trips@viktorbarzin.me spam@viktorbarzin.me
