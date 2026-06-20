@@ -33,6 +33,7 @@
 # nodeSelector pins this to ONE node (k8s-node2, which runs a Traefik pod) for first validation.
 # !!! REMOVING THE nodeSelector ROLLS THIS DAEMONSET CLUSTER-WIDE !!!
 # Do that ONLY after the one-node validation checklist passes (see commit/PR).
+# Validating on k8s-node2 (single node) before removing the nodeSelector to roll cluster-wide.
 
 locals {
   # Pin a specific stable release. Bump deliberately (re-validate on one node first).
