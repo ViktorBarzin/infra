@@ -151,11 +151,17 @@ resource "helm_release" "tigera_operator" {
   create_namespace = false
   repository       = "https://docs.tigera.io/calico/charts"
   chart            = "tigera-operator"
-  version          = "v3.28.5"
+  version          = "v3.30.7"
 
   values = [yamlencode({
     installation = { enabled = false }
     apiServer    = { enabled = false }
-    resources    = { limits = { memory = "256Mi" } }
+    # Goldmane (flow aggregator) + Whisker (observability UI) are new in Calico
+    # 3.30 and default-on; disabled — we use Prometheus/Loki, and on a helm
+    # UPGRADE their CRs render before their crds/ (which helm skips on upgrade)
+    # are installed -> "ensure CRDs are installed first". Not needed here.
+    goldmane  = { enabled = false }
+    whisker   = { enabled = false }
+    resources = { limits = { memory = "256Mi" } }
   })]
 }
