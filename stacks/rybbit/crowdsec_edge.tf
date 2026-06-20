@@ -4,28 +4,29 @@
 # Proxied hosts terminate at the Cloudflare edge, so the in-cluster CrowdSec
 # bouncer (which keys on the real client IP seen by Traefik) never gets to
 # decide on them. To enforce CrowdSec bans/captchas on proxied traffic we push
-# the decision INTO the Cloudflare edge as account-level IP Lists + a single
+# the decision INTO the Cloudflare edge as a SINGLE account-level IP List + one
 # zone-scoped WAF custom rule:
 #
-#   * Two account IP Lists — `crowdsec_ban` and `crowdsec_captcha` — hold the
-#     banned / captcha'd source IPs (empty in TF; populated at runtime).
+#   * ONE account IP List — `crowdsec_ban` — holds BOTH the banned AND captcha'd
+#     source IPs (empty in TF; populated at runtime). The CF account hard-limits
+#     to ONE Rules List, so captcha decisions are downgraded to block at the
+#     edge and folded into this same list (block-only enforcement).
 #   * A zone-scoped WAF ruleset in the http_request_firewall_custom phase
-#     blocks `(ip.src in $crowdsec_ban)` and managed-challenges
-#     `(ip.src in $crowdsec_captcha)`. Because it's a ZONE rule it enforces
+#     blocks `(ip.src in $crowdsec_ban)`. Because it's a ZONE rule it enforces
 #     across ALL proxied hosts in the zone (~135), not just the handful a
 #     Worker would route. (The previous Worker+KV design only covered the ~27
 #     hosts the rybbit Worker routed; the analytics Worker in worker/ is
 #     unrelated and stays.)
 #
-# This file is the CONTROL PLANE that keeps those lists in sync with LAPI:
-#   1. the two empty IP Lists (list ITEMS are owned by the CronJob at runtime,
+# This file is the CONTROL PLANE that keeps that list in sync with LAPI:
+#   1. the single empty IP List (list ITEMS are owned by the CronJob at runtime,
 #      NOT by Terraform — see the lifecycle ignore_changes on `item`),
 #   2. a LEAST-PRIVILEGE Cloudflare API token (account Filter-Lists edit only,
 #      scoped to this account) the sync job authenticates with,
 #   3. a CronJob running lapi_kv_sync.py every 2 min to full-reconcile LAPI
-#      decisions into the two lists (mirrors monitoring/alert_digest.tf: stock
-#      python:3.12-alpine + pure-stdlib script from a ConfigMap, no pip/apk at
-#      runtime).
+#      decisions (ban + captcha) into the one list (mirrors
+#      monitoring/alert_digest.tf: stock python:3.12-alpine + pure-stdlib script
+#      from a ConfigMap, no pip/apk at runtime).
 #
 # Cloudflare provider is pinned v4.52.7 (~> 4) — v4 schema is used throughout
 # (v5 differs greatly: policy is a block here not a `policies = [...]` list;
@@ -44,7 +45,7 @@ locals {
 }
 
 # -----------------------------------------------------------------------------
-# IP Lists — empty shells. The CronJob owns the items at runtime via the CF
+# IP List — empty shell. The CronJob owns the items at runtime via the CF
 # Rules-Lists API; TF must NOT manage items or every 2-min sync would fight the
 # next `terragrunt apply` (apply would try to delete the runtime items).
 #
@@ -54,7 +55,7 @@ locals {
 #     comment=... }`. We declare NO `item` blocks (empty list) and
 #     ignore_changes=[item] so runtime items don't show as drift.
 #     NOTE: list `name` must match /^[a-zA-Z0-9_]+$/ (underscores ok, no dashes)
-#     — hence crowdsec_ban / crowdsec_captcha (underscore, not dash).
+#     — hence crowdsec_ban (underscore, not dash).
 # -----------------------------------------------------------------------------
 resource "cloudflare_list" "crowdsec_ban" {
   account_id  = local.cf_account_id
@@ -69,29 +70,17 @@ resource "cloudflare_list" "crowdsec_ban" {
   }
 }
 
-resource "cloudflare_list" "crowdsec_captcha" {
-  account_id  = local.cf_account_id
-  name        = "crowdsec_captcha"
-  kind        = "ip"
-  description = "CrowdSec captcha decisions (synced from LAPI)"
-
-  lifecycle {
-    ignore_changes = [item]
-  }
-}
-
 # -----------------------------------------------------------------------------
-# Zone-scoped WAF custom ruleset — the actual enforcement. One ruleset, two
-# rules, applied to EVERY proxied host in the zone.
+# Zone-scoped WAF custom ruleset — the actual enforcement. One ruleset, one
+# block rule, applied to EVERY proxied host in the zone.
 #
 # ### VERIFY (v4.52.7): cloudflare_ruleset with zone_id + kind="zone" +
 #     phase="http_request_firewall_custom"; `rules` is a repeatable block with
-#     action/expression/description/enabled. actions "block" and
-#     "managed_challenge" are both valid. List references in WAF expressions use
-#     the list NAME with a `$` prefix (NOT the list id): ($crowdsec_ban).
-#     Rule order matters — ban (block) is evaluated before captcha so a
-#     double-listed IP is blocked outright (the sync script also enforces
-#     ban-wins, so an IP is never in both lists, but order is belt-and-braces).
+#     action/expression/description/enabled. action "block" is valid. List
+#     references in WAF expressions use the list NAME with a `$` prefix (NOT the
+#     list id): ($crowdsec_ban). Both ban and captcha decisions land in this one
+#     list (the CF account allows only one Rules List), so a single block rule
+#     covers everything — captcha is enforced as block at the edge.
 #
 # zone_id is the viktorbarzin.me zone — the single zone id used repo-wide
 # (default of var.cloudflare_zone_id in modules/kubernetes/ingress_factory and
@@ -116,22 +105,17 @@ resource "cloudflare_ruleset" "crowdsec" {
   kind    = "zone"
   phase   = "http_request_firewall_custom"
 
-  # The WAF rules reference the IP lists by name ($crowdsec_ban / $crowdsec_captcha),
-  # so the lists must exist before this ruleset is created/updated.
-  depends_on = [cloudflare_list.crowdsec_ban, cloudflare_list.crowdsec_captcha]
+  # The WAF rule references the IP list by name ($crowdsec_ban), so the list
+  # must exist before this ruleset is created/updated.
+  depends_on = [cloudflare_list.crowdsec_ban]
 
-  # CrowdSec ban — evaluated FIRST so a banned IP is blocked before anything else.
+  # CrowdSec ban — block every IP in the single edge list. The sync writes BOTH
+  # ban and captcha decisions into crowdsec_ban (captcha downgraded to block at
+  # the edge) because the CF account allows only ONE Rules List.
   rules {
     action      = "block"
     expression  = "(ip.src in $crowdsec_ban)"
     description = "CrowdSec: block banned IPs"
-    enabled     = true
-  }
-  # CrowdSec captcha — managed challenge for flagged IPs.
-  rules {
-    action      = "managed_challenge"
-    expression  = "(ip.src in $crowdsec_captcha)"
-    description = "CrowdSec: challenge flagged IPs"
     enabled     = true
   }
   # Pre-existing rule, imported and preserved verbatim (currently disabled).
@@ -278,10 +262,6 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
               env {
                 name  = "CF_BAN_LIST_ID"
                 value = cloudflare_list.crowdsec_ban.id
-              }
-              env {
-                name  = "CF_CAPTCHA_LIST_ID"
-                value = cloudflare_list.crowdsec_captcha.id
               }
               env {
                 name  = "PUSHGATEWAY_URL"
