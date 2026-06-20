@@ -135,6 +135,14 @@ lapi:
     # the prior manual registration was lost in the MySQL→PostgreSQL migration).
     - name: BOUNCER_KEY_traefik
       value: "${INGRESS_CROWDSEC_API_KEY}"
+    # Real enforcement path that replaces the dead Traefik Yaegi plugin:
+    #   kvsync   -> LAPI->Cloudflare-KV sync CronJob (proxied hosts, edge Worker)
+    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel nftables drop)
+    # Registered at LAPI startup (idempotent across the 3 replicas / restarts).
+    - name: BOUNCER_KEY_kvsync
+      value: "${KVSYNC_CROWDSEC_API_KEY}"
+    - name: BOUNCER_KEY_firewall
+      value: "${FIREWALL_CROWDSEC_API_KEY}"
   dashboard:
     enabled: true
     env:
