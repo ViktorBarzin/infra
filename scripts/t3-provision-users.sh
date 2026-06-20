@@ -272,6 +272,15 @@ install_claude_auth_sync() {
   token_file="$cfg/vault-token"
   policy="workstation-claude-$user"
 
+  # The service sandbox makes the rest of $HOME read-only. Pre-create every
+  # writable path before systemd enters that sandbox; ReadWritePaths cannot
+  # create a missing child beneath a read-only parent.
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "[dry-run] ensure Claude-auth state dirs -> $user"
+  else
+    install -d -o "$user" -g "$user" -m 0700 "$cfg" "$home/.local/state/claude-auth-sync"
+  fi
+
   if [[ ! -s "$token_file" ]]; then
     if [[ "$DRY_RUN" == 1 ]]; then
       echo "[dry-run] mint scoped Claude-auth Vault token -> $user"
