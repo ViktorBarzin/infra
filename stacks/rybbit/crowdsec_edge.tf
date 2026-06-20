@@ -154,8 +154,8 @@ resource "cloudflare_api_token" "list_sync" {
   policy {
     effect = "allow"
     permission_groups = [
-      data.cloudflare_api_token_permission_groups.all.account["Account Filter Lists Edit"],
-      data.cloudflare_api_token_permission_groups.all.account["Account Filter Lists Read"],
+      data.cloudflare_api_token_permission_groups.all.account["Account Rule Lists Write"],
+      data.cloudflare_api_token_permission_groups.all.account["Account Rule Lists Read"],
     ]
     resources = {
       "com.cloudflare.api.account.${local.cf_account_id}" = "*"
