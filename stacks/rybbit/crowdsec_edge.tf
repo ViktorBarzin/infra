@@ -107,7 +107,7 @@ resource "cloudflare_list" "crowdsec_captcha" {
 # (currently disabled) skip rule preserved verbatim below it.
 import {
   to = cloudflare_ruleset.crowdsec
-  id = "fd2c5dd4efe8fe38958944e74d0ced6d/106a1342bc88454ea59c47ad3431fe0e"
+  id = "zone/fd2c5dd4efe8fe38958944e74d0ced6d/106a1342bc88454ea59c47ad3431fe0e"
 }
 
 resource "cloudflare_ruleset" "crowdsec" {
@@ -115,6 +115,10 @@ resource "cloudflare_ruleset" "crowdsec" {
   name    = "default"
   kind    = "zone"
   phase   = "http_request_firewall_custom"
+
+  # The WAF rules reference the IP lists by name ($crowdsec_ban / $crowdsec_captcha),
+  # so the lists must exist before this ruleset is created/updated.
+  depends_on = [cloudflare_list.crowdsec_ban, cloudflare_list.crowdsec_captcha]
 
   # CrowdSec ban — evaluated FIRST so a banned IP is blocked before anything else.
   rules {
