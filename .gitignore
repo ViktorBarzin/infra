@@ -110,3 +110,9 @@ terraform.tfstate.backup
 # Timestamped terraform state backups (terraform.tfstate.<ts>.backup) — plaintext Tier-0
 # secrets; created by terraform state ops. The patterns above miss the timestamped form.
 terraform.tfstate.*.backup
+
+# Python test artifacts (pytest bytecode cache) — e.g. from
+# stacks/k8s-version-upgrade/scripts/test_compat_gate.py
+__pycache__/
+*.pyc
+.pytest_cache/
