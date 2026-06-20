@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
-"""Sync CrowdSec LAPI decisions -> two Cloudflare account IP Lists.
+"""Sync CrowdSec LAPI decisions -> ONE Cloudflare account IP List (block-only).
 
 Cloudflare-PROXIED hosts terminate at the CF edge, so the in-cluster CrowdSec
 bouncer (which keys on the client IP Traefik sees) never decides on them. We
 push the decisions into the edge instead: a zone-scoped WAF custom rule blocks
-`(ip.src in $crowdsec_ban)` and managed-challenges `(ip.src in $crowdsec_captcha)`
-across EVERY proxied host in the zone. This job is the control plane that keeps
-those two IP Lists in sync with LAPI.
+`(ip.src in $crowdsec_ban)` across EVERY proxied host in the zone. This job is
+the control plane that keeps that one IP List in sync with LAPI.
+
+The CF account hard-limits to ONE Rules List, so enforcement is BLOCK-ONLY:
+BOTH ban AND captcha (scope=="ip") decisions are folded into the single
+crowdsec_ban list and captcha is downgraded to block at the proxied edge.
 
 (Filename kept as lapi_kv_sync.py for path/ConfigMap continuity with the prior
-Workers-KV design; it no longer touches KV — it reconciles CF Rules Lists.)
+Workers-KV design; it no longer touches KV — it reconciles a CF Rules List.)
 
 Design notes:
   * Pure Python stdlib (no pip/apk at runtime) — runs on stock python:3.12-alpine
     mounted from a ConfigMap, the alert_digest pattern.
-  * FULL RECONCILE each run: read the complete decision set from LAPI, partition
-    into ban / captcha desired sets, then for each list compute add (desired -
-    existing) and remove (existing - desired) and apply both. An IP listed for
-    BOTH ban and captcha is placed in BAN ONLY (ban wins; the WAF rule order
-    also blocks-before-challenges as belt-and-braces). A `cscli decisions
-    delete` therefore clears from the edge within one interval (<=2 min).
-  * FAIL-SAFE on LAPI: if LAPI can't be read we SKIP the run (lists untouched,
-    exit 0). A LAPI outage thus freezes the edge state rather than wiping every
-    ban — degrade toward the last-known-good block set, never toward all-block
-    or a thundering un-ban. (Decisions linger only until the next successful
-    sync, not their TTL — we reconcile to LAPI truth, we don't expire entries.)
+  * FULL RECONCILE each run: read the complete decision set from LAPI, take the
+    UNION of ban + captcha (scope=="ip") as the single desired set, then compute
+    add (desired - existing) and remove (existing - desired) against the one
+    crowdsec_ban list and apply both. A `cscli decisions delete` therefore
+    clears from the edge within one interval (<=2 min).
+  * FAIL-SAFE on LAPI: if LAPI can't be read we SKIP the run (list untouched,
+    exit 0). A LAPI outage thus freezes the edge state rather than wiping the
+    block list — degrade toward the last-known-good block set, never toward
+    all-block or a thundering un-ban. (Decisions linger only until the next
+    successful sync, not their TTL — we reconcile to LAPI truth, we don't
+    expire entries.)
   * FAIL-LOUD on Cloudflare: any CF API error is logged and the job exits
     non-zero so the failure is visible (CronJob backoff + missing success
     metric + the next run retries).
@@ -42,9 +45,9 @@ official API reference (developers.cloudflare.com, 2026):
   * GET    /accounts/{acct}/rules/lists/bulk_operations/{op_id} -> status in
            {pending,running,completed,failed} (failed carries `error`).
   ASYNC HANDLING: Cloudflare allows only ONE pending bulk operation per ACCOUNT.
-  So we must NOT fire add+delete (or both lists) concurrently — we serialize and
-  poll each operation_id to a terminal state (short bounded timeout) before the
-  next mutation. If a poll times out we stop mutating for this run and report
+  So we must NOT fire add+delete concurrently — we serialize and poll each
+  operation_id to a terminal state (short bounded timeout) before the next
+  mutation. If a poll times out we stop mutating for this run and report
   partial success (the next 2-min run reconciles the rest); we never abandon an
   in-flight op and immediately issue another (that would 409/reject).
 """
@@ -63,7 +66,6 @@ LAPI_KEY = os.environ["LAPI_KEY"]  # kvsync bouncer key, registered in LAPI
 CF_ACCOUNT_ID = os.environ["CF_ACCOUNT_ID"]
 CF_API_TOKEN = os.environ["CF_API_TOKEN"]  # scoped: Account Filter Lists Edit
 CF_BAN_LIST_ID = os.environ["CF_BAN_LIST_ID"]
-CF_CAPTCHA_LIST_ID = os.environ["CF_CAPTCHA_LIST_ID"]
 PUSHGATEWAY = os.environ.get("PUSHGATEWAY_URL", "").rstrip("/")  # optional
 
 CF_API = "https://api.cloudflare.com/client/v4"
@@ -115,17 +117,19 @@ def _cf(url, *, method="GET", payload=None, timeout=20):
 # LAPI
 # --------------------------------------------------------------------------- #
 def fetch_decisions():
-    """Return (ban_set, captcha_set) of IPs from LAPI.
+    """Return the single desired set of IPs to BLOCK at the edge.
 
-    Only scope=="ip" decisions are projected (the WAF rule keys on ip.src). An
-    IP appearing in both ban and captcha is placed in BAN only. Raises on
-    transport/HTTP error so the caller can SKIP the run (fail-safe).
+    Only scope=="ip" decisions are projected (the WAF rule keys on ip.src). The
+    CF account allows only ONE Rules List, so BOTH "ban" AND "captcha" decisions
+    are folded into one block set (captcha is downgraded to block at the proxied
+    edge). Raises on transport/HTTP error so the caller can SKIP the run
+    (fail-safe).
     """
     data = _req(
         f"{LAPI_URL}/v1/decisions",
         headers={"X-Api-Key": LAPI_KEY, "Accept": "application/json"},
     )
-    ban, captcha = set(), set()
+    block = set()
     for d in data or []:
         if (d.get("scope") or "").lower() != "ip":
             continue
@@ -133,13 +137,10 @@ def fetch_decisions():
         if not ip:
             continue
         dtype = (d.get("type") or "").lower()
-        if dtype == "ban":
-            ban.add(ip)
-        elif dtype == "captcha":
-            captcha.add(ip)
+        if dtype in ("ban", "captcha"):
+            block.add(ip)
         # other remediation types (e.g. throttle) are ignored
-    captcha -= ban  # ban wins: never list the same IP in both
-    return ban, captcha
+    return block
 
 
 # --------------------------------------------------------------------------- #
@@ -260,14 +261,12 @@ def reconcile(label, list_id, desired):
 # --------------------------------------------------------------------------- #
 # Metrics (best-effort)
 # --------------------------------------------------------------------------- #
-def push_metrics(ban_n, captcha_n, ok):
+def push_metrics(block_n, ok):
     if not PUSHGATEWAY:
         return
     payload = (
         "# TYPE crowdsec_cf_list_ban_count gauge\n"
-        f"crowdsec_cf_list_ban_count {ban_n}\n"
-        "# TYPE crowdsec_cf_list_captcha_count gauge\n"
-        f"crowdsec_cf_list_captcha_count {captcha_n}\n"
+        f"crowdsec_cf_list_ban_count {block_n}\n"
         "# TYPE crowdsec_cf_list_sync_success gauge\n"
         f"crowdsec_cf_list_sync_success {1 if ok else 0}\n"
         "# TYPE crowdsec_cf_list_sync_last_run_seconds gauge\n"
@@ -289,28 +288,27 @@ def push_metrics(ban_n, captcha_n, ok):
 def main():
     # 1. Desired state from LAPI. Any failure here = SKIP (fail-safe).
     try:
-        ban, captcha = fetch_decisions()
+        block = fetch_decisions()
     except Exception as e:
         print(
-            f"[skip] LAPI unreadable ({e}); leaving CF lists untouched "
+            f"[skip] LAPI unreadable ({e}); leaving the CF list untouched "
             f"(fail-safe: freeze last-known edge state).",
             file=sys.stderr,
         )
-        push_metrics(0, 0, ok=False)
+        push_metrics(0, ok=False)
         return 0
 
-    print(f"[info] LAPI desired: {len(ban)} ban / {len(captcha)} captcha (ip-scope)")
+    print(f"[info] LAPI desired: {len(block)} block (ban+captcha, ip-scope)")
 
-    # 2. Reconcile both lists. CF errors fail loud (non-zero exit).
+    # 2. Reconcile the single block list. CF errors fail loud (non-zero exit).
     try:
-        reconcile("ban", CF_BAN_LIST_ID, ban)
-        reconcile("captcha", CF_CAPTCHA_LIST_ID, captcha)
+        reconcile("block", CF_BAN_LIST_ID, block)
     except CFError as e:
         print(f"[error] Cloudflare API failure: {e}", file=sys.stderr)
-        push_metrics(len(ban), len(captcha), ok=False)
+        push_metrics(len(block), ok=False)
         return 1
 
-    push_metrics(len(ban), len(captcha), ok=True)
+    push_metrics(len(block), ok=True)
     return 0
 
 
