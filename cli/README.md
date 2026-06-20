@@ -147,6 +147,30 @@ the privacy-preserving answer to "what does the team use."
 |---|---|---|
 | `usage top [--since 30d] [--user U] [--json]` | read | rank verbs by invocation count across all users (or one), via `sum by (verb) (count_over_time({job="homelab-usage"}[…]))` |
 
+### v0.7 verbs — Home Assistant
+
+Cover exactly the two things the `ha` **MCP server can't**: resolving the
+long-lived API token out of the cluster, and SSH to the HA host for host-level
+work (config files, docker, add-ons). Entity state and control (`turn_on`,
+`get_state`, services) stay with the MCP — *actions an MCP already encodes are
+out of scope* (see top of this doc). The value here is the same as `net`/`dns`:
+the non-obvious *which secret, which host, which key, which flags* you'd
+otherwise re-derive every session — agents were hand-rolling a
+`kubectl | base64 | jq` token pipeline and a bespoke `ssh -o …` invocation on
+every run because the existing `home-assistant-sofia.py` needs an env var set
+and a cwd-relative path, neither of which holds in an arbitrary session.
+
+| Command | Tier | What it does |
+|---|---|---|
+| `ha token [--instance sofia\|london]` | read | print the long-lived HA API token, resolved live from k8s Secret `openclaw/openclaw-secrets` (`skill_secrets` JSON) via the ambient kubeconfig — no pre-set env var. Use as `curl -H "Authorization: Bearer $(homelab ha token)" …` |
+| `ha ssh [--instance sofia\|london] [-i KEY] -- <cmd>` | write | run `<cmd>` on the HA host over ssh with deterministic non-interactive flags (explicit key = the invoking user's `~/.ssh/id_ed25519`, no user ssh-config, no known_hosts prompt). sofia (`vbarzin@192.168.1.8`) is reachable from the devvm LAN; london is documented but generally remote |
+
+`--instance` defaults to **sofia** (the devvm shares the Sofia LAN). `ha token`
+prints the bare token to stdout so it composes in `$(…)`; it's read-tier like
+`memory secret`. `ha ssh` resolves the *invoking user's* key, so it's per-user,
+not tied to whoever first wrote the workflow (the user's key must be enrolled on
+the HA host).
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -166,4 +190,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0011` for the architecture decisions.
+See `infra/docs/adr/0004`–`0012` for the architecture decisions.
