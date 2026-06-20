@@ -102,6 +102,14 @@ the upgrade** if any of these hold for the detected target:
 - a **node's containerd is below the target's floor** (the minimum containerd the
   target k8s requires).
 
+The addon check is **scoped to minor jumps**: a target **at or below the running
+k8s minor** (a patch) crosses into no new minor, so the running cluster is itself
+proof the installed addons work there — `compat-gate.py` skips the addon ceilings
+when `target_minor <= running_minor`. (Without this a conservative ceiling such as
+ESO 0.12 → 1.31 would false-block a 1.34.x **patch** on a cluster already running
+1.34 — fixed 2026-06-20.) The deprecated-API and containerd checks are naturally
+inert for a patch (no API removal or containerd floor occurs inside a minor).
+
 This is the **"auto-upgrade when we can, halt + alert when we can't"** contract.
 
 **On a block**, the gate:
@@ -123,10 +131,15 @@ supported k8s minor`, populated from each addon's own compatibility docs. **Keep
 it current**; the gate reads it on every run. Gate logic:
 `stacks/k8s-version-upgrade/scripts/compat-gate.py`.
 
-> The detector's minor-probe was **fixed** (the `HEAD pkgs.k8s.io/.../v<NEXT_MINOR>`
-> curl now follows the 302 from `pkgs.k8s.io` via `-L`), so **minor versions are
-> finally detected** — and are gated behind the compat check above before the
-> chain will act on them.
+> **Both** detector probes against `pkgs.k8s.io` follow the 302 redirect via `-L`:
+> the next-minor *availability* probe (`HEAD .../v<NEXT_MINOR>/deb/Release`) **and**
+> the next-minor *patch* probe (`GET .../v<NEXT_MINOR>/deb/Packages`, which resolves
+> the exact `X.Y.Z`). The Packages probe lacked `-L` until 2026-06-20 — `pkgs.k8s.io`
+> 302-redirects every request, so without it curl returned an empty body,
+> `NEXT_MINOR_PATCH` came back empty, and the detector silently fell through to
+> "No upgrade needed". That is why the **2026-06-19 nightly run no-op'd** instead of
+> resolving the 1.35 target. With both probes on `-L`, **minor versions are detected**
+> and gated behind the compat check above before the chain acts on them.
 
 ## Components
 
