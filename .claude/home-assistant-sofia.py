@@ -7,6 +7,7 @@ Control and query Home Assistant entities on ha-sofia.viktorbarzin.me.
 import argparse
 import json
 import os
+import subprocess
 import sys
 from urllib.parse import urljoin
 
@@ -17,13 +18,29 @@ except ImportError:
     print("  pip install requests")
     sys.exit(1)
 
-# Configuration from environment variables (ha-sofia specific)
-HA_URL = os.environ.get("HOME_ASSISTANT_SOFIA_URL", "").rstrip("/")
-HA_TOKEN = os.environ.get("HOME_ASSISTANT_SOFIA_TOKEN")
 
-if not HA_URL or not HA_TOKEN:
-    print("ERROR: HOME_ASSISTANT_SOFIA_URL and HOME_ASSISTANT_SOFIA_TOKEN environment variables must be set.")
-    print("These should be set when activating the Claude venv (~/.venvs/claude)")
+def _token_from_homelab():
+    """Resolve the token via the homelab CLI when the env var isn't set, so the
+    script works from any directory / unprovisioned session (see ADR-0012)."""
+    try:
+        out = subprocess.run(
+            ["homelab", "ha", "token", "--instance", "sofia"],
+            capture_output=True, text=True, timeout=30)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+# Configuration: prefer env vars (set by the Claude venv); otherwise fall back to
+# defaults + the homelab CLI so the script is not cwd/env dependent (ADR-0012).
+HA_URL = os.environ.get("HOME_ASSISTANT_SOFIA_URL", "").rstrip("/") or "https://ha-sofia.viktorbarzin.me"
+HA_TOKEN = os.environ.get("HOME_ASSISTANT_SOFIA_TOKEN") or _token_from_homelab()
+
+if not HA_TOKEN:
+    print("ERROR: no ha-sofia API token available.")
+    print("Set HOME_ASSISTANT_SOFIA_TOKEN, or ensure `homelab ha token` works (kubeconfig reachable).")
     sys.exit(1)
 
 HEADERS = {
