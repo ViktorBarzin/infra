@@ -14,8 +14,10 @@ CONFIG_BASE="${WORKSTATION_CONFIG_BASE:-/home/wizard/.claude}"
 [[ $EUID -eq 0 ]] || { echo "setup-devvm.sh: must run as root" >&2; exit 1; }
 log() { echo "[setup-devvm] $*"; }
 
-# 1) apt toolset (declarative manifest; comments/blank lines stripped)
-mapfile -t PKGS < <(grep -vE '^[[:space:]]*(#|$)' "$HERE/packages.txt")
+# 1) apt toolset (declarative manifest; full-line AND inline comments stripped).
+# Passing an inline comment through makes apt treat the whole remainder as part
+# of the package name (e.g. "golang-go # builds ..."), breaking every rebuild.
+mapfile -t PKGS < <(sed -E 's/[[:space:]]+#.*$//' "$HERE/packages.txt" | grep -vE '^[[:space:]]*(#|$)')
 log "apt: ensuring ${#PKGS[@]} packages present"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
