@@ -205,6 +205,34 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__repository__DISABLE_DOWNLOAD_SOURCE_ARCHIVES"
             value = "true"
           }
+          # --- Mirror / git-op resilience (2026-06-19 incident). The tripit
+          # push-mirror to GitHub silently stopped: `git cat-file --batch-all-objects`
+          # over the NFS-backed repo blew the default git-op deadline (~360s) once
+          # loose objects piled up (~4500). Forgejo's git_gc_repos cron only runs
+          # `gc --auto`, whose 6700-loose threshold hadn't fired, so the repo stayed
+          # unpacked and enumeration kept slowing until the mirror aborted with
+          # "context deadline exceeded". Two-part durable fix:
+          #   1) raise git-op timeouts so a slow enumeration never aborts a
+          #      mirror/gc ([git.timeout], seconds);
+          #   2) lower gc.auto so post-push autogc + the cron keep repos PACKED —
+          #      the real fix ([git.config] gc.auto).
+          # Dotted section/key names use the _0X2E_ env-to-ini escape.
+          env {
+            name  = "FORGEJO__git_0X2E_timeout__DEFAULT"
+            value = "3600"
+          }
+          env {
+            name  = "FORGEJO__git_0X2E_timeout__MIRROR"
+            value = "3600"
+          }
+          env {
+            name  = "FORGEJO__git_0X2E_timeout__GC"
+            value = "1800"
+          }
+          env {
+            name  = "FORGEJO__git_0X2E_config__gc_0X2E_auto"
+            value = "1000"
+          }
           # --- Open-signup bot prevention + mailer (appended so the diff vs the
           # pre-signup deployment stays purely additive). ---
           # Cloudflare Turnstile captcha on the registration form (widget
