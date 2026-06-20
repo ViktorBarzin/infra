@@ -50,7 +50,10 @@ func dispatch(reg []Command, args []string) error {
 	if best < 0 {
 		return fmt.Errorf("unknown command: %q", strings.Join(args, " "))
 	}
-	return reg[best].Run(args[bestLen:])
+	matched := reg[best]
+	runErr := matched.Run(args[bestLen:])
+	emitUsage(matched.name(), runErr) // best-effort usage telemetry; never affects the command
+	return runErr
 }
 
 // name is the space-joined verb path, e.g. "tf plan".

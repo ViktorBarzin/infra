@@ -131,6 +131,22 @@ Quote the PromQL/LogQL. These hit auth-free internal ingresses — no port-forwa
 no kubectl. (In-cluster-only endpoints like Alertmanager stay out of scope; the
 firing set is reachable via `ALERTS` instead.)
 
+### v0.6 — usage telemetry (`usage top`)
+
+Makes "which verbs are actually used, by everyone" a query instead of a guess —
+so adding the *next* verb is evidence-driven, not shaped by one person's habits.
+
+Every dispatched verb emits one fire-and-forget Loki line: `{job, user, verb}`
+labels + `exit=N ver=X` — **only the verb path and exit code, never args, paths,
+flags, or secrets.** It's best-effort (tight timeout, errors swallowed, never
+affects the command) and opt-out via `HOMELAB_TELEMETRY=0`. Because the sink is
+the shared Loki, aggregate usage is queryable **without reading anyone's home** —
+the privacy-preserving answer to "what does the team use."
+
+| Command | Tier | What it does |
+|---|---|---|
+| `usage top [--since 30d] [--user U] [--json]` | read | rank verbs by invocation count across all users (or one), via `sum by (verb) (count_over_time({job="homelab-usage"}[…]))` |
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -150,4 +166,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0010` for the architecture decisions.
+See `infra/docs/adr/0004`–`0011` for the architecture decisions.
