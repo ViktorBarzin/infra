@@ -102,6 +102,15 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
         reason: "Trusted IP - never block"
         ip:
           - "176.12.22.76"
+        cidr:
+          # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
+          # Worker + firewall-bouncer) drops on real source IP, so an internal
+          # range slipping into a decision could blackhole legit traffic — this
+          # makes that structurally impossible at the decision layer.
+          - "10.0.0.0/8"        # k8s nodes/pods/services + VLAN 10/20
+          - "172.16.0.0/12"     # RFC1918
+          - "192.168.0.0/16"    # LAN (192.168.1.0/24) + Sofia
+          - "100.64.0.0/10"     # Headscale tailnet (CGNAT)
       ---
       name: viktor/immich-asset-paths-whitelist
       description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
