@@ -217,6 +217,8 @@ resource "kubernetes_deployment" "forgejo" {
           #   2) lower gc.auto so post-push autogc + the cron keep repos PACKED —
           #      the real fix ([git.config] gc.auto).
           # Dotted section/key names use the _0X2E_ env-to-ini escape.
+          # (Re-applied 2026-06-19: the original commit's CI apply skipped this
+          # stack via the changed-stack-diff race, so this touch re-triggers it.)
           env {
             name  = "FORGEJO__git_0X2E_timeout__DEFAULT"
             value = "3600"
