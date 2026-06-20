@@ -21,6 +21,16 @@ variable "ingress_bouncer_key" {
   sensitive   = true
   description = "API key for the Traefik CrowdSec bouncer plugin. Seeded into LAPI via BOUNCER_KEY_traefik so the bouncer authenticates and pulls decisions — the same key the traefik-stack middleware presents."
 }
+variable "kvsync_bouncer_key" {
+  type        = string
+  sensitive   = true
+  description = "API key for the LAPI->Cloudflare-KV sync job (proxied-edge control plane). Seeded into LAPI via BOUNCER_KEY_kvsync; the rybbit-stack CronJob presents the same key to pull decisions."
+}
+variable "firewall_bouncer_key" {
+  type        = string
+  sensitive   = true
+  description = "API key for the cs-firewall-bouncer DaemonSet (direct-host in-kernel enforcement). Seeded into LAPI via BOUNCER_KEY_firewall; the DaemonSet presents the same key to stream decisions."
+}
 
 module "tls_secret" {
   source          = "../../../../modules/kubernetes/setup_tls_secret"
@@ -162,7 +172,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, INGRESS_CROWDSEC_API_KEY = var.ingress_bouncer_key })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, INGRESS_CROWDSEC_API_KEY = var.ingress_bouncer_key, KVSYNC_CROWDSEC_API_KEY = var.kvsync_bouncer_key, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
