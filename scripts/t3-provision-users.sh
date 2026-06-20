@@ -251,23 +251,41 @@ env_set() {
   chmod 600 "$file"
 }
 
-# Share the admin's Claude subscription with a non-admin: inject CLAUDE_CODE_OAUTH_TOKEN
-# (the staged long-lived token) into their t3-serve env — ONLY if they have neither their
-# own ~/.claude/.credentials.json (own login) nor an existing token. Never clobbers. The
-# agent picks it up when its t3-serve@ instance (re)starts.
-install_user_claude_token() {
-  local user="$1" home envf tok
-  local token_file="${CLAUDE_TOKEN_FILE:-/etc/t3-serve/claude-oauth-token}"
+env_unset() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  grep -q "^${key}=" "$file" || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] unset $key -> $file"; return 0; fi
+  sed -i "/^${key}=.*/d" "$file"
+  chmod 600 "$file"
+  log "removed legacy shared $key -> $(basename "$file")"
+}
+
+# Install one user's isolated Claude credential renewal flow. The scoped periodic
+# Vault token is minted only when this reconcile has admin Vault access (normal
+# onboarding/deployment); routine token renewal is performed by the user service.
+install_claude_auth_sync() {
+  local user="$1" home cfg token_file token policy
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -z "$home" ]] && return 0
-  [[ -f "$home/.claude/.credentials.json" ]] && return 0      # has own login -> leave it
-  [[ -r "$token_file" ]] || return 0
-  envf="${ENVDIR:-/etc/t3-serve}/$user.env"
-  grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$envf" 2>/dev/null && return 0   # already shared
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] share Claude token -> $envf"; return 0; fi
-  tok="$(cat "$token_file")"
-  env_set "$envf" CLAUDE_CODE_OAUTH_TOKEN "$tok"
-  log "shared Claude token -> $user (t3-serve env; restart needed to take effect)"
+  cfg="$home/.config/claude-auth-sync"
+  token_file="$cfg/vault-token"
+  policy="workstation-claude-$user"
+
+  if [[ ! -s "$token_file" ]]; then
+    if [[ "$DRY_RUN" == 1 ]]; then
+      echo "[dry-run] mint scoped Claude-auth Vault token -> $user"
+    elif vault token lookup >/dev/null 2>&1 && \
+      token="$(vault token create -orphan -period=768h -policy="$policy" \
+        -display-name="devvm-claude-auth-$user" -field=token 2>/dev/null)"; then
+      install -d -o "$user" -g "$user" -m 0700 "$cfg"
+      install -o "$user" -g "$user" -m 0600 /dev/stdin "$token_file" <<<"$token"
+      log "minted isolated Claude-auth Vault token -> $user"
+    else
+      log "WARN: scoped Claude-auth Vault token missing for $user (run provisioner with admin VAULT_TOKEN after vault stack apply)"
+    fi
+  fi
+  run systemctl enable --now "claude-auth-sync@$user.timer" >/dev/null 2>&1 || true
 }
 
 # Re-deploy the managed per-user Claude launcher to ~/start-claude.sh. /etc/skel only
@@ -421,7 +439,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
       log "add $os_user -> group $g"; run gpasswd -a "$os_user" "$g" >/dev/null
     done
   fi
-  if [[ "$tier" != admin ]]; then            # non-admins: locked clone(s) (kept fresh) + kubeconfig + shared Claude token
+  if [[ "$tier" != admin ]]; then            # non-admins: locked clone(s) (kept fresh) + kubeconfig
     if [[ "$code_layout" == workspace ]]; then
       ensure_workspace_layout "$os_user"
       install_locked_clone "$os_user" code/infra
@@ -440,17 +458,20 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
       refresh_user_clone   "$os_user" code
     fi
     install_user_kubeconfig "$os_user"
-    install_user_claude_token "$os_user"
     deploy_user_launcher "$os_user"          # keep ~/start-claude.sh current (skel only seeds new accounts)
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
+  install_claude_auth_sync "$os_user"        # all tiers — own Claude identity + isolated Vault recovery
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
   envf="$ENVDIR/$os_user.env"
-  env_set "$envf" T3_PORT "$port"   # update-or-append; preserves CLAUDE_CODE_OAUTH_TOKEN
+  env_set "$envf" T3_PORT "$port"
+  # Per-user Enterprise login is authoritative. A legacy shared setup-token has
+  # higher credential precedence and would silently defeat user isolation.
+  env_unset "$envf" CLAUDE_CODE_OAUTH_TOKEN
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 

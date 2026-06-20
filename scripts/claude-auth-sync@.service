@@ -1,0 +1,20 @@
+[Unit]
+Description=Validate and back up Claude OAuth credentials for %i
+Documentation=https://github.com/ViktorBarzin/infra/blob/master/docs/runbooks/claude-auth-renew-workstation.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+Environment=HOME=/home/%i
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
+ExecStart=/usr/local/bin/claude-auth-sync
+
+# Credential and Vault access are required; keep the remaining host surface narrow.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=-/home/%i/.claude -/home/%i/.claude.json -/home/%i/.config/claude-auth-sync -/home/%i/.local/state/claude-auth-sync

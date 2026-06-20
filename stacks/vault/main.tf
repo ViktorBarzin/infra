@@ -1016,6 +1016,11 @@ data "vault_kv_secret_v2" "platform" {
 locals {
   k8s_users = jsondecode(data.vault_kv_secret_v2.platform.data["k8s_users"])
 
+  # Workstation roster is the source of truth for Claude credential isolation.
+  # Each user's renewal agent receives a periodic Vault token carrying exactly
+  # one of these policies; no user can read another user's OAuth state.
+  workstation_users = yamldecode(file("${path.module}/../../scripts/workstation/roster.yaml")).users
+
   # Flatten user -> namespace pairs for namespace-owners
   namespace_owner_namespaces = flatten([
     for name, user in local.k8s_users : [
@@ -1032,6 +1037,26 @@ locals {
     for name, user in local.k8s_users : user.namespaces
     if user.role == "namespace-owner"
   ]))
+}
+
+resource "vault_policy" "workstation_claude" {
+  for_each = local.workstation_users
+
+  name   = "workstation-claude-${each.key}"
+  policy = <<-EOT
+    path "secret/data/workstation/claude-users/${each.key}" {
+      capabilities = ["create", "read", "update"]
+    }
+    path "secret/metadata/workstation/claude-users/${each.key}" {
+      capabilities = ["read"]
+    }
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+  EOT
 }
 
 resource "kubernetes_namespace" "user_namespace" {
