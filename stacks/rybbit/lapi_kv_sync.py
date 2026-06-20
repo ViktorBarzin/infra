@@ -4,12 +4,16 @@
 Cloudflare-PROXIED hosts terminate at the CF edge, so the in-cluster CrowdSec
 bouncer (which keys on the client IP Traefik sees) never decides on them. We
 push the decisions into the edge instead: a zone-scoped WAF custom rule blocks
-`(ip.src in $crowdsec_ban)` across EVERY proxied host in the zone. This job is
-the control plane that keeps that one IP List in sync with LAPI.
+`(ip.src in $crowdsec_ban)` across EVERY proxied host in the zone (the Authentik
+auth hosts are carved out in crowdsec_edge.tf so a ban can't break login). This
+job is the control plane that keeps that one IP List in sync with LAPI.
 
-The CF account hard-limits to ONE Rules List, so enforcement is BLOCK-ONLY:
-BOTH ban AND captcha (scope=="ip") decisions are folded into the single
-crowdsec_ban list and captcha is downgraded to block at the proxied edge.
+Enforcement is BAN-ONLY: only scope=="ip" decisions of type "ban" are synced.
+"captcha" decisions are deliberately NOT pushed — the CF account allows only ONE
+Rules List with a single block action, so folding captcha in would hard-block a
+soft challenge across every proxied host. Captcha remediation stays at the
+in-cluster Traefik bouncer (Turnstile) for non-proxied apps. (Changed 2026-06-20
+from the prior ban+captcha fold that downgraded captcha to a hard edge block.)
 
 (Filename kept as lapi_kv_sync.py for path/ConfigMap continuity with the prior
 Workers-KV design; it no longer touches KV — it reconciles a CF Rules List.)
@@ -117,13 +121,17 @@ def _cf(url, *, method="GET", payload=None, timeout=20):
 # LAPI
 # --------------------------------------------------------------------------- #
 def fetch_decisions():
-    """Return the single desired set of IPs to BLOCK at the edge.
+    """Return the desired set of IPs to BLOCK at the edge.
 
-    Only scope=="ip" decisions are projected (the WAF rule keys on ip.src). The
-    CF account allows only ONE Rules List, so BOTH "ban" AND "captcha" decisions
-    are folded into one block set (captcha is downgraded to block at the proxied
-    edge). Raises on transport/HTTP error so the caller can SKIP the run
-    (fail-safe).
+    Only scope=="ip" decisions of type "ban" are projected (the WAF rule keys on
+    ip.src). "captcha" decisions are deliberately NOT pushed to the edge: the CF
+    account allows only ONE Rules List with a single block action, so folding
+    captcha in would HARD-BLOCK a soft challenge across every proxied host (and,
+    before the auth-host carve-out in crowdsec_edge.tf, could lock a user out of
+    Authentik itself). Edge enforcement is therefore ban-only; captcha
+    remediation stays at the in-cluster Traefik bouncer (Turnstile) for
+    non-proxied apps. Raises on transport/HTTP error so the caller can SKIP the
+    run (fail-safe). 2026-06-20.
     """
     data = _req(
         f"{LAPI_URL}/v1/decisions",
@@ -137,9 +145,10 @@ def fetch_decisions():
         if not ip:
             continue
         dtype = (d.get("type") or "").lower()
-        if dtype in ("ban", "captcha"):
+        if dtype == "ban":
             block.add(ip)
-        # other remediation types (e.g. throttle) are ignored
+        # captcha / throttle / other remediation types are ignored at the edge
+        # (ban-only enforcement — see the docstring above)
     return block
 
 
@@ -298,7 +307,7 @@ def main():
         push_metrics(0, ok=False)
         return 0
 
-    print(f"[info] LAPI desired: {len(block)} block (ban+captcha, ip-scope)")
+    print(f"[info] LAPI desired: {len(block)} block (ban-only, ip-scope)")
 
     # 2. Reconcile the single block list. CF errors fail loud (non-zero exit).
     try:
