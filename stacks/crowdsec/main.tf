@@ -32,4 +32,8 @@ module "crowdsec" {
   # Same key the traefik-stack bouncer middleware uses — seeded into LAPI so the
   # bouncer authenticates and pulls decisions (was unregistered → 403 → fail-open).
   ingress_bouncer_key = data.vault_kv_secret_v2.secrets.data["ingress_crowdsec_api_key"]
+  # Real enforcement replacing the dead Traefik plugin: kvsync feeds the proxied
+  # edge Worker via Cloudflare KV; firewall is the direct-host nftables bouncer.
+  kvsync_bouncer_key   = data.vault_kv_secret_v2.secrets.data["kvsync_bouncer_key"]
+  firewall_bouncer_key = data.vault_kv_secret_v2.secrets.data["firewall_bouncer_key"]
 }
