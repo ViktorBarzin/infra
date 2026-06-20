@@ -161,11 +161,13 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
               curl -fsSL "${local.firewall_bouncer_tgz_url}" -o /tmp/fb.tgz
               # Archive layout (verified @ v0.0.34): a single versioned top dir
               # `crowdsec-firewall-bouncer-vX.Y.Z/` containing the binary plus
-              # config/, scripts/, install.sh. Strip that dir and extract ONLY the
-              # binary — the `*/crowdsec-firewall-bouncer` glob matches one path
-              # segment after the top dir, so config/...yaml is NOT pulled.
-              tar -xzf /tmp/fb.tgz -C /opt/firewall-bouncer --strip-components=1 \
-                --wildcards '*/crowdsec-firewall-bouncer'
+              # config/, scripts/, install.sh. The curl image is BusyBox, whose
+              # tar lacks GNU --wildcards/--strip-components selection — so extract
+              # everything to a scratch dir, then cp ONLY the binary out via a
+              # shell glob (`*/` matches the single versioned top dir).
+              mkdir -p /tmp/fb-extract
+              tar -xzf /tmp/fb.tgz -C /tmp/fb-extract
+              cp /tmp/fb-extract/*/crowdsec-firewall-bouncer ${local.firewall_bouncer_bin_path}
               chmod +x ${local.firewall_bouncer_bin_path}
               echo "Fetched: $(ls -l ${local.firewall_bouncer_bin_path})"
             EOT
