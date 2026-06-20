@@ -82,6 +82,13 @@ module "ingress" {
   service_name     = "goauthentik-server"
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
+  # Never let the in-cluster CrowdSec bouncer serve a Turnstile/captcha
+  # interstitial or 403 on Authentik's own login + WebAuthn XHR endpoints — that
+  # walls users out of the very gate they authenticate through (a CrowdSec hit
+  # would break the passkey ceremony / session refresh mid-flow). Auth keeps
+  # Traefik rate-limiting; the Cloudflare edge WAF also carves out this host
+  # (stacks/rybbit/crowdsec_edge.tf). 2026-06-20.
+  exclude_crowdsec = true
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Authentik"

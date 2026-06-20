@@ -107,6 +107,32 @@ CrowdSec operates in a hub-and-agent model:
     configured, so `captcha` decisions silently degraded to a 403 ban** — users
     had no way to self-unblock; wiring Turnstile fixed that.
 
+**Cloudflare Edge Enforcement for proxied hosts** (`stacks/rybbit/crowdsec_edge.tf` + `lapi_kv_sync.py`):
+- Proxied (orange-cloud) hosts terminate at the Cloudflare edge, so the in-cluster
+  bouncer above never decides on them. Edge enforcement instead syncs LAPI
+  decisions into **one Cloudflare account IP List (`crowdsec_ban`)** + a single
+  **zone-scoped WAF custom rule** blocking `(ip.src in $crowdsec_ban)` across every
+  proxied host. CronJob `crowdsec-cf-sync` (rybbit ns, every 2 min) reconciles it.
+- **BAN-ONLY (2026-06-20):** only `type=ban` decisions sync to the edge. `captcha`
+  decisions are deliberately NOT pushed — the CF account allows only ONE Rules List
+  with a single block action, so folding captcha in would hard-block a soft
+  challenge on every proxied host. (Before 2026-06-20 captcha was downgraded to a
+  hard block at the edge.)
+- **Auth carve-out (2026-06-20):** the WAF rule excludes `authentik.viktorbarzin.me`
+  + `public-auth.viktorbarzin.me` (`… and not (http.host in {…})`), and the
+  Authentik UI ingress sets `exclude_crowdsec = true` for the in-cluster bouncer. A
+  CrowdSec hit must never wall a user out of the login / WebAuthn flow they
+  authenticate through; auth keeps `traefik-rate-limit` for brute-force protection.
+- **⚠️ Currently NON-FUNCTIONAL (known issue, pre-existing since the 2026-06-20
+  rollout):** `crowdsec-cf-sync` fails every run — `cf_list_items()` pagination
+  gets CF `HTTP 400 code 10027 "invalid or expired cursor"`, so the list never
+  populates (`num_items=0`) and the edge rule blocks nothing. LAPI also returns
+  ~31k ban IPs, likely exceeding CF IP-List capacity even once pagination is fixed.
+  **Edge enforcement for proxied hosts is therefore inert pending a fix** (the
+  in-cluster bouncer still protects direct apps; the auth carve-out is correct
+  regardless). Fix needs: (1) correct CF cursor pagination, (2) a capacity strategy
+  for the ban set.
+
 **Metabase** (disabled by default):
 - Dashboard for CrowdSec analytics
 - CPU-intensive, only enable when investigating incidents
