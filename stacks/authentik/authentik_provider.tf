@@ -207,6 +207,36 @@ resource "authentik_stage_user_login" "default_login" {
 }
 
 # -----------------------------------------------------------------------------
+# Source (social-login) User Login stage — bound to default-source-authentication-flow.
+# Adopted into Terraform 2026-06-20: its session_duration was the provider default
+# "seconds=0", which falls back to AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE (hours=2).
+# So Google/GitHub/Facebook logins expired every 2h while password and passkey
+# logins (default-authentication-login) lasted weeks=4. After the 2026-06-18 passkey
+# wipe forced fallback to Google login, this 2h cap became the "re-login multiple
+# times daily" symptom. Pinning weeks=4 makes every login path consistent.
+# See docs/architecture/authentication.md.
+# -----------------------------------------------------------------------------
+import {
+  to = authentik_stage_user_login.default_source_login
+  id = "4c6977d2-eaae-4033-b1db-21b48c6b47f0"
+}
+
+resource "authentik_stage_user_login" "default_source_login" {
+  name             = "default-source-authentication-login"
+  session_duration = "weeks=4"
+  lifecycle {
+    # Pin only session_duration; everything else stays UI-managed (same pattern
+    # as authentik_stage_user_login.default_login above).
+    ignore_changes = [
+      remember_me_offset,
+      terminate_other_sessions,
+      geoip_binding,
+      network_binding,
+    ]
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Default Identification stage — adopted 2026-06-10 to embed the password
 # field on the identification screen (single-screen login: one round trip and
 # one screen instead of two). Per authentik docs, when an Identification stage
@@ -227,6 +257,13 @@ resource "authentik_stage_identification" "default_identification" {
   lifecycle {
     # Pin only password_stage; everything else stays UI-managed (same pattern
     # as authentik_stage_user_login.default_login above).
+    # NOTE: do NOT add webauthn_stage / enable_remember_me here — the pinned
+    # authentik TF provider's authentik_stage_identification resource exposes no
+    # such attributes (verified 2026-06-20: `tg plan` => "Unsupported attribute").
+    # They exist on Authentik's IdentificationStage *model* but not in the
+    # provider schema, so Terraform never manages or nulls them; they are purely
+    # UI/app-managed and need no ignore_changes entry. Commit 4e882989 removed
+    # them for exactly this reason — re-adding them breaks every apply.
     ignore_changes = [
       user_fields,
       case_insensitive_matching,

@@ -109,16 +109,25 @@ resource "cloudflare_ruleset" "crowdsec" {
   # must exist before this ruleset is created/updated.
   depends_on = [cloudflare_list.crowdsec_ban]
 
-  # CrowdSec ban — block every IP in the single edge list. The sync writes BOTH
-  # ban and captcha decisions into crowdsec_ban (captcha downgraded to block at
-  # the edge) because the CF account allows only ONE Rules List.
+  # CrowdSec ban — block every IP in the single edge list, EXCEPT on the
+  # Authentik auth hosts. The sync (lapi_kv_sync.py) now writes ONLY "ban"
+  # decisions into crowdsec_ban — captcha is no longer downgraded to a hard
+  # block. The auth-host carve-out guarantees a CrowdSec hit can never wall a
+  # user out of the login / WebAuthn flow they authenticate through: without it,
+  # a false-positive ban would 403 the passkey ceremony + session-refresh XHRs
+  # on every proxied host, auth included. 2026-06-20.
   rules {
     action      = "block"
-    expression  = "(ip.src in $crowdsec_ban)"
-    description = "CrowdSec: block banned IPs"
+    expression  = "(ip.src in $crowdsec_ban) and not (http.host in {\"authentik.viktorbarzin.me\" \"public-auth.viktorbarzin.me\"})"
+    description = "CrowdSec: block banned IPs (auth hosts carved out)"
     enabled     = true
   }
   # Pre-existing rule, imported and preserved verbatim (currently disabled).
+  # NOTE: Cloudflare auto-attaches logging{enabled=true} to skip rules. It must
+  # be declared here to match live, otherwise editing the OTHER rule re-sends
+  # this one too and the v4 provider errors "Provider produced inconsistent
+  # result after apply: .rules[1].logging block count changed from 0 to 1"
+  # (hit 2026-06-20 when adding the auth-host carve-out above).
   rules {
     action      = "skip"
     expression  = "(http.host contains \"viktorbarzin.me\")"
@@ -128,6 +137,9 @@ resource "cloudflare_ruleset" "crowdsec" {
       phases   = ["http_ratelimit", "http_request_firewall_managed", "http_request_sbfm"]
       products = ["uaBlock", "bic", "hot", "securityLevel", "rateLimit", "waf", "zoneLockdown"]
       ruleset  = "current"
+    }
+    logging {
+      enabled = true
     }
   }
 }
