@@ -274,6 +274,20 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 runbook     = "docs/runbooks/t3-version-bump.md"
               }
             },
+            {
+              # Per-user Claude refresh/backup/restore exhausted its automatic
+              # recovery path. This is actionable: that user needs interactive SSO,
+              # or the scoped Vault token/bootstrap needs repair.
+              alert  = "WorkstationClaudeAuthInvalid"
+              expr   = "sum by (unit) (count_over_time({job=\"devvm-journal\", identifier=\"claude-auth-sync\"} |~ \"FAIL\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "Per-user Claude authentication recovery failed on {{ $labels.unit }}"
+                description = "The Workstation renewal agent could not validate Claude auth, renew its scoped Vault token, or recover from the Vault backup. Follow the per-user SSO recovery runbook."
+                runbook     = "docs/runbooks/claude-auth-renew-workstation.md"
+              }
+            },
           ]
         },
         {

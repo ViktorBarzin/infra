@@ -125,14 +125,10 @@ if command -v vault >/dev/null; then
   if [[ -z "${VAULT_TOKEN:-}" && -r /home/wizard/.vault-token ]]; then
     VAULT_TOKEN="$(cat /home/wizard/.vault-token)"; export VAULT_TOKEN
   fi
-  # 8a) Shared Claude subscription OAuth token (long-lived sk-ant-oat01) -> root file the
-  #     provisioner injects into non-admins' t3-serve env (only those without their own login).
-  if claude_tok="$(vault kv get -field=claude_oauth_token secret/workstation 2>/dev/null)"; then
-    install -m 0600 /dev/stdin /etc/t3-serve/claude-oauth-token <<<"$claude_tok"
-    log "staged /etc/t3-serve/claude-oauth-token (shared Claude subscription)"
-  else
-    log "WARN: secret/workstation claude_oauth_token absent -> non-admins won't share Claude auth"
-  fi
+  # 8a) Claude auth is deliberately NOT shared. Each roster user signs in with their own
+  #     Enterprise identity; claude-auth-sync backs up only their OAuth object to an
+  #     isolated Vault path. The provisioner mints its scoped Vault token when this admin
+  #     VAULT_TOKEN is present.
   # 8b) Shared Codex auth -> /opt/codex-shared/auth.json (the codex wrapper symlinks each
   #     user's ~/.codex/auth.json here). Previously a manual host change that did NOT survive
   #     a rebuild even though the Vault key existed — now reproducible from Vault.
@@ -166,6 +162,7 @@ SCRIPTS="$HERE/.."
 install -m 0755 "$SCRIPTS/t3-autoupdate.sh"   /usr/local/bin/t3-autoupdate
 install -m 0755 "$SCRIPTS/t3-backup-state.sh" /usr/local/bin/t3-backup-state
 install -m 0755 "$SCRIPTS/t3-mint"            /usr/local/bin/t3-mint
+install -m 0755 "$HERE/claude-auth-sync.sh"   /usr/local/bin/claude-auth-sync
 # 9b) t3-dispatch: unprivileged system account + compiled Go binary (build-if-absent)
 id -u t3-dispatch >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin t3-dispatch
 if [[ ! -x /usr/local/bin/t3-dispatch ]]; then
@@ -197,12 +194,14 @@ fi
 # 9d) unit files + enablement. Timers self-heal; t3-dispatch is long-running.
 #     t3-serve@ is a TEMPLATE (enabled per-user by the provisioner, not here).
 for u in t3-serve@.service \
+         claude-auth-sync@.service claude-auth-sync@.timer \
          t3-autoupdate.service t3-autoupdate.timer \
          t3-backup-state.service t3-backup-state.timer \
          t3-provision-users.service t3-provision-users.timer \
          t3-dispatch.service; do
   install -m 0644 "$SCRIPTS/$u" "/etc/systemd/system/$u"
 done
+log "claude auth: per-user sync script + template units installed"
 # 9e) per-user playwright-mcp browser MCP: system-level TEMPLATE units (one
 #     instance per OS user) + the snapshot-refresh script. Reproducible-from-git
 #     replacement for the hand-made ~/.config/systemd/user/playwright-* units
@@ -218,5 +217,12 @@ systemctl enable --now t3-dispatch.service \
   t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer >/dev/null 2>&1 || \
   log "WARN: some units failed to enable (check: systemctl status t3-dispatch t3-*.timer)"
 log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-user)"
+
+# Run one foreground reconcile while the admin Vault token borrowed in section 8
+# is still available. This is what mints new roster users' isolated periodic
+# Vault tokens; the hourly no-admin-token reconcile only maintains existing ones.
+if [[ -n "${VAULT_TOKEN:-}" ]]; then
+  /usr/local/bin/t3-provision-users || log "WARN: foreground provisioner failed; scoped Claude-auth tokens may need a retry"
+fi
 
 log "OK (idempotent)"

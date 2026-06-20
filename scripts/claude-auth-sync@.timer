@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep Claude OAuth credentials valid and recoverable for %i
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10m
+Unit=claude-auth-sync@%i.service
+
+[Install]
+WantedBy=timers.target

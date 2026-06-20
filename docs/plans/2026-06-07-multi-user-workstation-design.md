@@ -110,7 +110,7 @@ The Config base / machine-wide managed layer is **secret-free**. Everything carr
 
 | Auth / token | Lives in (per-user, `0600`) | New-user provisioning (from Vault) |
 |---|---|---|
-| **Claude OAuth** | `~/.claude/.credentials.json` (or `CLAUDE_CODE_OAUTH_TOKEN`) | the shared Enterprise token (earlier decision) **or** own interactive login; emo keeps his own |
+| **Claude OAuth** | `~/.claude/.credentials.json` + isolated Vault backup | own Enterprise SSO login; Claude refreshes locally and `claude-auth-sync@<user>.timer` validates/backs up/recovers `claudeAiOauth` at `secret/workstation/claude-users/<os_user>`; shared token injection is forbidden |
 | **`claude_memory` MCP** | `~/.claude.json` mcpServers + `MEMORY_API_KEY` in `settings.json` env | **DEFERRED — not a risk now (Viktor, 2026-06-08).** Per-user memory isolation needs a service-side `_key_to_user` map edit + redeploy (claude-memory-mcp, GHA repo 78), not just a Vault write — NOT built now. For now a new user gets a simple key or omits memory; revisit if isolation becomes a concern. |
 | **`ha` MCP** (token-in-URL) | `~/.claude.json` | shared `ha_sofia_mcp_url` from Vault `secret/openclaw` (one HA instance; shared secret, per-user file) — only if HA-eligible |
 | **`playwright` MCP** | per-user systemd unit (own port) + localhost entry | existing per-user playwright pattern (id=4015); non-secret |
