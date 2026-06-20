@@ -46,7 +46,31 @@ def kget(args):
         return ""
 
 
-def check_addons(matrix, tgt):
+def running_minor():
+    """Oldest kubelet minor across all nodes, as a (major, minor) tuple.
+
+    Mirrors the detector's "oldest kubelet" choice so a partially-upgraded
+    cluster is judged by its lowest node, not its newest. RUNNING_K8S overrides
+    for local testing. None if undeterminable (treated as a minor jump → the
+    addon checks run in full, fail-safe)."""
+    env = os.environ.get("RUNNING_K8S")
+    if env:
+        return minor(env)
+    out = kget(["get", "nodes", "-o",
+                "jsonpath={range .items[*]}{.status.nodeInfo.kubeletVersion}{\"\\n\"}{end}"])
+    minors = [minor(line) for line in out.splitlines() if minor(line)]
+    return min(minors) if minors else None
+
+
+def check_addons(matrix, tgt, running):
+    # A target at or below the RUNNING minor (a patch, or a same/lower minor)
+    # crosses into no new k8s minor, so every installed addon is already
+    # empirically proven on it — addon ceilings only constrain a true minor jump.
+    # Without this guard an addon whose matrix ceiling sits below the running
+    # minor (e.g. ESO 0.12 → 1.31 on a cluster already running 1.34) would
+    # false-block legitimate patch upgrades, defeating autonomous patching.
+    if running and tgt <= running:
+        return []
     reasons = []
     for a in matrix.get("addons", []):
         img = kget(["-n", a["namespace"], "get", a["kind"], a["resource"],
@@ -127,7 +151,8 @@ def main():
         print(f"could not parse compat matrix JSON: {e}")
         sys.exit(3)
 
-    reasons = (check_addons(matrix, tgt)
+    running = running_minor()
+    reasons = (check_addons(matrix, tgt, running)
                + check_removed_apis(tgt)
                + check_containerd(matrix, tgt))
     if reasons:
