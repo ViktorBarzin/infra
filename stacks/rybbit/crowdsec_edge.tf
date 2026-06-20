@@ -99,25 +99,48 @@ resource "cloudflare_list" "crowdsec_captcha" {
 # config.tfvars). Hardcoded here (with the conventional marker comment) because
 # the rybbit stack does not import the ingress_factory module.
 # -----------------------------------------------------------------------------
-resource "cloudflare_ruleset" "crowdsec" {
-  zone_id     = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id (viktorbarzin.me)
-  name        = "crowdsec-ip-enforcement"
-  description = "Block/challenge IPs CrowdSec flagged (synced from LAPI into CF IP Lists)"
-  kind        = "zone"
-  phase       = "http_request_firewall_custom"
+# Cloudflare allows only ONE entrypoint ruleset per zone+phase, and the zone
+# already has the stock `default` http_request_firewall_custom ruleset (created
+# out-of-band, id 106a1342bc88454ea59c47ad3431fe0e). Creating a second one fails
+# the singleton constraint, so we IMPORT the existing ruleset and manage all of
+# its rules here: our CrowdSec ban/captcha rules FIRST, and the pre-existing
+# (currently disabled) skip rule preserved verbatim below it.
+import {
+  to = cloudflare_ruleset.crowdsec
+  id = "fd2c5dd4efe8fe38958944e74d0ced6d/106a1342bc88454ea59c47ad3431fe0e"
+}
 
+resource "cloudflare_ruleset" "crowdsec" {
+  zone_id = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id (viktorbarzin.me)
+  name    = "default"
+  kind    = "zone"
+  phase   = "http_request_firewall_custom"
+
+  # CrowdSec ban — evaluated FIRST so a banned IP is blocked before anything else.
   rules {
     action      = "block"
     expression  = "(ip.src in $crowdsec_ban)"
     description = "CrowdSec: block banned IPs"
     enabled     = true
   }
-
+  # CrowdSec captcha — managed challenge for flagged IPs.
   rules {
     action      = "managed_challenge"
     expression  = "(ip.src in $crowdsec_captcha)"
-    description = "CrowdSec: managed-challenge captcha'd IPs"
+    description = "CrowdSec: challenge flagged IPs"
     enabled     = true
+  }
+  # Pre-existing rule, imported and preserved verbatim (currently disabled).
+  rules {
+    action      = "skip"
+    expression  = "(http.host contains \"viktorbarzin.me\")"
+    description = "skip"
+    enabled     = false
+    action_parameters {
+      phases   = ["http_ratelimit", "http_request_firewall_managed", "http_request_sbfm"]
+      products = ["uaBlock", "bic", "hot", "securityLevel", "rateLimit", "waf", "zoneLockdown"]
+      ruleset  = "current"
+    }
   }
 }
 
