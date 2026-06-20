@@ -435,7 +435,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   KIND="patch"
                 elif [ "$NEXT_MINOR_AVAILABLE" = "yes" ]; then
                   NEXT_MINOR_PATCH=$($SSH wizard@k8s-master.viktorbarzin.lan \
-                    "curl -sf 'https://pkgs.k8s.io/core:/stable:/v$NEXT_MINOR/deb/Packages' \
+                    "curl -sfL 'https://pkgs.k8s.io/core:/stable:/v$NEXT_MINOR/deb/Packages' \
                       | grep -oE 'Version: [0-9.-]+' \
                       | awk '{print \$2}' | sed 's/-.*//' \
                       | sort -V | tail -1" || echo "")
