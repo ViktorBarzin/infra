@@ -1,0 +1,8 @@
+[Unit]
+Description=t3 idle migrator — restart deferred t3-serve instances onto the current binary when idle
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/plans/2026-06-21-t3-idle-migrate-design.md
+After=network.target t3-dispatch.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-migrate-idle
