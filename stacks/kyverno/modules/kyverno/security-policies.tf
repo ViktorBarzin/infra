@@ -330,8 +330,9 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "docker.n8n.io/*", "registry.gitlab.com/*",
                   # Private
                   "forgejo.viktorbarzin.me/*", "10.0.20.10*",
-                  # Legacy private registry (decommissioned 2026-05-07 per CLAUDE.md
-                  # but council-complaints still references — migrate to Forgejo).
+                  # Legacy private registry (decommissioned 2026-05-07 per CLAUDE.md).
+                  # No live workload pulls from it; only stale completed Job records
+                  # (e.g. old wealthfolio-sync jobs) still carry the image ref.
                   "registry.viktorbarzin.me/*",
                   # DockerHub library (bare image names without slash)
                   "alpine*", "busybox*", "kong*", "mysql*", "nginx*", "postgres*", "python*",
