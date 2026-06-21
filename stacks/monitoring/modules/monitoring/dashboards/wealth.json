@@ -760,6 +760,76 @@
       ]
     },
     {
+      "id": 9216,
+      "title": "Price freshness",
+      "description": "Staleness of the most out-of-date HELD position's market price: days since quote_latest.day (the last quote we mirrored from Wealthfolio's SQLite). Green <=4d tolerates weekend/bank-holiday gaps; amber 5-9d = the price feed may be lagging; red >=10d = the feed has stopped updating this symbol and its valuation is frozen. A held position with no quote at all sorts as max-stale. Value is humanised (e.g. '2 months'); the name shown is the worst symbol.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 432000
+              },
+              {
+                "color": "red",
+                "value": 864000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT now() AS \"time\", a.symbol AS metric, COALESCE(CURRENT_DATE - q.day, 9999) * 86400 AS value FROM positions_latest p JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY value DESC LIMIT 1"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Net worth over time",
       "collapsed": true,
@@ -768,7 +838,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 13
       },
       "panels": [
         {
@@ -1023,7 +1093,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 33
       },
       "panels": [
         {
@@ -1317,7 +1387,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 65
       },
       "panels": [
         {
@@ -1448,7 +1518,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 77
       },
       "panels": [
         {
@@ -1716,7 +1786,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 89
       },
       "panels": [
         {
@@ -2070,7 +2140,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 103
       },
       "panels": [
         {
