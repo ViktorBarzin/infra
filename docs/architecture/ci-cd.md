@@ -116,7 +116,7 @@ instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
 fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
 pilot, 2026-06-09). Earlier public-repo apps already on GHA (Website,
 k8s-portal, apple-health-data, audiblez-web, plotting-book, insta2spotify,
-audiobook-search, council-complaints) now also land on ghcr.
+audiobook-search) now also land on ghcr.
 
 ### Infra-owned images (issues #29 / #30)
 
