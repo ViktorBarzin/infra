@@ -49,7 +49,37 @@ safe_to_restart() {
 }
 
 main() {
-  :   # drain loop added in Task 4
+  # a frozen build must not be auto-migrated (shared switch with t3-autoupdate)
+  if [ -e "$FREEZE_FILE" ]; then LOG "FROZEN: $FREEZE_FILE present — not draining deferrals"; exit 0; fi
+  [ -d "$DEFER_DIR" ] || exit 0                       # nothing deferred
+  last_good="$(tr -d '[:space:]' <"$LAST_GOOD_FILE" 2>/dev/null)"   # rollback target for the helper
+
+  local marker u unit started mwritten migrated=0 skipped=0
+  for marker in "$DEFER_DIR"/*; do
+    [ -e "$marker" ] || continue                      # empty-dir glob
+    u="$(basename "$marker")"; unit="t3-serve@$u.service"
+    if ! systemctl is-active --quiet "$unit"; then
+      LOG "clearing marker for $u: $unit not active"; rm -f "$marker"; continue
+    fi
+    started="$(date -d "$(systemctl show -p ActiveEnterTimestamp --value "$unit" 2>/dev/null)" +%s 2>/dev/null || echo 0)"
+    mwritten="$(stat -c %Y "$marker" 2>/dev/null || echo 0)"
+    if [ "$started" -gt "$mwritten" ]; then
+      LOG "clearing marker for $u: $unit already restarted $((started-mwritten))s after the deferral"; rm -f "$marker"; continue
+    fi
+    if ! safe_to_restart "$u"; then skipped=$((skipped+1)); continue; fi
+
+    target="$(tr -d '[:space:]' <"$marker" 2>/dev/null)"; [ -n "$target" ] || target="$(ver)"
+    if [ "$DRY_RUN" = "1" ]; then LOG "DRY_RUN: would migrate $unit -> $target (idle gate satisfied)"; continue; fi
+    if ! backup_user "$u" >/dev/null; then
+      LOG "WARN: pre-restart backup failed for $u — skipping (fail closed)"; skipped=$((skipped+1)); continue
+    fi
+    if safe_restart_unit "$unit" "$u"; then
+      LOG "migrated $unit -> $target (idle restart)"; rm -f "$marker"; migrated=$((migrated+1))
+    else
+      LOG "migrate FAILED for $unit — recovery+freeze handled by safe_restart_unit; stopping drain"; exit 1
+    fi
+  done
+  LOG "idle-migrate pass complete (migrated=$migrated skipped=$skipped)"
 }
 
 # main-guard: run only when executed, not when sourced (tests source this file).
