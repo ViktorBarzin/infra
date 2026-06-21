@@ -838,7 +838,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 13
       },
       "panels": []
     },
@@ -855,7 +855,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -927,7 +927,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -992,7 +992,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -1092,7 +1092,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 33
       },
       "panels": []
     },
@@ -1109,7 +1109,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 34
       },
       "fieldConfig": {
         "defaults": {
@@ -1204,7 +1204,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -1309,7 +1309,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -1385,7 +1385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 65
       },
       "panels": []
     },
@@ -1402,7 +1402,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 66
       },
       "fieldConfig": {
         "defaults": {
@@ -1515,7 +1515,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 77
       },
       "panels": []
     },
@@ -1532,7 +1532,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 74
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
@@ -1729,7 +1729,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 74
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
@@ -1782,7 +1782,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 89
       },
       "panels": []
     },
@@ -1799,7 +1799,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 90
       },
       "fieldConfig": {
         "defaults": {
@@ -1916,7 +1916,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 90
       },
       "fieldConfig": {
         "defaults": {
@@ -2135,7 +2135,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 103
       },
       "panels": []
     },
@@ -2152,7 +2152,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 100
+        "y": 104
       },
       "fieldConfig": {
         "defaults": {
@@ -2246,6 +2246,330 @@
           "editorMode": "code",
           "rawQuery": true,
           "rawSql": "WITH active_count AS (SELECT COUNT(*) n FROM accounts), mc AS (SELECT MAX(valuation_date) d FROM (SELECT valuation_date, COUNT(*) c FROM dav_corrected GROUP BY valuation_date) x WHERE c >= (SELECT n FROM active_count)), latest AS (SELECT DISTINCT ON (account_id) account_id, total_value, net_contribution FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) ORDER BY account_id, valuation_date DESC), agg AS (SELECT SUM(total_value) nw0, SUM(net_contribution) c_now FROM latest), ago AS (SELECT SUM(x.nc) c_ago FROM latest l LEFT JOIN LATERAL (SELECT net_contribution nc FROM dav_corrected dd WHERE dd.account_id=l.account_id AND dd.valuation_date <= (SELECT d FROM mc) - INTERVAL '12 months' ORDER BY dd.valuation_date DESC LIMIT 1) x ON true), yearly AS (SELECT EXTRACT(YEAR FROM valuation_date)::int yr, valuation_date, SUM(total_value) nw, SUM(net_contribution) contrib FROM dav_corrected WHERE valuation_date <= (SELECT d FROM mc) GROUP BY valuation_date), ep AS (SELECT yr, (array_agg(nw ORDER BY valuation_date))[1] nw_s, (array_agg(nw ORDER BY valuation_date DESC))[1] nw_e, (array_agg(contrib ORDER BY valuation_date))[1] c_s, (array_agg(contrib ORDER BY valuation_date DESC))[1] c_e, COUNT(*) days FROM yearly GROUP BY yr), r3 AS (SELECT (nw_e-nw_s-(c_e-c_s))/NULLIF(nw_s+0.5*(c_e-c_s),0) ret FROM ep WHERE (nw_s+0.5*(c_e-c_s))>0 AND days>=300 ORDER BY yr DESC LIMIT 3), params AS (SELECT (SELECT nw0 FROM agg) nw0, COALESCE(NULLIF('$monthly_contribution','auto')::numeric, ((SELECT c_now FROM agg)-(SELECT c_ago FROM ago))/12.0) cm, ($rate_low::float)/100 rl, ($rate_base::float)/100 rb, ($rate_high::float)/100 rh, (SELECT exp(avg(ln(1+ret)))-1 FROM r3) rhist), m AS (SELECT generate_series(0, ${horizon_years}*12) n) SELECT round((m.n/12.0)::numeric,2) AS \"Years from today\", round((nw0*power(1+(power(1+rl,1/12.0)-1),m.n) + cm*((power(1+(power(1+rl,1/12.0)-1),m.n)-1)/NULLIF((power(1+rl,1/12.0)-1),0)))::numeric,0) AS \"Low ($rate_low%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n) + cm*((power(1+(power(1+rb,1/12.0)-1),m.n)-1)/NULLIF((power(1+rb,1/12.0)-1),0)))::numeric,0) AS \"Base ($rate_base%)\", round((nw0*power(1+(power(1+rb,1/12.0)-1),m.n))::numeric,0) AS \"Base, no new contributions\", round((nw0*power(1+(power(1+rh,1/12.0)-1),m.n) + cm*((power(1+(power(1+rh,1/12.0)-1),m.n)-1)/NULLIF((power(1+rh,1/12.0)-1),0)))::numeric,0) AS \"High ($rate_high%)\", round((nw0*power(1+(power(1+rhist,1/12.0)-1),m.n) + cm*((power(1+(power(1+rhist,1/12.0)-1),m.n)-1)/NULLIF((power(1+rhist,1/12.0)-1),0)))::numeric,0) AS \"Historical (trailing 3y)\" FROM m, params"
+        }
+      ]
+    },
+    {
+      "id": 9220,
+      "title": "Daily spend (floor)",
+      "description": "FLOOR \u2014 current net worth (including the locked pension) divided evenly across every day remaining until your 100th birthday (2098-10-04). Assumes cash: no growth, no inflation \u2014 a conservative lower bound on sustainable spend. Recomputed live, so it drifts up as net worth grows and the horizon shortens.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((pv/years/365.25)::numeric,0) AS \"value\" FROM pmt"
+        }
+      ]
+    },
+    {
+      "id": 9221,
+      "title": "Monthly spend (floor)",
+      "description": "FLOOR \u2014 current net worth (including the locked pension) divided evenly across every month remaining until your 100th birthday (2098-10-04). Assumes cash: no growth, no inflation \u2014 a conservative lower bound on sustainable spend. Recomputed live, so it drifts up as net worth grows and the horizon shortens.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((pv/years/12)::numeric,0) AS \"value\" FROM pmt"
+        }
+      ]
+    },
+    {
+      "id": 9222,
+      "title": "Yearly spend (floor)",
+      "description": "FLOOR \u2014 current net worth (including the locked pension) divided evenly across every year remaining until your 100th birthday (2098-10-04). Assumes cash: no growth, no inflation \u2014 a conservative lower bound on sustainable spend. Recomputed live, so it drifts up as net worth grows and the horizon shortens.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((pv/years)::numeric,0) AS \"value\" FROM pmt"
+        }
+      ]
+    },
+    {
+      "id": 9223,
+      "title": "Daily spend (4% real)",
+      "description": "DIE-WITH-ZERO at age 100 \u2014 the constant, inflation-adjusted amount you can spend each day while the balance keeps earning 4% real, draining to \u00a30 on your 100th birthday (2098-10-04). Annuity PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n), r = 4% real, n = years to 100. Includes the locked pension.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((annual/365.25)::numeric,0) AS \"value\" FROM pmt"
+        }
+      ]
+    },
+    {
+      "id": 9224,
+      "title": "Monthly spend (4% real)",
+      "description": "DIE-WITH-ZERO at age 100 \u2014 the constant, inflation-adjusted amount you can spend each month while the balance keeps earning 4% real, draining to \u00a30 on your 100th birthday (2098-10-04). Annuity PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n), r = 4% real, n = years to 100. Includes the locked pension.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((annual/12)::numeric,0) AS \"value\" FROM pmt"
+        }
+      ]
+    },
+    {
+      "id": 9225,
+      "title": "Yearly spend (4% real)",
+      "description": "DIE-WITH-ZERO at age 100 \u2014 the constant, inflation-adjusted amount you can spend each year while the balance keeps earning 4% real, draining to \u00a30 on your 100th birthday (2098-10-04). Annuity PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n), r = 4% real, n = years to 100. Includes the locked pension.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT round((annual)::numeric,0) AS \"value\" FROM pmt"
         }
       ]
     }
