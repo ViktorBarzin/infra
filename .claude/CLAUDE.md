@@ -130,7 +130,7 @@ ghcr, NOT DockerHub), kms-website, Freedify, instagram-poster, payslip-ingest,
 broker-sync (image `wealthfolio-sync`), fire-planner, recruiter-responder,
 x402-gateway — plus tripit. Earlier public-repo apps already on GHA (Website,
 apple-health-data, audiblez-web, plotting-book, insta2spotify,
-audiobook-search, council-complaints) now also land on ghcr.
+audiobook-search) now also land on ghcr.
 - **PUBLIC ghcr packages:** beadboard, nextcloud-todos, claude-agent-service,
   claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
   chrome-service-novnc, android-emulator.
