@@ -21,6 +21,7 @@ resource "kubernetes_config_map" "mailserver_config" {
         ImageZoom: true
         ShowAlbumName: false
         ShowProgressBar: false
+        ClockFormat: "HH:mm"
         WeatherApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_weather_api_key"]}
         UnitSystem: metric
         WeatherLatLong: "51.5074,-0.1278"
