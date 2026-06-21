@@ -1,8 +1,4 @@
 variable "tier" { type = string }
-variable "crowdsec_api_key" {
-  type      = string
-  sensitive = true
-}
 variable "redis_host" { type = string }
 variable "tls_secret_name" {}
 variable "auth_fallback_htpasswd" {
@@ -21,16 +17,6 @@ variable "x402_notify_webhook_url" {
   description = "Slack-compatible incoming-webhook URL the gateway POSTs to on every successful payment. Empty = no notifications."
   sensitive   = true
 }
-variable "captcha_site_key" {
-  type        = string
-  sensitive   = true
-  description = "Cloudflare Turnstile site key (public) for the CrowdSec captcha remediation. Sourced from cloudflare_turnstile_widget in the stack root."
-}
-variable "captcha_secret_key" {
-  type        = string
-  sensitive   = true
-  description = "Cloudflare Turnstile secret key for the CrowdSec captcha remediation — validated server-side by the bouncer plugin against Cloudflare siteverify."
-}
 
 resource "kubernetes_namespace" "traefik" {
   metadata {
@@ -48,22 +34,6 @@ resource "kubernetes_namespace" "traefik" {
   }
 }
 
-# captcha.html template served by the CrowdSec bouncer plugin for Turnstile
-# challenges. The pulled Yaegi plugin does NOT expose its bundled template to
-# Traefik, so we vendor it (captcha.html in this module) and mount it into the
-# Traefik container at /captcha via the `volumes` Helm value below. The template
-# is provider-agnostic: the plugin fills {{ .FrontendJS }}/{{ .FrontendKey }}/
-# {{ .SiteKey }} with Turnstile's JS URL + `cf-turnstile` class + the site key.
-resource "kubernetes_config_map" "captcha_template" {
-  metadata {
-    name      = "crowdsec-captcha-template"
-    namespace = kubernetes_namespace.traefik.metadata[0].name
-  }
-  data = {
-    "captcha.html" = file("${path.module}/captcha.html")
-  }
-}
-
 resource "helm_release" "traefik" {
   namespace        = kubernetes_namespace.traefik.metadata[0].name
   create_namespace = false
@@ -75,9 +45,9 @@ resource "helm_release" "traefik" {
   # chart 41.0.0 rejects this values block's `logs` key ("Additional property
   # logs is not allowed"). Bump deliberately (with values migration), never
   # implicitly. Deployed since 2026-05-30 (release rev 57).
-  version          = "40.2.0"
-  atomic           = true
-  timeout          = 600
+  version = "40.2.0"
+  atomic  = true
+  timeout = 600
 
   values = [yamlencode({
     deployment = {
@@ -100,13 +70,10 @@ resource "helm_release" "traefik" {
         command = ["sh", "-c", join("", [
           "set -e; ",
           "STORAGE=/plugins-storage; ",
-          "mkdir -p \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\"; ",
-          "wget -q -T 30 -O \"$STORAGE/archives/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/v1.6.0.zip\" ",
-          "\"https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v1.6.0.zip\"; ",
           "mkdir -p \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware\"; ",
           "wget -q -T 30 -O \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware/v0.1.4.zip\" ",
           "\"https://github.com/Aetherinox/traefik-api-token-middleware/archive/refs/tags/v0.1.4.zip\"; ",
-          "printf '{\"github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin\":\"v1.6.0\",\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
+          "printf '{\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
           "> \"$STORAGE/archives/state.json\"; ",
           "echo \"Plugins pre-downloaded successfully\"",
         ])]
@@ -124,15 +91,6 @@ resource "helm_release" "traefik" {
         maxSurge       = 1
       }
     }
-
-    # Mount the CrowdSec captcha template into the Traefik container at
-    # /captcha/captcha.html (chart `volumes` creates the volume + container
-    # mount from one entry). Referenced by captchaHTMLFilePath in middleware.tf.
-    volumes = [{
-      name      = kubernetes_config_map.captcha_template.metadata[0].name
-      mountPath = "/captcha"
-      type      = "configMap"
-    }]
 
     ingressClass = {
       enabled        = true
@@ -230,10 +188,6 @@ resource "helm_release" "traefik" {
     # Plugins
     experimental = {
       plugins = {
-        crowdsec-bouncer = {
-          moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
-          version    = "v1.6.0"
-        }
         # Static-token bearer/header auth middleware. Used by services that
         # need gateway-level API-key/bearer enforcement without app-layer auth
         # (e.g. paperless-mcp, which has no native auth). Plugin key
