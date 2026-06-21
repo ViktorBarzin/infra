@@ -1,0 +1,10 @@
+[Unit]
+Description=Overnight drain of t3-autoupdate deferrals (idle-gated t3-serve migration)
+
+[Timer]
+OnCalendar=*-*-* 01..05:00/20
+RandomizedDelaySec=120
+Persistent=false
+
+[Install]
+WantedBy=timers.target
