@@ -2244,6 +2244,10 @@ serverFiles:
           # idempotency guard the next detection cycle deletes + re-spawns the
           # Failed Job (clearing this within ~24h); a sustained firing means it
           # re-failed — investigate the root cause.
+          # Scoped to the four chain PHASE jobs (preflight|master|worker|
+          # postflight) — NOT a bare `k8s-upgrade-.*`, which would also match
+          # helper jobs in the namespace like k8s-upgrade-nightly-report-* and
+          # false-fire if one of those failed.
           # `unless on() k8s_upgrade_blocked == 1` excludes the case where the
           # preflight terminally failed because the compat gate deliberately
           # REFUSED the target: block() exits 1 (so the Failed Job re-spawns
@@ -2255,7 +2259,7 @@ serverFiles:
           # block until the next run's preflight resets it to 0, so the exclusion
           # holds for the whole blocked period.
           - alert: K8sUpgradeChainJobFailed
-            expr: (kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)
+            expr: (kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)
             for: 15m
             labels:
               severity: warning
