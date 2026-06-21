@@ -9,8 +9,8 @@ resource "kubernetes_namespace" "poison_fountain" {
   metadata {
     name = "poison-fountain"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.cluster
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }
@@ -228,7 +228,6 @@ module "ingress" {
   port                    = 8080
   tls_secret_name         = var.tls_secret_name
   skip_default_rate_limit = true
-  exclude_crowdsec        = true
   anti_ai_scraping        = false
   # Deployment is scaled to 0 (see replicas above). Opt the ingress out of
   # Uptime Kuma external monitoring so the sync CronJob deletes the orphaned

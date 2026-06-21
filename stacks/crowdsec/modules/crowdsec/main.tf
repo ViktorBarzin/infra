@@ -303,13 +303,12 @@ resource "kubernetes_service" "crowdsec-web" {
   }
 }
 module "ingress" {
-  source           = "../../../../modules/kubernetes/ingress_factory"
-  dns_type         = "proxied"
-  namespace        = kubernetes_namespace.crowdsec.metadata[0].name
-  name             = "crowdsec-web"
-  auth             = "required"
-  tls_secret_name  = var.tls_secret_name
-  exclude_crowdsec = true
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.crowdsec.metadata[0].name
+  name            = "crowdsec-web"
+  auth            = "required"
+  tls_secret_name = var.tls_secret_name
 }
 
 # CronJob to import public blocklists into CrowdSec

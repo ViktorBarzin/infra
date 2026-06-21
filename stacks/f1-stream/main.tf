@@ -301,7 +301,6 @@ module "ingress" {
   service_name      = module.anubis.service_name
   port              = module.anubis.service_port
   tls_secret_name   = var.tls_secret_name
-  exclude_crowdsec  = true
   anti_ai_scraping  = false
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   extra_annotations = {
