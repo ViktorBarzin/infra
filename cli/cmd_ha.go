@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,23 +13,24 @@ import (
 // host-level work (config files, docker, add-ons). Entity state/control stays
 // with the MCP — see docs/adr/0012.
 //
-// The token lives in a k8s Secret (a JSON blob of several skill tokens), the
-// same place the openclaw agent reads it from. `ha token` resolves it on demand
-// via the ambient kubeconfig, so it never depends on a pre-set env var (the gap
-// that made agents re-derive the kubectl|base64|jq pipeline every session).
+// The token lives in the dedicated k8s Secret openclaw/ha-tokens (one key per
+// instance), split out of openclaw-secrets so non-admin operators (emo / "Home
+// Server Admins") can read JUST the HA token, not the full skill_secrets blob.
+// `ha token` resolves it on demand via the ambient kubeconfig, so it never
+// depends on a pre-set env var (the gap that made agents re-derive the
+// kubectl|base64|jq pipeline every session).
 
 type haInstance struct {
 	name      string // sofia | london
 	sshUser   string // SSH login on the HA host
 	sshHost   string // host reachable from the devvm (Sofia LAN)
-	secretKey string // key inside skill_secrets holding this instance's token
+	secretKey string // key inside the openclaw/ha-tokens Secret holding this token
 }
 
 const (
 	haDefaultInstance = "sofia"
 	haSecretNamespace = "openclaw"
-	haSecretName      = "openclaw-secrets"
-	haSecretField     = "skill_secrets" // a base64 JSON blob: {token-name: token}
+	haSecretName      = "ha-tokens" // dedicated, least-privilege; see stacks/openclaw/ha_tokens.tf
 )
 
 // haInstances maps instance name → connection/secret facts. sofia is the default
@@ -38,8 +38,8 @@ const (
 // (192.168.8.x) is only reachable remotely, so `ha ssh --instance london`
 // generally won't connect from here (token resolution still works).
 var haInstances = map[string]haInstance{
-	"sofia":  {name: "sofia", sshUser: "vbarzin", sshHost: "192.168.1.8", secretKey: "home_assistant_sofia_token"},
-	"london": {name: "london", sshUser: "hassio", sshHost: "192.168.8.103", secretKey: "home_assistant_token"},
+	"sofia":  {name: "sofia", sshUser: "vbarzin", sshHost: "192.168.1.8", secretKey: "sofia"},
+	"london": {name: "london", sshUser: "hassio", sshHost: "192.168.8.103", secretKey: "london"},
 }
 
 func haCommands() []Command {
@@ -63,22 +63,14 @@ func resolveHAInstance(name string) (haInstance, error) {
 	return inst, nil
 }
 
-// parseSkillSecret decodes the base64 skill_secrets blob (as returned by kubectl
-// jsonpath, trailing whitespace tolerated) and returns the value for key.
-func parseSkillSecret(b64, key string) (string, error) {
+// decodeSecretValue base64-decodes a k8s Secret `.data.<key>` value as returned
+// by kubectl jsonpath (trailing whitespace tolerated).
+func decodeSecretValue(b64 string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
 	if err != nil {
-		return "", fmt.Errorf("decode %s: %w", haSecretField, err)
+		return "", fmt.Errorf("base64-decode secret value: %w", err)
 	}
-	var m map[string]string
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return "", fmt.Errorf("parse %s json: %w", haSecretField, err)
-	}
-	v, ok := m[key]
-	if !ok {
-		return "", fmt.Errorf("key %q not present in %s", key, haSecretField)
-	}
-	return v, nil
+	return string(raw), nil
 }
 
 func haToken(args []string) error {
@@ -95,14 +87,14 @@ func haToken(args []string) error {
 		return err
 	}
 	b64, err := kubectlCapture(haSecretNamespace, "get", "secret", haSecretName,
-		"-o", "jsonpath={.data."+haSecretField+"}")
+		"-o", "jsonpath={.data."+inst.secretKey+"}")
 	if err != nil {
-		return fmt.Errorf("read secret %s/%s (kubeconfig set?): %w", haSecretNamespace, haSecretName, err)
+		return fmt.Errorf("read secret %s/%s (kubeconfig set? RBAC?): %w", haSecretNamespace, haSecretName, err)
 	}
 	if b64 == "" {
-		return fmt.Errorf("secret %s/%s has no %q field", haSecretNamespace, haSecretName, haSecretField)
+		return fmt.Errorf("secret %s/%s has no %q key", haSecretNamespace, haSecretName, inst.secretKey)
 	}
-	tok, err := parseSkillSecret(b64, inst.secretKey)
+	tok, err := decodeSecretValue(b64)
 	if err != nil {
 		return err
 	}
