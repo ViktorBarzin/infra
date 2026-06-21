@@ -201,7 +201,6 @@ resource "kubernetes_manifest" "ingressroute_catchall" {
         priority = 1
         middlewares = [
           { name = "rate-limit", namespace = kubernetes_namespace.traefik.metadata[0].name },
-          { name = "crowdsec", namespace = kubernetes_namespace.traefik.metadata[0].name },
         ]
         services = [{
           name      = "error-pages"

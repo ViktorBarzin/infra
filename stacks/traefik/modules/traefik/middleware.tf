@@ -183,59 +183,6 @@ resource "kubernetes_manifest" "middleware_security_headers" {
   depends_on = [helm_release.traefik]
 }
 
-# CrowdSec bouncer plugin middleware
-resource "kubernetes_manifest" "middleware_crowdsec" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "crowdsec"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        crowdsec-bouncer = {
-          crowdsecLapiKey            = var.crowdsec_api_key
-          crowdsecLapiHost           = "crowdsec-service.crowdsec.svc.cluster.local:8080"
-          # LIVE mode (synchronous per-request LAPI query), not stream: under
-          # Traefik's Yaegi interpreter the plugin's stream cache updates (it logs
-          # `handleStreamCache:updated`) but does NOT enforce the cached decisions
-          # — verified by a ban that was present in the LAPI stream AND pulled by
-          # the plugin yet still let the banned IP through. Live mode queries LAPI
-          # per request (result cached per-IP for defaultDecisionSeconds), enforces
-          # reliably, and picks up new decisions immediately. LAPI is 3-replica +
-          # in-cluster; fail-open preserved via updateMaxFailure=-1.
-          crowdsecMode               = "live"
-          updateMaxFailure           = -1 # fail-open if LAPI is unreachable
-          # Redis cache DISABLED: the plugin's redis client does not work under
-          # Traefik's Yaegi interpreter — it logs `cache:unreachable` even though
-          # redis-master is reachable+writable from the traefik ns (verified). With
-          # the redis cache enabled + redisCacheUnreachableBlock=false the bouncer
-          # therefore failed open and enforced nothing. In-memory cache (the
-          # default when disabled) holds the streamed decision set per-pod and
-          # works under Yaegi. Trade-off: captcha "already-solved" grace is
-          # per-pod across the 3 Traefik replicas (at worst an occasional re-solve).
-          redisCacheEnabled          = false
-          clientTrustedIPs           = ["10.0.20.0/24", "10.10.0.0/16"] # node + pod CIDRs bypass CrowdSec
-          # Captcha remediation: serve a Cloudflare Turnstile challenge for
-          # `captcha`-type LAPI decisions instead of falling through to a 403
-          # (the pre-2026-06 behaviour — no provider configured → handleBan).
-          # captcha.html is mounted at /captcha in the Traefik pod
-          # (kubernetes_config_map.captcha_template + the helm `volumes` value);
-          # keys come from the Turnstile widget in the stack root (main.tf).
-          captchaProvider           = "turnstile"
-          captchaSiteKey            = var.captcha_site_key
-          captchaSecretKey          = var.captcha_secret_key
-          captchaGracePeriodSeconds = 1800 # how long a solved challenge is honoured
-          captchaHTMLFilePath       = "/captcha/captcha.html"
-        }
-      }
-    }
-  }
-
-  depends_on = [helm_release.traefik, kubernetes_config_map.captcha_template]
-}
-
 # TLS option for mTLS (client certificate auth)
 resource "kubernetes_manifest" "tls_option_mtls" {
   manifest = {
