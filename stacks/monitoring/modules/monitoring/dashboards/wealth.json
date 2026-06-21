@@ -2251,8 +2251,8 @@
     },
     {
       "id": 9220,
-      "title": "Spend-down to \u00a30 at age 100",
-      "description": "How much you can spend to exhaust your net worth (pension included) by your 100th birthday (2098-10-04), draining to \u00a30. Three scenarios by how the pot grows: No growth (0%), Inflation (3% nominal), Market (7% nominal \u2014 the dashboard's base return assumption). Each is a die-with-zero annuity (PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n); NW\u00f7years when r=0) spending a constant number of pounds. Figures are ACTUAL (nominal) pounds you'd withdraw \u2014 at higher growth, later pounds buy less. Rates hardcoded (one-line SQL edit to change). Computed live.",
+      "title": "Spend-down to \u00a30 at age 100 (today's \u00a3)",
+      "description": "How much you can spend in TODAY'S MONEY (constant purchasing power, inflation-adjusted) to drain your net worth (pension included) to \u00a30 by your 100th birthday (2098-10-04). Each row holds your spending power flat for life \u2014 the actual pounds withdrawn rise with inflation (assumed 3%/yr). Rows differ by how the pot grows in NOMINAL terms: No growth (0%), Inflation (3%), Market (7%). Die-with-zero annuity at the real rate (1+g)/1.03\u22121; a no-growth pot has a negative real return (loses to inflation) so it's lowest. Rates hardcoded (one-line SQL edit). Computed live.",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -2314,7 +2314,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), hz AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years FROM nw), scen AS (SELECT ord,label, CASE WHEN rate=0 THEN pv/years ELSE pv*rate/(1-power(1+rate,-years)) END AS annual FROM hz, (VALUES (1,'No growth',0.0::float8),(2,'Inflation (3%)',0.03::float8),(3,'Market (7%)',0.07::float8)) AS s(ord,label,rate)) SELECT label AS \"Scenario\", round((annual/365.25)::numeric,0) AS \"Per day\", round((annual/12)::numeric,0) AS \"Per month\", round(annual::numeric,0) AS \"Per year\" FROM scen ORDER BY ord"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id=d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), hz AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years FROM nw), r AS (SELECT ord,label,(1+g)/1.03-1 AS rr FROM (VALUES (1,'No growth',0.0::float8),(2,'Inflation (3%)',0.03::float8),(3,'Market (7%)',0.07::float8)) AS s(ord,label,g)), calc AS (SELECT ord,label, CASE WHEN abs(rr)<1e-9 THEN pv/years ELSE pv*rr/(1-power(1+rr,-years)) END AS annual FROM r, hz) SELECT label AS \"Scenario\", round((annual/365.25)::numeric,0) AS \"Per day\", round((annual/12)::numeric,0) AS \"Per month\", round(annual::numeric,0) AS \"Per year\" FROM calc ORDER BY ord"
         }
       ]
     }
