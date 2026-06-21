@@ -2,40 +2,50 @@
 
 ## Overview
 
-The homelab implements defense-in-depth security at the application layer (L7) using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 3-layer anti-AI scraping defense (reduced from 5 in April 2026 after removing the rewrite-body plugin). All security components operate in graceful degradation mode (fail-open) to prevent cascading failures. Security policies are deployed in audit mode first, then selectively enforced after validation.
+The homelab implements defense-in-depth security using CrowdSec for threat intelligence and IP reputation, Kyverno for policy enforcement and resource governance, and a 3-layer anti-AI scraping defense (reduced from 5 in April 2026 after removing the rewrite-body plugin). CrowdSec enforcement is **out-of-band** (not a per-request Traefik hop — see the CrowdSec section): banned IPs are dropped in-kernel via nftables on direct hosts, and blocked at the Cloudflare edge on proxied hosts, so enforcement adds **zero per-request latency**. All security components fail open (a CrowdSec outage stops new bans but never blocks legitimate traffic). Security policies are deployed in audit mode first, then selectively enforced after validation.
 
 ## Architecture Diagram
 
+CrowdSec enforcement is out-of-band (NOT an inline Traefik middleware hop). The
+Traefik request chain is anti-AI → Authentik ForwardAuth → rate-limit → retry;
+CrowdSec drops banned IPs *before* (direct hosts) or *off* (proxied hosts) that
+chain entirely.
+
 ```mermaid
-graph LR
+graph TB
     Internet[Internet]
-    CF[Cloudflare WAF]
+
+    subgraph "Proxied hosts (orange-cloud)"
+        CFedge[Cloudflare edge<br/>WAF rule: ip.src in $crowdsec_ban → block]
+    end
+    subgraph "Direct hosts (grey-cloud / internal)"
+        NFT[Host nftables<br/>table crowdsec/crowdsec6<br/>drop in input + forward]
+    end
+
     Tunnel[Cloudflared Tunnel]
-    CrowdSec[CrowdSec Bouncer<br/>Traefik Plugin]
-    AntiAI[Anti-AI Check<br/>poison-fountain]
-    ForwardAuth[Authentik ForwardAuth]
-    RateLimit[Rate Limit Middleware]
-    Retry[Retry Middleware<br/>2 attempts, 100ms]
+    Traefik[Traefik<br/>anti-AI → Authentik → rate-limit → retry]
     Backend[Backend Service]
 
     LAPI[CrowdSec LAPI<br/>3 replicas]
-    Agent[CrowdSec Agent]
+    Agent[CrowdSec Agent<br/>parses Traefik logs]
+    FWB[cs-firewall-bouncer<br/>DaemonSet, every node]
+    CFsync[crowdsec-cf-sync<br/>CronJob, every 2 min]
 
-    Internet -->|1| CF
-    CF -->|2| Tunnel
-    Tunnel -->|3| CrowdSec
-    CrowdSec -.->|Query| LAPI
-    Agent -.->|Report| LAPI
-    CrowdSec -->|4. Pass/Block| AntiAI
-    AntiAI -->|5. Human/Bot| ForwardAuth
-    ForwardAuth -->|6. Authenticated| RateLimit
-    RateLimit -->|7. Under Limit| Retry
-    Retry -->|8. Success/Retry| Backend
+    Internet -->|proxied| CFedge
+    Internet -->|direct| NFT
+    CFedge -->|allowed| Tunnel
+    Tunnel --> Traefik
+    NFT -->|allowed| Traefik
+    Traefik --> Backend
 
-    style CrowdSec fill:#f9f,stroke:#333
-    style AntiAI fill:#ff9,stroke:#333
-    style ForwardAuth fill:#9f9,stroke:#333
-    style RateLimit fill:#99f,stroke:#333
+    Agent -.->|report| LAPI
+    LAPI -.->|all decisions incl. CAPI| FWB
+    FWB -.->|program drop rules| NFT
+    LAPI -.->|ban/captcha decisions, CAPI excluded| CFsync
+    CFsync -.->|push IP list| CFedge
+
+    style CFedge fill:#f9f,stroke:#333
+    style NFT fill:#f9f,stroke:#333
 ```
 
 ## Components
@@ -44,7 +54,8 @@ graph LR
 |-----------|---------|----------|---------|
 | CrowdSec LAPI | Pinned | `stacks/crowdsec/` | Local API, threat intelligence aggregation (3 replicas) |
 | CrowdSec Agent | Pinned | `stacks/crowdsec/` | Log parser, scenario detection |
-| CrowdSec Traefik Bouncer | Plugin | Traefik config | Plugin-based IP reputation check |
+| cs-firewall-bouncer | v0.0.34 | `stacks/crowdsec/modules/crowdsec/firewall_bouncer.tf` | In-kernel nftables drop on every node (DIRECT hosts). Bouncer key `firewall` |
+| crowdsec-cf-sync | — | `stacks/rybbit/crowdsec_edge.tf` | LAPI→Cloudflare-IP-List sync CronJob (PROXIED hosts). Bouncer key `kvsync` |
 | Kyverno | Pinned chart | `stacks/kyverno/` | Policy engine for K8s admission control |
 | poison-fountain | Latest | `stacks/poison-fountain/` | Anti-AI bot detection and tarpit service |
 | cert-manager/certbot | - | `stacks/cert-manager/` | TLS certificate management |
@@ -54,11 +65,15 @@ graph LR
 
 ### Request Security Layers
 
-Every incoming request passes through 6 security layers:
+CrowdSec IP-reputation enforcement happens **before** a request reaches the
+Traefik chain (banned IPs are dropped in-kernel on direct hosts, or blocked at
+the Cloudflare edge on proxied hosts — see CrowdSec Threat Intelligence below).
+A request that survives that out-of-band gate then passes through the Traefik
+middleware chain:
 
-1. **Cloudflare WAF** - DDoS protection, bot detection, firewall rules (external)
-2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP
-3. **CrowdSec Bouncer** - IP reputation check against LAPI (fail-open on error)
+1. **Cloudflare WAF / edge** - DDoS protection, bot detection, firewall rules incl. the CrowdSec `crowdsec_ban` block rule (proxied hosts only)
+2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP (proxied hosts)
+3. **CrowdSec out-of-band drop** - nftables on direct hosts; *not* a Traefik hop (zero per-request latency)
 4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
 6. **Rate Limiting** - Per-source IP rate limits (returns 429 on breach)
@@ -80,58 +95,71 @@ CrowdSec operates in a hub-and-agent model:
 - Reports malicious IPs to LAPI
 - Shares threat intel with CrowdSec community (anonymized)
 
-**Traefik Bouncer Plugin** (`crowdsec-bouncer-traefik-plugin`, `stacks/traefik/modules/traefik/middleware.tf`):
-- Integrated as Traefik middleware (in the default ingress chain)
-- Queries LAPI for IP reputation on each request
-- **Registered with LAPI** via `BOUNCER_KEY_traefik` env on the LAPI container
-  (`stacks/crowdsec/modules/crowdsec/values.yaml`), seeded from the same Vault key
-  the middleware presents (`ingress_crowdsec_api_key`). **Before 2026-06-19 the
-  bouncer was never registered → LAPI returned 403 → the plugin failed open and
-  enforced nothing (no bans, no captcha).** The seed re-registers automatically on
-  every LAPI start, so a DB wipe (e.g. the MySQL→PostgreSQL migration that lost the
-  original registration) can't silently disable enforcement again.
-- **Fail-open mode**: If LAPI unreachable, allows traffic (graceful degradation)
-- **Only sees non-proxied (direct) apps' real client IPs** (ETP=Local). Proxied
-  apps arrive from cloudflared's pod IP (in `clientTrustedIPs`) and are bypassed —
-  extending enforcement to proxied apps needs `forwardedHeadersTrustedIPs` (future).
-- Honours two LAPI remediation types (profiles in `stacks/crowdsec/modules/crowdsec/values.yaml`):
-  - **`ban`** → HTTP 403 (serious attacks: CVE exploits, scanners, brute force)
-  - **`captcha`** → **Cloudflare Turnstile challenge** so the flagged user can
-    self-unblock (lower-severity abuse: `http-429-abuse`, `http-403-abuse`,
-    `http-crawl-non_statics`, `http-sensitive-files`). The plugin is configured
-    with `captchaProvider=turnstile` + the widget keys; the `captcha.html`
-    template is mounted into the Traefik pod at `/captcha`. The widget is
-    Terraform-managed in `stacks/traefik/main.tf`
-    (`cloudflare_turnstile_widget.crowdsec_captcha`, scoped to `viktorbarzin.me`
-    so it covers every subdomain). **Before 2026-06-19 no captcha provider was
-    configured, so `captcha` decisions silently degraded to a 403 ban** — users
-    had no way to self-unblock; wiring Turnstile fixed that.
+Enforcement is split across **two out-of-band surfaces**, neither of which adds
+any per-request latency. (See "Why the Traefik bouncer plugin was removed" below
+for the supersession history — there is no longer an inline Traefik bouncer.)
 
-**Cloudflare Edge Enforcement for proxied hosts** (`stacks/rybbit/crowdsec_edge.tf` + `lapi_kv_sync.py`):
-- Proxied (orange-cloud) hosts terminate at the Cloudflare edge, so the in-cluster
-  bouncer above never decides on them. Edge enforcement instead syncs LAPI
-  decisions into **one Cloudflare account IP List (`crowdsec_ban`)** + a single
-  **zone-scoped WAF custom rule** blocking `(ip.src in $crowdsec_ban)` across every
-  proxied host. CronJob `crowdsec-cf-sync` (rybbit ns, every 2 min) reconciles it.
-- **BAN-ONLY (2026-06-20):** only `type=ban` decisions sync to the edge. `captcha`
-  decisions are deliberately NOT pushed — the CF account allows only ONE Rules List
-  with a single block action, so folding captcha in would hard-block a soft
-  challenge on every proxied host. (Before 2026-06-20 captcha was downgraded to a
-  hard block at the edge.)
-- **Auth carve-out (2026-06-20):** the WAF rule excludes `authentik.viktorbarzin.me`
-  + `public-auth.viktorbarzin.me` (`… and not (http.host in {…})`), and the
-  Authentik UI ingress sets `exclude_crowdsec = true` for the in-cluster bouncer. A
-  CrowdSec hit must never wall a user out of the login / WebAuthn flow they
-  authenticate through; auth keeps `traefik-rate-limit` for brute-force protection.
-- **⚠️ Currently NON-FUNCTIONAL (known issue, pre-existing since the 2026-06-20
-  rollout):** `crowdsec-cf-sync` fails every run — `cf_list_items()` pagination
-  gets CF `HTTP 400 code 10027 "invalid or expired cursor"`, so the list never
-  populates (`num_items=0`) and the edge rule blocks nothing. LAPI also returns
-  ~31k ban IPs, likely exceeding CF IP-List capacity even once pagination is fixed.
-  **Edge enforcement for proxied hosts is therefore inert pending a fix** (the
-  in-cluster bouncer still protects direct apps; the auth carve-out is correct
-  regardless). Fix needs: (1) correct CF cursor pagination, (2) a capacity strategy
-  for the ban set.
+**Surface 1 — DIRECT (non-Cloudflare-proxied) hosts → in-kernel nftables drop**
+(`cs-firewall-bouncer` DaemonSet, `stacks/crowdsec/modules/crowdsec/firewall_bouncer.tf`):
+- Runs on **every node** (no nodeSelector). Programs the HOST nftables — `table ip
+  crowdsec` / `table ip6 crowdsec6` — with drop rules in **both the `input` AND
+  the `forward` hooks**. The `forward` hook is required because Traefik is a
+  LoadBalancer with `externalTrafficPolicy=Local`: client traffic is DNAT'd to the
+  Traefik **pod** and transits the node's `forward` hook (not `input`) with the
+  real client IP preserved. Chains use `policy accept` (only set members drop —
+  it can never blackhole normal traffic).
+- Pulls **all** decisions from LAPI, **including the CAPI community blocklist
+  (~31k IPs)**. Packets from banned IPs are dropped **in-kernel before reaching
+  Traefik** → zero per-request hops, no Traefik involvement at all.
+- **Packaging**: cs-firewall-bouncer publishes no container image, so the
+  **v0.0.34** static binary is fetched at runtime by an initContainer onto a
+  `debian:bookworm-slim` runtime container. Needs `hostNetwork` +
+  `NET_ADMIN`/`NET_RAW` to talk netlink directly. Registered bouncer key:
+  **`firewall`**.
+- **Fail-open**: if LAPI is unreachable it just stops receiving new decisions
+  (existing drop rules persist); it never blocks legitimate traffic.
+
+**Surface 2 — PROXIED (Cloudflare orange-cloud) hosts → Cloudflare edge block**
+(`stacks/rybbit/crowdsec_edge.tf` + `lapi_kv_sync.py`):
+- Proxied hosts terminate at the Cloudflare edge, so a host-level nftables drop
+  would never see them. Enforcement is instead a single Cloudflare Rules List
+  **`crowdsec_ban`** + a zone-scoped WAF custom rule `(ip.src in $crowdsec_ban)`
+  → **block** action, which covers every proxied host in the zone.
+- Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, every 2 min,
+  pure-stdlib Python in a ConfigMap). It pulls local **ban/captcha ip-scoped**
+  decisions and pushes them into the CF list, but **EXCLUDES the ~31k CAPI
+  community blocklist** — that set is far too large for a CF Rules List (the CF
+  account hard-limits to **one** list), and CAPI is already covered in-kernel on
+  direct hosts and by Cloudflare's own managed protections on proxied hosts.
+  Registered bouncer key: **`kvsync`**.
+- **Block-only**: the single-list limit precludes a separate
+  captcha/managed-challenge list, so both ban and captcha decisions are enforced
+  as a plain block at the edge.
+- **Auth carve-out:** the WAF rule excludes `authentik.viktorbarzin.me` +
+  `public-auth.viktorbarzin.me` (`… and not (http.host in {…})`). A CrowdSec hit
+  must never wall a user out of the login / WebAuthn flow they authenticate
+  through; auth keeps `traefik-rate-limit` for brute-force protection.
+
+**Whitelist** (`stacks/crowdsec/whitelist.yaml`): a CrowdSec whitelist covers
+RFC1918 + the tailnet + internal CIDRs (plus one specific external IP), so
+internal users are never enforced. Internal access uses split-horizon DNS
+straight to Traefik, and direct internal clients are RFC1918 — both whitelisted.
+
+#### Why the Traefik bouncer plugin was removed
+
+Enforcement used to run as an inline Traefik middleware — the
+`crowdsec-bouncer-traefik-plugin` (Yaegi/Lua), which queried LAPI on every
+request and could serve a Cloudflare Turnstile captcha for soft remediations.
+On **Traefik 3.7.5 the Yaegi handler was never invoked**, so the bouncer was
+registered but enforced **nothing** despite appearing healthy. Rather than chase
+the Yaegi runtime, the whole plugin path was **removed** (2026-06): the plugin
+static config + initContainer download, the `crowdsec` Middleware CRD, the
+`captcha.html` template + its ConfigMap and volume mount, and the Cloudflare
+Turnstile widget (`cloudflare_turnstile_widget.crowdsec_captcha`). It was
+replaced by the two out-of-band surfaces above, which add zero per-request
+latency and fail open. (The earlier `crowdsec-cf-sync` cursor-pagination /
+IP-List-capacity issues are also moot now that CAPI is excluded from the edge
+list and dropped in-kernel instead.)
 
 **Metabase** (disabled by default):
 - Dashboard for CrowdSec analytics
@@ -377,10 +405,12 @@ Beads: `code-8ywc` W1.6 + W1.7. **Status: planned.**
 
 | Path | Purpose |
 |------|---------|
-| `stacks/crowdsec/` | CrowdSec LAPI, agent, bouncer config |
+| `stacks/crowdsec/` | CrowdSec LAPI, agent config + `whitelist.yaml` |
+| `stacks/crowdsec/modules/crowdsec/firewall_bouncer.tf` | cs-firewall-bouncer DaemonSet (in-kernel nftables drop, direct hosts) |
+| `stacks/rybbit/crowdsec_edge.tf` + `lapi_kv_sync.py` | Cloudflare IP-List + WAF block rule + LAPI→CF sync CronJob (proxied hosts) |
 | `stacks/kyverno/` | Kyverno deployment + policies |
 | `stacks/poison-fountain/` | Anti-AI service + CronJob |
-| `stacks/platform/modules/traefik/middleware.tf` | Security middleware definitions |
+| `stacks/traefik/modules/traefik/middleware.tf` | Security middleware definitions (no longer includes a CrowdSec bouncer) |
 | `stacks/platform/modules/ingress_factory/` | Per-service security toggles |
 
 ### Vault Paths
@@ -490,7 +520,11 @@ spec:
 **Fix**:
 1. Check LAPI decisions: `kubectl exec -it crowdsec-lapi-0 -- cscli decisions list`
 2. Remove ban: `kubectl exec -it crowdsec-lapi-0 -- cscli decisions delete --ip <IP>`
-3. Whitelist if needed: Add to `stacks/crowdsec/whitelist.yaml`
+   — the in-kernel drop clears as soon as `cs-firewall-bouncer` reconciles (direct
+   hosts); for proxied hosts the `crowdsec-cf-sync` CronJob removes it from the
+   `crowdsec_ban` CF list within ~2 min.
+3. Whitelist if needed: Add to `stacks/crowdsec/whitelist.yaml` (RFC1918 + tailnet
+   + internal CIDRs are already whitelisted, so internal clients are never banned).
 
 ### Kyverno Policy Blocking Deployment
 

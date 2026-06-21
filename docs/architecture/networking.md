@@ -4,7 +4,7 @@ Last updated: 2026-04-19 (WS E — Kea DHCP pushes dual DNS per subnet; Kea DDNS
 
 ## Overview
 
-The homelab network is built on a dual-VLAN architecture with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a comprehensive middleware chain including CrowdSec bot protection, Authentik forward-auth, and rate limiting. All HTTP traffic flows through Cloudflared tunnels, avoiding the need for port forwarding or exposing public IPs.
+The homelab network is built on a dual-VLAN architecture with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). All HTTP traffic flows through Cloudflared tunnels, avoiding the need for port forwarding or exposing public IPs.
 
 ## Architecture Diagram
 
@@ -16,11 +16,13 @@ graph TB
     Traefik[Traefik Ingress<br/>3 replicas + PDB]
 
     subgraph "Middleware Chain"
-        CS[CrowdSec Bouncer<br/>fail-open]
+        AntiAI[Anti-AI bot-block<br/>fail-open]
         Auth[Authentik Forward-Auth<br/>3 replicas + PDB]
         RL[Rate Limiter<br/>429 response]
         Retry[Retry<br/>2 attempts, 100ms]
     end
+
+    CSdrop[CrowdSec drop<br/>nftables / CF edge<br/>out-of-band, pre-Traefik]
 
     subgraph "Proxmox Host (eno1)"
         vmbr0[vmbr0 Bridge<br/>192.168.1.127/24]
@@ -53,8 +55,9 @@ graph TB
     Internet -->|DNS query| CF
     CF -->|CNAME to tunnel| CFD
     CFD --> Traefik
-    Traefik --> CS
-    CS --> Auth
+    CSdrop -.->|banned IPs dropped before Traefik| Traefik
+    Traefik --> AntiAI
+    AntiAI --> Auth
     Auth --> RL
     RL --> Retry
     Retry --> Service
@@ -82,7 +85,7 @@ graph TB
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
 | Traefik | Helm chart | K8s (3 replicas + PDB) | Ingress controller, HTTP/3 enabled |
-| CrowdSec | Helm chart | K8s (LAPI: 3 replicas) | Bot protection, fail-open bouncer |
+| CrowdSec | Helm chart | K8s (LAPI: 3 replicas) | IP reputation. Out-of-band enforcement: `cs-firewall-bouncer` DaemonSet (in-kernel nftables drop, direct hosts) + Cloudflare edge WAF rule (proxied hosts). Fail-open |
 | Authentik | Helm chart | K8s (3 replicas + PDB) | SSO, forward-auth middleware |
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
@@ -208,24 +211,31 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 
 ### Ingress Flow
 
+CrowdSec is **not** a step in this chain — banned IPs are dropped before the
+request ever reaches Traefik (Cloudflare edge WAF rule on proxied hosts; host
+nftables on direct hosts). The flow below is for a request that survives that
+out-of-band gate.
+
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Cloudflare
+    participant CFedge as Cloudflare (edge WAF: crowdsec_ban block)
     participant Cloudflared
     participant Traefik
-    participant CrowdSec
+    participant AntiAI
     participant Authentik
     participant RateLimit
     participant Retry
     participant Service
     participant Pod
 
-    Client->>Cloudflare: HTTPS request to blog.viktorbarzin.me
-    Cloudflare->>Cloudflared: Forward via tunnel (QUIC)
+    Client->>CFedge: HTTPS request to blog.viktorbarzin.me
+    Note over CFedge: banned IP → blocked here (proxied hosts)
+    CFedge->>Cloudflared: Forward via tunnel (QUIC)
     Cloudflared->>Traefik: HTTP to LoadBalancer IP
-    Traefik->>CrowdSec: Apply bouncer middleware
-    CrowdSec->>Authentik: If allowed, check auth (protected=true)
+    Note over Traefik: on direct hosts, banned IPs already dropped in-kernel (nftables forward hook)
+    Traefik->>AntiAI: anti-AI bot-block (fail-open)
+    AntiAI->>Authentik: If allowed, check auth (protected=true)
     Authentik->>RateLimit: If authenticated, check rate limit
     RateLimit->>Retry: If within limit, continue
     Retry->>Service: Forward to Service
@@ -234,24 +244,27 @@ sequenceDiagram
     Service-->>Retry: Response
     Retry-->>RateLimit: Response
     RateLimit-->>Authentik: Response (strip auth headers)
-    Authentik-->>CrowdSec: Response
-    CrowdSec-->>Traefik: Response
+    Authentik-->>AntiAI: Response
+    AntiAI-->>Traefik: Response
     Traefik-->>Cloudflared: Response
-    Cloudflared-->>Cloudflare: Response via tunnel
-    Cloudflare-->>Client: HTTPS response
+    Cloudflared-->>CFedge: Response via tunnel
+    CFedge-->>Client: HTTPS response
 ```
 
 ### Middleware Chain
 
-Every ingress created by the `ingress_factory` module follows this chain:
+CrowdSec IP-reputation enforcement is **not** in this chain — it is out-of-band
+(host nftables on direct hosts; the Cloudflare edge WAF `crowdsec_ban` rule on
+proxied hosts), so banned IPs never reach the chain and there is no per-request
+CrowdSec hop. Every ingress created by the `ingress_factory` module follows this
+Traefik chain:
 
-1. **CrowdSec Bouncer**: Checks IP against threat database. **Fail-open** mode — if LAPI is unreachable, traffic passes through to prevent outages.
+1. **Anti-AI bot-block** (`ai-bot-block` ForwardAuth, on by default via `ingress_factory`): blocks/tarpits known AI crawlers. **Fail-open** (currently a no-op `return 200` — poison-fountain scaled to 0; see `docs/architecture/security.md`).
 2. **Authentik Forward-Auth** (if `protected = true`): SSO authentication via OIDC. Non-authenticated users are redirected to login. Auth headers are stripped before forwarding to backend.
 3. **Rate Limiting**: Per-IP throttling. Returns **429 Too Many Requests** (not 503) when limit exceeded. Default is `rate-limit` (average 10 req/s, burst 50). Services whose clients legitimately burst harder get a dedicated middleware via `skip_default_rate_limit = true` + `extra_middlewares`: Immich (`immich-rate-limit`, 1000/20000, photo uploads) and ActualBudget (`actualbudget-rate-limit`, 50/300 — the Actual web app boots with ~70 parallel asset/migration revalidations; the default burst 429'd the tail and stalled every page load).
 4. **Retry**: 2 attempts with 100ms delay on transient failures (5xx errors, connection errors).
 
 Additional middleware:
-- **Anti-AI**: On by default via `ingress_factory`. Blocks common AI crawler user-agents.
 - **HTTP/3 (QUIC)**: Enabled globally on Traefik.
 
 ### Entrypoint Transport Timeouts
@@ -348,7 +361,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | pfSense | `stacks/pfsense/` | VM + cloud-init config |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
 | Traefik | `stacks/platform/` (sub-module) | Helm release, IngressRoute CRDs |
-| CrowdSec | `stacks/platform/` (sub-module) | Helm release, LAPI + bouncer |
+| CrowdSec | `stacks/crowdsec/` (+ edge in `stacks/rybbit/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts) + Cloudflare edge sync (proxied hosts) |
 | Authentik | `stacks/authentik/` | Helm release, ingress, OIDC configs |
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
@@ -436,13 +449,30 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **Decision**: Technitium handles internal `.lan` domains with near-zero latency. Cloudflare handles public domains with global DNS. K8s nodes use Technitium as primary, which forwards non-.lan queries to Cloudflare.
 
-### Why Fail-Open on CrowdSec Bouncer?
+### Why CrowdSec Enforcement Is Out-of-Band (and Fails Open)
 
-**Alternatives considered**:
-1. **Fail-closed**: Maximum security, but LAPI downtime blocks all traffic.
-2. **Redundant LAPI**: Already scaled to 3 replicas, but resource pressure can still cause outages.
+CrowdSec used to enforce inline as a Traefik middleware (the
+`crowdsec-bouncer-traefik-plugin`). On Traefik 3.7.5 the Yaegi plugin handler was
+never invoked, so it enforced nothing; the plugin was removed and enforcement
+moved off the request path entirely (full history in
+`docs/architecture/security.md`). It now runs on two surfaces:
 
-**Decision**: Availability > strict bot blocking. CrowdSec LAPI is scaled to 3 replicas for resilience, but during cluster-wide resource exhaustion (e.g., memory pressure), bouncer falls back to allowing traffic. This prevents a complete service outage due to a security add-on.
+- **Direct hosts** → `cs-firewall-bouncer` DaemonSet drops banned IPs in the host
+  nftables, in **both the `input` and `forward` hooks**. The `forward` hook is
+  the load-bearing one: with Traefik on a dedicated LB IP at
+  `externalTrafficPolicy=Local`, client packets are DNAT'd to the Traefik **pod**
+  and transit the node's `forward` chain (not `input`) — which is exactly why the
+  ingress must preserve the **real client IP** end-to-end (ETP=Local + PROXY-v2
+  for IPv6; see the Traefik LB IP and IPv6 ingress notes above). Without the real
+  client IP the firewall-bouncer (and the CF edge rule) would have nothing to
+  match on.
+- **Proxied hosts** → a Cloudflare edge WAF rule (`ip.src in $crowdsec_ban`) fed
+  by the `crowdsec-cf-sync` CronJob.
+
+Both **fail open**: if LAPI is unreachable, the firewall-bouncer simply stops
+receiving new decisions (existing drops persist) and the CF sync skips a run —
+neither ever blocks legitimate traffic. Availability > strict bot blocking, and
+out-of-band enforcement adds **zero per-request latency** (no Traefik hop).
 
 ### Why HTTP/3 (QUIC)?
 
@@ -473,9 +503,10 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **Symptoms**: All ingress routes return 503, Traefik dashboard shows no backends available.
 
-**Diagnosis**: Middleware chain is blocking traffic. Check:
-1. Authentik status: `kubectl get pod -n authentik`
-2. CrowdSec LAPI status: `kubectl get pod -n crowdsec`
+**Diagnosis**: Middleware chain is blocking traffic. (CrowdSec is **not** in the
+chain — a CrowdSec/LAPI outage cannot cause 503s; it only stops new bans.) Check:
+1. Authentik status: `kubectl get pod -n authentik` (ForwardAuth fails closed if the auth server is unreachable)
+2. `bot-block-proxy` status: `kubectl get pod -n traefik -l app=bot-block-proxy` (anti-AI ForwardAuth target — also fails closed if down)
 3. Traefik logs: `kubectl logs -n kube-system deploy/traefik`
 
 **Fix**: If Authentik is down and ingress uses forward-auth, pods won't pass health checks. Scale Authentik to 3 replicas or temporarily disable forward-auth middleware.
