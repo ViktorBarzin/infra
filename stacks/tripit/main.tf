@@ -30,15 +30,20 @@ locals {
   # (keys via the tripit-secrets ExternalSecret), WEATHER_PROVIDER=openmeteo,
   # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=fake and
   # MAIL_INGEST_ENABLED=false here (the ingest-plans CronJob overrides both).
-  # AUTH_MODE=hybrid (tripit ADR-0017, image >= 81a816f7): a Bearer JWT from
-  # the tripit-app Authentik provider wins (validated in-app against OIDC_*);
-  # otherwise the backend trusts the Authentik-injected X-authentik-email
-  # header exactly as forwardauth did (browser path unchanged; the tripit-api
-  # ingress strips inbound X-authentik-* so the fallback can't be spoofed).
+  # AUTH_MODE=normal (tripit ADR-0028, #96): the backend authenticates ONLY its
+  # own TripIt session (cookie or Bearer JWT) — the legacy Authentik OIDC-bearer
+  # and forward-auth arms were removed once the Shell moved onto TripIt sessions
+  # (#94) and the cutover stopped injecting X-authentik-*. OIDC_* below stays: the
+  # "Log in with Authentik" web login and the Shell's /api/auth/exchange validate
+  # Authentik tokens against the same JWKS only to MINT a TripIt session.
   # STORAGE_DIR points at the RWX NFS PVC — the app's default ./var is not
   # writable by the non-root user.
   app_env = {
-    AUTH_MODE     = "hybrid"
+    AUTH_MODE     = "normal"
+    # Open-signup abuse controls sit behind Traefik (tripit ADR-0028, #95): trust
+    # the proxy's X-Forwarded-For so the per-IP rate-limit keys on the real client,
+    # not the shared ingress pod IP. (The PoW captcha is the primary control.)
+    TRUST_FORWARDED_FOR = "true"
     OIDC_ISSUER   = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
     OIDC_JWKS_URL = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
     OIDC_AUDIENCE = "tripit-app"
@@ -66,19 +71,20 @@ locals {
     PUSH_PROVIDER       = "webpush"
     LLM_MODE            = "fake"
     MAIL_INGEST_ENABLED = "false"
-    # Outbound mail (linked-email verification + trip-share invites) — submitted
-    # via the cluster mailserver authenticated as spam@ (SMTP_USER), but sent
-    # From: plans@viktorbarzin.me (SMTP_FROM). docker-mailserver SPOOF_PROTECTION
-    # requires the login to "own" the From; an explicit plans@ -> spam@ virtual
-    # alias grants that (see mailserver extra/aliases.txt) and keeps inbound
-    # plans@ routing to spam@. Relays out via Brevo. SMTP_PASSWORD comes from
-    # tripit-secrets (the existing PLANS_IMAP_PASSWORD = spam@'s password).
+    # Outbound mail (native-auth signup-verification + account recovery, linked-
+    # email verification, trip-share invites) — submitted via the cluster
+    # mailserver authenticated as spam@ (SMTP_USER), but sent From:
+    # trips@viktorbarzin.me (SMTP_FROM; tripit ADR-0028). docker-mailserver
+    # SPOOF_PROTECTION requires the login to "own" the From; an explicit
+    # trips@ -> spam@ virtual alias grants that (see mailserver extra/aliases.txt)
+    # and routes inbound trips@ to spam@. Relays out via Brevo. SMTP_PASSWORD comes
+    # from tripit-secrets (the existing PLANS_IMAP_PASSWORD = spam@'s password).
     # PUBLIC_BASE_URL builds the links mailed to recipients.
     EMAIL_PROVIDER  = "smtp"
     SMTP_HOST       = "mailserver.mailserver.svc"
     SMTP_PORT       = "587"
     SMTP_USER       = "spam@viktorbarzin.me"
-    SMTP_FROM       = "plans@viktorbarzin.me"
+    SMTP_FROM       = "trips@viktorbarzin.me"
     PUBLIC_BASE_URL = "https://tripit.viktorbarzin.me"
     # Narrator audio (ADR-0004): Chatterbox via the in-cluster `tts` stack.
     # OpenAI-compatible /v1/audio/speech; the bake POSTs best-effort synth
