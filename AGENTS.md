@@ -9,7 +9,7 @@
 - **Ask before `git push`** — always confirm with the user first
 
 ## Execution
-- **Apply a service**: `scripts/tg apply --non-interactive` (auto-decrypts SOPS secrets)
+- **Apply a service**: `scripts/tg apply --non-interactive` (auto-decrypts SOPS secrets; passes `-lock-timeout`, default `5m` / `TG_LOCK_TIMEOUT`, so a contended state lock waits instead of failing with `Error acquiring the state lock`)
 - **Legacy apply**: `cd stacks/<service> && terragrunt apply --non-interactive` (uses terraform.tfvars)
 - **kubectl**: `kubectl --kubeconfig $(pwd)/config`
 - **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
