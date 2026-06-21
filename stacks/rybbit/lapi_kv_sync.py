@@ -138,8 +138,17 @@ def fetch_decisions():
         headers={"X-Api-Key": LAPI_KEY, "Accept": "application/json"},
     )
     block = set()
+    skipped_capi = 0
     for d in data or []:
         if (d.get("scope") or "").lower() != "ip":
+            continue
+        # EXCLUDE the CAPI community blocklist: ~31k IPs, far over a CF IP
+        # List's capacity, and ALREADY enforced in-kernel for direct hosts by
+        # the cs-firewall-bouncer DaemonSet. The edge list carries only our
+        # HIGH-SIGNAL local + curated decisions (own scenarios, cscli-import,
+        # subscribed lists).
+        if (d.get("origin") or "").upper() == "CAPI":
+            skipped_capi += 1
             continue
         ip = d.get("value")
         if not ip:
@@ -149,6 +158,16 @@ def fetch_decisions():
             block.add(ip)
         # captcha / throttle / other remediation types are ignored at the edge
         # (ban-only enforcement — see the docstring above)
+    if skipped_capi:
+        print(f"[info] excluded {skipped_capi} CAPI decisions (enforced at L3 by "
+              f"the firewall-bouncer; too many for a CF list)")
+    # Safety cap: a CF IP List can't hold unbounded entries. Never push more
+    # than this — keep a bounded, deterministic subset and warn.
+    MAX_ITEMS = 9000
+    if len(block) > MAX_ITEMS:
+        print(f"[warn] desired {len(block)} exceeds {MAX_ITEMS} cap; truncating "
+              f"(consider a CF plan with a higher list limit)", file=sys.stderr)
+        block = set(sorted(block)[:MAX_ITEMS])
     return block
 
 
@@ -160,7 +179,9 @@ def cf_list_items(list_id):
     out = {}
     cursor = ""
     while True:
-        url = f"{CF_API}/accounts/{CF_ACCOUNT_ID}/rules/lists/{list_id}/items?per_page=1000"
+        # per_page max for the list-items endpoint is 500; 1000 returns a
+        # misleading HTTP 400 "invalid or expired cursor" (CF error 10027).
+        url = f"{CF_API}/accounts/{CF_ACCOUNT_ID}/rules/lists/{list_id}/items?per_page=500"
         if cursor:
             url += f"&cursor={urllib.parse.quote(cursor)}"
         res = _cf(url)
