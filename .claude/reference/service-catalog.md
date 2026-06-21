@@ -58,7 +58,6 @@
 | claude-memory | Persistent memory MCP server | claude-memory |
 | paperless-mcp | Paperless-ngx document search MCP (barryw/PaperlessMCP). Traefik bearer auth via Aetherinox api-token-middleware. `auth=none` at ingress; gateway-level bearer enforced by `paperless-mcp/bearer-auth` Middleware CRD. Tokens + paperless API token in Vault `secret/paperless-mcp`. | paperless-mcp |
 | paperless-ai | AI layer over Paperless-ngx (clusterzx/paperless-ai): semantic/RAG document search (Chat) + auto-tagging. Local embeddings (sentence-transformers MiniLM) + ChromaDB on the PVC — search is GPU-free. LLM (chat answers + tagging) via in-cluster llama-swap `qwen3-8b` (`SYSTEM_PROMPT=/no_think` to keep Qwen3 output parseable). `auth=required` (Authentik) at `paperless-ai.viktorbarzin.me`. Reads Paperless over the internal svc as a dedicated `paperless-ai` superuser. **Runtime config + app-admin live in the PVC `.env`/SQLite (written once via the app's setup flow), NOT TF env — its dotenv loader does not override `process.env`, so container env shadows the `.env`.** Vault `secret/paperless-ai` (paperless_api_token, api_key, custom_api_key, app_admin_*). | paperless-ai |
-| council-complaints | Islington civic reporting pilot | council-complaints |
 
 ## Optional
 | Service | Description | Stack |
