@@ -381,6 +381,50 @@ install_playwright() {
   run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
 }
 
+# Per-user homelab-memory setup — migrate off the claude-memory MCP/plugin to the
+# homelab CLI hooks (auto-recall + auto-learn + compaction backup/recovery).
+# Idempotent, if-absent, ADDITIVE: never clobbers `env` (the per-user
+# MEMORY_API_KEY) or other MCP servers; removes ONLY the `claude_memory` MCP.
+# Reuses the user's existing key — does NOT mint one (per-user isolation stays
+# deferred, design 2026-06-08). The homelab CLI (/usr/local/bin/homelab) hits the
+# same remote HTTP API the MCP used. Hook scripts: $WORKSTATION_DIR/claude-hooks.
+install_memory() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  local src="$WORKSTATION_DIR/claude-hooks" hooks_dst="$home/.claude/hooks" settings="$home/.claude/settings.json"
+  [[ -d "$src" ]] || { log "WARN: $src missing -> skip memory setup for $user"; return 0; }
+
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
+
+  # (1) (re)install the 4 hook scripts, owned by the user (refreshed each reconcile so fixes land)
+  install -d -o "$user" -g "$user" -m 0755 "$hooks_dst"
+  local h
+  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh; do
+    install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
+  done
+
+  # (2) wire the hooks in settings.json (AS the user -> correct ownership), if-absent + additive;
+  #     enforce 0600 (it holds the per-user MEMORY_API_KEY).
+  if runuser -u "$user" -- python3 "$src/wire-memory-hooks.py" "$home" >/dev/null 2>&1; then
+    log "memory hooks wired -> $user"
+  else
+    log "WARN: memory hook wiring failed for $user (retries next reconcile)"
+  fi
+  [[ -f "$settings" ]] && chmod 600 "$settings"
+
+  # (2b) reuse the user's existing key; warn (do NOT mint — needs an admin vault write) if absent.
+  if [[ -f "$settings" ]] && ! grep -q 'MEMORY_API_KEY' "$settings"; then
+    log "WARN: $user has no MEMORY_API_KEY in settings.json — homelab memory no-ops until an admin mints one"
+  fi
+
+  # (3) remove the now-superseded claude_memory MCP (AS the user, if-present) + the plugin dir.
+  if runuser -u "$user" -- bash -lc 'command -v claude >/dev/null 2>&1 && claude mcp get claude_memory >/dev/null 2>&1'; then
+    runuser -u "$user" -- bash -lc 'claude mcp remove claude_memory >/dev/null 2>&1' && log "removed claude_memory MCP -> $user" || true
+  fi
+  [[ -d "$home/.claude/plugins/claude-memory" ]] && rm -rf "$home/.claude/plugins/claude-memory" && log "removed claude-memory plugin dir -> $user"
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -493,6 +537,14 @@ while IFS=$'\t' read -r os_user pw_port; do
   env_set "$ENVDIR/playwright-$os_user.env" PLAYWRIGHT_PORT "$pw_port"
   install_playwright "$os_user"
 done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
+
+# 5d) per-user homelab-memory (ALL users): replace the claude-memory MCP/plugin with the
+#     homelab CLI memory hooks. Idempotent + additive + if-absent; never touches the
+#     per-user MEMORY_API_KEY or other MCP servers (removes ONLY claude_memory).
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_memory "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5b) machine-wide (once, not per-user): keep the t3 gated nightly TRACKER timer enabled (it
 #     follows t3@nightly daily, gated; see t3-autoupdate.sh / docs/runbooks/t3-version-bump.md).
