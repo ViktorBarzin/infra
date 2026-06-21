@@ -211,7 +211,6 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         "traefik-retry@kubernetescrd",
         var.skip_global_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
-        "traefik-crowdsec@kubernetescrd",
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
         var.strip_auth_headers ? "traefik-strip-auth-headers@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,

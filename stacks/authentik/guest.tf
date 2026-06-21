@@ -211,7 +211,6 @@ module "ingress_public_outpost" {
   tls_secret_name  = var.tls_secret_name
   dns_type         = "proxied"
   anti_ai_scraping = false
-  exclude_crowdsec = true
   homepage_enabled = false
   depends_on       = [authentik_outpost.public]
 }

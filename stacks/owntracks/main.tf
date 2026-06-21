@@ -49,7 +49,7 @@ resource "kubernetes_namespace" "owntracks" {
     name = "owntracks"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -249,7 +249,7 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 80
   extra_annotations = {
-    "traefik.ingress.kubernetes.io/router.middlewares" = "owntracks-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd"
+    "traefik.ingress.kubernetes.io/router.middlewares" = "owntracks-basic-auth@kubernetescrd,traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd"
     "gethomepage.dev/enabled"                          = "true"
     "gethomepage.dev/name"                             = "OwnTracks"
     "gethomepage.dev/description"                      = "Location tracking"

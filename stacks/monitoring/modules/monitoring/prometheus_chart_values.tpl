@@ -15,7 +15,7 @@ alertmanager:
     enabled: true
     ingressClassName: "traefik"
     annotations:
-      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
       traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
       gethomepage.dev/enabled: "true"
       gethomepage.dev/name: "Alertmanager"
@@ -399,7 +399,7 @@ server:
     enabled: true
     ingressClassName: "traefik"
     annotations:
-      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+      traefik.ingress.kubernetes.io/router.middlewares: "traefik-rate-limit@kubernetescrd,traefik-csp-headers@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
       traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
 
       gethomepage.dev/enabled: "true"

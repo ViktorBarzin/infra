@@ -31,11 +31,11 @@ module "tls_secret" {
 
 # https://pfsense.viktorbarzin.me/
 module "pfsense" {
-  source           = "./factory"
-  dns_type         = "proxied"
-  name             = "pfsense"
-  external_name    = "pfsense.viktorbarzin.lan"
-  tls_secret_name  = var.tls_secret_name
+  source          = "./factory"
+  dns_type        = "proxied"
+  name            = "pfsense"
+  external_name   = "pfsense.viktorbarzin.lan"
+  tls_secret_name = var.tls_secret_name
   # webGUI moved to :8443 on 2026-06-10 — :443 on pfSense is now the
   # SNI-routed HAProxy frontend (hostname->Traefik, no-SNI->GUI). Direct
   # backend port avoids a Traefik->HAProxy->GUI double hop.
@@ -163,7 +163,7 @@ module "docker-registry-ui" {
   depends_on      = [kubernetes_namespace.reverse-proxy]
   extra_annotations = {
     # Override middleware chain to remove rate-limit; the UI fires many API calls to list repos/tags
-    "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-crowdsec@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
+    "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-csp-headers@kubernetescrd,traefik-authentik-forward-auth@kubernetescrd"
     "gethomepage.dev/enabled"                          = "true"
     "gethomepage.dev/name"                             = "Docker Registry"
     "gethomepage.dev/description"                      = "Container registry"
