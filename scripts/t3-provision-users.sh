@@ -404,9 +404,12 @@ install_memory() {
     install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
   done
 
-  # (2) wire the hooks in settings.json (AS the user -> correct ownership), if-absent + additive;
+  # (2) wire the hooks in settings.json, if-absent + additive. Run the helper as ROOT:
+  #     it must read $src under the admin's hardened home (mode 700), which a
+  #     runuser-as-$user CANNOT traverse — so chown the result back to the user and
   #     enforce 0600 (it holds the per-user MEMORY_API_KEY).
-  if runuser -u "$user" -- python3 "$src/wire-memory-hooks.py" "$home" >/dev/null 2>&1; then
+  if python3 "$src/wire-memory-hooks.py" "$home" >/dev/null 2>&1; then
+    [[ -f "$settings" ]] && chown "$user:$user" "$settings" 2>/dev/null || true
     log "memory hooks wired -> $user"
   else
     log "WARN: memory hook wiring failed for $user (retries next reconcile)"
