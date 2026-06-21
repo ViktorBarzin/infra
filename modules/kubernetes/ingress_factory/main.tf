@@ -107,10 +107,6 @@ variable "custom_content_security_policy" {
   type    = string
   default = null
 }
-variable "exclude_crowdsec" {
-  type    = bool
-  default = false
-}
 variable "full_host" {
   type    = string
   default = null
@@ -310,7 +306,6 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
-        var.exclude_crowdsec ? null : "traefik-crowdsec@kubernetescrd",
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
         local.auth_middleware,
