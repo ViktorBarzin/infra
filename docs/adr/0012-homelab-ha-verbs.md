@@ -19,12 +19,20 @@ gap for every user in every directory.
   *resolution* and host *SSH*, neither of which an API-only MCP can provide. The
   value is endpoint/secret/host resolution, exactly like `net`/`dns` (ADR-0010).
 - **`ha token` resolves live from the cluster, not from an env var.** It reads
-  k8s Secret `openclaw/openclaw-secrets`, field `skill_secrets` (a base64 JSON
-  blob of several tokens), and prints the per-instance key
-  (`home_assistant_sofia_token` / `home_assistant_token`) via the ambient
-  kubeconfig. This is robust to env drift — the precise failure that made agents
-  re-derive the pipeline. Read-tier, prints the bare token to stdout so it
-  composes in `$(…)`, mirroring `memory secret`.
+  the dedicated k8s Secret `openclaw/ha-tokens` (one key per instance: `sofia` /
+  `london`) via the ambient kubeconfig. This is robust to env drift — the precise
+  failure that made agents re-derive the pipeline. Read-tier, prints the bare
+  token to stdout so it composes in `$(…)`, mirroring `memory secret`.
+- **The token is split into its own least-privilege secret** (`stacks/openclaw/ha_tokens.tf`).
+  It was originally read from `openclaw-secrets` → `skill_secrets` (a JSON blob
+  also holding `slack_webhook` + `uptime_kuma_password`), which only cluster
+  admins can read — so the verb hung/failed for the non-admin operator it was
+  built for (emo = `emil.barzin@gmail.com`, group `Home Server Admins`, whose
+  OIDC identity is barred from secrets in `openclaw`). `ha-tokens` carries only
+  the HA tokens, with a Role+RoleBinding granting `get` on *just that secret* to
+  the `Home Server Admins` group (k8s RBAC can't scope to a JSON sub-key, hence
+  the separate object). openclaw's own deployment keeps reading `openclaw-secrets`
+  — this is purely additive.
 - **`ha ssh` is deterministic and per-user.** Flags are fixed for unattended
   use: `-F /dev/null` (ignore user ssh-config), `StrictHostKeyChecking=no` +
   `UserKnownHostsFile=/dev/null` (no host-key prompt/record — agents have no

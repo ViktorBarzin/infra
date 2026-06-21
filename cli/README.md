@@ -162,7 +162,7 @@ and a cwd-relative path, neither of which holds in an arbitrary session.
 
 | Command | Tier | What it does |
 |---|---|---|
-| `ha token [--instance sofia\|london]` | read | print the long-lived HA API token, resolved live from k8s Secret `openclaw/openclaw-secrets` (`skill_secrets` JSON) via the ambient kubeconfig — no pre-set env var. Use as `curl -H "Authorization: Bearer $(homelab ha token)" …` |
+| `ha token [--instance sofia\|london]` | read | print the long-lived HA API token, resolved live from the dedicated k8s Secret `openclaw/ha-tokens` (key per instance) via the ambient kubeconfig — no pre-set env var. Use as `curl -H "Authorization: Bearer $(homelab ha token)" …`. The secret is a least-privilege carve-out (`stacks/openclaw/ha_tokens.tf`): the `Home Server Admins` group can read *just* it, so non-admin operators get the HA token without the rest of `skill_secrets` (slack webhook, uptime-kuma password) |
 | `ha ssh [--instance sofia\|london] [-i KEY] -- <cmd>` | write | run `<cmd>` on the HA host over ssh with deterministic non-interactive flags (explicit key = the invoking user's `~/.ssh/id_ed25519`, no user ssh-config, no known_hosts prompt). sofia (`vbarzin@192.168.1.8`) is reachable from the devvm LAN; london is documented but generally remote |
 
 `--instance` defaults to **sofia** (the devvm shares the Sofia LAN). `ha token`

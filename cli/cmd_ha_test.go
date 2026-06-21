@@ -12,10 +12,10 @@ func TestResolveHAInstance(t *testing.T) {
 	if got, err := resolveHAInstance(""); err != nil || got.name != "sofia" {
 		t.Fatalf(`resolveHAInstance("") = %+v, %v; want sofia`, got, err)
 	}
-	if got, err := resolveHAInstance("sofia"); err != nil || got.secretKey != "home_assistant_sofia_token" {
+	if got, err := resolveHAInstance("sofia"); err != nil || got.secretKey != "sofia" {
 		t.Fatalf("sofia secretKey = %q, %v", got.secretKey, err)
 	}
-	if got, err := resolveHAInstance("london"); err != nil || got.secretKey != "home_assistant_token" || got.sshUser != "hassio" {
+	if got, err := resolveHAInstance("london"); err != nil || got.secretKey != "london" || got.sshUser != "hassio" {
 		t.Fatalf("london = %+v, %v", got, err)
 	}
 	if _, err := resolveHAInstance("paris"); err == nil {
@@ -23,22 +23,19 @@ func TestResolveHAInstance(t *testing.T) {
 	}
 }
 
-func TestParseSkillSecret(t *testing.T) {
-	blob := base64.StdEncoding.EncodeToString([]byte(
-		`{"home_assistant_sofia_token":"tok-sofia","home_assistant_token":"tok-london","slack_webhook":"https://x"}`))
-
-	if got, err := parseSkillSecret(blob, "home_assistant_sofia_token"); err != nil || got != "tok-sofia" {
-		t.Fatalf("parseSkillSecret sofia = %q, %v; want tok-sofia", got, err)
+func TestDecodeSecretValue(t *testing.T) {
+	// k8s stores Secret values base64-encoded; `kubectl -o jsonpath={.data.<k>}`
+	// returns that base64, which decodeSecretValue turns back into the raw token.
+	enc := base64.StdEncoding.EncodeToString([]byte("tok-sofia"))
+	if got, err := decodeSecretValue(enc); err != nil || got != "tok-sofia" {
+		t.Fatalf("decodeSecretValue = %q, %v; want tok-sofia", got, err)
 	}
-	// kubectl jsonpath output can carry trailing whitespace/newline — must tolerate it
-	if got, err := parseSkillSecret(blob+"\n", "home_assistant_token"); err != nil || got != "tok-london" {
-		t.Fatalf("parseSkillSecret london (trailing ws) = %q, %v; want tok-london", got, err)
+	// trailing whitespace/newline from jsonpath output must be tolerated
+	if got, err := decodeSecretValue(enc + "\n"); err != nil || got != "tok-sofia" {
+		t.Fatalf("decodeSecretValue (trailing ws) = %q, %v; want tok-sofia", got, err)
 	}
-	if _, err := parseSkillSecret(blob, "missing_key"); err == nil {
-		t.Fatalf("parseSkillSecret should error on a key absent from the blob")
-	}
-	if _, err := parseSkillSecret("not-base64!!", "home_assistant_sofia_token"); err == nil {
-		t.Fatalf("parseSkillSecret should error on undecodable base64")
+	if _, err := decodeSecretValue("not-base64!!"); err == nil {
+		t.Fatalf("decodeSecretValue should error on undecodable base64")
 	}
 }
 
