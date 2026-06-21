@@ -37,6 +37,19 @@ logs every outcome (`paired user=.. endpoint=.. fallback=..`, plus `mint/pairing
 `T3AutoUpdateRolledBack` / `T3AutoUpdateRollbackFailed` / `T3AutoUpdateFrozen` →
 Alertmanager → Slack.
 
+## Idle migrator — draining deferrals  (`scripts/t3-migrate-idle.sh`)
+
+Step 5 DEFERS any instance with an active agent, recording `/var/lib/t3-autoupdate/deferred/<user>` (= the target version). Without a drainer, a user busy at every 04:00 window never migrates and their client shows *"Client and server versions differ"* for days. `t3-migrate-idle.timer` (overnight, every 20 min 01:00–05:40) drains those markers:
+
+- Per marker: skip + clear if the unit is gone or was already restarted *after* the deferral; otherwise restart the still-stale `t3-serve@<u>` onto the current binary **only when that user is idle** — `state.sqlite` shows zero `active_turn_id` (no in-flight turn) AND ≥ `T3_MIGRATE_QUIET_SECONDS` (default 900 = 15 min) since the last thread activity — then verify pairing and clear the marker. **Fail-closed:** any query/parse doubt → skip, retry next tick.
+- It restarts via the SAME `safe_restart_unit` the daily canary uses (sourced `t3-safe-restart.sh`: backup → restart → verify → recover). The shared `/etc/t3-autoupdate.freeze` halts it too.
+- **Force / preview:**
+  ```bash
+  sudo systemctl start t3-migrate-idle.service           # run a drain pass now (still idle-gated)
+  sudo env T3_DRY_RUN=1 /usr/local/bin/t3-migrate-idle   # log decisions, act on nothing
+  ```
+- **Rare-tail failure:** if a deferred user's forward migration fails at idle restart (already gated against a copy of their real DB at install), `safe_restart_unit` restores their DB + freezes + alerts. The binary rollback is a no-op (the build was already accepted, so other users are unaffected), but that user's serve may crashloop on the restored DB until the freeze is cleared and the build investigated (manual rollback below).
+
 ## Operations
 
 **Freeze / revert (stop tracking right now — the fast "make it stop"):**

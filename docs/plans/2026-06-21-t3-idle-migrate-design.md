@@ -1,7 +1,7 @@
 # t3 idle-migrate — graceful overnight restart of deferred t3-serve instances — design
 
 - **Date:** 2026-06-21
-- **Status:** designed 2026-06-21 (brainstorm) — not yet implemented
+- **Status:** implemented 2026-06-21 (branch `wizard/t3-idle-migrate`; deployed + timer enabled on devvm, first overnight drain pending)
 - **Owner:** Viktor (wizard)
 - **Builds on:** the gated nightly tracker `t3-autoupdate` (re-enabled 2026-06-16, `scripts/t3-autoupdate.{sh,service,timer}`; design history in `docs/runbooks/t3-version-bump.md` + post-mortem `2026-06-09-t3-nightly-autoupdate-auth-outage.md`) and the per-user `t3-serve@<user>` systemd instances (`scripts/t3-serve@.service`).
 
