@@ -162,6 +162,8 @@ fi
 SCRIPTS="$HERE/.."
 # 9a) scripts the units exec (t3-provision-users already deployed in section 6)
 install -m 0755 "$SCRIPTS/t3-autoupdate.sh"   /usr/local/bin/t3-autoupdate
+install -m 0644 "$SCRIPTS/t3-safe-restart.sh" /usr/local/lib/t3-safe-restart.sh   # sourced lib (t3-autoupdate + t3-migrate-idle)
+install -m 0755 "$SCRIPTS/t3-migrate-idle.sh" /usr/local/bin/t3-migrate-idle
 install -m 0755 "$SCRIPTS/t3-backup-state.sh" /usr/local/bin/t3-backup-state
 install -m 0755 "$SCRIPTS/t3-mint"            /usr/local/bin/t3-mint
 install -m 0755 "$HERE/claude-auth-sync.sh"   /usr/local/bin/claude-auth-sync
@@ -198,6 +200,7 @@ fi
 for u in t3-serve@.service \
          claude-auth-sync@.service claude-auth-sync@.timer \
          t3-autoupdate.service t3-autoupdate.timer \
+         t3-migrate-idle.service t3-migrate-idle.timer \
          t3-backup-state.service t3-backup-state.timer \
          t3-provision-users.service t3-provision-users.timer \
          t3-dispatch.service; do
@@ -216,7 +219,7 @@ done
 log "playwright: template units + snapshot-refresh script installed (per-user enable in provisioner)"
 systemctl daemon-reload
 systemctl enable --now t3-dispatch.service \
-  t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer >/dev/null 2>&1 || \
+  t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer t3-migrate-idle.timer >/dev/null 2>&1 || \
   log "WARN: some units failed to enable (check: systemctl status t3-dispatch t3-*.timer)"
 log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-user)"
 
