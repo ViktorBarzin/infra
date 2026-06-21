@@ -762,7 +762,7 @@
     {
       "id": 9216,
       "title": "Price freshness",
-      "description": "Staleness of the most out-of-date HELD position's market price: days since quote_latest.day (the last quote we mirrored from Wealthfolio's SQLite). Green <=4d tolerates weekend/bank-holiday gaps; amber 5-9d = the price feed may be lagging; red >=10d = the feed has stopped updating this symbol and its valuation is frozen. A held position with no quote at all sorts as max-stale. Value is humanised (e.g. '2 months'); the name shown is the worst symbol.",
+      "description": "Quote freshness for each held position (one value per holding, worst first): days since quote_latest.day (the last quote we mirrored from Wealthfolio's SQLite). Green <=4d tolerates weekend/bank-holiday gaps; amber 5-9d = the price feed may be lagging; red >=10d = the feed has stopped updating that symbol and its valuation is frozen. A held position with no quote at all sorts as max-stale. Values are humanised (e.g. '2 months').",
       "type": "stat",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -805,7 +805,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
-        "orientation": "auto",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -825,7 +825,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "SELECT now() AS \"time\", a.symbol AS metric, COALESCE(CURRENT_DATE - q.day, 9999) * 86400 AS value FROM positions_latest p JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY value DESC LIMIT 1"
+          "rawSql": "SELECT now() AS \"time\", a.symbol AS metric, COALESCE(CURRENT_DATE - q.day, 9999) * 86400 AS value FROM positions_latest p JOIN assets a ON a.id = p.asset_id LEFT JOIN quote_latest q ON q.asset_id = p.asset_id ORDER BY value DESC"
         }
       ]
     },
