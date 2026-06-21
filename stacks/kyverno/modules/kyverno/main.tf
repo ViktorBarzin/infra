@@ -21,7 +21,13 @@ resource "helm_release" "kyverno" {
 
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno"
-  version    = "3.6.1"
+  # Stepped upgrade to clear the k8s-1.35 compat-gate block (kyverno <=1.34 -> 1.35).
+  # 3.6.1 (app 1.16) -> 3.7.2 (1.17) -> 3.8.1 (1.18, supports k8s 1.35), one minor at
+  # a time per the kyverno upgrade guide (per-minor CRD notes). atomic=true rolls back
+  # a failed rollout; forceFailurePolicyIgnore keeps admissions open if the webhook is
+  # mid-roll. Each hop verified: 17 ClusterPolicies stay Ready + webhook responds.
+  # 3.6.1->3.7.2 done 2026-06-21 (clean). Now 3.7.2 (1.17.2) -> 3.8.1 (1.18.1).
+  version = "3.8.1"
 
   values = [yamlencode({
     # When Kyverno is unavailable, allow pod creation to proceed without
