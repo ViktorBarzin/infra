@@ -838,7 +838,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "panels": []
     },
@@ -855,7 +855,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -927,7 +927,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -992,7 +992,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -1092,7 +1092,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 34
       },
       "panels": []
     },
@@ -1109,7 +1109,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -1204,7 +1204,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 45
       },
       "fieldConfig": {
         "defaults": {
@@ -1309,7 +1309,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1385,7 +1385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 66
       },
       "panels": []
     },
@@ -1402,7 +1402,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 66
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -1515,7 +1515,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 78
       },
       "panels": []
     },
@@ -1532,7 +1532,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 79
       },
       "fieldConfig": {
         "defaults": {
@@ -1729,7 +1729,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 79
       },
       "fieldConfig": {
         "defaults": {
@@ -1782,7 +1782,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 89
+        "y": 90
       },
       "panels": []
     },
@@ -1799,7 +1799,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 90
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -1916,7 +1916,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 90
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -2135,7 +2135,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 104
       },
       "panels": []
     },
@@ -2152,7 +2152,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 105
       },
       "fieldConfig": {
         "defaults": {
@@ -2252,14 +2252,14 @@
     {
       "id": 9220,
       "title": "Spend-down to \u00a30 at age 100",
-      "description": "How much you can spend to exhaust your net worth (pension included) by your 100th birthday (2098-10-04). FLOOR = treats the money as cash, no growth or inflation \u2014 a conservative lower bound. 4% REAL = die-with-zero annuity assuming the balance keeps earning 4% after inflation: PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n). Computed live, so it drifts as net worth and the horizon move.",
+      "description": "How much you can spend to exhaust your net worth (pension included) by your 100th birthday (2098-10-04), draining to \u00a30. Three scenarios by how the pot grows: No growth (0%), Inflation (3% nominal), Market (7% nominal \u2014 the dashboard's base return assumption). Each is a die-with-zero annuity (PMT = NW\u00b7r/(1\u2212(1+r)^\u2212n); NW\u00f7years when r=0) spending a constant number of pounds. Figures are ACTUAL (nominal) pounds you'd withdraw \u2014 at higher growth, later pounds buy less. Rates hardcoded (one-line SQL edit to change). Computed live.",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "wealth-pg"
       },
       "gridPos": {
-        "h": 4,
+        "h": 5,
         "w": 9,
         "x": 0,
         "y": 9
@@ -2277,7 +2277,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Basis"
+              "options": "Scenario"
             },
             "properties": [
               {
@@ -2314,7 +2314,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), calc AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8 AS days, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years, 0.04::float8 AS r FROM nw), pmt AS (SELECT pv, days, years, r, pv*r/(1-power(1+r,-years)) AS annual FROM calc) SELECT b.label AS \"Basis\", round((CASE b.k WHEN 'floor' THEN pv/years/365.25 ELSE annual/365.25 END)::numeric,0) AS \"Per day\", round((CASE b.k WHEN 'floor' THEN pv/years/12 ELSE annual/12 END)::numeric,0) AS \"Per month\", round((CASE b.k WHEN 'floor' THEN pv/years ELSE annual END)::numeric,0) AS \"Per year\" FROM pmt, (VALUES (1,'floor','Floor'),(2,'real','4% real')) AS b(ord,k,label) ORDER BY b.ord"
+          "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id = d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), hz AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years FROM nw), scen AS (SELECT ord,label, CASE WHEN rate=0 THEN pv/years ELSE pv*rate/(1-power(1+rate,-years)) END AS annual FROM hz, (VALUES (1,'No growth',0.0::float8),(2,'Inflation (3%)',0.03::float8),(3,'Market (7%)',0.07::float8)) AS s(ord,label,rate)) SELECT label AS \"Scenario\", round((annual/365.25)::numeric,0) AS \"Per day\", round((annual/12)::numeric,0) AS \"Per month\", round(annual::numeric,0) AS \"Per year\" FROM scen ORDER BY ord"
         }
       ]
     }
