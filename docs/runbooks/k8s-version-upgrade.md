@@ -171,9 +171,26 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 - **`K8sVersionSkew`** — distinct kubelet/apiserver `gitVersion` count > 1 for 30m. Catches a half-done rollout.
 - **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently.
 - **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a Job in the chain dying without spawning its successor.
-- **`K8sUpgradeChainJobFailed`** — `(kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL). The `unless k8s_upgrade_blocked == 1` clause (added 2026-06-21) excludes a preflight that failed because the **compat gate deliberately refused** the target — that's owned by `K8sUpgradeBlocked` and was double-firing here; a genuine wedge exits without setting the blocked gauge, so it still fires.
+- **`K8sUpgradeChainJobFailed`** — `(kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL). The `unless k8s_upgrade_blocked == 1` clause (added 2026-06-21) excludes a preflight that failed because the **compat gate deliberately refused** the target — that's owned by `K8sUpgradeBlocked` and was double-firing here; a genuine wedge exits without setting the blocked gauge, so it still fires.
 - **`K8sUpgradeBlocked`** — `k8s_upgrade_blocked == 1` (warning). A k8s **auto-upgrade was refused** by the compat gate because a critical addon, an in-use deprecated API, or a node's containerd is too old for the detected target. The **specific reasons are in Slack**; clear it by upgrading the named addon / migrating the API caller / bumping containerd, after which the next nightly run proceeds (see "Auto-upgrade compat gate"). No upgrade was attempted, so this is not a half-done-rollout alert.
 - The first four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
+
+### Nightly upgrade report (Slack)
+
+CronJob `k8s-upgrade-nightly-report` (k8s-upgrade ns, `var.report_schedule`,
+default `7 6 * * *` = 06:07 UTC — after the 23:00 chain, before the 08:00 London
+alert-digest) posts ONE Slack summary each morning of the previous night's run:
+running version, detector freshness, detected target + kind, the outcome
+(⚪ no upgrade needed / 🔴 blocked + live blocker reasons / 🟢 upgraded /
+🟡 in progress / ⚠️ detector stale), and recent chain jobs. Read-only — it reads
+the Pushgateway gauges + live nodes/jobs and re-runs `compat-gate.py` for fresh
+blocker reasons; reuses the chain's SA + `slack_webhook` + scripts ConfigMap.
+Logic + unit tests: `scripts/nightly-report.py`, `scripts/test_nightly_report.py`.
+This is the day-to-day visibility layer (it does NOT replace the alerts above —
+those fire on problems; this reports the outcome every night). Manual run:
+`kubectl -n k8s-upgrade create job --from=cronjob/k8s-upgrade-nightly-report nightly-report-test`
+(name it WITHOUT a `k8s-upgrade-{phase}-` prefix so a failure can't trip
+`K8sUpgradeChainJobFailed`).
 
 ### CoreDNS is NOT upgraded by kubeadm here
 

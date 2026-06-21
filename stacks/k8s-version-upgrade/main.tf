@@ -41,6 +41,15 @@ variable "enabled" {
   default = true
 }
 
+# Nightly upgrade-report CronJob schedule. 06:07 UTC (07:07 London) — safely
+# after the 23:00 chain has finished (worst case ~02:00) and before the 08:00
+# London alert-digest, so the morning Slack skim shows last night's upgrade
+# outcome + any live blocker. Posts once/day; read-only.
+variable "report_schedule" {
+  type    = string
+  default = "7 6 * * *"
+}
+
 # Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — bump
 # in lockstep with claude-agent-service rebuilds. The image ships kubectl,
 # ssh-client, curl, jq, envsubst — everything the upgrade Jobs need.
@@ -301,6 +310,7 @@ resource "kubernetes_config_map" "k8s_upgrade_scripts" {
     "update_k8s.sh"     = file("${path.module}/../../scripts/update_k8s.sh")
     "compat-gate.py"    = file("${path.module}/scripts/compat-gate.py")
     "addon-compat.json" = file("${path.module}/scripts/addon-compat.json")
+    "nightly-report.py" = file("${path.module}/scripts/nightly-report.py")
   }
 }
 
@@ -525,6 +535,98 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
               volume_mount {
                 name       = "template"
                 mount_path = "/template"
+                read_only  = true
+              }
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "128Mi"
+                }
+                limits = {
+                  memory = "256Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# --- Nightly upgrade report ---
+#
+# Each morning, after the 23:00 chain has finished, posts ONE concise Slack
+# report of last night's upgrade outcome (no-op / blocked+reasons / upgraded /
+# in-progress) so the autonomous upgrader's nightly result — and any live
+# blocker — is visible at a glance. Read-only: reads the chain's Pushgateway
+# gauges + live nodes/jobs and re-runs compat-gate.py for fresh blocker reasons.
+# Reuses the same SA, creds secret (slack_webhook), and scripts ConfigMap as the
+# chain. Logic + unit tests: scripts/nightly-report.py, scripts/test_nightly_report.py.
+resource "kubernetes_cron_job_v1" "k8s_upgrade_nightly_report" {
+  metadata {
+    name      = "k8s-upgrade-nightly-report"
+    namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule                      = var.report_schedule
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 600
+    suspend                       = !var.enabled
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            service_account_name = kubernetes_service_account.k8s_upgrade_job.metadata[0].name
+            restart_policy       = "Never"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            volume {
+              name = "creds"
+              secret {
+                secret_name  = "k8s-upgrade-creds"
+                default_mode = "0444"
+              }
+            }
+            volume {
+              name = "scripts"
+              config_map {
+                name         = kubernetes_config_map.k8s_upgrade_scripts.metadata[0].name
+                default_mode = "0755"
+              }
+            }
+            container {
+              name    = "report"
+              image   = local.image
+              command = ["python3", "/scripts/nightly-report.py"]
+              env {
+                name  = "HOME"
+                value = "/tmp"
+              }
+              volume_mount {
+                name       = "creds"
+                mount_path = "/secrets/k8s-upgrade"
+                read_only  = true
+              }
+              volume_mount {
+                name       = "scripts"
+                mount_path = "/scripts"
                 read_only  = true
               }
               resources {
