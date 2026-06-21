@@ -2244,8 +2244,18 @@ serverFiles:
           # idempotency guard the next detection cycle deletes + re-spawns the
           # Failed Job (clearing this within ~24h); a sustained firing means it
           # re-failed — investigate the root cause.
+          # `unless on() k8s_upgrade_blocked == 1` excludes the case where the
+          # preflight terminally failed because the compat gate deliberately
+          # REFUSED the target: block() exits 1 (so the Failed Job re-spawns
+          # nightly) but a refusal is not a wedge — that case is owned by
+          # K8sUpgradeBlocked below, and firing here too is a duplicate false
+          # alarm (observed 2026-06-21: a 1.35.6 block tripped BOTH). A genuine
+          # wedge / crash / halt-on-alert exits 1 WITHOUT pushing
+          # k8s_upgrade_blocked=1, so it still fires. The gauge stays 1 from the
+          # block until the next run's preflight resets it to 0, so the exclusion
+          # holds for the whole blocked period.
           - alert: K8sUpgradeChainJobFailed
-            expr: kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0
+            expr: (kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)
             for: 15m
             labels:
               severity: warning
