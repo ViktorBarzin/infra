@@ -30,10 +30,10 @@
 # Source: https://github.com/crowdsecurity/cs-firewall-bouncer
 #         https://docs.crowdsec.net/u/bouncers/firewall/
 #
-# nodeSelector pins this to ONE node (k8s-node2, which runs a Traefik pod) for first validation.
-# !!! REMOVING THE nodeSelector ROLLS THIS DAEMONSET CLUSTER-WIDE !!!
-# Do that ONLY after the one-node validation checklist passes (see commit/PR).
-# Validating on k8s-node2 (single node) before removing the nodeSelector to roll cluster-wide.
+# Runs cluster-wide (no nodeSelector): the DaemonSet schedules on every untainted
+# node, covering all MetalLB-VIP-eligible workers so direct-host enforcement
+# survives a Traefik VIP failover to any node. One-node validation on k8s-node2
+# is complete (see the note in the pod spec below).
 
 locals {
   # Pin a specific stable release. Bump deliberately (re-validate on one node first).
@@ -135,18 +135,14 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
         host_network = true
         dns_policy   = "ClusterFirstWithHostNet"
 
-        # ---- FIRST-VALIDATION PIN ----------------------------------------------
-        # Pinned to a SINGLE node so a mistake in the nftables rules can only
-        # affect one node. k8s-node2 is chosen because it currently runs a Traefik
-        # pod — required to validate the `forward`-hook drop on DNAT'd LoadBalancer
-        # traffic (under ETP=Local a node with no Traefik pod never sees that path,
-        # so the validation would be meaningless there).
-        # REMOVE this nodeSelector to roll the bouncer to EVERY node (the normal
-        # end state for a firewall bouncer) — but ONLY after the one-node
-        # validation checklist passes.
-        node_selector = {
-          "kubernetes.io/hostname" = "k8s-node2"
-        }
+        # ---- CLUSTER-WIDE (validation passed) ----------------------------------
+        # One-node validation on k8s-node2 passed: kernel nftables sets were
+        # created in BOTH the input and forward chains (policy accept), ~31k
+        # decisions loaded, a known banned scanner confirmed in the drop set, and
+        # the pod stayed stable 4h+ with no collateral. The nodeSelector is now
+        # removed so the DaemonSet runs on every (untainted) node — covering all
+        # MetalLB-VIP-eligible workers, so direct-host enforcement survives a
+        # Traefik VIP failover to any node.
         # ------------------------------------------------------------------------
 
         # initContainer fetches + extracts the pinned release binary into the
