@@ -13,6 +13,15 @@ export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cac
 export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=1
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
+# State-lock wait window. Tier-1 stacks lock their state via terraform's pg
+# backend (pg_advisory_lock); with no timeout an apply fails instantly
+# ("Error acquiring the state lock") the moment anything else holds the lock —
+# a Woodpecker-killed run whose lock PG hasn't reaped yet, a concurrent local
+# apply, or the daily drift `plan`. Waiting a few minutes absorbs all of those
+# (the holder finishes, or PG reaps the dead backend). This was the #1 cause of
+# infra CI failures. Override with TG_LOCK_TIMEOUT (e.g. 0 to fail fast).
+LOCK_TIMEOUT="${TG_LOCK_TIMEOUT:-5m}"
+
 # Determine stack name from cwd (relative to stacks/)
 STACK_NAME=""
 cwd="$(pwd)"
@@ -134,29 +143,30 @@ if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
   fi
 fi
 
-# If running apply with --non-interactive, add -auto-approve for Terraform
+# Build the terragrunt invocation:
+#  - add -auto-approve right after `apply` for --non-interactive runs (CI)
+#  - add -lock-timeout for state-locking verbs (plan/apply/destroy/refresh) so
+#    a contended state lock WAITS instead of failing instantly (see
+#    LOCK_TIMEOUT above). Non-locking verbs (init/validate/output/fmt) skip it.
 args=("$@")
-has_apply=false
 has_non_interactive=false
 for arg in "${args[@]}"; do
   case "$arg" in
-    apply) has_apply=true ;;
     --non-interactive) has_non_interactive=true ;;
   esac
 done
 
-if $has_apply && $has_non_interactive; then
-  new_args=()
-  for arg in "${args[@]}"; do
-    new_args+=("$arg")
-    if [ "$arg" = "apply" ]; then
-      new_args+=("-auto-approve")
-    fi
-  done
-  terragrunt "${new_args[@]}"
-else
-  terragrunt "$@"
+tg_args=()
+for arg in "${args[@]}"; do
+  tg_args+=("$arg")
+  if [ "$arg" = "apply" ] && $has_non_interactive; then
+    tg_args+=("-auto-approve")
+  fi
+done
+if $is_tf_op; then
+  tg_args+=("-lock-timeout=$LOCK_TIMEOUT")
 fi
+terragrunt "${tg_args[@]}"
 
 # After mutating operations: encrypt+commit (Tier 0) or no-op (Tier 1 — PG is authoritative)
 if $is_mutating && [ -n "$STACK_NAME" ] && is_tier0 "$STACK_NAME"; then
