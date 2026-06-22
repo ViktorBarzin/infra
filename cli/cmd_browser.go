@@ -62,12 +62,16 @@ USAGE
   homelab browser run <script.js> [--url URL] [--shared-context] [--keep-open] [--port N] [--timeout S]
   homelab browser open <url> [--shared-context] [--timeout S]
 
-WHEN TO USE THIS (not the headless @playwright/mcp browser)
-  A site LOADS fine but a gated action FAILS or HANGS — a submit/login/checkout
-  spins forever, or ONE request 500s / aborts while its siblings 200. That is
-  the signature of headless / anti-bot detection (navigator.webdriver, UA
-  "HeadlessChrome", disable-devtool traps). Switch to this command — it presents
-  as a real Chrome and typically succeeds first try.
+WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
+  Default to the Playwright MCP / headless browser for ALL routine browsing and
+  automation — it's interactive (snapshot per step), fast to start, isolated.
+  Reach for THIS command ONLY when headless is demonstrably blocked: a site
+  LOADS fine but a gated action FAILS or HANGS — a submit/login/checkout spins
+  forever, or ONE request errors while its siblings 200. That is the signature
+  of headless / anti-bot detection (navigator.webdriver, UA "HeadlessChrome",
+  disable-devtool traps). It presents as a real Chrome and usually succeeds
+  first try — but it's the shared cluster browser (slower startup, one batch
+  run, no per-step feedback), so it's the escalation path, never the default.
 
 ERROR-CODE CHEAT-SHEET (diagnose BEFORE retrying)
   ERR_FILE_NOT_FOUND (-6)   request intercepted/resolved locally by the
