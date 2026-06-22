@@ -24,6 +24,10 @@ rsync
 wget
 tree
 shellcheck
+# resource containment — the systemd-oomd backstop (setup-devvm.sh §10, 2026-06-22):
+# a PSI-based, cgroup-aware OOM killer that sheds the single worst work cgroup
+# before the box swap-thrashes/wedges. Ships SEPARATELY from core systemd on Ubuntu.
+systemd-oomd
 
 # --- installed by setup-devvm.sh via NON-apt paths (not apt-installable) ---
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)
