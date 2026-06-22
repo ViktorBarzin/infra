@@ -171,6 +171,37 @@ prints the bare token to stdout so it composes in `$(…)`; it's read-tier like
 not tied to whoever first wrote the workflow (the user's key must be enrolled on
 the HA host).
 
+### v0.8 verbs — browser (headful anti-bot automation)
+
+Drive the cluster's **headful** Chrome (`chrome-service`, real Chrome under Xvfb)
+from the devvm over CDP, for sites that detect and block headless automation. The
+headless `@playwright/mcp` browser can *load* such a site and fill its forms, but
+the gated action (submit/login) silently fails — the motivating case was the
+Stirling Ackroyd Fixflo tenant portal, whose pre-submit check returned
+`net::ERR_FILE_NOT_FOUND` and hung. This path connects via `connect_over_cdp`,
+injects the same `stealth.js` the in-cluster callers use, and submits first try.
+
+The command owns only the *mechanics* (port-forward, stealth, lifecycle); the
+agent supplies the Playwright script — judgment stays out of the CLI.
+
+| Command | Tier | What it does |
+|---|---|---|
+| `browser run <script.js> [--url U] [--shared-context] [--keep-open] [--port N] [--timeout S]` | write | port-forward `svc/chrome-service:9222`, assert it's a real (non-headless) Chrome via `/json/version`, `connect_over_cdp`, `addInitScript(stealth.js)`, then run the script with `page`/`context`/`browser`/`log` in scope (top-level await ok; return a value to print it). Always tears the forward down. |
+| `browser open <url> [--shared-context] [--timeout S]` | write | open `<url>` headful and print title + visible text + a screenshot path — a quick check. |
+| `browser --help` | read | when-to-use signature + the error-code cheat-sheet (`ERR_FILE_NOT_FOUND` = automation-layer intercept, not egress; `ERR_CONNECTION_REFUSED`/`_TIMED_OUT`/`_NAME_NOT_RESOLVED` = real egress; one endpoint 500 while siblings 200 = bot rejection). |
+
+Default context is a **fresh incognito** one (closed on exit) — safe for the
+shared browser and concurrent callers (e.g. tripit's fare scrape); `--shared-context`
+reuses the warmed persistent profile when a pre-logged-in session is needed.
+`port-forward` tunnels API-server→pod, so it bypasses the `:9222` NetworkPolicy
+that gates in-cluster callers — no namespace label needed. The node CDP client is
+pinned to **`playwright-core@1.48.2`** to match the chrome-service image minor
+(Chromium 130; protocol changes between minors) and is installed once, lazily,
+into `~/.cache/homelab/browser-client/` (no per-user setup). Because the client
+runs on the devvm, `setInputFiles` streams local files to the remote browser over
+CDP — no `chmod`/staging-dir workaround. See `docs/architecture/chrome-service.md`
+and `docs/adr/0013`.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
@@ -190,4 +221,4 @@ original flag-based path unchanged, so the webhook handler is unaffected.
 
 ## Design
 
-See `infra/docs/adr/0004`–`0012` for the architecture decisions.
+See `infra/docs/adr/0004`–`0013` for the architecture decisions.
