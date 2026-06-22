@@ -414,7 +414,7 @@ install_memory() {
   else
     log "WARN: memory hook wiring failed for $user (retries next reconcile)"
   fi
-  [[ -f "$settings" ]] && chmod 600 "$settings"
+  [[ -f "$settings" ]] && chmod 600 "$settings" || true
 
   # (2b) reuse the user's existing key; warn (do NOT mint — needs an admin vault write) if absent.
   if [[ -f "$settings" ]] && ! grep -q 'MEMORY_API_KEY' "$settings"; then
@@ -425,7 +425,10 @@ install_memory() {
   if runuser -u "$user" -- bash -lc 'command -v claude >/dev/null 2>&1 && claude mcp get claude_memory >/dev/null 2>&1'; then
     runuser -u "$user" -- bash -lc 'claude mcp remove claude_memory >/dev/null 2>&1' && log "removed claude_memory MCP -> $user" || true
   fi
-  [[ -d "$home/.claude/plugins/claude-memory" ]] && rm -rf "$home/.claude/plugins/claude-memory" && log "removed claude-memory plugin dir -> $user"
+  if [[ -d "$home/.claude/plugins/claude-memory" ]]; then
+    rm -rf "$home/.claude/plugins/claude-memory" && log "removed claude-memory plugin dir -> $user"
+  fi
+  return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
