@@ -103,8 +103,11 @@ for d in skills rules agents commands; do
 done
 log "skel: launcher + tmux + inheritance symlinks (base=$CONFIG_BASE)"
 
-# 6) deploy the roster-driven provisioner to /usr/local/bin (run hourly by
-#    t3-provision-users.timer). Re-deployed here so its logic is reproducible.
+# 6) BOOTSTRAP-deploy the roster-driven provisioner to /usr/local/bin (run hourly
+#    by t3-provision-users.timer). This seeds the binary on a fresh box; ongoing
+#    edits self-deploy from the repo on the next reconcile (the script's step 0),
+#    so a committed change no longer needs a manual setup-devvm.sh re-run to land
+#    (the gap that left the homelab-memory rollout undeployed for a day).
 install -m 0755 "$HERE/../t3-provision-users.sh" /usr/local/bin/t3-provision-users
 log "t3-provision-users -> /usr/local/bin/ (roster-driven)"
 
