@@ -81,6 +81,12 @@ locals {
     LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
+    # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
+    # internal-API path is an optional optimisation gated on IG_GRAPHQL_DOC_ID;
+    # unset = yt-dlp only, which works). Was UNSET -> FakeReelExtractor returned a
+    # CANNED caption, so every pasted/forwarded reel produced a DUMMY place.
+    # Verified: yt-dlp reads a real IG /p/ caption from the cluster, no doc_id.
+    REEL_PROVIDER = "anonymous"
     MAIL_INGEST_ENABLED = "false"
     # Outbound mail (native-auth signup-verification + account recovery, linked-
     # email verification, trip-share invites) — submitted via the cluster
