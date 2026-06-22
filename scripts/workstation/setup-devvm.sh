@@ -226,6 +226,134 @@ systemctl enable --now t3-dispatch.service \
   log "WARN: some units failed to enable (check: systemctl status t3-dispatch t3-*.timer)"
 log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-user)"
 
+# 10) RESOURCE CONTAINMENT (2026-06-22): bound per-user memory + an OOM backstop so
+#     ONE user's runaway can never IO/memory-overload the shared box. History: the
+#     2026-06-10 "swap-only, ssh/tmux memory-uncontained" decision let a single
+#     user's runaway (a 10G `ugrep`; agent storms) swap-thrash the 60/60-throttled
+#     virtual disk into an IO storm + multi-minute freeze (hard-killed 2026-06-22).
+#     t3-serve@ was already capped (its [Service] block); the HOLE was the uncapped
+#     user-<uid>.slice (all ssh/tmux work). Design — per user, on BOTH trees:
+#     MemoryHigh=12G soft, MemoryMax=16G hard, MemorySwapMax=0 (work never touches
+#     disk swap → no thrash; it OOMs locally at the ceiling instead), fair-share
+#     CPU/IO weights, and systemd-oomd (PSI) killing the single worst work cgroup on
+#     sustained box-wide memory pressure. system.slice is NOT policed, so sshd +
+#     services + your way in always survive. Docker containers are routed into a
+#     capped, oomd-policed docker.slice so they can't dodge the caps or mis-target
+#     oomd onto an innocent user. systemd-oomd pkg comes from packages.txt (§1).
+#     Post-mortem: docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md
+
+# 10a) per-user caps + weights + oomd policing on EVERY user-<uid>.slice (ssh/tmux)
+install -d -m 0755 /etc/systemd/system/user-.slice.d
+cat > /etc/systemd/system/user-.slice.d/50-devvm-resource.conf <<'SLICE_EOF'
+# Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22).
+# Applies to EACH user-<uid>.slice = all of one user's ssh/tmux work. Mirrors the
+# t3-serve@.service caps so a user is bounded in whichever surface they work in.
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=12G
+MemoryMax=16G
+MemorySwapMax=0
+CPUAccounting=yes
+CPUWeight=100
+IOAccounting=yes
+IOWeight=100
+ManagedOOMMemoryPressure=kill
+ManagedOOMSwap=kill
+SLICE_EOF
+
+# 10b) systemd-oomd backstop (PSI-based). Kill the worst-pressured descendant of a
+#      policed slice when memory-pressure 'full' stays >60% for 20s; swap guard 80%.
+install -d -m 0755 /etc/systemd/oomd.conf.d
+cat > /etc/systemd/oomd.conf.d/10-devvm.conf <<'OOMD_EOF'
+# devvm OOM backstop (setup-devvm.sh §10, 2026-06-22). Acts only on slices that
+# opt in via ManagedOOM*=kill (user-<uid>.slice, system-t3\x2dserve.slice,
+# docker.slice). system.slice is deliberately NOT policed.
+[OOM]
+SwapUsedLimit=80%
+DefaultMemoryPressureLimit=60%
+DefaultMemoryPressureDurationSec=20s
+OOMD_EOF
+
+# 10c) capped, oomd-policed docker.slice (top-level sibling of system/user slices);
+#      daemon.json cgroup-parent (10d) makes EVERY container land here.
+cat > /etc/systemd/system/docker.slice <<'DOCKER_SLICE_EOF'
+# All docker containers live here (cgroup-parent in /etc/docker/daemon.json) so
+# they share one bounded budget and a runaway container dies ITSELF instead of
+# mis-targeting oomd onto an innocent user. setup-devvm.sh §10, 2026-06-22.
+[Unit]
+Description=Docker containers slice (capped + oomd-policed)
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=6G
+MemoryMax=8G
+MemorySwapMax=0
+CPUAccounting=yes
+CPUWeight=100
+IOAccounting=yes
+IOWeight=100
+ManagedOOMMemoryPressure=kill
+ManagedOOMSwap=kill
+DOCKER_SLICE_EOF
+
+# 10d) point dockerd at docker.slice (idempotent JSON merge; flag a needed restart).
+#      python preserves the rest of daemon.json (buildkit, nvidia runtime, etc.).
+docker_restart=0
+# if-condition form so the deliberate non-zero exit (10=changed) does NOT trip the
+# script's `set -e`; $? in the else branch is the python exit code.
+if python3 - <<'PY'
+import json, os, sys
+p = "/etc/docker/daemon.json"
+try:
+    d = json.load(open(p)) if os.path.exists(p) else {}
+except Exception:
+    sys.exit(2)                       # malformed -> don't touch
+if d.get("cgroup-parent") == "docker.slice":
+    sys.exit(0)                       # already correct -> no restart
+d["cgroup-parent"] = "docker.slice"
+json.dump(d, open(p, "w"), indent=4)
+sys.exit(10)                          # changed -> restart needed
+PY
+then rc=0; else rc=$?; fi
+case $rc in
+  0) : ;;
+  10) docker_restart=1 ;;
+  *) log "WARN: could not patch /etc/docker/daemon.json — docker.slice NOT wired" ;;
+esac
+
+# 10e) ManagedOOM on the auto-generated t3-serve slice. Its name carries an escaped
+#      '-' (system-t3\x2dserve.slice); a static drop-in works whether or not an
+#      instance is currently running (set-property would need it loaded).
+install -d -m 0755 '/etc/systemd/system/system-t3\x2dserve.slice.d'
+cat > '/etc/systemd/system/system-t3\x2dserve.slice.d/50-devvm-oomd.conf' <<'T3SLICE_EOF'
+# oomd policing for all t3-serve@ instances (per-service caps live in
+# t3-serve@.service). setup-devvm.sh §10, 2026-06-22.
+[Slice]
+ManagedOOMMemoryPressure=kill
+ManagedOOMSwap=kill
+T3SLICE_EOF
+
+# 10f) give system.slice a priority edge so sshd/services stay snappy under
+#      contention (weights are work-conserving — users still get idle CPU/IO).
+install -d -m 0755 /etc/systemd/system/system.slice.d
+cat > /etc/systemd/system/system.slice.d/50-devvm-priority.conf <<'SYS_EOF'
+# Keep the box's nervous system responsive under contention (setup-devvm.sh §10).
+[Slice]
+CPUAccounting=yes
+CPUWeight=200
+IOAccounting=yes
+IOWeight=200
+SYS_EOF
+
+# 10g) activate: reload, arm oomd, restart dockerd ONLY if daemon.json changed.
+systemctl daemon-reload
+systemctl enable --now systemd-oomd.service >/dev/null 2>&1 \
+  || log "WARN: systemd-oomd failed to enable — is the package installed? (packages.txt §1)"
+if [[ $docker_restart -eq 1 ]] && systemctl is-active --quiet docker; then
+  log "restarting dockerd to apply cgroup-parent=docker.slice (running containers bounce briefly)"
+  systemctl restart docker || log "WARN: docker restart failed"
+fi
+log "§10 resource containment: per-user 12G/16G swap=0, oomd PSI backstop, docker.slice"
+
 # Run one foreground reconcile while the admin Vault token borrowed in section 8
 # is still available. This is what mints new roster users' isolated periodic
 # Vault tokens; the hourly no-admin-token reconcile only maintains existing ones.
