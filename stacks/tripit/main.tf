@@ -28,8 +28,11 @@ locals {
   # Env shared by the Deployment app container and the worker CronJobs.
   # Real integrations: FLIGHT_PROVIDER=aerodatabox + RAIL_PROVIDER=realtimetrains
   # (keys via the tripit-secrets ExternalSecret), WEATHER_PROVIDER=openmeteo,
-  # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=fake and
-  # MAIL_INGEST_ENABLED=false here (the ingest-plans CronJob overrides both).
+  # GEOCODER_PROVIDER=openmeteo, PUSH_PROVIDER=webpush. LLM_MODE=llamacpp
+  # (qwen3vl-8b + the ADR-0033 claude-agent fallback) so the Deployment can run
+  # real extraction for in-app reel-URL paste (#120) and booking share; the reel
+  # route uses REEL_GEOCODER_PROVIDER=nominatim. MAIL_INGEST_ENABLED=false here
+  # (the ingest-plans CronJob overrides it to true).
   # AUTH_MODE=normal (tripit ADR-0028, #96): the backend authenticates ONLY its
   # own TripIt session (cookie or Bearer JWT) — the legacy Authentik OIDC-bearer
   # and forward-auth arms were removed once the Shell moved onto TripIt sessions
@@ -69,7 +72,15 @@ locals {
     # (Open-Meteo keyless geocoding API; results cached in the geocode_cache table).
     GEOCODER_PROVIDER   = "openmeteo"
     PUSH_PROVIDER       = "webpush"
-    LLM_MODE            = "fake"
+    # Real LLM on the Deployment too (was fake): in-app reel-URL paste (#120) and
+    # booking share run ingest in the web pod. llama-cpp primary + claude-agent
+    # fallback (ADR-0033). qwen3-8b segfaults on the current llama-swap image, so
+    # use qwen3vl-8b (matches the ingest-plans CronJob).
+    LLM_MODE            = "llamacpp"
+    LLM_MODEL           = "qwen3vl-8b"
+    LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
+    REEL_GEOCODER_PROVIDER = "nominatim"
     MAIL_INGEST_ENABLED = "false"
     # Outbound mail (native-auth signup-verification + account recovery, linked-
     # email verification, trip-share invites) — submitted via the cluster
