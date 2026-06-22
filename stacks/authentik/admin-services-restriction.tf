@@ -49,6 +49,17 @@ resource "authentik_policy_expression" "admin_services_restriction" {
 
     host = request.context.get("host", "")
 
+    # chrome-service noVNC (chrome.viktorbarzin.me) exposes Viktor's LIVE
+    # logged-in browser sessions, so lock it to Viktor's own accounts ONLY.
+    # "Home Server Admins" is NOT sufficient — emo (emil.barzin@gmail.com) is a
+    # member. akadmin kept as break-glass. The homelab-browser CDP path is
+    # already RBAC-gated (emo = oidc-power-user-readonly, no pods/portforward),
+    # so this closes the only remaining, human, noVNC path. Match username OR
+    # email so neither attribute alone can lock Viktor out.
+    CHROME_ALLOWED = {"akadmin", "akadmin@viktorbarzin.me", "vbarzin@gmail.com"}
+    if host == "chrome.viktorbarzin.me":
+        return request.user.username in CHROME_ALLOWED or request.user.email in CHROME_ALLOWED
+
     # t3 Workstation edge gate: only members of "T3 Users" may reach t3.
     # Placed BEFORE the ADMIN_ONLY_HOSTS early-return (t3 is intentionally not in
     # that set — it must not require Home-Server-Admins, just T3 Users membership).
