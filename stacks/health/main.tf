@@ -251,7 +251,7 @@ module "ingress_test" {
 
 resource "kubernetes_manifest" "external_secret_db" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "health-db-secrets"
@@ -285,7 +285,7 @@ resource "kubernetes_manifest" "external_secret_db" {
 
 resource "kubernetes_manifest" "external_secret_kv" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "health-kv-secrets"

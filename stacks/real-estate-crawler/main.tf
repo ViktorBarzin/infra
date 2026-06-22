@@ -8,7 +8,7 @@ variable "mysql_host" { type = string }
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "real-estate-crawler-secrets"
@@ -37,7 +37,7 @@ resource "kubernetes_manifest" "external_secret" {
 # Provides DB_CONNECTION_STRING that auto-updates when password rotates
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "realestate-crawler-db-creds"
@@ -86,7 +86,7 @@ data "kubernetes_secret" "eso_secrets" {
 # (Sprig `b64enc`) so the PAT never sits in K8s in cleartext.
 resource "kubernetes_manifest" "dockerhub_pull_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "dockerhub-pull-secret"

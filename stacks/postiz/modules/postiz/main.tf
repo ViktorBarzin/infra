@@ -73,7 +73,7 @@ resource "kubernetes_persistent_volume_claim" "uploads" {
 # this Secret in via `envFrom: secretRef: postiz-secrets`.
 resource "kubernetes_manifest" "external_secret_jwt" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "postiz-jwt-secret"

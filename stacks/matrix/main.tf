@@ -26,7 +26,7 @@ resource "kubernetes_namespace" "matrix" {
 # later (e.g. to add family) without regenerating it.
 resource "kubernetes_manifest" "secrets_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "matrix-secrets"

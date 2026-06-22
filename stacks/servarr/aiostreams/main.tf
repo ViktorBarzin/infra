@@ -186,7 +186,7 @@ resource "kubernetes_service" "aiostreams" {
 
 resource "kubernetes_manifest" "probe_secrets" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "aiostreams-probe-secrets"

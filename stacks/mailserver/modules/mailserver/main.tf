@@ -801,7 +801,7 @@ resource "kubernetes_service" "mailserver_proxy" {
 # `env_from { secret_ref {} }` block.
 resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "mailserver-probe-secrets"

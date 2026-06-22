@@ -50,7 +50,7 @@ resource "kubernetes_namespace" "ci_pipeline_health" {
 # the alias could not do. Blast radius = this single-CronJob namespace.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "ci-pipeline-health-creds"

@@ -59,7 +59,7 @@ resource "kubernetes_namespace" "nextcloud_todos" {
 # managed via the Vault database engine — see static-creds/pg-nextcloud-todos.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "nextcloud-todos-secrets"
@@ -98,7 +98,7 @@ resource "kubernetes_manifest" "external_secret" {
 # `nextcloud_todos`, and Vault role `static-creds/pg-nextcloud-todos`.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "nextcloud-todos-db-creds"

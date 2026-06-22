@@ -126,7 +126,7 @@ resource "kubernetes_namespace" "nextcloud" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "nextcloud-secrets"
@@ -155,7 +155,7 @@ resource "kubernetes_manifest" "external_secret" {
 # Nextcloud Helm chart reads password at runtime via existingSecret reference
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "nextcloud-db-creds"

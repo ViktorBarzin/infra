@@ -6,7 +6,7 @@
 
 resource "kubernetes_manifest" "oauth2_proxy_externalsecret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "oauth2-proxy"

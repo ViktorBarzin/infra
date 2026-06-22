@@ -34,7 +34,7 @@ resource "kubernetes_namespace" "f1-stream" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "f1-stream-secrets"
@@ -63,7 +63,7 @@ resource "kubernetes_manifest" "external_secret" {
 # Secret so the verifier can reach the in-cluster Playwright pool.
 resource "kubernetes_manifest" "chrome_service_client_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "chrome-service-client-secrets"

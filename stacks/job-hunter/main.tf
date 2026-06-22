@@ -42,7 +42,7 @@ resource "kubernetes_namespace" "job_hunter" {
 #     digest_from_address   — From: header for the digest
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "job-hunter-secrets"
@@ -106,7 +106,7 @@ resource "kubernetes_manifest" "external_secret" {
 # Template builds the asyncpg DSN consumed by the FastAPI app as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "job-hunter-db-creds"
@@ -326,7 +326,7 @@ resource "kubernetes_service" "job_hunter" {
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_job_hunter_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "grafana-job-hunter-pg-creds"

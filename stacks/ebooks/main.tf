@@ -21,7 +21,7 @@ resource "kubernetes_namespace" "ebooks" {
 # ExternalSecrets for all three sources
 resource "kubernetes_manifest" "calibre_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "calibre-secrets"
@@ -48,7 +48,7 @@ resource "kubernetes_manifest" "calibre_external_secret" {
 
 resource "kubernetes_manifest" "audiobookshelf_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "audiobookshelf-secrets"
@@ -75,7 +75,7 @@ resource "kubernetes_manifest" "audiobookshelf_external_secret" {
 
 resource "kubernetes_manifest" "servarr_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "servarr-secrets"

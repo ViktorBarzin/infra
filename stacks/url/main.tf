@@ -36,7 +36,7 @@ resource "kubernetes_namespace" "shlink" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "url-secrets"
@@ -68,7 +68,7 @@ resource "kubernetes_manifest" "external_secret" {
 # kubernetes_secret can be removed.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "url-db-creds"

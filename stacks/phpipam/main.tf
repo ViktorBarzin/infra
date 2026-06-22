@@ -29,7 +29,7 @@ resource "kubernetes_namespace" "phpipam" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "phpipam-secrets"
@@ -58,7 +58,7 @@ resource "kubernetes_manifest" "external_secret" {
 
 resource "kubernetes_manifest" "external_secret_pfsense_ssh" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "phpipam-pfsense-ssh"
@@ -87,7 +87,7 @@ resource "kubernetes_manifest" "external_secret_pfsense_ssh" {
 
 resource "kubernetes_manifest" "external_secret_admin" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "phpipam-admin-password"

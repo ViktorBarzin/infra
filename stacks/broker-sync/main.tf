@@ -29,7 +29,7 @@ resource "kubernetes_namespace" "broker_sync" {
 #   imap_host, imap_user, imap_password, imap_directory — for InvestEngine + Schwab email ingest
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "broker-sync-secrets"
