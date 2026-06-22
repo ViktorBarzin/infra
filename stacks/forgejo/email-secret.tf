@@ -7,7 +7,7 @@
 # reloader annotation rolls the Forgejo pod if the password is ever rotated.
 resource "kubernetes_manifest" "forgejo_email_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "forgejo-email"

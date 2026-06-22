@@ -208,7 +208,7 @@ resource "kubernetes_cluster_role_binding" "pve_snapshot_admin" {
 # Referenced by the proxmox-lvm-encrypted StorageClass for node-stage and node-expand.
 resource "kubernetes_manifest" "external_secret_encryption" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "proxmox-csi-encryption"

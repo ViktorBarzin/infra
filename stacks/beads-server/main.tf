@@ -602,7 +602,7 @@ resource "kubernetes_config_map" "beadboard_config" {
 # dispatch agent jobs via the in-cluster HTTP API.
 resource "kubernetes_manifest" "beadboard_agent_service_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "beadboard-agent-service"

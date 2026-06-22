@@ -98,7 +98,7 @@ resource "kubernetes_namespace" "k8s_upgrade" {
 # No claude-agent bearer needed — the chain no longer POSTs to that service.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "k8s-upgrade-creds"

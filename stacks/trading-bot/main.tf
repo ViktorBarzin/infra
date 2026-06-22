@@ -50,7 +50,7 @@ module "tls_secret" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "trading-bot-secrets"
@@ -104,7 +104,7 @@ resource "kubernetes_manifest" "external_secret" {
 # DB credentials from Vault database engine (rotated every 24h)
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "trading-bot-db-creds"

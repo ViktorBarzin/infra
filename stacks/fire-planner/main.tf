@@ -54,7 +54,7 @@ resource "kubernetes_namespace" "fire_planner" {
 #   secret/fire-planner -> property `recompute_bearer_token`
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "fire-planner-secrets"
@@ -116,7 +116,7 @@ resource "kubernetes_manifest" "external_secret" {
 # as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "fire-planner-db-creds"
@@ -160,7 +160,7 @@ resource "kubernetes_manifest" "db_external_secret" {
 # fire-planner ingest reads those tables via this role.
 resource "kubernetes_manifest" "wealthfolio_sync_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "wealthfolio-sync-db-creds"
@@ -662,7 +662,7 @@ variable "run_examples_bulk_ingest" {
 # Reddit OAuth creds pulled from Vault secret/viktor.
 resource "kubernetes_manifest" "external_secret_examples_reddit" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "fire-planner-examples-reddit"
@@ -702,7 +702,7 @@ resource "kubernetes_manifest" "external_secret_examples_reddit" {
 # is decoupled from the Reddit creds.
 resource "kubernetes_manifest" "external_secret_examples_claude" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "fire-planner-examples-claude"

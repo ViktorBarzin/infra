@@ -27,7 +27,7 @@ resource "kubernetes_namespace" "n8n" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "n8n-secrets"
@@ -54,7 +54,7 @@ resource "kubernetes_manifest" "external_secret" {
 
 resource "kubernetes_manifest" "external_secret_claude_agent" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "claude-agent-token"
@@ -85,7 +85,7 @@ resource "kubernetes_manifest" "external_secret_claude_agent" {
 # Workflows in stacks/n8n/workflows/instagram-*.json reference these env vars.
 resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "instagram-pipeline-secrets"

@@ -35,7 +35,7 @@ resource "helm_release" "external_secrets" {
 
 resource "kubernetes_manifest" "css_vault_kv" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ClusterSecretStore"
     metadata   = { name = "vault-kv" }
     spec = {
@@ -65,7 +65,7 @@ resource "kubernetes_manifest" "css_vault_kv" {
 
 resource "kubernetes_manifest" "css_vault_db" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ClusterSecretStore"
     metadata   = { name = "vault-database" }
     spec = {

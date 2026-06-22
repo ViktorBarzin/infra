@@ -216,7 +216,7 @@ resource "kubernetes_namespace" "tripit" {
 # DB user: created via Vault database engine — see static-creds/pg-tripit.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "tripit-secrets"
@@ -292,7 +292,7 @@ resource "kubernetes_manifest" "external_secret" {
 # role `static-creds/pg-tripit`.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "tripit-db-creds"

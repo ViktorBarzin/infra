@@ -22,7 +22,7 @@ resource "kubernetes_namespace" "wealthfolio" {
 
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "wealthfolio-secrets"
@@ -52,7 +52,7 @@ resource "kubernetes_manifest" "external_secret" {
 # the K8s Secret every 15m so the sidecar always has a valid password.
 resource "kubernetes_manifest" "wealthfolio_sync_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "wealthfolio-sync-db-creds"
@@ -778,7 +778,7 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_wealth_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "grafana-wealth-pg-creds"

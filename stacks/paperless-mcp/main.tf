@@ -29,7 +29,7 @@ resource "kubernetes_namespace" "paperless-mcp" {
 # by ESO; the pod reads it via secret_key_ref.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "paperless-mcp-secrets"

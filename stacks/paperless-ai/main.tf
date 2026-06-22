@@ -27,7 +27,7 @@ resource "kubernetes_namespace" "paperless_ai" {
 #   custom_api_key      — placeholder bearer for llama-swap (no auth, field required).
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "paperless-ai-secrets"

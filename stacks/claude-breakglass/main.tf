@@ -58,7 +58,7 @@ resource "kubernetes_service_account" "breakglass" {
 # pod can never read it.
 resource "kubernetes_manifest" "external_secret_ssh" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "breakglass-ssh"
@@ -83,7 +83,7 @@ resource "kubernetes_manifest" "external_secret_ssh" {
 # same account) and the app bearer token (in-cluster/CLI fallback caller auth).
 resource "kubernetes_manifest" "external_secret_env" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "breakglass-env"

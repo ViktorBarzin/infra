@@ -36,7 +36,7 @@ resource "kubernetes_namespace" "instagram_poster" {
 #     - immich_tag_posted         (optional — auto-resolved if missing)
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "instagram-poster-secrets"
@@ -140,7 +140,7 @@ resource "kubernetes_manifest" "external_secret" {
 # bounces the pod when the password changes.
 resource "kubernetes_manifest" "benchmark_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "instagram-poster-benchmark-db"

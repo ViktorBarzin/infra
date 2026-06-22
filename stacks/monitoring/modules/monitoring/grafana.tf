@@ -72,7 +72,7 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 # Provides GF_DATABASE_PASSWORD that auto-updates when password rotates
 resource "kubernetes_manifest" "grafana_db_creds" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "grafana-db-creds"

@@ -305,7 +305,7 @@ resource "kubernetes_config_map" "kms_slack_notifier" {
 
 resource "kubernetes_manifest" "kms_slack_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "kms-slack-webhook"

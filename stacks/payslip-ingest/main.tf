@@ -59,7 +59,7 @@ resource "kubernetes_namespace" "payslip_ingest" {
 #                                       (same as Viktor's sync_id)
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "payslip-ingest-secrets"
@@ -134,7 +134,7 @@ resource "kubernetes_manifest" "external_secret" {
 # Template builds the asyncpg DSN consumed by the FastAPI app as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "payslip-ingest-db-creds"
@@ -451,7 +451,7 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_payslips_db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "grafana-payslips-pg-creds"

@@ -56,7 +56,7 @@ resource "kubernetes_namespace" "recruiter_responder" {
 # DB user: created via Vault database engine — see static-creds/pg-recruiter-responder.
 resource "kubernetes_manifest" "external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "recruiter-responder-secrets"
@@ -108,7 +108,7 @@ resource "kubernetes_manifest" "external_secret" {
 # `recruiter_responder`, and Vault role `static-creds/pg-recruiter-responder`.
 resource "kubernetes_manifest" "db_external_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "recruiter-responder-db-creds"
