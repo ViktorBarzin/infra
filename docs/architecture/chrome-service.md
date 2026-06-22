@@ -170,7 +170,10 @@ minor, with Python-side bindings pre-installed.
   Authentik-gated. The bare host serves `vnc.html` (image symlinks
   `index.html → vnc.html`); add `?autoconnect=true&resize=scale&path=websockify`
   to skip the Connect button. The view is **black when no browser window is
-  open** (idle) — that is normal, not a failed connection.
+  open** (idle) — that is normal, not a failed connection. Chrome is launched
+  with `--window-size=1280,720 --window-position=0,0` to fill the Xvfb screen
+  (no window manager runs, so without it Chrome opens at its profile-persisted
+  size and the rest of the framebuffer shows as a black cut-off).
 
 ### noVNC fd-sweep gotcha (stuck "Connecting")
 

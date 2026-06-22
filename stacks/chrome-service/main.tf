@@ -252,6 +252,8 @@ resource "kubernetes_deployment" "chrome_service" {
               --disable-dev-shm-usage \
               --password-store=basic \
               --use-mock-keychain \
+              --window-position=0,0 \
+              --window-size=1280,720 \
               about:blank
             EOT
           ]
