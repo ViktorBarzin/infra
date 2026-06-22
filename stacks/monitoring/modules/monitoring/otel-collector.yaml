@@ -1,0 +1,79 @@
+# OpenTelemetry Collector — OTLP ingress + deny-list redaction backstop in front
+# of Tempo (tripit ADR-0032). Contrib image (the `redaction` processor is contrib-
+# only). Traces-only: the chart's default jaeger/zipkin/prometheus receivers and
+# metrics/logs pipelines are nulled out so the collector runs a single clean
+# otlp -> redaction -> batch -> tempo pipeline.
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+command:
+  name: otelcol-contrib
+
+presets:
+  kubernetesAttributes:
+    enabled: false
+
+# Only the OTLP ports; drop the chart's default jaeger/zipkin/metrics ports.
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+  metrics: { enabled: false }
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+config:
+  # Null the chart defaults we don't use (configured-but-unused components fail
+  # collector startup).
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    # Deny-list backstop (ADR-0032): drop credential-shaped attribute VALUES even
+    # if an app accidentally puts one on a span. In-app hygiene is primary.
+    redaction:
+      allow_all_keys: true
+      blocked_values:
+        - "(?i)bearer\\s+[a-z0-9._~+/=-]+"
+        - "eyJ[a-zA-Z0-9_-]{5,}\\.[a-zA-Z0-9_-]{5,}\\.[a-zA-Z0-9_-]+"
+        - "-----BEGIN[\\s\\S]*?-----END[^-]*-----"
+    batch: {}
+  exporters:
+    otlp/tempo:
+      endpoint: tempo.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [redaction, batch]
+        exporters: [otlp/tempo]
+      metrics: null
+      logs: null

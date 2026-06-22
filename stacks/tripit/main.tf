@@ -131,6 +131,12 @@ locals {
     # not-yet-visited countries + real UK bank-holiday leave windows + fares).
     # `claude_agent` mode requires images >= the #23 slice (already deployed).
     RESEARCH_PROVIDER = "claude_agent"
+    # Observability (tripit ADR-0032, Phase 2): structured JSON logs (so Loki's
+    # trace_id derivedField links to Tempo) + OTLP trace export to the in-cluster
+    # OTel Collector -> Tempo. Both require images >= the observability slice
+    # (v0.81.0, already live), so they land after that rollout.
+    LOG_FORMAT                  = "json"
+    OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318/v1/traces"
     # Stay cover photos (tripit issue #47, ADR-0017): auto-fetch each picked
     # city's Wikipedia lead image (keyless REST summary API, "City, Country"
     # first), downloaded into the app's STORAGE_DIR (never hotlinked) and

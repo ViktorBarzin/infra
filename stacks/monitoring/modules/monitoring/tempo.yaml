@@ -1,0 +1,38 @@
+# Grafana Tempo — single-binary trace store for the TripIt observability stack
+# (tripit ADR-0032). Mirrors Loki: filesystem storage on a proxmox-lvm PVC,
+# SingleBinary, ingests OTLP from the OTel Collector. Additive — independent of
+# Loki/Prometheus/Grafana.
+tempo:
+  retention: 720h # 30d, matching Loki
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  # OTLP ingest (from the OTel Collector). gRPC 4317 / HTTP 4318.
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  # Tempo query/HTTP API — the Grafana datasource URL targets this (3100).
+  server:
+    http_listen_port: 3100
+  # Container resources — the single-binary chart key is tempo.resources (NOT a
+  # top-level `resources:`, which is silently ignored → the pod falls to the
+  # namespace LimitRange default ~256Mi and is OOMKilled, exit 137).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClassName: proxmox-lvm
