@@ -167,7 +167,26 @@ minor, with Python-side bindings pre-installed.
   `x11vnc` (connected to Xvfb on `localhost:6099`) bridged to
   `websockify` on port 6080. Service `chrome` maps :80 → :6080 and is
   exposed via `ingress_factory` at `chrome.viktorbarzin.me`,
-  Authentik-gated.
+  Authentik-gated. The bare host serves `vnc.html` (image symlinks
+  `index.html → vnc.html`); add `?autoconnect=true&resize=scale&path=websockify`
+  to skip the Connect button. The view is **black when no browser window is
+  open** (idle) — that is normal, not a failed connection.
+
+### noVNC fd-sweep gotcha (stuck "Connecting")
+
+If the noVNC client hangs on **"Connecting" forever then times out**, the cause
+is almost always x11vnc's fd-table sweep: containerd grants pods
+`RLIMIT_NOFILE = 2^31`, and x11vnc `fcntl`-sweeps the **entire** fd table on
+every client connection, so the RFB handshake never completes (websockify
+accepts the WS and logs `connecting to: localhost:5900`, but x11vnc never sends
+the `RFB 003.008` banner). Diagnose: `grep "open files" /proc/$(pgrep -n
+x11vnc)/limits` (huge = bad) and time the handshake from a sibling container
+(`python3 -c "import socket;s=socket.socket();s.connect(('127.0.0.1',5900));print(s.recv(12))"` —
+healthy <0.3s, broken hangs). **Fix: cap `ulimit -n 65536` before x11vnc starts**
+— done both in `files/novnc/entrypoint.sh` (root) and via the container `command`
+wrapper in `main.tf` (so it applies deterministically even though the image is
+`:latest`/`IfNotPresent` and won't re-pull a rebuilt entrypoint). Same bug + fix
+as the android-emulator stack.
 - **snapshot-server sidecar** (`mcr.microsoft.com/playwright/python:v1.48.0-noble`)
   serves `GET /api/snapshot` from `/profile/snapshots/storage-state.json`,
   bearer-gated by `PW_TOKEN`. Service `chrome-snapshot` maps :8088 → :8088
