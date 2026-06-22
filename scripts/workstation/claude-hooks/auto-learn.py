@@ -4,7 +4,8 @@ Stop hook (async): automatic learning extraction via haiku-as-judge.
 
 After each Claude response, sends the user message + assistant response to
 haiku to detect corrections, preferences, decisions, or facts worth storing.
-If learning events are detected, stores them via the memory API (or SQLite fallback).
+If learning events are detected, stores them via the `homelab memory` CLI — the
+only sanctioned memory path on the devvm (no direct HTTP, no local SQLite).
 
 Runs with async: true — does NOT block the user.
 """
@@ -16,13 +17,8 @@ import os
 import shutil
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 
 logger = logging.getLogger(__name__)
-
-API_BASE_URL = os.environ.get("MEMORY_API_URL") or os.environ.get("CLAUDE_MEMORY_API_URL", "")
-API_KEY = os.environ.get("MEMORY_API_KEY") or os.environ.get("CLAUDE_MEMORY_API_KEY", "")
 
 JUDGE_PROMPT = """You are a memory extraction judge. Analyze this exchange between a user and an AI assistant.
 
@@ -53,46 +49,28 @@ Rules:
 - Return ONLY valid JSON, no other text"""
 
 
-def _api_request(method: str, path: str, body: dict | None = None) -> dict:
-    url = f"{API_BASE_URL}{path}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        url, data=data, method=method,
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode())
-
-
-def _store_via_api(content, category, tags, importance, expanded_keywords):
-    _api_request("POST", "/api/memories", {
-        "content": content, "category": category, "tags": tags,
-        "expanded_keywords": expanded_keywords, "importance": importance,
-    })
-
-
-def _store_via_sqlite(content, category, tags, importance, expanded_keywords):
-    import sqlite3
-    from datetime import datetime, timezone
-
-    memory_home = os.environ.get("MEMORY_HOME", os.path.expanduser("~/.claude/claude-memory"))
-    db_path = os.path.join(memory_home, "memory", "memory.db")
-
-    # Also check legacy path
-    if not os.path.exists(db_path):
-        legacy_db = os.path.join(os.path.expanduser("~/.claude/metaclaw"), "memory", "memory.db")
-        if os.path.exists(legacy_db):
-            db_path = legacy_db
-
-    conn = sqlite3.connect(db_path, timeout=10.0)
-    conn.execute("PRAGMA journal_mode=WAL")
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "INSERT INTO memories (content, category, tags, importance, expanded_keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (content, category, tags, importance, expanded_keywords, now, now),
-    )
-    conn.commit()
-    conn.close()
+def _store_via_homelab_cli(content, category, tags, importance, expanded_keywords):
+    """Store one memory via the homelab CLI — the only sanctioned memory path on
+    the devvm (no direct HTTP, no local SQLite). The CLI defaults the API URL and
+    reads CLAUDE_MEMORY_API_KEY / MEMORY_API_KEY from the environment; if neither
+    is set (e.g. a user without a minted key) it no-ops silently."""
+    homelab = shutil.which("homelab") or "/usr/local/bin/homelab"
+    if not os.path.exists(homelab):
+        return
+    if not (os.environ.get("CLAUDE_MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY")):
+        return
+    cmd = [
+        homelab, "memory", "store", content,
+        "--category", category,
+        "--tags", tags,
+        "--importance", str(importance),
+    ]
+    if expanded_keywords:
+        # CLI wants comma-separated keywords; the judge emits space-separated terms.
+        keywords = ",".join(expanded_keywords.replace(",", " ").split())
+        if keywords:
+            cmd += ["--keywords", keywords]
+    subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=os.environ)
 
 
 def main() -> None:
@@ -197,10 +175,7 @@ def main() -> None:
         expanded_keywords = event.get("expanded_keywords", "")
 
         try:
-            if API_KEY and API_BASE_URL:
-                _store_via_api(content, category, tags, importance, expanded_keywords)
-            else:
-                _store_via_sqlite(content, category, tags, importance, expanded_keywords)
+            _store_via_homelab_cli(content, category, tags, importance, expanded_keywords)
         except Exception:
             pass  # Never crash the async hook
 
