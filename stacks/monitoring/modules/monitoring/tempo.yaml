@@ -22,15 +22,17 @@ tempo:
   # Tempo query/HTTP API — the Grafana datasource URL targets this (3100).
   server:
     http_listen_port: 3100
+  # Container resources — the single-binary chart key is tempo.resources (NOT a
+  # top-level `resources:`). With it mis-placed the pod fell to the namespace
+  # LimitRange default and was OOMKilled (exit 137); set it explicitly here.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
 
 persistence:
   enabled: true
   size: 20Gi
   storageClassName: proxmox-lvm
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    memory: 1Gi
