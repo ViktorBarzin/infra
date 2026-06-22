@@ -233,16 +233,20 @@ log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-us
 #     virtual disk into an IO storm + multi-minute freeze (hard-killed 2026-06-22).
 #     t3-serve@ was already capped (its [Service] block); the HOLE was the uncapped
 #     user-<uid>.slice (all ssh/tmux work). Design — per user, on BOTH trees:
-#     MemoryHigh=12G soft, MemoryMax=16G hard, MemorySwapMax=0 (work never touches
-#     disk swap → no thrash; it OOMs locally at the ceiling instead), fair-share
-#     CPU/IO weights, and systemd-oomd (PSI) killing the single worst work cgroup on
-#     sustained box-wide memory pressure. system.slice is NOT policed, so sshd +
-#     services + your way in always survive. Docker containers are routed into a
-#     capped, oomd-policed docker.slice so they can't dodge the caps or mis-target
-#     oomd onto an innocent user. systemd-oomd pkg comes from packages.txt (§1).
+#     MemoryHigh=12G soft (throttles a runaway to a crawl), MemoryMax=16G hard,
+#     MemorySwapMax=0 (work never touches disk swap → no thrash; it OOMs locally at
+#     the ceiling instead), plus fair-share CPU/IO weights.
+#     BACKSTOP = earlyoom, NOT systemd-oomd. We first shipped systemd-oomd but it is
+#     INERT with swap=0: its pressure-kill only acts on cgroups doing active reclaim
+#     (pgscan rising), and a no-swap anon workload never reclaims — verified live, a
+#     cgroup at 99% memory.pressure / pgscan=0 was never killed. earlyoom instead
+#     watches FREE RAM (MemAvailable%) and SIGTERMs the biggest process at 5% / -k 3%,
+#     swap-independent and reliable. It --avoids sshd/systemd/dockerd (your way in
+#     stays alive) and --prefers the agent/browser hogs. earlyoom pkg = packages.txt
+#     (§1). Per-cgroup MemoryMax is the PRIMARY guard; earlyoom is the aggregate net.
 #     Post-mortem: docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md
 
-# 10a) per-user caps + weights + oomd policing on EVERY user-<uid>.slice (ssh/tmux)
+# 10a) per-user caps + fair-share weights on EVERY user-<uid>.slice (ssh/tmux)
 install -d -m 0755 /etc/systemd/system/user-.slice.d
 cat > /etc/systemd/system/user-.slice.d/50-devvm-resource.conf <<'SLICE_EOF'
 # Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22).
@@ -257,31 +261,31 @@ CPUAccounting=yes
 CPUWeight=100
 IOAccounting=yes
 IOWeight=100
-ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
 SLICE_EOF
 
-# 10b) systemd-oomd backstop (PSI-based). Kill the worst-pressured descendant of a
-#      policed slice when memory-pressure 'full' stays >60% for 20s; swap guard 80%.
-install -d -m 0755 /etc/systemd/oomd.conf.d
-cat > /etc/systemd/oomd.conf.d/10-devvm.conf <<'OOMD_EOF'
-# devvm OOM backstop (setup-devvm.sh §10, 2026-06-22). Acts only on slices that
-# opt in via ManagedOOM*=kill (user-<uid>.slice, system-t3\x2dserve.slice,
-# docker.slice). system.slice is deliberately NOT policed.
-[OOM]
-SwapUsedLimit=80%
-DefaultMemoryPressureLimit=60%
-DefaultMemoryPressureDurationSec=20s
-OOMD_EOF
+# 10b) earlyoom backstop config — RAM-threshold, swap-INDEPENDENT (see header note
+#      on why systemd-oomd is inert with swap=0). The Debian unit reads /etc/default.
+cat > /etc/default/earlyoom <<'EARLYOOM_EOF'
+# devvm aggregate OOM backstop (setup-devvm.sh §10, 2026-06-22). Watches FREE RAM
+# (MemAvailable%) and kills the biggest task before the box exhausts. Unlike
+# systemd-oomd it needs NO swap/reclaim, so it works with our swap=0 work cgroups.
+#   -m 5,3     SIGTERM the victim at MemAvailable<5%, SIGKILL at <3%
+#   -s 100,100 ignore swap in the decision (RAM-only; work cgroups are swap=0)
+#   --avoid    never the box's nervous system / your way back in
+#   --prefer   target the agent/browser/build hogs that actually exhaust RAM
+#   -r 3600    hourly memory report (the 60s default is log spam)
+EARLYOOM_ARGS="-m 5,3 -s 100,100 -r 3600 --avoid ^(systemd|systemd-.*|sshd|dockerd|containerd|init|t3-dispatch|tmux.*)$ --prefer ^(python3|node|chrome|chromium|ugrep|rg|go|claude)$"
+EARLYOOM_EOF
 
-# 10c) capped, oomd-policed docker.slice (top-level sibling of system/user slices);
-#      daemon.json cgroup-parent (10d) makes EVERY container land here.
+# 10c) capped docker.slice (top-level sibling of system/user slices); daemon.json
+#      cgroup-parent (10d) makes EVERY container land here under one bounded budget.
 cat > /etc/systemd/system/docker.slice <<'DOCKER_SLICE_EOF'
 # All docker containers live here (cgroup-parent in /etc/docker/daemon.json) so
-# they share one bounded budget and a runaway container dies ITSELF instead of
-# mis-targeting oomd onto an innocent user. setup-devvm.sh §10, 2026-06-22.
+# they share one bounded budget and a runaway container is capped at MemoryMax
+# (cgroup-OOM'd locally) instead of escaping into the uncapped system.slice.
+# setup-devvm.sh §10, 2026-06-22.
 [Unit]
-Description=Docker containers slice (capped + oomd-policed)
+Description=Docker containers slice (capped)
 [Slice]
 MemoryAccounting=yes
 MemoryHigh=6G
@@ -291,8 +295,6 @@ CPUAccounting=yes
 CPUWeight=100
 IOAccounting=yes
 IOWeight=100
-ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
 DOCKER_SLICE_EOF
 
 # 10d) point dockerd at docker.slice (idempotent JSON merge; flag a needed restart).
@@ -320,17 +322,9 @@ case $rc in
   *) log "WARN: could not patch /etc/docker/daemon.json — docker.slice NOT wired" ;;
 esac
 
-# 10e) ManagedOOM on the auto-generated t3-serve slice. Its name carries an escaped
-#      '-' (system-t3\x2dserve.slice); a static drop-in works whether or not an
-#      instance is currently running (set-property would need it loaded).
-install -d -m 0755 '/etc/systemd/system/system-t3\x2dserve.slice.d'
-cat > '/etc/systemd/system/system-t3\x2dserve.slice.d/50-devvm-oomd.conf' <<'T3SLICE_EOF'
-# oomd policing for all t3-serve@ instances (per-service caps live in
-# t3-serve@.service). setup-devvm.sh §10, 2026-06-22.
-[Slice]
-ManagedOOMMemoryPressure=kill
-ManagedOOMSwap=kill
-T3SLICE_EOF
+# 10e) t3-serve@ instances need no extra drop-in: their per-instance MemoryMax /
+#      MemorySwapMax caps live in t3-serve@.service [Service]; earlyoom (10b) is the
+#      box-wide net. (The earlier oomd slice-policing drop-in was removed — inert.)
 
 # 10f) give system.slice a priority edge so sshd/services stay snappy under
 #      contention (weights are work-conserving — users still get idle CPU/IO).
@@ -344,15 +338,21 @@ IOAccounting=yes
 IOWeight=200
 SYS_EOF
 
-# 10g) activate: reload, arm oomd, restart dockerd ONLY if daemon.json changed.
+# 10g) activate: reload, arm earlyoom, restart dockerd ONLY if daemon.json changed.
 systemctl daemon-reload
-systemctl enable --now systemd-oomd.service >/dev/null 2>&1 \
-  || log "WARN: systemd-oomd failed to enable — is the package installed? (packages.txt §1)"
+# earlyoom reads /etc/default/earlyoom (10b); enable + restart so new args take effect
+# even on a re-run where it was already running.
+systemctl enable --now earlyoom.service >/dev/null 2>&1 \
+  || log "WARN: earlyoom failed to enable — is the package installed? (packages.txt §1)"
+systemctl restart earlyoom.service 2>/dev/null || true
+# systemd-oomd is inert with swap=0 (see header) — ensure it isn't also running from
+# an earlier iteration of this section. No-op if the package was never installed.
+systemctl disable --now systemd-oomd.service >/dev/null 2>&1 || true
 if [[ $docker_restart -eq 1 ]] && systemctl is-active --quiet docker; then
   log "restarting dockerd to apply cgroup-parent=docker.slice (running containers bounce briefly)"
   systemctl restart docker || log "WARN: docker restart failed"
 fi
-log "§10 resource containment: per-user 12G/16G swap=0, oomd PSI backstop, docker.slice"
+log "§10 resource containment: per-user 12G/16G swap=0, earlyoom RAM backstop, docker.slice"
 
 # Run one foreground reconcile while the admin Vault token borrowed in section 8
 # is still available. This is what mints new roster users' isolated periodic

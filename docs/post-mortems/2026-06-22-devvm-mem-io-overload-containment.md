@@ -52,21 +52,23 @@ backstop** (no systemd-oomd / earlyoom) to shed the worst offender before the
 kernel OOM or the thrash-wedge. And even the existing t3 caps don't sum safely
 (3 users × 16G = 48G > 32G RAM) — nothing reasoned about the *whole box*.
 
-## Fix (shipped this commit — `setup-devvm.sh` §10, applied live 2026-06-22)
+## Fix (`setup-devvm.sh` §10, applied live 2026-06-22)
 
 Design decisions (interviewed with the admin via `/grill-me`): **soft-generous
-per-user caps + a hard ceiling + an oomd backstop**, maximising single-user
-utilisation while making a box-wide wedge impossible.
+per-user caps + a hard ceiling + a kill-the-worst backstop**, maximising
+single-user utilisation while making a box-wide wedge impossible. (The backstop
+was first built on systemd-oomd, then switched to earlyoom mid-rollout when oomd
+proved inert with `swap=0` — see Verification + Lessons.)
 
 | Layer | What |
 |---|---|
 | **Per-user caps, BOTH trees** | `user-.slice.d` drop-in gives every `user-<uid>.slice` the same `MemoryHigh=12G / MemoryMax=16G / MemorySwapMax=0` the t3 tree already had. A user is now bounded in whichever surface they work in. |
 | **No disk swap for work** | `MemorySwapMax=0` on every work cgroup → a spike OOMs **locally** at the ceiling instead of thrashing the throttled disk. Kills the IO-storm-via-swap mechanism at the source. The 14G swapfile stays for system cold pages only. |
-| **systemd-oomd backstop (PSI)** | New package. Kills the single worst-pressured descendant of a policed slice when memory-pressure (`full`) stays **>60% for 20s**; global swap guard **80%**. Polices `user.slice`, `system-t3\x2dserve.slice`, `docker.slice`. **`system.slice` is deliberately NOT policed** — sshd + services + the admin's way in always survive; only a runaway *user* session is ever sacrificed, locally, under genuine box-wide pressure. |
+| **earlyoom backstop (free-RAM threshold)** | New package — used **instead of systemd-oomd** (which is inert with `swap=0`; see Lessons). Watches `MemAvailable%` and SIGTERMs the biggest task at **5%**, SIGKILL at **3%**, swap ignored (`-s 100`). `--avoid` keeps sshd/systemd/dockerd/containerd/t3-dispatch/tmux off the victim list (**the admin's way in always survives**); `--prefer` targets the agent/browser hogs (python3/node/chrome/…). Swap-independent and reliable, where oomd's pressure-kill was not. |
 | **Fair-share CPU/IO** | `CPUWeight`/`IOWeight` per slice (system.slice 200, users + docker 100 each). Work-conserving — a lone user still gets all 32 cores + the full IO budget when others idle; weights only bite under contention. No hard CPU/IO caps. |
-| **Docker containment** | Containers previously landed in `system.slice` — uncapped AND protected from oomd, so a ballooning container would mis-target oomd onto an innocent user. Now `cgroup-parent: docker.slice` in `daemon.json` routes every container into a capped (`MemoryMax=8G`, swap 0), oomd-policed slice. |
+| **Docker containment** | Containers previously landed in `system.slice` — uncapped. Now `cgroup-parent: docker.slice` in `daemon.json` routes every container into a capped (`MemoryMax=8G`, swap 0) slice, so a runaway container is cgroup-OOM'd locally instead of escaping into the uncapped `system.slice`. |
 
-Durable in `setup-devvm.sh` (survives a VM rebuild); `systemd-oomd` added to
+Durable in `setup-devvm.sh` (survives a VM rebuild); `earlyoom` added to
 `packages.txt`. The numbers are tunable — `MemoryHigh=12G` will throttle a *lone*
 heavy user between 12–16G even with RAM free; bump to 16/20 if that bites.
 
@@ -76,22 +78,30 @@ heavy user between 12–16G even with RAM free; bump to 16/20 if that bites.
   `memory.high=12G memory.max=16G memory.swap.max=0`; `docker.slice` `memory.max=8G`;
   daemon.json kept buildkit/nvidia/insecure-registries; paperless-mcp recovered
   under `docker.slice`.
-- **oomd armed**: `oomctl` shows `Dry Run: no`, swap-limit 80%, pressure-limit
-  60% / 20s, and the 5 policed cgroups — `system.slice` absent (protected).
-- **Stress test A (hard cap)**: a 2G-capped, swap=0 balloon was killed at exactly
-  2G by the cgroup-local OOM (`constraint=CONSTRAINT_MEMCG`) with **swap flat at
-  0MB throughout** — no thrash. This is the mechanism protecting every slice.
-- **Stress test B (oomd backstop)**: a self-policed balloon (256M soft / 20%
-  pressure limit) was killed by **systemd-oomd on memory pressure**, confirming
-  the backstop fires, not just arms.
+- **Stress test A (hard cap)** — the PRIMARY guard: a 2G-capped, swap=0 balloon was
+  killed at exactly 2G by the cgroup-local OOM (`constraint=CONSTRAINT_MEMCG`) with
+  **swap flat at 0MB throughout** — no thrash. Same mechanism protects every user
+  slice (16G) and `docker.slice` (8G).
+- **Soft cap observed**: a balloon pushed past `MemoryHigh` sat at ~220M / 99%
+  memory.pressure, throttled to a crawl, making no progress and harming nothing —
+  a runaway is throttled, not just killed.
+- **systemd-oomd disproven, then dropped**: a self-policed balloon held
+  `memory.pressure full avg10 = 96–99%` (≫ its 20% limit) for >70s but oomd never
+  killed it — `Pgscan: 0`. oomd's pressure-kill only acts on cgroups doing active
+  reclaim, which a `swap=0` anon workload never does. oomd was purged.
+- **earlyoom backstop** — verified via `--dryrun`: at the threshold it logs
+  `low memory! … mem 90% swap 100%` (fires on RAM alone, swap ignored) and selects
+  `SIGTERM … "chrome"` (a `--prefer` hog), never an `--avoid`'d daemon. Live
+  earlyoom v1.7 confirms `SIGTERM mem<=5% / SIGKILL mem<=3%, swap<=100%`.
 
 ## Out of scope / follow-ups
 
 - **Alerting** (tracked, fast-follow bead): `DevvmDown` (closes the 90-min
   detection gap the 2026-06-11 PM flagged), sustained-memory-PSI/swap pressure
-  early-warning, and an "oomd-killed-something" alert. devvm node-exporter is
-  already scraped (`job=devvm`, `10.0.10.10:9100`), so only alert *rules* are new
-  (a monitoring-stack Terraform change).
+  early-warning, and an "earlyoom-killed-something" alert (earlyoom logs each kill;
+  `-N /script` can push a metric). devvm node-exporter is already scraped
+  (`job=devvm`, `10.0.10.10:9100`), so only alert *rules* are new (a
+  monitoring-stack Terraform change).
 - **zram cushion**: considered, deferred. Could let work cgroups absorb spikes in
   compressed RAM instead of OOMing at the ceiling; not needed for the wedge fix.
 - **Per-user docker isolation**: containers share one `docker.slice` budget, not
@@ -108,6 +118,14 @@ heavy user between 12–16G even with RAM free; bump to 16/20 if that bites.
 - **Cap the box, not one surface.** t3 sessions were capped for months while the
   same user's tmux was unbounded — and the caps that existed didn't sum to < RAM.
   Containment has to reason about every tree and the aggregate.
-- **A backstop must protect the operator's way in.** oomd polices the work trees
-  only; `system.slice` (sshd, the daemons) is never a victim, so the box always
-  stays reachable to recover.
+- **A backstop must protect the operator's way in.** earlyoom `--avoid`s
+  sshd/systemd/dockerd/containerd/t3-dispatch/tmux, so the box always stays
+  reachable to recover; only the agent/browser hogs are eligible victims.
+- **systemd-oomd is the wrong backstop for a no-swap box — verify, don't assume.**
+  oomd's memory-pressure killer only fires on cgroups doing active reclaim
+  (`pgscan` rising). With `MemorySwapMax=0` + anonymous memory there is nothing to
+  reclaim, so a cgroup sat at 99% `memory.pressure` indefinitely and oomd never
+  acted (proven with `oomctl` + a balloon). The very `swap=0` that kills the IO
+  storm also neuters oomd. earlyoom (free-RAM threshold, swap-independent) is the
+  correct pairing. A famous tool that "does OOM" still has to be proven to fire
+  under *your* configuration.
