@@ -434,6 +434,28 @@ install_memory() {
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
+
+# 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
+#    deploy_user_launcher below). Nothing else redeploys /usr/local/bin (only the
+#    manual setup-devvm.sh did) — so a committed edit silently never reached the
+#    hourly run until now (the homelab-memory rollout sat undeployed for a day).
+#    If the repo copy differs, install it and re-exec the fresh binary. Guarded:
+#    re-exec flag (no loop), bash -n (never deploy a broken script), DRY_RUN (no
+#    mutation), cmp (no churn when unchanged).
+SELF_SRC="$WORKSTATION_DIR/../t3-provision-users.sh"
+SELF_DST=/usr/local/bin/t3-provision-users
+if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SELF_SRC" "$SELF_DST"; then
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "[dry-run] self-deploy $SELF_DST from repo (changed)"
+  elif bash -n "$SELF_SRC" 2>/dev/null; then
+    install -m 0755 "$SELF_SRC" "$SELF_DST"
+    log "self-deployed $SELF_DST from repo (changed) — re-exec"
+    exec env T3_PROVISION_SELF_DEPLOYED=1 "$SELF_DST" "$@"
+  else
+    log "WARN: repo t3-provision-users.sh fails 'bash -n' — keeping deployed copy"
+  fi
+fi
+
 install -d -m 0755 "$ENVDIR"
 
 # 1) current sticky ports from existing .env files -> {os_user: port}
