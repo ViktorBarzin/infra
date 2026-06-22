@@ -524,6 +524,19 @@ resource "kubernetes_config_map" "grafana_loki_datasource" {
         access    = "proxy"
         url       = "http://loki.monitoring.svc.cluster.local:3100"
         isDefault = false
+        jsonData = {
+          # Log -> trace (tripit ADR-0032): pull trace_id out of tripit's JSON log
+          # lines and deep-link to the trace in Tempo. Additive — does NOT set a
+          # uid, so existing dashboards' references to this datasource are
+          # unaffected.
+          derivedFields = [{
+            name            = "trace_id"
+            matcherRegex    = "\"trace_id\":\\s*\"([a-f0-9]{32})\""
+            url             = "$${__value.raw}"
+            datasourceUid   = "tempo"
+            urlDisplayLabel = "View trace in Tempo"
+          }]
+        }
       }]
     })
   }
