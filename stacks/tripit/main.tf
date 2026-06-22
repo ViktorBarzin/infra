@@ -571,11 +571,15 @@ locals {
       extra_env = {
         LLM_MODE     = "llamacpp"
         LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        # Text body extraction uses the 8B text model (reliably emits flight_number);
+        # Text body extraction uses an 8B model (reliably emits flight_number);
         # boarding-pass image attachments use the 4B vision model. llama-swap loads
         # each on demand. Was qwen3vl-4b for both, which dropped flight numbers and
-        # duplicated schedule-change emails (2026-06-16).
-        LLM_MODEL           = "qwen3-8b"
+        # duplicated schedule-change emails (2026-06-16). Switched qwen3-8b ->
+        # qwen3vl-8b (2026-06-22): the qwen3-8b GGUF SEGFAULTS on the current
+        # llama-swap :cuda image ("failed to create context"), which broke ALL mail
+        # ingest; qwen3vl-8b loads and extracts flight numbers + places reliably.
+        # (ADR-0033 adds a claude-agent-service fallback for the next llama outage.)
+        LLM_MODEL           = "qwen3vl-8b"
         LLM_VISION_MODEL    = "qwen3vl-4b"
         MAIL_INGEST_ENABLED = "true"
         # Reel→Wishlist ingest (tripit ADR-0031): geocode forwarded-reel venues at
