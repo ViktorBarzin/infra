@@ -3,6 +3,13 @@
 # and serve the noVNC HTML5 client + websockify bridge on :6080.
 set -e
 
+# Containerd grants pods an effectively unbounded RLIMIT_NOFILE (2^31). x11vnc
+# sweeps the WHOLE fd table with fcntl on every client connection, so each VNC
+# connect hangs for ~forever and the noVNC client sits on "Connecting" until it
+# times out. Cap it before launching x11vnc. (Same fix as the android-emulator
+# stack; see docs/architecture/chrome-service.md "noVNC fd-sweep".)
+ulimit -n 65536
+
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if echo > /dev/tcp/127.0.0.1/6099 2>/dev/null; then
     echo "Xvfb TCP up after attempt $i"

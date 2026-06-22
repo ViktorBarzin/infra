@@ -326,6 +326,14 @@ resource "kubernetes_deployment" "chrome_service" {
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
           image             = "ghcr.io/viktorbarzin/chrome-service-novnc:latest"
           image_pull_policy = "IfNotPresent"
+          # Cap RLIMIT_NOFILE before the entrypoint runs. Containerd grants pods
+          # nofile=2^31; x11vnc sweeps the whole fd table on each client connect,
+          # so every VNC connection hangs on "Connecting" until it times out
+          # (fd-sweep bug, same as android-emulator). entrypoint.sh now also sets
+          # this, but the image is :latest/IfNotPresent so a rebuilt entrypoint
+          # isn't guaranteed to be pulled — this wrapper applies the cap
+          # deterministically on every rollout off the cached image.
+          command = ["bash", "-c", "ulimit -n 65536; exec /entrypoint.sh"]
           port {
             name           = "http"
             container_port = 6080
