@@ -578,6 +578,11 @@ locals {
         LLM_MODEL           = "qwen3-8b"
         LLM_VISION_MODEL    = "qwen3vl-4b"
         MAIL_INGEST_ENABLED = "true"
+        # Reel→Wishlist ingest (tripit ADR-0031): geocode forwarded-reel venues at
+        # POI level via Nominatim (venue -> lat/lon + city + country), isolated from
+        # the global GEOCODER_PROVIDER=openmeteo which stays city-level for
+        # weather/tours. Only this CronJob runs the reel route (ingest-mail).
+        REEL_GEOCODER_PROVIDER = "nominatim"
         IMAP_HOST           = "mailserver.mailserver.svc.cluster.local"
         IMAP_PORT           = "993"
         IMAP_USER           = "spam@viktorbarzin.me"
