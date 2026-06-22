@@ -137,6 +137,18 @@ func TestBrowserHelpHasDiagnosticCheatSheet(t *testing.T) {
 	}
 }
 
+func TestBrowserHelpIsTiered(t *testing.T) {
+	// --help must frame this as the ESCALATION path (default to headless first),
+	// matching ~/code/CLAUDE.md and chrome-service.md — non-conflicting agent
+	// instructions. Guard against a regression to "co-equal choice" wording.
+	h := browserHelp()
+	for _, want := range []string{"Default to the", "escalation"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("browser --help must carry the tiered/default-headless framing; missing %q", want)
+		}
+	}
+}
+
 func TestStealthJSEmbeddedMatchesCanonical(t *testing.T) {
 	// The embedded copy must never drift from the source of truth that the
 	// in-cluster callers use, else the CLI's stealth and the cluster's diverge.

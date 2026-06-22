@@ -184,9 +184,12 @@ inject `CHROME_CDP_URL`, vendor `stealth.js`).
 
 Agents on the devvm reach this browser through the **`homelab browser`** CLI
 (`cli/`, ADR-0013) — the packaged, discoverable form of the ad-hoc
-`connect_over_cdp` recipe. Use it when a site loads but a gated action
-(submit/login) silently fails or hangs — the signature of headless / anti-bot
-detection.
+`connect_over_cdp` recipe. It is the **escalation path, not the default**:
+agents default to the Playwright MCP / headless browser for all routine
+automation, and reach for `homelab browser` ONLY when headless is blocked — a
+site loads but a gated action (submit/login) silently fails or hangs, the
+signature of headless / anti-bot detection. (Same tiered rule lives in
+`~/code/CLAUDE.md` and `homelab browser --help`.)
 
 ```text
 devvm:  homelab browser run flow.js
