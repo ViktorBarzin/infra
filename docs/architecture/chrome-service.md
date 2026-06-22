@@ -180,6 +180,42 @@ minor, with Python-side bindings pre-installed.
 See `stacks/chrome-service/README.md` for the recipe (label namespace,
 inject `CHROME_CDP_URL`, vendor `stealth.js`).
 
+## Driving from OUTSIDE the cluster (`homelab browser`)
+
+Agents on the devvm reach this browser through the **`homelab browser`** CLI
+(`cli/`, ADR-0013) — the packaged, discoverable form of the ad-hoc
+`connect_over_cdp` recipe. Use it when a site loads but a gated action
+(submit/login) silently fails or hangs — the signature of headless / anti-bot
+detection.
+
+```text
+devvm:  homelab browser run flow.js
+          │  kubectl port-forward svc/chrome-service :9222  (random local port)
+          ▼
+   http://127.0.0.1:<port>  ──►  chrome-service pod :9222 (CDP)
+          │  assert /json/version Browser is "Chrome/…", not "HeadlessChrome"
+          │  node + playwright-core@1.48.2 → connectOverCDP
+          │  context.addInitScript(stealth.js)   ← same vendored file as in-cluster
+          │  run the user's Playwright script with page/context/browser in scope
+          └─ port-forward always torn down (success or error)
+```
+
+Key facts:
+
+- **port-forward bypasses the `:9222` NetworkPolicy.** It tunnels
+  API-server→pod, so the devvm needs no `chrome-service.viktorbarzin.me/client`
+  label — unlike in-cluster callers.
+- **Client pinned to the image minor.** The node client is
+  `playwright-core@1.48.2` (matches `v1.48.0-noble` / Chromium 130), installed
+  lazily into `~/.cache/homelab/browser-client/`. Bump it in lockstep when the
+  server image bumps (same rule as the in-cluster Python clients — see "Image
+  pin" above).
+- **Default context is a fresh incognito one** (closed on exit), safe for the
+  shared browser; `--shared-context` reuses the warmed persistent profile.
+- **`stealth.js` is vendored** into the CLI (`cli/browser_stealth.js`) as a
+  byte-identical copy of `files/stealth.js`, guarded by a drift test — so the
+  CLI's stealth never diverges from the in-cluster callers'.
+
 ## Limits + risks
 
 - **Anti-bot vs stealth arms race** — when an upstream beats us (DRM
