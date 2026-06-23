@@ -1,0 +1,39 @@
+name: Build chrome-service-browser
+
+# ADR-0002: infra-owned image built off-infra on GHA → ghcr. Playwright base +
+# real Google Chrome (proprietary H.264/AAC codecs) for the chrome-service
+# browser container, so the noVNC view can play H.264 video (Reels). Rebuilds
+# are rare → dispatch + path trigger. NOTE: after the first push, set the ghcr
+# package `chrome-service-browser` to PUBLIC (same as chrome-service-novnc) so
+# the pod pulls it without credentials.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'stacks/chrome-service/files/chrome/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: stacks/chrome-service/files/chrome
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/chrome-service-browser:latest
+            ghcr.io/viktorbarzin/chrome-service-browser:${{ github.sha }}

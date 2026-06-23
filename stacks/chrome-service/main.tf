@@ -178,8 +178,12 @@ resource "kubernetes_deployment" "chrome_service" {
         }
 
         container {
-          name              = "chrome-service"
-          image             = local.image
+          name = "chrome-service"
+          # Real Google Chrome (Playwright base + google-chrome-stable) for
+          # proprietary H.264/AAC codecs — see files/chrome/Dockerfile. The
+          # snapshot sidecars still use local.python_image (playwright minor
+          # pin) and connect_over_cdp; verified compatible with this Chrome.
+          image             = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
           image_pull_policy = "IfNotPresent"
 
           # Direct chromium launch (NOT `playwright launch-server`). Reason:
@@ -203,16 +207,16 @@ resource "kubernetes_deployment" "chrome_service" {
           args = [
             <<-EOT
             set -e
-            # Locate chromium in the Microsoft image. The path is
-            # /ms-playwright/chromium-XXXX/chrome-linux/chrome where XXXX
-            # is the playwright-pinned build; resolve at runtime so a minor
-            # bump of the image doesn't break the launch line.
-            CHROMIUM=$(find /ms-playwright -maxdepth 4 -name 'chrome' -type f -executable -path '*/chrome-linux/*' 2>/dev/null | head -1)
-            if [ -z "$CHROMIUM" ]; then
-              echo "ERROR: chromium binary not found under /ms-playwright" >&2
+            # Real Google Chrome (proprietary H.264/AAC codecs) baked into the
+            # chrome-service-browser image at a fixed path — so H.264 video
+            # (Reels) plays in the noVNC view. The bundled Chromium under
+            # /ms-playwright lacks those codecs (MEDIA_ERR_SRC_NOT_SUPPORTED).
+            CHROMIUM=/opt/google/chrome/chrome
+            if [ ! -x "$CHROMIUM" ]; then
+              echo "ERROR: google-chrome not found at $CHROMIUM (wrong image?)" >&2
               exit 1
             fi
-            echo "[chrome-service] using chromium: $CHROMIUM"
+            echo "[chrome-service] using browser: $($CHROMIUM --version 2>/dev/null || echo "$CHROMIUM")"
 
             # -listen tcp enables localhost:6099 so the noVNC sidecar can
             # attach over the pod's shared network ns (Ubuntu 24.04

@@ -29,6 +29,9 @@ REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
+# OS users (space-separated) that receive the vendored agent skills (scripts/workstation/claude-skills).
+# Allowlist: install_skills no-ops for anyone not listed. Extend here to roll out to more users.
+SKILL_USERS="${SKILL_USERS:-emo}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -431,6 +434,58 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
+# Per-user agent skills, vendored from the in-repo snapshot ($WORKSTATION_DIR/claude-skills) — the
+# `npx skills` upstream drifted off this exact set, so we reproduce it offline + deterministically.
+# if-absent + ADDITIVE: copies a skill dir into ~/.agents/skills/<name> (owned by the user) and
+# symlinks ~/.claude/skills/<name> -> ../../.agents/skills/<name> (the layout `skills add -g`
+# produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS. if-absent keys on the
+# user's OWN copy, so it heals a stale/cross-user ~/.claude/skills symlink but never clobbers a real
+# skill dir. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_skills() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  case " $SKILL_USERS " in *" $user "*) ;; *) return 0 ;; esac
+  local src_root="$WORKSTATION_DIR/claude-skills"
+  [[ -d "$src_root" ]] || { log "WARN: $src_root missing -> skip skills for $user"; return 0; }
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    local d names=""
+    for d in "$src_root"/*/; do [[ -d "$d" ]] && names+="$(basename "$d") "; done
+    echo "[dry-run] vendor skills if-absent -> $user: ${names}"
+    return 0
+  fi
+
+  local agents_dir="$home/.agents/skills" claude_dir="$home/.claude/skills"
+  # own the parent ~/.agents too (install -d leaves created intermediates root-owned)
+  install -d -o "$user" -g "$user" -m 0755 "$home/.agents" "$agents_dir" "$claude_dir"
+  chown "$user:$user" "$home/.agents" || true
+
+  local skill name dst link n=0
+  for skill in "$src_root"/*/; do
+    [[ -d "$skill" ]] || continue
+    name="$(basename "$skill")"
+    dst="$agents_dir/$name"
+    link="$claude_dir/$name"
+    # if-absent keys on the user's OWN copy (a real dir under ~/.agents/skills), NOT on any
+    # pre-existing ~/.claude/skills entry — so a stale or cross-user symlink gets healed.
+    if [[ ! -d "$dst" ]]; then
+      cp -a "$src_root/$name" "$dst" || { log "WARN: copy skill $name -> $user failed"; continue; }
+      chown -R "$user:$user" "$dst" || true
+      n=$((n+1))
+    fi
+    # point ~/.claude/skills/<name> at the user's own copy (replacing a stale/cross-user symlink);
+    # never clobber a real dir/file squatting that name.
+    if [[ -d "$link" && ! -L "$link" ]]; then
+      log "WARN: $claude_dir/$name is a real dir (left as-is) for $user"
+    elif [[ "$(readlink "$link" 2>/dev/null)" != "../../.agents/skills/$name" ]]; then
+      ln -sfn "../../.agents/skills/$name" "$link" && chown -h "$user:$user" "$link" || log "WARN: link skill $name -> $user failed"
+    fi
+  done
+  if [[ "$n" -gt 0 ]]; then log "vendored/healed $n skill(s) -> $user"; fi
+  return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the reconcile
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -572,6 +627,13 @@ done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desi
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_memory "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5e) per-user agent skills (SKILL_USERS allowlist only): vendored snapshot -> ~/.agents/skills
+#     + ~/.claude/skills symlinks. if-absent + additive; best-effort (never aborts the reconcile).
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_skills "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5b) machine-wide (once, not per-user): keep the t3 gated nightly TRACKER timer enabled (it
