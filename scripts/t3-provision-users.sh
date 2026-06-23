@@ -438,8 +438,9 @@ install_memory() {
 # `npx skills` upstream drifted off this exact set, so we reproduce it offline + deterministically.
 # if-absent + ADDITIVE: copies a skill dir into ~/.agents/skills/<name> (owned by the user) and
 # symlinks ~/.claude/skills/<name> -> ../../.agents/skills/<name> (the layout `skills add -g`
-# produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS; never clobbers an existing
-# skill. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+# produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS. if-absent keys on the
+# user's OWN copy, so it heals a stale/cross-user ~/.claude/skills symlink but never clobbers a real
+# skill dir. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
 install_skills() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -456,24 +457,32 @@ install_skills() {
   fi
 
   local agents_dir="$home/.agents/skills" claude_dir="$home/.claude/skills"
-  install -d -o "$user" -g "$user" -m 0755 "$agents_dir" "$claude_dir"
+  # own the parent ~/.agents too (install -d leaves created intermediates root-owned)
+  install -d -o "$user" -g "$user" -m 0755 "$home/.agents" "$agents_dir" "$claude_dir"
+  chown "$user:$user" "$home/.agents" || true
 
-  local skill name dst n=0
+  local skill name dst link n=0
   for skill in "$src_root"/*/; do
     [[ -d "$skill" ]] || continue
     name="$(basename "$skill")"
     dst="$agents_dir/$name"
-    [[ -e "$dst" || -L "$claude_dir/$name" ]] && continue            # if-absent: already installed
-    if cp -a "$src_root/$name" "$dst"; then
-      chown -R "$user:$user" "$dst"
-      ln -sfn "../../.agents/skills/$name" "$claude_dir/$name"
-      chown -h "$user:$user" "$claude_dir/$name"
+    link="$claude_dir/$name"
+    # if-absent keys on the user's OWN copy (a real dir under ~/.agents/skills), NOT on any
+    # pre-existing ~/.claude/skills entry — so a stale or cross-user symlink gets healed.
+    if [[ ! -d "$dst" ]]; then
+      cp -a "$src_root/$name" "$dst" || { log "WARN: copy skill $name -> $user failed"; continue; }
+      chown -R "$user:$user" "$dst" || true
       n=$((n+1))
-    else
-      log "WARN: copy skill $name -> $user failed"
+    fi
+    # point ~/.claude/skills/<name> at the user's own copy (replacing a stale/cross-user symlink);
+    # never clobber a real dir/file squatting that name.
+    if [[ -d "$link" && ! -L "$link" ]]; then
+      log "WARN: $claude_dir/$name is a real dir (left as-is) for $user"
+    elif [[ "$(readlink "$link" 2>/dev/null)" != "../../.agents/skills/$name" ]]; then
+      ln -sfn "../../.agents/skills/$name" "$link" && chown -h "$user:$user" "$link" || log "WARN: link skill $name -> $user failed"
     fi
   done
-  if [[ "$n" -gt 0 ]]; then log "vendored $n skill(s) -> $user"; fi
+  if [[ "$n" -gt 0 ]]; then log "vendored/healed $n skill(s) -> $user"; fi
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the reconcile
 }
 
