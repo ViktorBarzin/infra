@@ -112,17 +112,32 @@ External caller (dev box):
   @playwright/mcp --isolated --storage-state ~/.cache/...storage-state.json
 ```
 
+## Browser binary — real Google Chrome (for proprietary codecs)
+
+The chrome-service container runs **real Google Chrome**, not the bundled
+Chromium, via the infra-owned image `ghcr.io/viktorbarzin/chrome-service-browser`
+(`files/chrome/Dockerfile` = `mcr.microsoft.com/playwright:v1.48.0-noble` +
+`google-chrome-stable`, built by `.github/workflows/build-chrome-service-browser.yml`).
+The launch resolves `CHROMIUM=/opt/google/chrome/chrome`.
+
+**Why:** the Playwright-bundled Chromium has proprietary codecs **compiled out**,
+so H.264/AAC video (Instagram Reels, X, most `.mp4`) fails in the noVNC view with
+`MEDIA_ERR_SRC_NOT_SUPPORTED` (the bytes download `200 video/mp4` but there's no
+decoder — NOT a GPU issue). Royalty-free codecs (VP9/VP8/AV1 → YouTube) always
+worked. Swapping `libffmpeg.so` does NOT help (codecs are compiled out, not just
+the lib stripped) and Chrome-for-Testing is also codec-less — only
+`google-chrome-stable` carries them.
+
 ## Image pin
 
-Both the server image (`mcr.microsoft.com/playwright:v1.48.0-noble` in
-`stacks/chrome-service/main.tf`) and the Python client
-(`playwright==1.48.0` in callers' `requirements.txt`) **must match
-minor-versions**. Bump in lockstep — Playwright protocol changes between
-minors and the client cannot connect to a mismatched server.
-
-The harvester + snapshot-server sidecar use
-`mcr.microsoft.com/playwright/python:v1.48.0-noble` — same playwright
-minor, with Python-side bindings pre-installed.
+The Playwright base + the Python client (`playwright==1.48.0` in callers'
+`requirements.txt`) and the snapshot sidecars
+(`mcr.microsoft.com/playwright/python:v1.48.0-noble`) historically had to match
+minor-versions. The chrome-service browser is now real Google Chrome (a newer
+milestone than the 1.48 Chromium), but the `connect_over_cdp` callers (tripit
+fare scrape, `homelab browser`, snapshot-harvester) attach over raw CDP, which is
+version-tolerant — verified working against this Chrome. If a future Chrome
+milestone breaks a caller, pin Chrome in the Dockerfile or bump the clients.
 
 ## Storage
 
