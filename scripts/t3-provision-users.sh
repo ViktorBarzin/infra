@@ -29,6 +29,9 @@ REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
+# OS users (space-separated) that receive the vendored agent skills (scripts/workstation/claude-skills).
+# Allowlist: install_skills no-ops for anyone not listed. Extend here to roll out to more users.
+SKILL_USERS="${SKILL_USERS:-emo}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -431,6 +434,49 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
+# Per-user agent skills, vendored from the in-repo snapshot ($WORKSTATION_DIR/claude-skills) — the
+# `npx skills` upstream drifted off this exact set, so we reproduce it offline + deterministically.
+# if-absent + ADDITIVE: copies a skill dir into ~/.agents/skills/<name> (owned by the user) and
+# symlinks ~/.claude/skills/<name> -> ../../.agents/skills/<name> (the layout `skills add -g`
+# produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS; never clobbers an existing
+# skill. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_skills() {
+  local user="$1" home
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  case " $SKILL_USERS " in *" $user "*) ;; *) return 0 ;; esac
+  local src_root="$WORKSTATION_DIR/claude-skills"
+  [[ -d "$src_root" ]] || { log "WARN: $src_root missing -> skip skills for $user"; return 0; }
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    local d names=""
+    for d in "$src_root"/*/; do [[ -d "$d" ]] && names+="$(basename "$d") "; done
+    echo "[dry-run] vendor skills if-absent -> $user: ${names}"
+    return 0
+  fi
+
+  local agents_dir="$home/.agents/skills" claude_dir="$home/.claude/skills"
+  install -d -o "$user" -g "$user" -m 0755 "$agents_dir" "$claude_dir"
+
+  local skill name dst n=0
+  for skill in "$src_root"/*/; do
+    [[ -d "$skill" ]] || continue
+    name="$(basename "$skill")"
+    dst="$agents_dir/$name"
+    [[ -e "$dst" || -L "$claude_dir/$name" ]] && continue            # if-absent: already installed
+    if cp -a "$src_root/$name" "$dst"; then
+      chown -R "$user:$user" "$dst"
+      ln -sfn "../../.agents/skills/$name" "$claude_dir/$name"
+      chown -h "$user:$user" "$claude_dir/$name"
+      n=$((n+1))
+    else
+      log "WARN: copy skill $name -> $user failed"
+    fi
+  done
+  if [[ "$n" -gt 0 ]]; then log "vendored $n skill(s) -> $user"; fi
+  return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the reconcile
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -572,6 +618,13 @@ done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desi
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_memory "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5e) per-user agent skills (SKILL_USERS allowlist only): vendored snapshot -> ~/.agents/skills
+#     + ~/.claude/skills symlinks. if-absent + additive; best-effort (never aborts the reconcile).
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_skills "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5b) machine-wide (once, not per-user): keep the t3 gated nightly TRACKER timer enabled (it
