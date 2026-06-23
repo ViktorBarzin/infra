@@ -162,6 +162,11 @@ resource "helm_release" "tigera_operator" {
     # are installed -> "ensure CRDs are installed first". Not needed here.
     goldmane  = { enabled = false }
     whisker   = { enabled = false }
-    resources = { limits = { memory = "256Mi" } }
+    # 512Mi (was 256Mi): the operator idles at ~38Mi but its STARTUP spike
+    # (re-listing resources to build informer caches) exceeded 256Mi and
+    # OOM-crashlooped on 2026-06-23 the first time the pod restarted (a latent
+    # landmine — any restart would have triggered it). 512Mi covers the spike;
+    # data plane (calico-node) is unaffected by an operator restart.
+    resources = { limits = { memory = "512Mi" } }
   })]
 }
