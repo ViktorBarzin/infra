@@ -398,8 +398,16 @@ phase_preflight() {
     slack "preflight — k8s-master already on v$TARGET_VERSION; skipping kubeadm-plan-target gate (workers still pending)"
     echo "k8s-master already on v$TARGET_VERSION — skipping kubeadm-plan-target gate"
   else
+    # Pass the EXPLICIT target version. Without it, `kubeadm upgrade plan` (run by
+    # the OLD kubeadm still on master) auto-proposes only the current minor's
+    # latest patch — fine for a patch upgrade, but for a MINOR upgrade it never
+    # proposes the next minor, so plan_target came back as 1.34.x (or empty,
+    # "falling back to stable-1.34") and this gate ABORTED every 1.35 attempt
+    # (blocked last night's 1.34.9->1.35.6 run even though the compat gate passed,
+    # 2026-06-24). `kubeadm upgrade plan v1.35.6` correctly emits the
+    # "kubeadm upgrade apply v1.35.6" line (verified on master). Works for patches too.
     local plan_target
-    plan_target=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" 'sudo kubeadm upgrade plan --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins' \
+    plan_target=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" "sudo kubeadm upgrade plan v$TARGET_VERSION --ignore-preflight-errors=CoreDNSMigration,CoreDNSUnsupportedPlugins" \
       | grep -oE 'kubeadm upgrade apply v[0-9]+\.[0-9]+\.[0-9]+' \
       | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)
     if [ "$plan_target" != "$TARGET_VERSION" ]; then

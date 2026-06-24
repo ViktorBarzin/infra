@@ -131,6 +131,15 @@ resource "kubernetes_manifest" "external_secret" {
       ]
     }
   }
+
+  # ESO 2.x took SSA ownership of .spec.refreshInterval (it normalizes the value),
+  # which conflicts with terraform's apply of this ExternalSecret. force_conflicts
+  # lets terraform reassert its spec — the interval is semantically identical, so
+  # this is benign. Surfaced after the ESO 0.12->2.6 migration (2026-06-24); the
+  # same pattern affects all migrated ExternalSecrets fleet-wide.
+  field_manager {
+    force_conflicts = true
+  }
 }
 
 # --- Unified ServiceAccount + RBAC ---
