@@ -189,23 +189,26 @@ resource "kubernetes_cron_job_v1" "idle_sleeper" {
               image   = "bitnami/kubectl:latest"
               command = ["/bin/bash", "-c"]
               args = [<<-EOT
-                set -euo pipefail
+                set -eu
                 NS=android-emulator
                 DEPLOY=android-emulator
                 IDLE_LIMIT_SECONDS=21600   # 6h with no user activity -> sleep
                 spec=$(kubectl -n $NS get deploy $DEPLOY -o jsonpath='{.spec.replicas}')
                 [ "$spec" = "0" ] && { echo "already asleep"; exit 0; }
-                pod=$(kubectl -n $NS get pods -l app=$DEPLOY --field-selector=status.phase=Running -o name | head -1)
+                pod=$(kubectl -n $NS get pods -l app=$DEPLOY --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
                 [ -z "$pod" ] && { echo "no running pod (booting?) — not sleeping"; exit 0; }
-                pod=$${pod#pod/}
-                # How long since the emulator was actually used? Compare the
-                # last user-activity time from dumpsys power (taps/keys/app
-                # launches, incl. noVNC clicks) against current guest uptime,
-                # both in ms on the guest uptime clock. Fail-safe: if adb is
-                # not answering yet (cold boot) these come back empty and we
-                # must NOT sleep.
-                uptime_ms=$(kubectl -n $NS exec $pod -- sh -c 'adb shell cat /proc/uptime' 2>/dev/null | awk '{printf "%d", $1*1000}')
-                last_ms=$(kubectl -n $NS exec $pod -- sh -c 'adb shell dumpsys power' 2>/dev/null | awk -F= '/mLastUserActivityTime\(excludingAttention\)/{gsub(/[^0-9]/,"",$2); print $2; exit}')
+                # How long since the emulator was actually used? Compare the last
+                # user-activity time from dumpsys power (taps/keys/app-launches,
+                # incl. noVNC clicks) with current guest uptime, both in ms on
+                # the guest uptime clock. Capture first, then parse: NO pipefail
+                # and no early `exit` in awk, so a streaming `dumpsys` can't
+                # SIGPIPE the exec and trip set -e (that bug made every run die
+                # 141 with no output). Fail-safe: a still-booting emulator (adb
+                # not ready) yields empty values -> do NOT sleep.
+                uptime_raw=$(kubectl -n $NS exec $pod -- adb shell cat /proc/uptime 2>/dev/null || true)
+                dump=$(kubectl -n $NS exec $pod -- adb shell dumpsys power 2>/dev/null || true)
+                uptime_ms=$(printf '%s' "$uptime_raw" | awk '{printf "%d", $1*1000}')
+                last_ms=$(printf '%s' "$dump" | awk -F= '/mLastUserActivityTime\(excludingAttention\)/{v=$2} END{gsub(/[^0-9]/,"",v); print v}')
                 if [ -z "$uptime_ms" ] || [ -z "$last_ms" ]; then
                   echo "could not read activity (emulator booting / adb not ready) — not sleeping"
                   exit 0
