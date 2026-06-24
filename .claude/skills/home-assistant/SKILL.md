@@ -11,8 +11,8 @@ description: |
   There are TWO Home Assistant deployments: ha-london (default) and ha-sofia.
   Always use Home Assistant for smart home control.
 author: Claude Code
-version: 2.0.0
-date: 2026-02-07
+version: 2.1.0
+date: 2026-06-24
 ---
 
 # Home Assistant Control
@@ -395,13 +395,26 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 ## ha-london Knowledge Map
 
 ### Overview
-- **HA Version**: 2025.9.1 (Docker container on Raspberry Pi)
+- **HA Version**: 2026.5.2 on **Home Assistant OS** (HAOS — managed appliance, NOT a `docker run` container). Latest is 2026.6.4 (update available, deliberately not applied).
 - **Location**: London, UK
-- **Platform**: Raspberry Pi 4, HA OS (not Docker standalone)
-- **SSH**: `ssh hassio@192.168.8.103` (requires `sudo` for file access)
-- **Config path**: `/config/` (requires `sudo` for file access)
+- **Platform**: Raspberry Pi 4, HA OS
+- **Access from the Sofia devvm**: london is **remote** — `homelab ha ssh --instance london` generally WON'T connect (ADR-0012). Drive it via the API: `homelab ha token --instance london` + `https://ha-london.viktorbarzin.me/api/...`, and the WebSocket API `wss://ha-london.viktorbarzin.me/api/websocket` for dashboards / config-entries / HACS installs.
+- **SSH (only from the London LAN)**: `ssh hassio@192.168.8.103` (requires `sudo` for file access)
+- **Config path**: `/config/`
 - **3 tracked people**: Viktor Barzin, Anca Milea, Gheorghe Milea
 - **Zone**: London (home)
+
+### Dashboards (redesigned 2026-06-24)
+**Glossary** (HA terms — keep distinct):
+- **Dashboard** = a sidebar entry (Overview, Air Quality, Map). Sidebar *order* is a per-USER frontend preference, not in any dashboard config.
+- **View** = a tab inside a dashboard. View order is global (stored in the dashboard config).
+- **Card** = a widget inside a view.
+
+- **Overview** (`lovelace`, the default): responsive **sections** views, styled with Mushroom + mini-graph-card.
+  - **Home** tab: *Who's home* · *Comfort & Air* (CO₂/temp/humidity/PM2.5/VOC chips + CO₂ and temp/humidity trend graphs + link to Air Quality) · *Cowboy* (battery/range/last-ride) · *Energy* (5 Kasa plugs + power trend) · *Quick actions* (Netflix/Stremio/Night).
+  - **More** tab: *Network* (GL-MT6000 router) · *System* (HA version/update, last backup, RPi power) · *Phones*.
+- **Air Quality** (`air-quality`): deep-dive (views: Home, Detailed). (`detialed`→`detailed` path typo fixed 2026-06-24.)
+- Built via the WS `lovelace/config/save` API (london is remote — no SSH path).
 
 ### Key Systems
 
@@ -424,10 +437,15 @@ Named plugs with power/energy tracking:
 - PM1.0/2.5/4.0/10 particulate sensors
 - VOC, NOx, ammonia, CO, ethanol, hydrogen, methane, NO2 gas sensors
 
-#### 3. Cowboy E-Bike
-- `sensor.bike_state_of_charge`: Battery %
-- `sensor.bike_total_distance`: Total km
-- `sensor.bike_total_co2_saved`: CO2 saved (grams)
+#### 3. Cowboy E-Bike (`elsbrock/cowboy-ha`)
+Bike named **"Classic Performance"** → entities are `sensor.classic_performance_*` (26 total). The old `sensor.bike_*` names are GONE (they were the dead `jdejaegh` integration).
+- `sensor.classic_performance_remaining_battery`: Battery % (was `sensor.bike_state_of_charge`)
+- `sensor.classic_performance_remaining_range`: Range km
+- `sensor.classic_performance_mileage`: Total km (was `sensor.bike_total_distance`)
+- `sensor.classic_performance_saved_co2`: Lifetime CO2 saved (was `sensor.bike_total_co2_saved`)
+- Plus `_distance_today`, `_last_trip_*`, `_battery_health`, `device_tracker.classic_performance`, etc.
+- **GOTCHA**: live battery/range/mileage read `unknown` while the bike is parked/asleep — Cowboy only reports live SoC when awake (ridden/charging); trip-history + `distance_today` stay live regardless.
+- Auth: account **email+password** (no AWS Cognito — that was the dead `jdejaegh`/`cowboybike` lineage). Setup via UI config flow / REST `config_entries/flow`. Creds in Vaultwarden item **"cowboy bike"** (`homelab vault get "cowboy bike"`).
 
 #### 4. Uptime Monitoring (UptimeRobot)
 - `sensor.blog`: blog uptime
@@ -446,12 +464,17 @@ Named plugs with power/energy tracking:
 - Scripts: `script.start_netflix`, `script.start_stremio`
 - Scene: `scene.night` (turns off Livia + Michelle plugs)
 
-### Custom Components
-- **cowboy**: Cowboy e-bike integration (HACS)
-- **hildebrandglow_dcc**: UK smart meter DCC energy data (HACS)
+### Custom Components (HACS integrations)
+- **cowboy** (`elsbrock/cowboy-ha` v1.2.0): Cowboy e-bike — revived 2026-06-24. The old `jdejaegh/home-assistant-cowboy` repo is **dead (404)**; don't chase it.
+- **hildebrandglow_dcc**: UK smart meter DCC energy — **DISABLED by user** (config entry `disabled_by: user`), not broken.
+
+### HACS frontend cards (plugins)
+- **Mushroom** (`piitaya/lovelace-mushroom`), **mini-graph-card** (`kalkih/mini-graph-card`), **plotly-graph-card** (`dbuezas/lovelace-plotly-graph-card`) — used by the redesigned Overview. Install over WS `hacs/repository/download`; resources auto-register in storage mode.
 
 ### Integrations
-ESPHome, TP-Link Kasa, Tapo, UptimeRobot, Cowboy, Hildebrand Glow DCC, Oral-B BLE, Ookla Speedtest, HACS, OpenRouter (multiple free LLMs), Piper (local TTS), Whisper (local STT), Android TV/ADB
+ESPHome, TP-Link Kasa, Tapo, UptimeRobot, **Cowboy** (elsbrock), Oral-B BLE, Ookla Speedtest (exposes only an `update` entity, no live speed sensors), HACS, OpenRouter (free LLMs), Piper (TTS), Whisper (STT), Android TV/ADB.
+- **Disabled by user (NOT broken)**: `met` + `metoffice` (weather — so `weather.*` entities are ABSENT), `roomba` (Rumi vacuum), `hildebrandglow_dcc` (energy).
+- **Failing**: `tplink` **Tapo P100** projector plug — `setup_retry`, 403 KLAP handshake from 192.168.8.108 (plug off / firmware). Left as-is.
 
 ### AI / Voice Assistants
 - 5 free LLM conversation agents: Google Gemma 3 27B, Meta Llama 3.2 3B, Mistral Devstral 2, OpenAI GPT-OSS-20B, Z.AI GLM 4.5 Air
@@ -466,15 +489,8 @@ ESPHome, TP-Link Kasa, Tapo, UptimeRobot, Cowboy, Hildebrand Glow DCC, Oral-B BL
 - Anca arrival/departure notifications
 - Night scene: turns off Livia + Michelle
 
-### Docker Setup
-```bash
-docker run -d --name homeassistant --privileged \
-  -e TZ=Europe/London \
-  -v /home/pi/docker/homeAssistant:/config \
-  -v /run/dbus:/run/dbus:ro \
-  --network=host --restart=unless-stopped \
-  homeassistant/home-assistant:2025.9
-```
+### Platform (HAOS — ignore any legacy `docker run` snippet)
+ha-london runs **Home Assistant OS** (managed appliance), NOT a hand-run Docker container. There is no `docker run homeassistant/home-assistant` to manage. Install HACS components over the WebSocket API (`hacs/repository/download` with the repo's HACS id), then restart via `POST /api/services/homeassistant/restart` — a HAOS restart drops automations for ~1–2 min and resets `sensor.uptime` (use that as the "back up" marker).
 
 ### SSH Access
 ```bash
