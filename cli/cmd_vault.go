@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -459,7 +460,71 @@ func vaultLock(args []string) error {
 	return nil // lock/logout best-effort; never error the caller
 }
 
-func vaultSetup(args []string) error { return fmt.Errorf("not implemented") }
+func vaultPutArgs(user string, c vwCreds) []string {
+	return []string{"kv", "patch", vwCredsPath(user),
+		"vaultwarden_email=" + c.Email,
+		"vaultwarden_master_password=" + c.MasterPassword,
+		"vaultwarden_client_id=" + c.ClientID,
+		"vaultwarden_client_secret=" + c.ClientSecret,
+	}
+}
+
+// promptNoEcho reads one line without terminal echo (for the master password).
+func promptNoEcho(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	exec.Command("stty", "-echo").Run()
+	defer func() { exec.Command("stty", "echo").Run(); fmt.Fprintln(os.Stderr) }()
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	return strings.TrimSpace(line), err
+}
+
+func promptLine(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	return strings.TrimSpace(line), err
+}
+
+func vaultSetup(args []string) error {
+	hardenProcess()
+	fmt.Fprintln(os.Stderr, "One-time setup. Stored ONLY in your own Vault path; the admin never sees it.")
+	fmt.Fprintln(os.Stderr, "Get your API key at https://vaultwarden.viktorbarzin.me → Settings → Security → Keys → View API key.")
+	email, err := promptLine("Vaultwarden email: ")
+	if err != nil {
+		return err
+	}
+	clientID, err := promptLine("API key client_id (user.xxxx): ")
+	if err != nil {
+		return err
+	}
+	clientSecret, err := promptNoEcho("API key client_secret: ")
+	if err != nil {
+		return err
+	}
+	master, err := promptNoEcho("Master password: ")
+	if err != nil {
+		return err
+	}
+	if master == "" || clientID == "" || clientSecret == "" {
+		return fmt.Errorf("all fields are required")
+	}
+	c := vwCreds{Email: email, MasterPassword: master, ClientID: clientID, ClientSecret: clientSecret}
+	if _, err := realRunner("vault", vaultPutArgs(vaultCurrentUser(), c), nil); err != nil {
+		return fmt.Errorf("writing creds to your Vault path failed (scoped token present?): %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "Stored. Verifying unlock…")
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := openSession(realRunner, vaultCurrentUser(), uid); err != nil {
+		return fmt.Errorf("stored, but verification failed — double-check master password / API key: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "✓ Verified. Fetches are now AFK.")
+	return nil
+}
 
 func vaultGet(args []string) error {
 	hardenProcess()
