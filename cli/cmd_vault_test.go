@@ -190,3 +190,9 @@ func TestOpLogLineHasNoSecretOrItem(t *testing.T) {
 		}
 	}
 }
+
+func TestLockPath(t *testing.T) {
+	if got := vaultLockPath("1001"); got != "/run/user/1001/homelab-vault.lock" {
+		t.Fatalf("vaultLockPath = %q", got)
+	}
+}
