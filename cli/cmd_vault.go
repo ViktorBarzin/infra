@@ -32,7 +32,28 @@ func vaultCommands() []Command {
 			Summary: "current TOTP code for an item: vault code <name>", Run: vaultCode},
 		{Path: []string{"vault", "lock"}, Tier: TierWrite,
 			Summary: "lock/log out the local bw session", Run: vaultLock},
+		{Path: []string{"vault"}, Tier: TierRead,
+			Summary: "Vaultwarden access for your own vault (run `homelab vault` for help)",
+			Run:     func([]string) error { fmt.Print(vaultHelp()); return nil }},
 	}
+}
+
+// vaultHelp is shown for bare `homelab vault`.
+func vaultHelp() string {
+	return `homelab vault — read YOUR OWN Vaultwarden logins (no-HITL after one-time setup)
+
+  homelab vault setup             one-time: store your master password + API key in your Vault path
+  homelab vault status            configured / unlocked / reachable (no secrets)
+  homelab vault list [--search Q] list your item names (no secrets)
+  homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
+                                  TTY → clipboard (auto-clears); piped → stdout
+  homelab vault code <name>       current TOTP code
+  homelab vault lock              lock / log out the local bw session
+
+Creds live only in your own Vault path; the admin never sees them. Identity is
+your unix UID. Security model: docs/superpowers/specs/2026-06-24-homelab-vault-design.md
+(note: anything running as your user can decrypt your vault — the accepted no-HITL trade).
+`
 }
 
 const vwUserPathPrefix = "secret/workstation/claude-users/"
