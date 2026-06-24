@@ -331,6 +331,24 @@ func TestBwNeedsLogin(t *testing.T) {
 	}
 }
 
+func TestVaultHelpMentionsSecurity(t *testing.T) {
+	h := vaultHelp()
+	for _, want := range []string{"homelab vault get", "no-HITL", "your own", "setup"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("vault help missing %q", want)
+		}
+	}
+}
+
+func TestVaultBareGroupRegistered(t *testing.T) {
+	for _, c := range vaultCommands() {
+		if len(c.Path) == 1 && c.Path[0] == "vault" {
+			return
+		}
+	}
+	t.Fatal("bare `vault` help command not registered")
+}
+
 // getValue is the testable core: given a runner + opts, returns the secret value.
 func TestGetValueFlow(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{
