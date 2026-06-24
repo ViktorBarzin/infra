@@ -152,11 +152,18 @@ resource "kubernetes_service" "gate" {
   }
 }
 
-# Sleep side: every 15 min, look at established TCP connections to the
-# emulator's adb (5555) and noVNC (6080) ports from OUTSIDE the pod
-# (remote != 127.0.0.1 — the in-container adb server holds a permanent
-# loopback connection to adbd that must not count as activity). Four
-# consecutive idle checks (~1h) scale the deployment to zero.
+# Sleep side: every 15 min, ask the emulator how long since it was actually
+# USED — dumpsys power's last user-activity time (taps/keys/app-launches,
+# including noVNC clicks) vs guest uptime. No activity for 6h → scale the
+# deployment to zero. This deliberately IGNORES open adb/noVNC connections:
+# a forgotten adb transport (connect with no disconnect) stays ESTABLISHED
+# forever, so the old connection-count check kept resetting and the emulator
+# never slept (up 6+ days while idle ~5). Reads activity via `kubectl exec`
+# (the SA has pods/exec) and scales down with a direct replicas patch on the
+# named deployment — the SAME path the wake gate scales UP — so it needs only
+# the existing `deployments` patch grant, NOT `deployments/scale` (which the
+# SA lacks; the old `kubectl scale` here failed Forbidden). Stateless: no
+# idle-counter annotation. Fail-safe: any read error → do NOT sleep.
 resource "kubernetes_cron_job_v1" "idle_sleeper" {
   metadata {
     name      = "android-emulator-idle-sleeper"
@@ -183,32 +190,33 @@ resource "kubernetes_cron_job_v1" "idle_sleeper" {
               command = ["/bin/bash", "-c"]
               args = [<<-EOT
                 set -euo pipefail
-                NS=android-emulator DEPLOY=android-emulator ANN=emulator.viktorbarzin.me/idle-checks
+                NS=android-emulator
+                DEPLOY=android-emulator
+                IDLE_LIMIT_SECONDS=21600   # 6h with no user activity -> sleep
                 spec=$(kubectl -n $NS get deploy $DEPLOY -o jsonpath='{.spec.replicas}')
                 [ "$spec" = "0" ] && { echo "already asleep"; exit 0; }
                 pod=$(kubectl -n $NS get pods -l app=$DEPLOY --field-selector=status.phase=Running -o name | head -1)
-                [ -z "$pod" ] && { echo "no running pod (booting?) — not counting"; exit 0; }
-                # /proc/net/tcp: count ESTABLISHED (st=01) conns with local port
-                # 5555 (0x15B3) or 6080 (0x17C0) whose remote is not loopback.
-                est=$(kubectl -n $NS exec $${pod#pod/} -- cat /proc/net/tcp | awk '
-                  $4 == "01" {
-                    split($2, l, ":"); split($3, r, ":")
-                    if ((l[2] == "15B3" || l[2] == "17C0") && r[1] != "0100007F") n++
-                  } END { print n+0 }')
-                if [ "$est" -gt 0 ]; then
-                  echo "$est active connection(s) — resetting idle counter"
-                  kubectl -n $NS annotate deploy $DEPLOY $ANN=0 --overwrite
+                [ -z "$pod" ] && { echo "no running pod (booting?) — not sleeping"; exit 0; }
+                pod=$${pod#pod/}
+                # How long since the emulator was actually used? Compare the
+                # last user-activity time from dumpsys power (taps/keys/app
+                # launches, incl. noVNC clicks) against current guest uptime,
+                # both in ms on the guest uptime clock. Fail-safe: if adb is
+                # not answering yet (cold boot) these come back empty and we
+                # must NOT sleep.
+                uptime_ms=$(kubectl -n $NS exec $pod -- sh -c 'adb shell cat /proc/uptime' 2>/dev/null | awk '{printf "%d", $1*1000}')
+                last_ms=$(kubectl -n $NS exec $pod -- sh -c 'adb shell dumpsys power' 2>/dev/null | awk -F= '/mLastUserActivityTime\(excludingAttention\)/{gsub(/[^0-9]/,"",$2); print $2; exit}')
+                if [ -z "$uptime_ms" ] || [ -z "$last_ms" ]; then
+                  echo "could not read activity (emulator booting / adb not ready) — not sleeping"
                   exit 0
                 fi
-                n=$(kubectl -n $NS get deploy $DEPLOY -o jsonpath="{.metadata.annotations['emulator\.viktorbarzin\.me/idle-checks']}")
-                n=$(( $${n:-0} + 1 ))
-                if [ "$n" -ge 4 ]; then
-                  echo "idle for $n checks (~1h) — scaling to zero"
-                  kubectl -n $NS scale deploy $DEPLOY --replicas=0
-                  kubectl -n $NS annotate deploy $DEPLOY $ANN=0 --overwrite
+                idle_s=$(( (uptime_ms - last_ms) / 1000 ))
+                echo "idle for $idle_s s (limit $IDLE_LIMIT_SECONDS s / 6h)"
+                if [ "$idle_s" -ge "$IDLE_LIMIT_SECONDS" ]; then
+                  echo "idle >= 6h with no user activity — scaling to zero"
+                  kubectl -n $NS patch deploy $DEPLOY --type=merge -p '{"spec":{"replicas":0}}'
                 else
-                  echo "idle check $n/4"
-                  kubectl -n $NS annotate deploy $DEPLOY $ANN=$n --overwrite
+                  echo "used within 6h — staying up"
                 fi
               EOT
               ]
