@@ -176,3 +176,17 @@ func TestTerminalAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestOpLogLineHasNoSecretOrItem(t *testing.T) {
+	line := opLogLine(opRecord{User: "emo", Verb: "get", PID: 10, PPID: 9, ParentComm: "claude", ItemName: "Chase Bank"})
+	for _, must := range []string{"user=emo", "verb=get", "ppid=9", "parent=claude"} {
+		if !strings.Contains(line, must) {
+			t.Errorf("op-log missing %q: %s", must, line)
+		}
+	}
+	for _, mustNot := range []string{"Chase", "password", "secret"} {
+		if strings.Contains(line, mustNot) {
+			t.Fatalf("op-log LEAKS %q (privacy violation): %s", mustNot, line)
+		}
+	}
+}
