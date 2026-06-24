@@ -35,6 +35,14 @@ resource "kubernetes_namespace" "instagram_poster" {
 #     - immich_tag_instagram      (optional — auto-resolved if missing)
 #     - immich_tag_posted         (optional — auto-resolved if missing)
 resource "kubernetes_manifest" "external_secret" {
+  # The external-secrets controller takes server-side-apply ownership of
+  # .spec.refreshInterval, so a plain TF apply conflicts. force_conflicts lets
+  # TF win (values match, so it's stable) — same pattern as grafana/woodpecker/
+  # traefik/k8s-version-upgrade. Surfaced 2026-06-24 by the first IG apply since
+  # the ESO v1 migration (the scale-to-0 push).
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -139,6 +147,11 @@ resource "kubernetes_manifest" "external_secret" {
 # ESO refreshes the K8s Secret every 15m. `reloader.stakater.com/match`
 # bounces the pod when the password changes.
 resource "kubernetes_manifest" "benchmark_db_external_secret" {
+  # See external_secret above — ESO owns .spec.refreshInterval; force_conflicts
+  # lets the TF apply win instead of erroring on the field-manager conflict.
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -227,7 +240,11 @@ resource "kubernetes_deployment" "instagram_poster" {
   }
 
   spec {
-    replicas = 1
+    # Scaled to 0 (2026-06-24): Instagram Graph integration is unused and its
+    # ExternalSecret is dead (missing ig_graph_long_lived_token /
+    # ig_business_account_id in Vault secret/instagram-poster). Set back to 1
+    # after minting a Meta long-lived token and populating those keys.
+    replicas = 0
     # RWO PVC — cannot rolling-update.
     strategy {
       type = "Recreate"
