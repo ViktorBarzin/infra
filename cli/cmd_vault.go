@@ -269,10 +269,106 @@ func openSession(run cmdRunner, user, uid string) (session, error) {
 	return session{env: bwSecretEnv(appdata, creds, sess)}, nil
 }
 
-func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }
+type getOpts struct {
+	name  string
+	field string
+	json  bool
+}
+
+var validGetFields = map[string]bool{"password": true, "username": true, "uri": true, "notes": true, "totp": true}
+
+func parseGetArgs(args []string) (getOpts, error) {
+	o := getOpts{field: "password"}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
+			o.json = true
+		case a == "--field" && i+1 < len(args):
+			o.field = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--field="):
+			o.field = strings.TrimPrefix(a, "--field=")
+		case !strings.HasPrefix(a, "-") && o.name == "":
+			o.name = a
+		}
+	}
+	if o.name == "" {
+		return o, fmt.Errorf("usage: homelab vault get <name> [--field password|username|uri|notes|totp] [--json]")
+	}
+	if !validGetFields[o.field] {
+		return o, fmt.Errorf("invalid --field %q (want password|username|uri|notes|totp)", o.field)
+	}
+	return o, nil
+}
+
+// getValue opens a session and fetches one field. Pure of I/O side effects
+// besides the runner, so it is unit-tested with a fake runner.
+func getValue(run cmdRunner, user, uid string, o getOpts) (string, error) {
+	s, err := openSession(run, user, uid)
+	if err != nil {
+		return "", err
+	}
+	return bwGet(run, s.env, o.field, o.name)
+}
+
+// emitSecret returns it TTY-aware: clipboard (OSC52, gated, auto-clear) on a
+// terminal; stdout otherwise. Returns the human-facing status string (never the
+// secret) for the clipboard path.
+func emitSecret(value string) {
+	if returnMode(stdoutIsTTY()) == "stdout" {
+		fmt.Println(value)
+		return
+	}
+	if !terminalAllowed(os.Getenv("TERM"), os.Getenv("TERM_PROGRAM")) {
+		fmt.Fprintln(os.Stderr, "refusing to print secret: this terminal can't do OSC52 clipboard safely; pipe the command or use a supported terminal")
+		return
+	}
+	fmt.Fprint(os.Stderr, osc52(value))
+	fmt.Fprintln(os.Stderr, "copied to clipboard; clearing in 30s")
+	clearClipboardAfter(30)
+}
+
+// clearClipboardAfter spawns a detached background clear so the secret doesn't
+// linger in the clipboard. Best-effort.
+func clearClipboardAfter(seconds int) {
+	exec.Command("sh", "-c", fmt.Sprintf("sleep %d; printf '%s'", seconds, osc52clear())).Start()
+}
+
+func vaultSetup(args []string) error { return fmt.Errorf("not implemented") }
+
 func vaultStatus(args []string) error { return fmt.Errorf("not implemented") }
-func vaultList(args []string) error   { return fmt.Errorf("not implemented") }
-func vaultGet(args []string) error    { return fmt.Errorf("not implemented") }
+
+func vaultList(args []string) error { return fmt.Errorf("not implemented") }
+
+func vaultGet(args []string) error {
+	hardenProcess()
+	o, err := parseGetArgs(args)
+	if err != nil {
+		return err
+	}
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	user := vaultCurrentUser()
+	val, err := getValue(realRunner, user, uid, o)
+	if err != nil {
+		return err
+	}
+	writeOpLog(opRecord{User: user, Verb: "get", PID: os.Getpid(), PPID: os.Getppid(), ParentComm: parentComm(os.Getppid()), ItemName: o.name})
+	if o.json {
+		fmt.Printf("{%q:%q}\n", o.field, val)
+		return nil
+	}
+	emitSecret(val)
+	return nil
+}
+
 func vaultSearch(args []string) error { return fmt.Errorf("not implemented") }
-func vaultCode(args []string) error   { return fmt.Errorf("not implemented") }
-func vaultLock(args []string) error   { return fmt.Errorf("not implemented") }
+
+func vaultCode(args []string) error { return fmt.Errorf("not implemented") }
+
+func vaultLock(args []string) error { return fmt.Errorf("not implemented") }

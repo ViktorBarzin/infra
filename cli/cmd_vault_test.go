@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,5 +196,40 @@ func TestOpLogLineHasNoSecretOrItem(t *testing.T) {
 func TestLockPath(t *testing.T) {
 	if got := vaultLockPath("1001"); got != "/run/user/1001/homelab-vault.lock" {
 		t.Fatalf("vaultLockPath = %q", got)
+	}
+}
+
+func TestParseGetArgs(t *testing.T) {
+	o, err := parseGetArgs([]string{"github", "--field", "username", "--json"})
+	if err != nil || o.name != "github" || o.field != "username" || !o.json {
+		t.Fatalf("parseGetArgs = %+v err=%v", o, err)
+	}
+	d, _ := parseGetArgs([]string{"github"})
+	if d.field != "password" || d.json {
+		t.Fatalf("defaults wrong: %+v", d)
+	}
+	if _, err := parseGetArgs([]string{}); err == nil {
+		t.Fatal("get with no name must error")
+	}
+	if _, err := parseGetArgs([]string{"x", "--field", "evil"}); err == nil {
+		t.Fatal("invalid --field must error")
+	}
+}
+
+// getValue is the testable core: given a runner + opts, returns the secret value.
+func TestGetValueFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":        "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":    "cs",
+		"bw status":              `{"status":"locked"}`,
+		"bw unlock":              "SESS",
+		"bw get password github": "p@ss",
+	}}
+	// Use real UID so os.MkdirAll(/run/user/<uid>/homelab-bw) succeeds.
+	uid := fmt.Sprintf("%d", os.Getuid())
+	val, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"})
+	if err != nil || val != "p@ss" {
+		t.Fatalf("getValue = %q, %v", val, err)
 	}
 }
