@@ -233,6 +233,16 @@ func TestStatusSummaryUnconfigured(t *testing.T) {
 	}
 }
 
+func TestVaultPutArgs(t *testing.T) {
+	got := vaultPutArgs("emo", vwCreds{Email: "e", MasterPassword: "m", ClientID: "ci", ClientSecret: "cs"})
+	want := []string{"kv", "patch", "secret/workstation/claude-users/emo",
+		"vaultwarden_email=e", "vaultwarden_master_password=m",
+		"vaultwarden_client_id=ci", "vaultwarden_client_secret=cs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("vaultPutArgs = %v", got)
+	}
+}
+
 // getValue is the testable core: given a runner + opts, returns the secret value.
 func TestGetValueFlow(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{
