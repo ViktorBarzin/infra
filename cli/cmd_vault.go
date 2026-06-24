@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -335,11 +336,130 @@ func clearClipboardAfter(seconds int) {
 	exec.Command("sh", "-c", fmt.Sprintf("sleep %d; printf '%s'", seconds, osc52clear())).Start()
 }
 
+// listNames extracts "name (id)" from `bw list items` JSON; never values.
+func listNames(jsonOut string) []string {
+	var items []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &items); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, fmt.Sprintf("%s (%s)", it.Name, it.ID))
+	}
+	return out
+}
+
+func runList(run cmdRunner, user, uid, search string) ([]string, error) {
+	s, err := openSession(run, user, uid)
+	if err != nil {
+		return nil, err
+	}
+	out, err := run("bw", bwListArgs(search), s.env)
+	if err != nil {
+		return nil, err
+	}
+	return listNames(out), nil
+}
+
+func vaultList(args []string) error {
+	hardenProcess()
+	search := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--search" && i+1 < len(args) {
+			search = args[i+1]
+			i++
+		} else if strings.HasPrefix(args[i], "--search=") {
+			search = strings.TrimPrefix(args[i], "--search=")
+		}
+	}
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	names, err := runList(realRunner, vaultCurrentUser(), uid, search)
+	if err != nil {
+		return err
+	}
+	for _, n := range names {
+		fmt.Println(n)
+	}
+	return nil
+}
+
+func vaultSearch(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: homelab vault search <query>")
+	}
+	return vaultList([]string{"--search", strings.Join(args, " ")})
+}
+
+func vaultCode(args []string) error {
+	hardenProcess()
+	if len(args) == 0 {
+		return fmt.Errorf("usage: homelab vault code <name>")
+	}
+	name := args[0]
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	user := vaultCurrentUser()
+	val, err := getValue(realRunner, user, uid, getOpts{name: name, field: "totp"})
+	if err != nil {
+		return err
+	}
+	// TOTP is the most sensitive op: log AND emit an ntfy-bound marker (spec §9a-d).
+	writeOpLog(opRecord{User: user, Verb: "code", PID: os.Getpid(), PPID: os.Getppid(), ParentComm: parentComm(os.Getppid()), ItemName: name})
+	exec.Command("logger", "-t", "homelab-vault-totp", "user="+user+" totp-fetch parent="+parentComm(os.Getppid())).Run()
+	emitSecret(val)
+	return nil
+}
+
+// statusSummary reports config/reachability without revealing secrets.
+func statusSummary(run cmdRunner, user, uid string) string {
+	if _, err := loadCreds(run, user); err != nil {
+		return "vault: not configured — run `homelab vault setup`"
+	}
+	s, err := openSession(run, user, uid)
+	if err != nil {
+		return "vault: configured, but unlock/login FAILED (creds stale? run `homelab vault setup`): " + err.Error()
+	}
+	if _, err := run("bw", []string{"sync"}, s.env); err != nil {
+		return "vault: configured + unlocked, but sync/reachability failed: " + err.Error()
+	}
+	return "vault: configured, unlocked, reachable ✓"
+}
+
+func vaultStatus(args []string) error {
+	hardenProcess()
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	fmt.Println(statusSummary(realRunner, vaultCurrentUser(), uid))
+	return nil
+}
+
+func vaultLock(args []string) error {
+	appdata := bwAppDataDir(vaultCurrentUID())
+	_, _ = realRunner("bw", []string{"lock"}, bwBaseEnv(appdata))
+	_, err := realRunner("bw", []string{"logout"}, bwBaseEnv(appdata))
+	if err == nil {
+		fmt.Println("locked")
+	}
+	return nil // lock/logout best-effort; never error the caller
+}
+
 func vaultSetup(args []string) error { return fmt.Errorf("not implemented") }
-
-func vaultStatus(args []string) error { return fmt.Errorf("not implemented") }
-
-func vaultList(args []string) error { return fmt.Errorf("not implemented") }
 
 func vaultGet(args []string) error {
 	hardenProcess()
@@ -367,8 +487,3 @@ func vaultGet(args []string) error {
 	return nil
 }
 
-func vaultSearch(args []string) error { return fmt.Errorf("not implemented") }
-
-func vaultCode(args []string) error { return fmt.Errorf("not implemented") }
-
-func vaultLock(args []string) error { return fmt.Errorf("not implemented") }

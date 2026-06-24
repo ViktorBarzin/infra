@@ -216,6 +216,23 @@ func TestParseGetArgs(t *testing.T) {
 	}
 }
 
+func TestListNamesParsing(t *testing.T) {
+	// bw list items returns JSON; listNames extracts name + id only.
+	js := `[{"id":"1","name":"GitHub","login":{"username":"u"}},{"id":"2","name":"AWS"}]`
+	names := listNames(js)
+	if len(names) != 2 || names[0] != "GitHub (1)" || names[1] != "AWS (2)" {
+		t.Fatalf("listNames = %v", names)
+	}
+}
+
+func TestStatusSummaryUnconfigured(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{}} // no creds
+	s := statusSummary(f.run, "emo", "1001")
+	if !strings.Contains(s, "not configured") {
+		t.Fatalf("status = %q", s)
+	}
+}
+
 // getValue is the testable core: given a runner + opts, returns the secret value.
 func TestGetValueFlow(t *testing.T) {
 	f := &fakeRunner{out: map[string]string{
