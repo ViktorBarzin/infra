@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 // vault verbs give each unix user no-HITL access to THEIR OWN Vaultwarden vault.
@@ -213,6 +214,59 @@ func parentComm(ppid int) string {
 // never blocks or fails the command). Goes to syslog so it ships to Loki.
 func writeOpLog(r opRecord) {
 	exec.Command("logger", "-t", "homelab-vault", opLogLine(r)).Run() // best-effort
+}
+
+func vaultLockPath(uid string) string { return "/run/user/" + uid + "/homelab-vault.lock" }
+
+// hardenProcess disables core dumps so a bw/homelab crash can't spill the master
+// password to a core file. Best-effort.
+func hardenProcess() {
+	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{Cur: 0, Max: 0})
+}
+
+// withUserLock serializes bw mutations for this user (concurrent Claude sessions
+// as the same user otherwise race bw's appdata). Returns an unlock func.
+func withUserLock(uid string) (func(), error) {
+	f, err := os.OpenFile(vaultLockPath(uid), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+}
+
+// session is one usable bw context: the env (with BW_SESSION) ready for `bw get`.
+type session struct {
+	env []string
+}
+
+// openSession resolves creds, ensures login, unlocks, and returns a ready env.
+// Caller must hold the user lock. appdata is created on tmpfs (0700).
+func openSession(run cmdRunner, user, uid string) (session, error) {
+	creds, err := loadCreds(run, user)
+	if err != nil {
+		return session{}, err
+	}
+	appdata := bwAppDataDir(uid)
+	if err := os.MkdirAll(appdata, 0700); err != nil {
+		return session{}, fmt.Errorf("create bw appdata %s: %w", appdata, err)
+	}
+	loginEnv := bwSecretEnv(appdata, creds, "")
+	// Ensure server is set and we're logged in (idempotent; ignore "already").
+	_, _ = run("bw", []string{"config", "server", "https://vaultwarden.viktorbarzin.me"}, loginEnv)
+	if st, _ := run("bw", bwStatusArgs(), loginEnv); !strings.Contains(st, "\"status\"") || strings.Contains(st, "unauthenticated") {
+		if _, err := run("bw", bwLoginArgs(), loginEnv); err != nil {
+			return session{}, fmt.Errorf("bw login --apikey failed (API key valid? run `homelab vault setup`): %w", err)
+		}
+	}
+	sess, err := bwUnlock(run, loginEnv)
+	if err != nil {
+		return session{}, err
+	}
+	return session{env: bwSecretEnv(appdata, creds, sess)}, nil
 }
 
 func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }
