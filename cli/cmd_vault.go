@@ -88,6 +88,62 @@ func loadCreds(run cmdRunner, user string) (vwCreds, error) {
 var vaultCurrentUser = func() string { return os.Getenv("USER") }
 var vaultCurrentUID = func() string { return fmt.Sprintf("%d", os.Getuid()) }
 
+// bwBaseEnv is the minimal non-secret environment bw/node need. We deliberately
+// do NOT inherit the full parent env (keeps stray secrets out of the child).
+func bwBaseEnv(appdata string) []string {
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = "/usr/local/bin:/usr/bin:/bin"
+	}
+	return []string{
+		"PATH=" + path,
+		"HOME=" + os.Getenv("HOME"),
+		"BITWARDENCLI_APPDATA_DIR=" + appdata,
+		"BW_NOINTERACTION=true",
+	}
+}
+
+// bwSecretEnv adds the secret-bearing vars. session may be "" (pre-unlock).
+func bwSecretEnv(appdata string, c vwCreds, session string) []string {
+	env := bwBaseEnv(appdata)
+	env = append(env,
+		"BW_CLIENTID="+c.ClientID,
+		"BW_CLIENTSECRET="+c.ClientSecret,
+		"BW_PASSWORD="+c.MasterPassword,
+	)
+	if session != "" {
+		env = append(env, "BW_SESSION="+session)
+	}
+	return env
+}
+
+func bwLoginArgs() []string  { return []string{"login", "--apikey"} }
+func bwUnlockArgs() []string { return []string{"unlock", "--passwordenv", "BW_PASSWORD", "--raw"} }
+func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
+func bwStatusArgs() []string { return []string{"status"} }
+
+func bwListArgs(search string) []string {
+	a := []string{"list", "items"}
+	if search != "" {
+		a = append(a, "--search", search)
+	}
+	return a
+}
+
+// bwUnlock runs `bw unlock` and returns the raw session key.
+func bwUnlock(run cmdRunner, env []string) (string, error) {
+	out, err := run("bw", bwUnlockArgs(), env)
+	if err != nil {
+		return "", fmt.Errorf("bw unlock failed (wrong master password? run `homelab vault setup`): %w", err)
+	}
+	return out, nil
+}
+
+// bwGet fetches one field of one item; session must be present in env.
+func bwGet(run cmdRunner, env []string, field, name string) (string, error) {
+	return run("bw", bwGetArgs(field, name), env)
+}
+
 func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }
 func vaultStatus(args []string) error { return fmt.Errorf("not implemented") }
 func vaultList(args []string) error   { return fmt.Errorf("not implemented") }
