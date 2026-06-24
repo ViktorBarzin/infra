@@ -117,8 +117,16 @@ The bare-metal load-balancer that assigns external IPs to `type=LoadBalancer` Se
 _Avoid_: calling `.200` "the cluster IP" or assuming all ingress shares one LB IP.
 
 **Calico**:
-The cluster CNI and **NetworkPolicy** engine (also GlobalNetworkPolicy + flow logs). Egress lockdown follows an **observe-then-enforce** rollout — flow logs build an empirical allowlist, then default-deny egress is enforced per-namespace, tier by tier (wave 1 began at `recruiter-responder`; Tier 0/1/2 deferred).
+The cluster CNI and **NetworkPolicy** engine (also GlobalNetworkPolicy + flow logs; live flow observability via **Goldmane / Whisker**). Egress lockdown follows an **observe-then-enforce** rollout — flow logs build an empirical allowlist, then default-deny egress is enforced per-namespace, tier by tier (wave 1 began at `recruiter-responder`; Tier 0/1/2 deferred).
 _Avoid_: "firewall" (it's pod-level policy, not a perimeter); conflating a Calico **NetworkPolicy** (enforced in the data path) with a **Kyverno policy** (enforced at admission) — different layers.
+
+**Service identity**:
+How a **Service** is named in flow/audit data — its **namespace** is the primary identity (Goldmane stamps it natively, and "one Service ≈ one namespace" holds for ~87 namespaces), refined by an explicit identity label (e.g. `service-identity`) only in the handful of genuinely multi-Service namespaces (`monitoring`, `kube-system`, `dbaas`). Deliberately NOT a per-Service **ServiceAccount** (deferred — 56% of pods share `default`; revisit only if principal-based enforcement or mTLS is adopted) and NOT a SPIFFE/mesh identity (rejected — attribution-grade audit on a trusted single-tenant cluster doesn't justify a mesh).
+_Avoid_: equating "service identity" with a workload's **ServiceAccount** (that's the deferred enforcement principal, not the attribution key) or with cryptographic/SPIFFE identity; "Service" here is the domain **Service**, not the K8s `Service` object.
+
+**Goldmane / Whisker**:
+Calico 3.30's OSS flow-observability pair — **Goldmane** aggregates identity-stamped flows (namespace/pod/workload/labels + allow-deny + policy trace) streamed from Felix over gRPC into an in-memory ~60-min ring buffer (no etcd/API writes); **Whisker** is its live web UI. The east-west "who-talks-to-whom" data plane, succeeding raw iptables-`LOG`→journald lines (which carry no identity). Durable history requires emitting Goldmane flows to **Loki**; the in-memory buffer alone is not an audit trail.
+_Avoid_: assuming Goldmane persists (it's a ring buffer — lost on restart); expecting a ServiceAccount field in its schema (it carries labels, not SA); confusing it with Cilium **Hubble** (needs the Cilium datapath, unusable on Calico) or **Kiali** (needs an Istio mesh).
 
 ### Storage
 

@@ -1,0 +1,29 @@
+---
+status: accepted
+date: 2026-06-24
+---
+
+# Service identity is namespace + label; east-west observability via Calico Goldmane; no service mesh
+
+As the Service count grows we want an audit-grade record of which Service talks to which — the "service mesh evaluation" `docs/plans/2026-04-20-infra-audit-design.md` flagged as never done ("worth a design doc even if the answer is no, too much complexity for the gain"). We evaluated the full design space against two constraints: the trust model is a single-tenant cluster needing **attribution-grade** forensics (reconstruct events in a cluster we trust), not cryptographic non-repudiation against a hostile pod; and we are acutely **etcd-constrained** (we removed VPA/Goldilocks for exactly this, and carry open beads `code-oflt`/`code-at4f` on etcd starvation). Decision: **service identity = the workload's namespace** (primary; Goldmane stamps it natively and "one Service ≈ one namespace" holds for ~87 of our namespaces), refined by an explicit `service-identity` label only in the few genuinely multi-Service namespaces (`monitoring`, `kube-system`, `dbaas`). **East-west observability = Calico 3.30 Goldmane + Whisker** (already in our Calico v3.30.7, currently `enabled = false` in `stacks/calico/main.tf`), with Goldmane's emitter shipping flows to **Loki** for a durable trail. **Enforcement reuses the existing Wave 1 observe-then-enforce egress track**, now selecting on namespace/label and fed by Goldmane's allow/deny + policy-trace flows. We explicitly **reject** a service mesh, mTLS, SPIFFE/SPIRE, and dedicated per-Service ServiceAccounts for now.
+
+## Considered options
+
+- **Dedicated per-Service ServiceAccount as the identity primitive** — initially chosen, then reversed. 56% of pods (257/458) run as `default`, so it is a ~116-stack rollout; and Goldmane (the chosen flow source) carries pod/namespace/workload **labels but no ServiceAccount field**, so SAs would not even reach the audit trail without a custom pod→SA mapping. The cheaper, etcd-inert path (namespace is free; a handful of static labels) delivers the same attribution. Deferred until identity-aware NetworkPolicy needs a principal finer than namespace/label, or mTLS is adopted.
+- **Service mesh (Istio / Linkerd / Cilium-mesh) + mTLS + SPIFFE/SPIRE** — the only thing that makes the trail cryptographically non-repudiable against a hostile pod. The trust model does not justify it, east-west stays single-tenant plaintext, and it is precisely the "too much complexity for the gain" the audit doc predicted. Rejected.
+- **Microsoft Retina (CNI-agnostic eBPF)** — more capable (DNS, drops, Hubble UI) and GA, runs on Calico without a CNI change. But identity-rich mode writes **one `RetinaEndpoint` CRD per pod to etcd** (continuous, pod-proportional churn — the exact axis we guard), and it is metrics-first, not log-first (no per-flow Loki records without custom glue). Rejected for this use case; noted as the fallback if DNS/drop-level detail is ever needed.
+- **Cilium Hubble** — reads Cilium's eBPF datapath maps; unusable on Calico without migrating the CNI. A CNI migration is not justified. Rejected.
+- **Kiali** — builds its graph entirely from an Istio mesh's Prometheus telemetry; no mesh, no graph. Rejected.
+- **Custom Grafana Alloy enrichment exporter over raw iptables-`LOG` flow lines** — Alloy has no IP→identity dictionary-lookup primitive (`loki.process` lacks a lookup stage; `k8sattributes` can't do per-line/dual-IP association), so this is a multi-day custom build that also has to beat pod-IP churn. Goldmane delivers identity-stamped flows natively and obviates it. Rejected.
+- **Kyverno generate+mutate to provision/assign identity** — rejected on etcd grounds: background scans + PolicyReports + UpdateRequests are continuous writes, the VPA-class cost we shed. Identity stays static.
+
+## Consequences
+
+- **No etcd cost from the flow plane.** Goldmane streams flows from Felix (the existing `calico-node` DaemonSet) over gRPC into a ~60-minute in-memory ring buffer — nothing written to etcd or the K8s API. Steady-state cost is two Deployments (`goldmane`, `whisker`) + RAM/CPU on the goldmane pod.
+- **The ring buffer is not a trail.** Durable, queryable history depends on the emitter→Loki path (reuse the 90-day security-stream retention); on a Goldmane restart the in-memory window is lost.
+- **Goldmane is tech-preview** in OSS Calico 3.30 — the main risk. Enabling it is a reversible toggle in `stacks/calico/main.tf`, but the toggle interacts with the operator-managed Installation CR (only namespaces are TF-adopted today; verify how Goldmane/Whisker are enabled before applying).
+- **Attribution is namespace-grained for free** across ~87 single-Service namespaces. Multi-Service namespaces (`monitoring`, `kube-system`, `dbaas`) need a `service-identity` label to disambiguate; most are platform/infra and already on the Wave 1 enforcement exclude list.
+- **The trail is attribution-grade, not cryptographic.** It reliably reconstructs events in a trusted cluster but cannot prove identity against a pod that spoofs its source — an accepted limit of the trust model. This ADR does not change the east-west encryption posture (still plaintext, no mTLS).
+- **Enforcement gains a better data source.** Goldmane's allow/deny + policy-trace flows build the Wave 1 empirical egress allowlist faster than the current iptables-`LOG`→journald→Loki path, and policies select on namespace/label with no SA dependency.
+- **New ubiquitous language** recorded in `CONTEXT.md`: **Service identity** and **Goldmane / Whisker**.
+- **Revisit triggers:** adopt dedicated per-Service SAs if identity-aware NetworkPolicy needs a principal finer than namespace/label, or if mTLS is ever required; reconsider Retina if DNS/drop-level flow detail becomes necessary.
