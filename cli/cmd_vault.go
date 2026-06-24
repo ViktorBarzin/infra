@@ -1,6 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+)
 
 // vault verbs give each unix user no-HITL access to THEIR OWN Vaultwarden vault.
 // Identity is the kernel UID; per-user creds live in that user's isolated Vault
@@ -25,6 +30,63 @@ func vaultCommands() []Command {
 			Summary: "lock/log out the local bw session", Run: vaultLock},
 	}
 }
+
+const vwUserPathPrefix = "secret/workstation/claude-users/"
+
+// vwCreds is one user's Vaultwarden auth material, read from their Vault path.
+type vwCreds struct {
+	Email          string
+	MasterPassword string
+	ClientID       string
+	ClientSecret   string
+}
+
+// cmdRunner shells out to an external command with an explicit environment and
+// returns trimmed stdout. Secrets are passed via envv, NEVER argv. Tests inject
+// a fake; realRunner is the production implementation.
+type cmdRunner func(name string, argv, envv []string) (string, error)
+
+func realRunner(name string, argv, envv []string) (string, error) {
+	cmd := exec.Command(name, argv...)
+	if envv != nil {
+		cmd.Env = envv
+	}
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func vwCredsPath(user string) string { return vwUserPathPrefix + user }
+
+func bwAppDataDir(uid string) string { return "/run/user/" + uid + "/homelab-bw" }
+
+// readVaultField returns one field from a KV-v2 path, "" if absent/error.
+func readVaultField(run cmdRunner, field, path string) string {
+	out, err := run("vault", []string{"kv", "get", "-field=" + field, path}, nil)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// loadCreds reads the four vaultwarden_* keys from the user's isolated path.
+// A missing master password means the user hasn't onboarded.
+func loadCreds(run cmdRunner, user string) (vwCreds, error) {
+	p := vwCredsPath(user)
+	c := vwCreds{
+		Email:          readVaultField(run, "vaultwarden_email", p),
+		MasterPassword: readVaultField(run, "vaultwarden_master_password", p),
+		ClientID:       readVaultField(run, "vaultwarden_client_id", p),
+		ClientSecret:   readVaultField(run, "vaultwarden_client_secret", p),
+	}
+	if c.MasterPassword == "" {
+		return vwCreds{}, fmt.Errorf("vault not configured for this user — run `homelab vault setup`")
+	}
+	return c, nil
+}
+
+// vaultCurrentUser/vaultCurrentUID are seams for tests (avoid conflict with repo.go's currentUser func).
+var vaultCurrentUser = func() string { return os.Getenv("USER") }
+var vaultCurrentUID = func() string { return fmt.Sprintf("%d", os.Getuid()) }
 
 func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }
 func vaultStatus(args []string) error { return fmt.Errorf("not implemented") }
