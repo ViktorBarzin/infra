@@ -233,13 +233,101 @@ func TestStatusSummaryUnconfigured(t *testing.T) {
 	}
 }
 
-func TestVaultPutArgs(t *testing.T) {
-	got := vaultPutArgs("emo", vwCreds{Email: "e", MasterPassword: "m", ClientID: "ci", ClientSecret: "cs"})
+func TestVaultPatchPublicArgs(t *testing.T) {
+	got := vaultPatchPublicArgs("emo", "e@x.me", "user.ci")
 	want := []string{"kv", "patch", "secret/workstation/claude-users/emo",
-		"vaultwarden_email=e", "vaultwarden_master_password=m",
-		"vaultwarden_client_id=ci", "vaultwarden_client_secret=cs"}
+		"vaultwarden_email=e@x.me", "vaultwarden_client_id=user.ci"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("vaultPutArgs = %v", got)
+		t.Fatalf("vaultPatchPublicArgs = %v", got)
+	}
+	for _, a := range got {
+		if strings.Contains(a, "master_password") || strings.Contains(a, "client_secret") {
+			t.Fatalf("secret key leaked into public argv: %v", got)
+		}
+	}
+}
+
+func TestVaultPatchSecretArgsNoValueInArgv(t *testing.T) {
+	for _, key := range []string{"vaultwarden_master_password", "vaultwarden_client_secret"} {
+		got := vaultPatchSecretArgs("emo", key)
+		want := []string{"kv", "patch", "secret/workstation/claude-users/emo", key + "=-"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("vaultPatchSecretArgs(%q) = %v", key, got)
+		}
+		if got[len(got)-1] != key+"=-" {
+			t.Fatalf("secret value must be read from stdin (`%s=-`), got %v", key, got)
+		}
+	}
+}
+
+// TestNoSecretInArgvAcrossFlow is the load-bearing security test: across the
+// whole get flow (vault reads, bw config/status/login/unlock/get) NO secret
+// value may appear in any command's argv — secrets travel via env/stdin only.
+func TestNoSecretInArgvAcrossFlow(t *testing.T) {
+	uid := fmt.Sprintf("%d", os.Getuid())
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "SUPERSECRETPW",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":        "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":    "CLIENTSEKRET",
+		"bw status":              `{"status":"locked"}`,
+		"bw unlock":              "SESSIONXYZ",
+		"bw get password github": "p@ss",
+	}}
+	if _, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"}); err != nil {
+		t.Fatalf("getValue: %v", err)
+	}
+	for _, call := range f.calls {
+		for _, arg := range call {
+			for _, s := range []string{"SUPERSECRETPW", "CLIENTSEKRET", "SESSIONXYZ"} {
+				if strings.Contains(arg, s) {
+					t.Errorf("secret %q leaked into argv: %v", s, call)
+				}
+			}
+		}
+	}
+	if !strings.Contains(strings.Join(f.lastEnv, "\n"), "BW_SESSION=SESSIONXYZ") {
+		t.Error("expected BW_SESSION in the bw get env (test would be vacuous otherwise)")
+	}
+}
+
+func TestClipboardDecision(t *testing.T) {
+	cases := []struct {
+		stdoutTTY, stderrTTY bool
+		term, prog, want     string
+	}{
+		{false, true, "xterm-kitty", "", "stdout"},
+		{true, true, "xterm-kitty", "", "clipboard"},
+		{true, true, "dumb", "", "refuse"},
+		{true, false, "xterm-kitty", "", "refuse"},
+	}
+	for _, c := range cases {
+		if got := clipboardDecision(c.stdoutTTY, c.stderrTTY, c.term, c.prog); got != c.want {
+			t.Errorf("clipboardDecision(%v,%v,%q) = %q, want %q", c.stdoutTTY, c.stderrTTY, c.term, got, c.want)
+		}
+	}
+}
+
+func TestJSONToStdoutOK(t *testing.T) {
+	if jsonToStdoutOK(true) {
+		t.Error("must refuse JSON secret on a terminal")
+	}
+	if !jsonToStdoutOK(false) {
+		t.Error("must allow JSON when piped")
+	}
+}
+
+func TestBwNeedsLogin(t *testing.T) {
+	if !bwNeedsLogin(`{"status":"unauthenticated"}`) {
+		t.Error("unauthenticated → needs login")
+	}
+	if bwNeedsLogin(`{"status":"locked"}`) {
+		t.Error("locked → no login (just unlock)")
+	}
+	if bwNeedsLogin(`{"status":"unlocked"}`) {
+		t.Error("unlocked → no login")
+	}
+	if !bwNeedsLogin(`not json`) {
+		t.Error("unparseable → attempt login")
 	}
 }
 
