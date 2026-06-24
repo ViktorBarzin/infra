@@ -25,7 +25,7 @@ func vaultCommands() []Command {
 		{Path: []string{"vault", "list"}, Tier: TierRead,
 			Summary: "list your item names: vault list [--search Q]", Run: vaultList},
 		{Path: []string{"vault", "get"}, Tier: TierRead,
-			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes] [--json]", Run: vaultGet},
+			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes|totp] [--json]", Run: vaultGet},
 		{Path: []string{"vault", "search"}, Tier: TierRead,
 			Summary: "search your item names: vault search <query>", Run: vaultSearch},
 		{Path: []string{"vault", "code"}, Tier: TierRead,
@@ -56,7 +56,22 @@ func realRunner(name string, argv, envv []string) (string, error) {
 		cmd.Env = envv
 	}
 	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
+	// Trim only the trailing newline the tool appends — NOT all whitespace, so a
+	// fetched secret with significant leading/trailing spaces is preserved.
+	return strings.TrimRight(string(out), "\r\n"), err
+}
+
+// realRunnerStdin runs a command feeding `stdin` to it, for secret values that
+// must NOT appear in argv (visible via ps / /proc/<pid>/cmdline to same-UID
+// processes). Used by setup to write the master password / client_secret.
+func realRunnerStdin(name string, argv, envv []string, stdin string) (string, error) {
+	cmd := exec.Command(name, argv...)
+	if envv != nil {
+		cmd.Env = envv
+	}
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.Output()
+	return strings.TrimRight(string(out), "\r\n"), err
 }
 
 func vwCredsPath(user string) string { return vwUserPathPrefix + user }
@@ -126,6 +141,18 @@ func bwUnlockArgs() []string { return []string{"unlock", "--passwordenv", "BW_PA
 func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
 func bwStatusArgs() []string { return []string{"status"} }
 
+// bwNeedsLogin parses `bw status` JSON and reports whether a `bw login` is
+// required. Unparseable/empty output → true (safer to attempt login).
+func bwNeedsLogin(statusJSON string) bool {
+	var s struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(statusJSON), &s); err != nil {
+		return true
+	}
+	return s.Status == "unauthenticated" || s.Status == ""
+}
+
 func bwListArgs(search string) []string {
 	a := []string{"list", "items"}
 	if search != "" {
@@ -158,6 +185,16 @@ func returnMode(isTTY bool) string {
 // stdoutIsTTY reports whether stdout is a character device (a terminal).
 func stdoutIsTTY() bool {
 	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// stderrIsTTY reports whether stderr is a terminal (the OSC52 escape is written
+// to stderr, so the clipboard path is only viable when stderr is a terminal).
+func stderrIsTTY() bool {
+	fi, err := os.Stderr.Stat()
 	if err != nil {
 		return false
 	}
@@ -259,7 +296,8 @@ func openSession(run cmdRunner, user, uid string) (session, error) {
 	loginEnv := bwSecretEnv(appdata, creds, "")
 	// Ensure server is set and we're logged in (idempotent; ignore "already").
 	_, _ = run("bw", []string{"config", "server", "https://vaultwarden.viktorbarzin.me"}, loginEnv)
-	if st, _ := run("bw", bwStatusArgs(), loginEnv); !strings.Contains(st, "\"status\"") || strings.Contains(st, "unauthenticated") {
+	st, _ := run("bw", bwStatusArgs(), loginEnv)
+	if bwNeedsLogin(st) {
 		if _, err := run("bw", bwLoginArgs(), loginEnv); err != nil {
 			return session{}, fmt.Errorf("bw login --apikey failed (API key valid? run `homelab vault setup`): %w", err)
 		}
@@ -314,21 +352,38 @@ func getValue(run cmdRunner, user, uid string, o getOpts) (string, error) {
 	return bwGet(run, s.env, o.field, o.name)
 }
 
-// emitSecret returns it TTY-aware: clipboard (OSC52, gated, auto-clear) on a
-// terminal; stdout otherwise. Returns the human-facing status string (never the
-// secret) for the clipboard path.
+// clipboardDecision picks how to return a secret value. "stdout" prints it (a
+// pipe/agent — the intended machine path); "clipboard" copies via OSC52;
+// "refuse" emits nothing sensitive (would otherwise risk dumping the secret's
+// base64 into scrollback, or silently fail because the OSC52 escape goes to a
+// non-terminal stderr).
+func clipboardDecision(stdoutTTY, stderrTTY bool, term, termProgram string) string {
+	if !stdoutTTY {
+		return "stdout"
+	}
+	if terminalAllowed(term, termProgram) && stderrTTY {
+		return "clipboard"
+	}
+	return "refuse"
+}
+
+// jsonToStdoutOK reports whether `--json` may print the secret to stdout — only
+// when stdout is NOT a terminal (i.e. piped to a machine consumer).
+func jsonToStdoutOK(stdoutTTY bool) bool { return !stdoutTTY }
+
+// emitSecret returns a value TTY-aware (see clipboardDecision). Never prints the
+// secret to a terminal's stdout/scrollback.
 func emitSecret(value string) {
-	if returnMode(stdoutIsTTY()) == "stdout" {
+	switch clipboardDecision(stdoutIsTTY(), stderrIsTTY(), os.Getenv("TERM"), os.Getenv("TERM_PROGRAM")) {
+	case "stdout":
 		fmt.Println(value)
-		return
+	case "clipboard":
+		fmt.Fprint(os.Stderr, osc52(value))
+		fmt.Fprintln(os.Stderr, "copied to clipboard; clearing in 30s")
+		clearClipboardAfter(30)
+	default: // refuse
+		fmt.Fprintln(os.Stderr, "refusing to print secret: this terminal can't do OSC52 clipboard safely; pipe the command (e.g. | cat) or use a supported terminal")
 	}
-	if !terminalAllowed(os.Getenv("TERM"), os.Getenv("TERM_PROGRAM")) {
-		fmt.Fprintln(os.Stderr, "refusing to print secret: this terminal can't do OSC52 clipboard safely; pipe the command or use a supported terminal")
-		return
-	}
-	fmt.Fprint(os.Stderr, osc52(value))
-	fmt.Fprintln(os.Stderr, "copied to clipboard; clearing in 30s")
-	clearClipboardAfter(30)
 }
 
 // clearClipboardAfter spawns a detached background clear so the secret doesn't
@@ -451,22 +506,50 @@ func vaultStatus(args []string) error {
 }
 
 func vaultLock(args []string) error {
-	appdata := bwAppDataDir(vaultCurrentUID())
+	uid := vaultCurrentUID()
+	unlock, err := withUserLock(uid) // logout mutates bw state — serialize with get/list
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	appdata := bwAppDataDir(uid)
 	_, _ = realRunner("bw", []string{"lock"}, bwBaseEnv(appdata))
-	_, err := realRunner("bw", []string{"logout"}, bwBaseEnv(appdata))
-	if err == nil {
+	_, logoutErr := realRunner("bw", []string{"logout"}, bwBaseEnv(appdata))
+	if logoutErr == nil {
 		fmt.Println("locked")
 	}
 	return nil // lock/logout best-effort; never error the caller
 }
 
-func vaultPutArgs(user string, c vwCreds) []string {
+// vaultPatchPublicArgs writes the non-secret identifiers via argv. Neither the
+// email nor the API client_id is a usable credential on its own.
+func vaultPatchPublicArgs(user, email, clientID string) []string {
 	return []string{"kv", "patch", vwCredsPath(user),
-		"vaultwarden_email=" + c.Email,
-		"vaultwarden_master_password=" + c.MasterPassword,
-		"vaultwarden_client_id=" + c.ClientID,
-		"vaultwarden_client_secret=" + c.ClientSecret,
+		"vaultwarden_email=" + email,
+		"vaultwarden_client_id=" + clientID,
 	}
+}
+
+// vaultPatchSecretArgs writes ONE secret value via the `key=-` stdin form, so
+// the value never appears in argv (ps / /proc/<pid>/cmdline). The value is fed
+// on stdin by realRunnerStdin.
+func vaultPatchSecretArgs(user, key string) []string {
+	return []string{"kv", "patch", vwCredsPath(user), key + "=-"}
+}
+
+// writeCreds stores all four fields in the user's Vault path. The two real
+// secrets (master password, API client_secret) go via stdin — never argv.
+func writeCreds(user string, c vwCreds) error {
+	if _, err := realRunner("vault", vaultPatchPublicArgs(user, c.Email, c.ClientID), nil); err != nil {
+		return err
+	}
+	if _, err := realRunnerStdin("vault", vaultPatchSecretArgs(user, "vaultwarden_master_password"), nil, c.MasterPassword); err != nil {
+		return err
+	}
+	if _, err := realRunnerStdin("vault", vaultPatchSecretArgs(user, "vaultwarden_client_secret"), nil, c.ClientSecret); err != nil {
+		return err
+	}
+	return nil
 }
 
 // promptNoEcho reads one line without terminal echo (for the master password).
@@ -476,7 +559,9 @@ func promptNoEcho(prompt string) (string, error) {
 	defer func() { exec.Command("stty", "echo").Run(); fmt.Fprintln(os.Stderr) }()
 	r := bufio.NewReader(os.Stdin)
 	line, err := r.ReadString('\n')
-	return strings.TrimSpace(line), err
+	// Trim only the line terminator — a master password / API secret may
+	// legitimately contain leading/trailing spaces.
+	return strings.TrimRight(line, "\r\n"), err
 }
 
 func promptLine(prompt string) (string, error) {
@@ -509,7 +594,7 @@ func vaultSetup(args []string) error {
 		return fmt.Errorf("all fields are required")
 	}
 	c := vwCreds{Email: email, MasterPassword: master, ClientID: clientID, ClientSecret: clientSecret}
-	if _, err := realRunner("vault", vaultPutArgs(vaultCurrentUser(), c), nil); err != nil {
+	if err := writeCreds(vaultCurrentUser(), c); err != nil {
 		return fmt.Errorf("writing creds to your Vault path failed (scoped token present?): %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Stored. Verifying unlock…")
@@ -545,6 +630,9 @@ func vaultGet(args []string) error {
 	}
 	writeOpLog(opRecord{User: user, Verb: "get", PID: os.Getpid(), PPID: os.Getppid(), ParentComm: parentComm(os.Getppid()), ItemName: o.name})
 	if o.json {
+		if !jsonToStdoutOK(stdoutIsTTY()) {
+			return fmt.Errorf("refusing to print a secret as JSON to a terminal; pipe it (e.g. | cat) or drop --json")
+		}
 		fmt.Printf("{%q:%q}\n", o.field, val)
 		return nil
 	}
