@@ -23,6 +23,7 @@ func buildRegistry() []Command {
 	reg = append(reg, usageCommands()...)
 	reg = append(reg, haCommands()...)
 	reg = append(reg, browserCommands()...)
+	reg = append(reg, vaultCommands()...)
 	return reg
 }
 
