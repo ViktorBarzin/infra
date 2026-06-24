@@ -71,6 +71,15 @@ resource "kubernetes_persistent_volume" "alertmanager_pv" {
 # DB credentials from Vault database engine (rotated automatically)
 # Provides GF_DATABASE_PASSWORD that auto-updates when password rotates
 resource "kubernetes_manifest" "grafana_db_creds" {
+  # The external-secrets controller takes server-side-apply ownership of
+  # .spec.refreshInterval, so a plain TF apply conflicts ("conflict with
+  # external-secrets ... .spec.refreshInterval"). force_conflicts lets TF win
+  # (values match, so it's stable) — same pattern as the woodpecker/traefik/
+  # k8s-version-upgrade stacks. Surfaced 2026-06-24: the first monitoring apply
+  # in a while exposed this latent conflict (prior pushes were docs-only).
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
