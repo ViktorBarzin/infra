@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
 
 func TestVaultCommandsRegistered(t *testing.T) {
 	want := map[string]Tier{
@@ -26,5 +30,61 @@ func TestVaultCommandsRegistered(t *testing.T) {
 func TestVaultGroupInRegistry(t *testing.T) {
 	if !isCommandGroup(buildRegistry(), "vault") {
 		t.Fatal("`vault` group not wired into buildRegistry()")
+	}
+}
+
+func TestVaultCredsPath(t *testing.T) {
+	if got := vwCredsPath("emo"); got != "secret/workstation/claude-users/emo" {
+		t.Fatalf("vwCredsPath = %q", got)
+	}
+}
+
+func TestBwAppDataDir(t *testing.T) {
+	if got := bwAppDataDir("1001"); got != "/run/user/1001/homelab-bw" {
+		t.Fatalf("bwAppDataDir = %q", got)
+	}
+}
+
+// fakeRunner records calls and returns canned stdout/err keyed by argv[0]+first arg.
+type fakeRunner struct {
+	calls   [][]string
+	out     map[string]string // key: name+" "+strings.Join(argv," ") prefix-matched
+	err     map[string]error
+	lastEnv []string
+}
+
+func (f *fakeRunner) run(name string, argv, envv []string) (string, error) {
+	f.calls = append(f.calls, append([]string{name}, argv...))
+	f.lastEnv = envv
+	key := name + " " + strings.Join(argv, " ")
+	for k, v := range f.out {
+		if strings.HasPrefix(key, k) {
+			return v, f.err[k]
+		}
+	}
+	return "", f.err[key]
+}
+
+func TestLoadCredsReadsFourFields(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_email secret/workstation/claude-users/emo":          "emo@x.me",
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "hunter2",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.abc",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "sek",
+	}}
+	c, err := loadCreds(f.run, "emo")
+	if err != nil {
+		t.Fatalf("loadCreds: %v", err)
+	}
+	want := vwCreds{Email: "emo@x.me", MasterPassword: "hunter2", ClientID: "user.abc", ClientSecret: "sek"}
+	if !reflect.DeepEqual(c, want) {
+		t.Fatalf("loadCreds = %+v want %+v", c, want)
+	}
+}
+
+func TestLoadCredsUnconfigured(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{}} // every field empty
+	if _, err := loadCreds(f.run, "emo"); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("want 'not configured' error, got %v", err)
 	}
 }
