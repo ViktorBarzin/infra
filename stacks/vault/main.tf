@@ -674,6 +674,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
     "pg-technitium",
+    "pg-goldmane-edges",
   ]
 
   postgresql {
@@ -888,6 +889,17 @@ resource "vault_database_secret_backend_static_role" "pg_technitium" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-technitium"
   username        = "technitium"
+  rotation_period = 604800
+}
+
+# goldmane-edge-aggregator (ADR-0014 / infra #58) — 7-day rotation for the
+# goldmane_edges CNPG role. Consumed by stacks/goldmane-edge-aggregator via a
+# vault-database ExternalSecret -> DATABASE_URL (remoteRef static-creds/pg-goldmane-edges).
+resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-goldmane-edges"
+  username        = "goldmane_edges"
   rotation_period = 604800
 }
 
