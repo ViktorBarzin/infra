@@ -227,7 +227,11 @@ resource "kubernetes_deployment" "instagram_poster" {
   }
 
   spec {
-    replicas = 1
+    # Scaled to 0 (2026-06-24): Instagram Graph integration is unused and its
+    # ExternalSecret is dead (missing ig_graph_long_lived_token /
+    # ig_business_account_id in Vault secret/instagram-poster). Set back to 1
+    # after minting a Meta long-lived token and populating those keys.
+    replicas = 0
     # RWO PVC — cannot rolling-update.
     strategy {
       type = "Recreate"
