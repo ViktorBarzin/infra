@@ -31,6 +31,9 @@ locals {
     # "no local builds"). ghcr.io/viktorbarzin/k8s-portal:latest is PRIVATE
     # (infra repo default); the deployment references the cloned secret.
     "k8s-portal",
+    # goldmane-edge-aggregator: PRIVATE ghcr image pulled by the aggregate
+    # Deployment + digest CronJob (ADR-0014, infra#58).
+    "goldmane-edge-aggregator",
   ]
 }
 
