@@ -182,6 +182,39 @@ func terminalAllowed(term, termProgram string) bool {
 	return false
 }
 
+// opRecord is one CLI operation. ItemName is accepted for the caller's
+// convenience but is INTENTIONALLY never rendered into the log line — auditing
+// which of your own logins you opened is itself sensitive, and per-item reads
+// are invisible server-side anyway (spec §9a).
+type opRecord struct {
+	User       string
+	Verb       string
+	PID        int
+	PPID       int
+	ParentComm string
+	ItemName   string // never logged
+}
+
+func opLogLine(r opRecord) string {
+	return fmt.Sprintf("user=%s verb=%s pid=%d ppid=%d parent=%s",
+		r.User, r.Verb, r.PID, r.PPID, r.ParentComm)
+}
+
+// parentComm reads /proc/<ppid>/comm (best-effort; "" on failure).
+func parentComm(ppid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", ppid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// writeOpLog appends one privacy-aware line to the user's op-log (best-effort;
+// never blocks or fails the command). Goes to syslog so it ships to Loki.
+func writeOpLog(r opRecord) {
+	exec.Command("logger", "-t", "homelab-vault", opLogLine(r)).Run() // best-effort
+}
+
 func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }
 func vaultStatus(args []string) error { return fmt.Errorf("not implemented") }
 func vaultList(args []string) error   { return fmt.Errorf("not implemented") }
