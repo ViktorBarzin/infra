@@ -88,3 +88,55 @@ func TestLoadCredsUnconfigured(t *testing.T) {
 		t.Fatalf("want 'not configured' error, got %v", err)
 	}
 }
+
+func TestBwEnvCarriesSecretsNotArgv(t *testing.T) {
+	c := vwCreds{ClientID: "user.abc", ClientSecret: "sek", MasterPassword: "hunter2"}
+	env := bwSecretEnv("/run/user/1001/homelab-bw", c, "SESSIONKEY")
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{
+		"BW_CLIENTID=user.abc", "BW_CLIENTSECRET=sek", "BW_PASSWORD=hunter2",
+		"BW_SESSION=SESSIONKEY", "BITWARDENCLI_APPDATA_DIR=/run/user/1001/homelab-bw",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("bwSecretEnv missing %q", want)
+		}
+	}
+	if strings.Contains(joined, "PATH=") == false {
+		t.Error("bwSecretEnv must keep a PATH so node/bw resolve")
+	}
+}
+
+func TestBwGetArgsHasNoSessionInArgv(t *testing.T) {
+	argv := bwGetArgs("password", "github")
+	for _, a := range argv {
+		if strings.Contains(a, "SESSION") || a == "--session" {
+			t.Fatalf("session must travel via env, not argv: %v", argv)
+		}
+	}
+	if !reflect.DeepEqual(argv, []string{"get", "password", "github"}) {
+		t.Fatalf("bwGetArgs = %v", argv)
+	}
+}
+
+func TestBwListArgs(t *testing.T) {
+	if got := bwListArgs(""); !reflect.DeepEqual(got, []string{"list", "items"}) {
+		t.Fatalf("bwListArgs('') = %v", got)
+	}
+	if got := bwListArgs("git"); !reflect.DeepEqual(got, []string{"list", "items", "--search", "git"}) {
+		t.Fatalf("bwListArgs('git') = %v", got)
+	}
+}
+
+func TestBwUnlockReturnsSession(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{"bw unlock": "THE-SESSION-KEY"}}
+	env := bwSecretEnv("/run/user/1001/homelab-bw", vwCreds{MasterPassword: "pw"}, "")
+	sess, err := bwUnlock(f.run, env)
+	if err != nil || sess != "THE-SESSION-KEY" {
+		t.Fatalf("bwUnlock = %q, %v", sess, err)
+	}
+	// argv must use --passwordenv + --raw, never the password literal
+	last := f.calls[len(f.calls)-1]
+	if strings.Join(last, " ") != "bw unlock --passwordenv BW_PASSWORD --raw" {
+		t.Fatalf("unlock argv = %v", last)
+	}
+}
