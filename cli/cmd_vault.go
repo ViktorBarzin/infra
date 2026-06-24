@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -142,6 +143,43 @@ func bwUnlock(run cmdRunner, env []string) (string, error) {
 // bwGet fetches one field of one item; session must be present in env.
 func bwGet(run cmdRunner, env []string, field, name string) (string, error) {
 	return run("bw", bwGetArgs(field, name), env)
+}
+
+func returnMode(isTTY bool) string {
+	if isTTY {
+		return "clipboard"
+	}
+	return "stdout"
+}
+
+// stdoutIsTTY reports whether stdout is a character device (a terminal).
+func stdoutIsTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// osc52 returns the OSC 52 escape that makes the local terminal copy payload to
+// the system clipboard (works over SSH; no X11). osc52clear copies empty.
+func osc52(payload string) string {
+	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(payload)) + "\a"
+}
+func osc52clear() string { return "\x1b]52;c;\a" }
+
+// terminalAllowed gates OSC 52: only terminals known to honor clipboard writes,
+// else we'd dump the secret's base64 into scrollback on unsupported terminals.
+func terminalAllowed(term, termProgram string) bool {
+	t := strings.ToLower(term)
+	p := strings.ToLower(termProgram)
+	for _, ok := range []string{"kitty", "alacritty", "foot", "wezterm", "ghostty", "tmux", "screen"} {
+		if strings.Contains(t, ok) || strings.Contains(p, ok) {
+			return true
+		}
+	}
+	// xterm proper supports it only when the program is a known-good emulator.
+	return false
 }
 
 func vaultSetup(args []string) error  { return fmt.Errorf("not implemented") }

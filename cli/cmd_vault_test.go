@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
@@ -138,5 +139,40 @@ func TestBwUnlockReturnsSession(t *testing.T) {
 	last := f.calls[len(f.calls)-1]
 	if strings.Join(last, " ") != "bw unlock --passwordenv BW_PASSWORD --raw" {
 		t.Fatalf("unlock argv = %v", last)
+	}
+}
+
+func TestReturnMode(t *testing.T) {
+	if returnMode(true) != "clipboard" || returnMode(false) != "stdout" {
+		t.Fatal("returnMode wrong")
+	}
+}
+
+func TestOSC52Encode(t *testing.T) {
+	got := osc52("secret")
+	want := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte("secret")) + "\a"
+	if got != want {
+		t.Fatalf("osc52 = %q want %q", got, want)
+	}
+	if osc52clear() != "\x1b]52;c;\a" {
+		t.Fatalf("osc52clear wrong: %q", osc52clear())
+	}
+}
+
+func TestTerminalAllowed(t *testing.T) {
+	allow := []struct{ term, prog string }{
+		{"xterm-kitty", ""}, {"alacritty", ""}, {"foot", ""}, {"tmux-256color", ""},
+		{"screen-256color", ""}, {"xterm-256color", "WezTerm"}, {"xterm-256color", "ghostty"},
+	}
+	for _, c := range allow {
+		if !terminalAllowed(c.term, c.prog) {
+			t.Errorf("terminalAllowed(%q,%q) = false, want true", c.term, c.prog)
+		}
+	}
+	deny := []struct{ term, prog string }{{"dumb", ""}, {"", ""}, {"vt100", ""}}
+	for _, c := range deny {
+		if terminalAllowed(c.term, c.prog) {
+			t.Errorf("terminalAllowed(%q,%q) = true, want false", c.term, c.prog)
+		}
 	}
 }
