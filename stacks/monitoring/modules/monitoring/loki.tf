@@ -501,6 +501,39 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
           ]
+        },
+        {
+          # Vaultwarden vault CLI (`homelab vault`) traceability. The audit SPINE
+          # is the Vault audit device (reads of secret/data/workstation/claude-users/*
+          # are already captured in the vault-tail stream above). These add
+          # visibility/anomaly alerts off the per-user CLI op-log
+          # (`logger -t homelab-vault[-totp]` → devvm-journal). A true "Vault
+          # creds-read with NO matching CLI op-log = direct bypass" alert needs
+          # cross-stream correlation the Loki ruler can't express — tracked as a
+          # follow-up (small correlation CronJob). lane=security → #security.
+          name = "Vaultwarden vault CLI"
+          rules = [
+            {
+              alert  = "VaultwardenTOTPFetched"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"homelab-vault-totp\"} | logfmt [5m])) > 0"
+              for    = "0m"
+              labels = { severity = "info", lane = "security" }
+              annotations = {
+                summary     = "Vaultwarden TOTP (2nd factor) fetched via homelab vault by {{ $labels.user }}"
+                description = "A TOTP code was retrieved with `homelab vault code`. A stored TOTP co-located with its password collapses that downstream account's 2FA to 1FA under a same-UID compromise — confirm this fetch was expected."
+              }
+            },
+            {
+              alert  = "VaultwardenFetchVolumeHigh"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"homelab-vault\"} | logfmt | verb=~\"get|code\" [10m])) > 100"
+              for    = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary     = "Unusually high homelab vault fetch volume (>100/10m) for {{ $labels.user }}"
+                description = "A burst of credential fetches for one user — possible runaway loop or exfiltration. Cross-check the op-log parent process and the Vault audit stream (namespace=vault,container=audit-tail) for reads of secret/data/workstation/claude-users/{{ $labels.user }}."
+              }
+            },
+          ]
         }
       ]
     })
