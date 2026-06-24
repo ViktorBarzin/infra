@@ -6,9 +6,12 @@ tenant: tripit). Decision record: `docs/adr/0001-android-emulator-in-cluster.md`
 
 ## On-demand lifecycle (since 2026-06-12)
 
-The emulator **scales to zero when idle** (no adb/VNC connections for ~1h,
-checked by the `android-emulator-idle-sleeper` CronJob) and **wakes on
-visit**: the wake gate owns `/` on both hostnames. Warm boot is ~90s.
+The emulator **scales to zero when idle** (no user interaction for 6h —
+taps/keys/app-launches/noVNC clicks, read from `dumpsys power` by the
+`android-emulator-idle-sleeper` CronJob) and **wakes on visit**: the wake
+gate owns `/` on both hostnames. Warm boot is ~90s. Idle is measured from
+real interaction, not connection count, so a forgotten `adb connect` (left
+ESTABLISHED) no longer keeps it awake — but `adb disconnect` anyway.
 
 - Humans: open https://android-emulator.viktorbarzin.me — it wakes the
   emulator if needed, shows a self-refreshing boot page, then hands over to

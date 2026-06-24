@@ -22,7 +22,6 @@ API = "https://%s:%s" % (
 )
 TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-IDLE_ANNOTATION = "emulator.viktorbarzin.me/idle-checks"
 VNC_PATH = "/vnc.html?autoconnect=1&resize=scale"
 
 WAKING_PAGE = """<!doctype html><html><head><title>Android emulator</title>
@@ -57,13 +56,14 @@ def deployment_state():
 
 
 def wake():
+    # Direct replicas patch on the named deployment — same path the idle
+    # sleeper uses to scale DOWN; needs only `deployments` patch, not
+    # `deployments/scale`. Idle is now measured from dumpsys power, so there
+    # is no idle-counter annotation to reset here.
     kube(
         "PATCH",
         f"/apis/apps/v1/namespaces/{NS}/deployments/{DEPLOY}",
-        {
-            "spec": {"replicas": 1},
-            "metadata": {"annotations": {IDLE_ANNOTATION: "0"}},
-        },
+        {"spec": {"replicas": 1}},
     )
 
 
