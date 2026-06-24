@@ -71,6 +71,14 @@ if [[ -n "$want_t3" && "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/
   log "npm: installing t3@$T3_TRACK ($want_t3)"; npm install -g "t3@$want_t3" >/dev/null
 fi
 
+# 2c) Bitwarden CLI — backs `homelab vault` (per-user no-HITL Vaultwarden access).
+#     npm-global so every user's PATH resolves it. Pinned major; best-effort (a
+#     failure only disables `homelab vault`, nothing else on the box).
+if ! command -v bw >/dev/null; then
+  log "npm: installing @bitwarden/cli (homelab vault backend)"
+  npm install -g "@bitwarden/cli@^2024" >/dev/null 2>&1 || log "WARN: @bitwarden/cli install failed; homelab vault unavailable"
+fi
+
 # 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool).
 #    PINNED (not 'latest/download') so two fresh boxes built weeks apart are byte-identical.
 KUBELOGIN_VER="${KUBELOGIN_VER:-v1.36.2}"
