@@ -156,10 +156,11 @@ resource "helm_release" "tigera_operator" {
   values = [yamlencode({
     installation = { enabled = false }
     apiServer    = { enabled = false }
-    # Goldmane (flow aggregator) + Whisker (observability UI) are new in Calico
-    # 3.30 and default-on; disabled — we use Prometheus/Loki, and on a helm
-    # UPGRADE their CRs render before their crds/ (which helm skips on upgrade)
-    # are installed -> "ensure CRDs are installed first". Not needed here.
+    # Goldmane (flow aggregator) + Whisker (observability UI), new in Calico
+    # 3.30, are kept disabled IN HELM on purpose: on a helm UPGRADE their CRs
+    # render before their crds/ (which helm skips on upgrade) -> "ensure CRDs
+    # are installed first". We instead enable them via the operator CRs applied
+    # directly below (kubectl_manifest) now that the CRDs exist — see ADR-0014.
     goldmane  = { enabled = false }
     whisker   = { enabled = false }
     # 512Mi (was 256Mi): the operator idles at ~38Mi but its STARTUP spike
@@ -169,4 +170,45 @@ resource "helm_release" "tigera_operator" {
     # data plane (calico-node) is unaffected by an operator restart.
     resources = { limits = { memory = "512Mi" } }
   })]
+}
+
+# ---------------------------------------------------------------------------
+# Goldmane + Whisker (Calico 3.30 OSS flow observability) — ADR-0014.
+#
+# Enabled via the operator CRs directly (NOT the Helm goldmane/whisker flags,
+# which stay false above): the goldmanes/whiskers.operator.tigera.io CRDs are
+# already installed (operator adopted them 2026-06-19), so we sidestep the
+# helm-upgrade "CRs render before crds/" ordering issue by applying the CRs
+# ourselves — the running operator reconciles them. Same kubectl_manifest
+# pattern as the wave1 GNP above (no plan-time CRD requirement).
+#
+# Creating the Goldmane CR makes the operator re-render calico-node with the
+# FELIX_FLOWLOGSGOLDMANESERVER env (operator auto-wires Felix — do NOT patch
+# FelixConfiguration) => a supervised calico-node DaemonSet roll. Goldmane:
+# Deployment + Service goldmane:7443 (gRPC/mTLS) in calico-system. Whisker:
+# Deployment + Service whisker:8081 in calico-system; its backend dials
+# goldmane, so Goldmane must exist first (depends_on). notifications=Disabled
+# so the UI does not call the external Tigera notifications endpoint.
+#
+# NOTE: durable Loki persistence is NOT these CRs. The Goldmane emitter is
+# Calico Cloud/Enterprise-gated (no OSS knob to aim it at Loki), so the trail
+# is a separate consumer of goldmane's gRPC Flows API (ADR-0014 / issue #58).
+# Whisker alone is a ~60-min in-memory live view. Reversible: delete to disable.
+resource "kubectl_manifest" "goldmane" {
+  depends_on = [helm_release.tigera_operator]
+  yaml_body = yamlencode({
+    apiVersion = "operator.tigera.io/v1"
+    kind       = "Goldmane"
+    metadata   = { name = "default" }
+  })
+}
+
+resource "kubectl_manifest" "whisker" {
+  depends_on = [kubectl_manifest.goldmane]
+  yaml_body = yamlencode({
+    apiVersion = "operator.tigera.io/v1"
+    kind       = "Whisker"
+    metadata   = { name = "default" }
+    spec       = { notifications = "Disabled" }
+  })
 }
