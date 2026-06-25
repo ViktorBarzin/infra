@@ -35,6 +35,9 @@ resource "kubernetes_namespace" "shlink" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -67,6 +70,9 @@ resource "kubernetes_manifest" "external_secret" {
 # the deployment is migrated to use env_from with this secret, the plan-time
 # kubernetes_secret can be removed.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

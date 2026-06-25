@@ -20,6 +20,9 @@ resource "kubernetes_namespace" "ebooks" {
 
 # ExternalSecrets for all three sources
 resource "kubernetes_manifest" "calibre_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -47,6 +50,9 @@ resource "kubernetes_manifest" "calibre_external_secret" {
 }
 
 resource "kubernetes_manifest" "audiobookshelf_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -74,6 +80,9 @@ resource "kubernetes_manifest" "audiobookshelf_external_secret" {
 }
 
 resource "kubernetes_manifest" "servarr_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

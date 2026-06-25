@@ -53,6 +53,9 @@ resource "kubernetes_namespace" "fire_planner" {
 # Seed before applying:
 #   secret/fire-planner -> property `recompute_bearer_token`
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -115,6 +118,9 @@ resource "kubernetes_manifest" "external_secret" {
 # Template builds the asyncpg DSN consumed by the FastAPI app + CronJob
 # as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -159,6 +165,9 @@ resource "kubernetes_manifest" "db_external_secret" {
 # pg-sync sidecar populates `daily_account_valuation` etc. hourly; the
 # fire-planner ingest reads those tables via this role.
 resource "kubernetes_manifest" "wealthfolio_sync_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -661,6 +670,9 @@ variable "run_examples_bulk_ingest" {
 
 # Reddit OAuth creds pulled from Vault secret/viktor.
 resource "kubernetes_manifest" "external_secret_examples_reddit" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -701,6 +713,9 @@ resource "kubernetes_manifest" "external_secret_examples_reddit" {
 # claude-agent-service bearer pulled separately so its rotation cadence
 # is decoupled from the Reddit creds.
 resource "kubernetes_manifest" "external_secret_examples_claude" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

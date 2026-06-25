@@ -28,6 +28,9 @@ resource "kubernetes_namespace" "paperless-mcp" {
 # Paperless API token (MCP -> paperless). Synced from Vault to a K8s Secret
 # by ESO; the pod reads it via secret_key_ref.
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -49,6 +49,9 @@ module "tls_secret" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -103,6 +106,9 @@ resource "kubernetes_manifest" "external_secret" {
 
 # DB credentials from Vault database engine (rotated every 24h)
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

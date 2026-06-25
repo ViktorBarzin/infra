@@ -250,6 +250,9 @@ module "ingress_test" {
 }
 
 resource "kubernetes_manifest" "external_secret_db" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -284,6 +287,9 @@ resource "kubernetes_manifest" "external_secret_db" {
 }
 
 resource "kubernetes_manifest" "external_secret_kv" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

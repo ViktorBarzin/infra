@@ -601,6 +601,9 @@ resource "kubernetes_config_map" "beadboard_config" {
 # Pulls the claude-agent-service bearer token from Vault so BeadBoard can
 # dispatch agent jobs via the in-cluster HTTP API.
 resource "kubernetes_manifest" "beadboard_agent_service_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

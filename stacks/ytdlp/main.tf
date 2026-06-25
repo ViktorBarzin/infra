@@ -6,6 +6,9 @@ variable "slack_channel" { type = string }
 variable "nfs_server" { type = string }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -168,6 +168,9 @@ resource "kubernetes_job" "db_init" {
 # place in the CNPG connection allowlist are added in stacks/vault/main.tf
 # (see this stack's terragrunt.hcl note). remoteRef key: static-creds/pg-goldmane-edges.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -210,6 +213,9 @@ resource "kubernetes_manifest" "db_external_secret" {
 # into this namespace as SLACK_WEBHOOK_URL via an ExternalSecret (no new
 # webhook). The digest CronJob defaults to #security.
 resource "kubernetes_manifest" "slack_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -215,6 +215,9 @@ resource "kubernetes_namespace" "tripit" {
 # Schema in CNPG: `tripit` (alembic creates tables on first migrate).
 # DB user: created via Vault database engine — see static-creds/pg-tripit.
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -291,6 +294,9 @@ resource "kubernetes_manifest" "external_secret" {
 # Pre-req in dbaas: CNPG cluster has DB `tripit`, role `tripit`, and Vault
 # role `static-creds/pg-tripit`.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

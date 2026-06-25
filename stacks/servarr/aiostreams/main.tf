@@ -185,6 +185,9 @@ resource "kubernetes_service" "aiostreams" {
 }
 
 resource "kubernetes_manifest" "probe_secrets" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

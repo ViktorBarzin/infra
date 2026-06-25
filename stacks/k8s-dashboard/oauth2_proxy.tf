@@ -5,6 +5,9 @@
 # -----------------------------------------------------------------------------
 
 resource "kubernetes_manifest" "oauth2_proxy_externalsecret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

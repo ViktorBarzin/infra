@@ -26,6 +26,9 @@ resource "kubernetes_namespace" "paperless_ai" {
 #   api_key             — M2M key between the Node UI and the Python RAG service.
 #   custom_api_key      — placeholder bearer for llama-swap (no auth, field required).
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

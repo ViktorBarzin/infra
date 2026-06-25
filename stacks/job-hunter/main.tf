@@ -41,6 +41,9 @@ resource "kubernetes_namespace" "job_hunter" {
 #     digest_to_address     — where the weekly digest goes
 #     digest_from_address   — From: header for the digest
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -105,6 +108,9 @@ resource "kubernetes_manifest" "external_secret" {
 # DB credentials from Vault database engine (7-day rotation).
 # Template builds the asyncpg DSN consumed by the FastAPI app as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -325,6 +331,9 @@ resource "kubernetes_service" "job_hunter" {
 # references it as $__env{JOB_HUNTER_PG_PASSWORD}. Reloader restarts
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_job_hunter_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

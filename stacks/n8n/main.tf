@@ -26,6 +26,9 @@ resource "kubernetes_namespace" "n8n" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -53,6 +56,9 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 resource "kubernetes_manifest" "external_secret_claude_agent" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -84,6 +90,9 @@ resource "kubernetes_manifest" "external_secret_claude_agent" {
 # Shared secrets for the Immich → Telegram → Postiz Instagram pipeline.
 # Workflows in stacks/n8n/workflows/instagram-*.json reference these env vars.
 resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

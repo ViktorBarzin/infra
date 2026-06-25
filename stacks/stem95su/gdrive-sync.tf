@@ -16,6 +16,9 @@
 # `secret/stem95su.rclone_conf`. A failed run surfaces as a failed Job.
 
 resource "kubernetes_manifest" "rclone_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

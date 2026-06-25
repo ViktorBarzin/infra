@@ -58,6 +58,9 @@ resource "kubernetes_namespace" "nextcloud_todos" {
 # DB user: created in dbaas (null_resource.pg_nextcloud_todos_db); password
 # managed via the Vault database engine — see static-creds/pg-nextcloud-todos.
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -97,6 +100,9 @@ resource "kubernetes_manifest" "external_secret" {
 # Pre-req in dbaas: CNPG cluster has DB `nextcloud_todos`, role
 # `nextcloud_todos`, and Vault role `static-creds/pg-nextcloud-todos`.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -207,6 +207,9 @@ resource "kubernetes_cluster_role_binding" "pve_snapshot_admin" {
 # Creates K8s Secret "proxmox-csi-encryption" in kube-system from Vault KV.
 # Referenced by the proxmox-lvm-encrypted StorageClass for node-stage and node-expand.
 resource "kubernetes_manifest" "external_secret_encryption" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -800,6 +800,9 @@ resource "kubernetes_service" "mailserver_proxy" {
 # `EMAIL_MONITOR_IMAP_PASSWORD` so the CronJob can consume them via a single
 # `env_from { secret_ref {} }` block.
 resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

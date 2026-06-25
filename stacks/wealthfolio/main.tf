@@ -21,6 +21,9 @@ resource "kubernetes_namespace" "wealthfolio" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -51,6 +54,9 @@ resource "kubernetes_manifest" "external_secret" {
 # `pg-wealthfolio-sync` rotates this every 7 days; ExternalSecret refreshes
 # the K8s Secret every 15m so the sidecar always has a valid password.
 resource "kubernetes_manifest" "wealthfolio_sync_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -777,6 +783,9 @@ resource "kubernetes_cron_job_v1" "wealthfolio_sync" {
 # below references it as $__env{WEALTH_PG_PASSWORD}. Reloader restarts
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_wealth_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

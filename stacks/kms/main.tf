@@ -304,6 +304,9 @@ resource "kubernetes_config_map" "kms_slack_notifier" {
 }
 
 resource "kubernetes_manifest" "kms_slack_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

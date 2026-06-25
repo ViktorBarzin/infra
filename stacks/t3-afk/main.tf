@@ -58,6 +58,9 @@ resource "kubernetes_namespace" "t3_afk" {
 # (wired into ~/.gitconfig insteadOf rewrites in the container command).
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

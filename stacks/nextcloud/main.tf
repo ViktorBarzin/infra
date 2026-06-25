@@ -125,6 +125,9 @@ resource "kubernetes_namespace" "nextcloud" {
 # other enrolled workload (immich, freshrss) — is both correct and drift-free.
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -154,6 +157,9 @@ resource "kubernetes_manifest" "external_secret" {
 # DB credentials from Vault database engine (rotated every 24h)
 # Nextcloud Helm chart reads password at runtime via existingSecret reference
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

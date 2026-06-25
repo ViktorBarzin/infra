@@ -58,6 +58,9 @@ resource "kubernetes_namespace" "payslip_ingest" {
 #                                     - `actualbudget_budget_sync_id`
 #                                       (same as Viktor's sync_id)
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -133,6 +136,9 @@ resource "kubernetes_manifest" "external_secret" {
 # DB credentials from Vault database engine (rotated every 7 days).
 # Template builds the asyncpg DSN consumed by the FastAPI app as DB_CONNECTION_STRING.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -450,6 +456,9 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
 # references it as $__env{PAYSLIPS_PG_PASSWORD}. Reloader restarts
 # Grafana whenever ESO updates this secret (every 7d on rotation).
 resource "kubernetes_manifest" "grafana_payslips_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

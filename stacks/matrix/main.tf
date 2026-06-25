@@ -25,6 +25,9 @@ resource "kubernetes_namespace" "matrix" {
 # flipped to false. The token stays in Vault so registration can be re-opened
 # later (e.g. to add family) without regenerating it.
 resource "kubernetes_manifest" "secrets_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

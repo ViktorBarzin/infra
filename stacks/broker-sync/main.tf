@@ -28,6 +28,9 @@ resource "kubernetes_namespace" "broker_sync" {
 #   trading212_api_keys — JSON array of {account_id, account_type, api_key, name, currency}
 #   imap_host, imap_user, imap_password, imap_directory — for InvestEngine + Schwab email ingest
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
