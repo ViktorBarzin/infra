@@ -212,3 +212,65 @@ resource "kubectl_manifest" "whisker" {
     spec       = { notifications = "Disabled" }
   })
 }
+
+# ---------------------------------------------------------------------------
+# Gated public ingress for the Whisker UI (infra #57 / ADR-0014).
+#
+# whisker.viktorbarzin.me -> whisker:8081, Authentik-gated (auth="required":
+# Whisker ships NO own login — it's an admin observability UI, so Authentik
+# forward-auth is the only gate between strangers and the flow view). The
+# operator replicated `tls-secret` into calico-system already.
+#
+# TWO coupled pieces are required because the operator's own `whisker`
+# NetworkPolicy (owned by the Whisker CR above) sets policyTypes:[Ingress]
+# with NO ingress rules => default-deny on ingress to the whisker pod. The
+# additive NP below ORs in a Traefik allow (k8s NetworkPolicies are additive
+# across policies selecting the same pod), so we never edit the operator NP.
+module "ingress_whisker" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = "calico-system"
+  name            = "whisker"
+  service_name    = "whisker"
+  port            = 8081
+  auth            = "required"
+  tls_secret_name = "tls-secret"
+  extra_annotations = {
+    "gethomepage.dev/enabled"     = "true"
+    "gethomepage.dev/name"        = "Whisker"
+    "gethomepage.dev/description" = "Calico flow observability (who-talks-to-whom)"
+    "gethomepage.dev/icon"        = "calico.png"
+    "gethomepage.dev/group"       = "Infrastructure"
+  }
+}
+
+# Additive NetworkPolicy: permit Traefik -> whisker:8081. ORs with the
+# operator's default-deny `whisker` NP (selecting the same pod) so Traefik
+# can reach the UI without touching the operator-owned policy.
+resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {
+  metadata {
+    name      = "whisker-allow-traefik"
+    namespace = "calico-system"
+  }
+  spec {
+    pod_selector {
+      match_labels = {
+        "app.kubernetes.io/name" = "whisker"
+      }
+    }
+    policy_types = ["Ingress"]
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "traefik"
+          }
+        }
+      }
+      ports {
+        port     = "8081"
+        protocol = "TCP"
+      }
+    }
+  }
+}

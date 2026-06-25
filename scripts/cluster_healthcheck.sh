@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=47
+TOTAL_CHECKS=48
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -3156,6 +3156,44 @@ PYEOF
     esac
 }
 
+# --- 48. Goldmane edge-aggregator availability ---
+#
+# The goldmane-edge-aggregator Deployment (ADR-0014 / infra #58) streams Calico
+# Goldmane flows into the goldmane_edges CNPG DB — the durable who-talks-to-whom
+# trail. The pod has NO /metrics endpoint, so its liveness can't be scraped;
+# this check reads the Deployment's Available condition directly so the trail
+# silently dying surfaces in the health board (mirrors the AggregatorDown
+# Prometheus alert). Missing Deployment / not-Available -> FAIL.
+check_goldmane_aggregator() {
+    section 48 "Goldmane Edge-Aggregator"
+    local ns="goldmane-edge-aggregator" dep="goldmane-edge-aggregator"
+    local avail desired ready
+
+    # One get; absent Deployment is a hard fail (the trail isn't deployed).
+    if ! $KUBECTL get deploy "$dep" -n "$ns" >/dev/null 2>&1; then
+        [[ "$QUIET" == true ]] && section_always 48 "Goldmane Edge-Aggregator"
+        fail "Deployment $ns/$dep not found — who-talks-to-whom edge trail is not running"
+        json_add "goldmane_aggregator" "FAIL" "deployment missing"
+        return 0
+    fi
+
+    avail=$($KUBECTL get deploy "$dep" -n "$ns" \
+        -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)
+    ready=$($KUBECTL get deploy "$dep" -n "$ns" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+    desired=$($KUBECTL get deploy "$dep" -n "$ns" -o jsonpath='{.spec.replicas}' 2>/dev/null)
+    ready=${ready:-0}
+    desired=${desired:-0}
+
+    if [[ "$avail" == "True" ]]; then
+        pass "Edge-aggregator Available ($ready/$desired ready)"
+        json_add "goldmane_aggregator" "PASS" "${ready}/${desired} ready"
+    else
+        [[ "$QUIET" == true ]] && section_always 48 "Goldmane Edge-Aggregator"
+        fail "Edge-aggregator NOT Available ($ready/$desired ready) — edge trail has stopped recording"
+        json_add "goldmane_aggregator" "FAIL" "${ready}/${desired} ready; Available=${avail:-unknown}"
+    fi
+}
+
 # --- Summary ---
 print_summary() {
     if [[ "$JSON" == true ]]; then
@@ -3224,7 +3262,7 @@ main() {
         check_monitoring_prom_am check_monitoring_vault check_monitoring_css
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
-        check_immich_search check_csi_ghost_drift
+        check_immich_search check_csi_ghost_drift check_goldmane_aggregator
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that

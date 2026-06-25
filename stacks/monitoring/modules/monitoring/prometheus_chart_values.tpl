@@ -1450,6 +1450,49 @@ serverFiles:
                 Remediation: right-size top reservers via Goldilocks (immich-server,
                 frigate, prometheus, pg-cluster, paperless) or bump VM RAM on
                 k8s-node2/k8s-node3 from 32GB → 48GB to match node1.
+      # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
+      # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
+      # so its health is inferred from kube-state-metrics signals — the trail
+      # must not silently die. Two failure modes are covered:
+      #   - the aggregate Deployment stops consuming Goldmane's flow stream
+      #     (AggregatorDown) → no new edges ever land in the goldmane_edges DB
+      #   - the daily digest CronJob can't post new edges to Slack
+      #     (DigestFailing) → edges still land but nobody is told.
+      # A freshness probe (max(last_seen) staleness) is intentionally NOT here:
+      # AggregatorDown is the agreed floor and needs no extra moving parts.
+      - name: Network Observability (Goldmane)
+        rules:
+          # Deployment has <1 available replica for 15m. kube-state-metrics
+          # keeps `kube_deployment_status_replicas_available` (metric-keep list
+          # in serverFiles below). The 15m window rides out a normal rollout /
+          # node drain without paging; a genuinely-dead aggregator means the
+          # edge trail has stopped recording and stays down.
+          - alert: AggregatorDown
+            expr: |
+              kube_deployment_status_replicas_available{namespace="goldmane-edge-aggregator",deployment="goldmane-edge-aggregator"} < 1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "goldmane-edge-aggregator has no available replica — the who-talks-to-whom edge trail has stopped recording"
+              description: "The aggregate Deployment streams Calico Goldmane flows into the goldmane_edges CNPG DB. With 0 replicas, no new namespace-pair edges are captured. `kubectl -n goldmane-edge-aggregator describe deploy goldmane-edge-aggregator` + check the goldmane svc (calico-system) is reachable."
+          # The goldmane-edges-digest CronJob has a failed Job that started in
+          # the last 24h. Mirrors the generic JobFailed shape but scoped to the
+          # digest so it routes here. `for: 30m` rides out the apply/scrape
+          # transient; the digest runs daily so a real failure won't self-heal
+          # until the next run — surface it same-day rather than waiting 24h.
+          - alert: DigestFailing
+            expr: |
+              kube_job_status_failed{namespace="goldmane-edge-aggregator", job_name=~"goldmane-edges-digest.*"} > 0
+              and on(namespace, job_name)
+              (time() - kube_job_status_start_time{namespace="goldmane-edge-aggregator", job_name=~"goldmane-edges-digest.*"}) < 86400
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "goldmane-edges-digest CronJob failing — new edges captured but not posted to #security"
+              description: "The daily edge digest Job {{ $labels.job_name }} failed. Edges may still be landing in the goldmane_edges DB but no one is being notified of new namespace-pairs. `kubectl -n goldmane-edge-aggregator logs job/{{ $labels.job_name }}`."
       - name: Infrastructure Health
         rules:
           - alert: HomeAssistantDown

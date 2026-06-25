@@ -321,6 +321,17 @@ Detects the inverse of the K-series alerts: a service that **must work WITHOUT A
 - **Alert**: `probe_failed_due_to_regex{job="blackbox-authentik-walloff"} == 1` for 10m → `severity=warning`, `lane=security` → **`#security` Slack** (Slack-only, no paging). `probe_failed_due_to_regex` (not bare `probe_success==0`) is the signal: it isolates the Authentik-redirect from unrelated 5xx/DNS/TLS failures already covered by reachability alerts. Inhibited by `TraefikDown` and `AuthentikDown` (symptom, not regression, during those outages).
 - **Target list + how to add one**: `local.authentik_walloff_targets` in `stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf` — a map of `service → URL`. To guard a NEW carve-out, add ONE line. Verify it does NOT already 302 to Authentik first: `curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' '<url>'`. The map key becomes the `service` label on the metric + alert. (Note: openclaw `task-webhook` is intentionally NOT probed — no public DNS record.)
 
+#### East-west flow observability (Goldmane edge-aggregator) — `AggregatorDown` / `DigestFailing` (ADR-0014)
+
+Health for the durable "who-talks-to-whom" trail (Calico Goldmane → `goldmane-edge-aggregator` → CNPG `goldmane_edges` → daily `#alerts` digest; full trail in security.md + [runbooks/goldmane-flow-trail.md](../runbooks/goldmane-flow-trail.md)). The aggregator pod exposes **no `/metrics`**, so health is inferred from kube-state-metrics. Alert group `Network Observability (Goldmane)` in `prometheus_chart_values.tpl`; both route the default `slack-warning` receiver → **`#alerts`**.
+
+| Alert | Expr (abridged) | For | Severity |
+|---|---|---|---|
+| `AggregatorDown` | `kube_deployment_status_replicas_available{namespace="goldmane-edge-aggregator",deployment="goldmane-edge-aggregator"} < 1` (+ Prometheus-restart guard) | 15m | warning |
+| `DigestFailing` | `kube_job_status_failed{namespace="goldmane-edge-aggregator",job_name=~"goldmane-edges-digest.*"} > 0` within 24h | 30m | warning |
+
+The two layers are **complementary**: `AggregatorDown` ⇒ no new edges land in the DB; `DigestFailing` ⇒ edges still land but nobody is told. (`< 1` requires the metric series to exist — a fully-deleted Deployment is instead caught by cluster-health check #48 below as "deployment missing".) A freshness probe (#61b) was deliberately skipped — `AggregatorDown` is the agreed floor. **Cluster-health check #48** (`check_goldmane_aggregator` in `scripts/cluster_healthcheck.sh`) reads the Deployment's `Available` condition independently (human / `--quiet` / `--json`; JSON key `goldmane_aggregator`).
+
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup
 - **MySQLBackupStale**: >36h since last backup
