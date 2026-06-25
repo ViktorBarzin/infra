@@ -416,23 +416,37 @@ phase_preflight() {
     fi
   fi
 
-  # 4b. apiserver-OIDC drift gate (backstop for the rbac stack's kubeadm-config
+  # 4b. apiserver-OIDC drift check (backstop for the rbac stack's kubeadm-config
   # reconciliation). A `kubeadm upgrade` REGENERATES the apiserver manifest from
   # kubeadm-config; if kubeadm-config still carries the legacy single-issuer
   # --oidc-* args instead of --authentication-config, the regenerated apiserver
-  # reverts structured multi-issuer auth and CRASH-LOOPS — stalling the chain
-  # mid-flight with the master cordoned and etcd already bumped (the 2026-06-24
-  # v1.35 stall; docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md).
-  # `kubeadm upgrade diff` shows exactly what the manifest regen will change; a
-  # '-' line dropping --authentication-config means the drift is still present.
-  # Skip on an at-target master (resume — no apiserver regen). Best-effort: blocks
-  # only on a POSITIVE drift signal, never merely because diff is unavailable.
+  # loses structured multi-issuer auth → kubectl + dashboard SSO break AFTER the
+  # upgrade. This is RECOVERABLE (the apiserver does NOT crash — verified by an
+  # isolated repro 2026-06-24; the chain's post-master restore.sh re-adds the flag,
+  # and the rbac stack reconciles kubeadm-config so it won't recur) — so this is an
+  # ALERT, not a block. (NB the 2026-06-24 stall was NOT this — it was etcd IO
+  # starvation; see docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md.)
+  # Skip on an at-target master (resume — no apiserver regen).
   if [ "$master_kubelet_v" != "$TARGET_VERSION" ]; then
     local apiserver_diff
     apiserver_diff=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" "sudo kubeadm upgrade diff v$TARGET_VERSION 2>/dev/null" || true)
     if echo "$apiserver_diff" | grep -qE '^-[[:space:]].*--authentication-config'; then
-      block "kubeadm upgrade would DROP --authentication-config from kube-apiserver (kubeadm-config OIDC drift → apiserver crash-loop). Re-apply the rbac stack (apiserver-oidc.tf reconciles kubeadm-config), then retry. Master NOT drained."
+      slack "WARN preflight — kubeadm upgrade will DROP --authentication-config (kubeadm-config OIDC drift). SSO breaks post-upgrade until restore.sh re-adds it; re-apply the rbac stack to reconcile kubeadm-config. Proceeding (recoverable, not a crash)."
     fi
+  fi
+
+  # 4c. Reclaim kubeadm scratch on master. `kubeadm upgrade apply` dumps a full
+  # ~400MB etcd DB backup into /etc/kubernetes/tmp/kubeadm-backup-etcd-<ts>/ before
+  # every etcd upgrade and NEVER cleans it up — 145 dirs / 28GB had accumulated by
+  # 2026-06-24, pushing master root fs to 73% (image-GC churn + extra write IO on
+  # the shared HDD where etcd lives — a contributor to the etcd IO starvation that
+  # stalled that run, see post-mortem). Real etcd backups go to NFS, so these are
+  # throwaway. Prune ones >3 days old (keeps a short rollback window). Best-effort;
+  # never aborts the chain.
+  if [ "$master_kubelet_v" != "$TARGET_VERSION" ]; then
+    ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" \
+      "sudo find /etc/kubernetes/tmp -maxdepth 1 -type d \( -name 'kubeadm-backup-*' -o -name 'kubeadm-upgraded-manifests*' \) -mtime +3 -exec rm -rf {} + 2>/dev/null; echo -n 'master root after prune: '; df -h / | awk 'NR==2{print \$5\" used, \"\$4\" free\"}'" \
+      || echo "kubeadm-scratch prune skipped (ssh/df failed) — non-fatal"
   fi
 
   # 5. Push in-flight + started_timestamp metrics + ns annotations
