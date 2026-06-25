@@ -130,6 +130,11 @@ resource "kubernetes_deployment" "blackbox_exporter" {
     labels = {
       app  = "blackbox-exporter"
       tier = var.tier
+      # ADR-0014 service identity: monitoring is a multi-Service namespace, so
+      # the namespace alone can't attribute Goldmane flows. Value = the
+      # fronting Service name (kubernetes_service.blackbox_exporter is named
+      # "blackbox-exporter").
+      "service-identity" = "blackbox-exporter"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -146,6 +151,10 @@ resource "kubernetes_deployment" "blackbox_exporter" {
       metadata {
         labels = {
           app = "blackbox-exporter"
+          # ADR-0014: Goldmane/Felix stamps POD labels onto flows, so the
+          # disambiguating identity must live on the pod template (not just
+          # the Deployment metadata above). Not in selector → no replace.
+          "service-identity" = "blackbox-exporter"
         }
       }
       spec {

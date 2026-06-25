@@ -5,6 +5,11 @@ resource "kubernetes_deployment" "goflow2" {
     labels = {
       app  = "goflow2"
       tier = var.tier
+      # ADR-0014 service identity: monitoring is a multi-Service namespace, so
+      # the namespace alone can't attribute Goldmane flows. Value = the
+      # fronting Service name (kubernetes_service.goflow2 — the metrics svc; the
+      # goflow2-netflow NodePort is the same pod by another name).
+      "service-identity" = "goflow2"
     }
   }
   spec {
@@ -18,6 +23,10 @@ resource "kubernetes_deployment" "goflow2" {
       metadata {
         labels = {
           app = "goflow2"
+          # ADR-0014: Goldmane/Felix stamps POD labels onto flows, so the
+          # disambiguating identity must live on the pod template (not just
+          # the Deployment metadata above). Not in selector → no replace.
+          "service-identity" = "goflow2"
         }
       }
       spec {

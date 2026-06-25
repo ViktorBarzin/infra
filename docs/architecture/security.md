@@ -364,6 +364,67 @@ Beads: `code-8ywc` W1.6 + W1.7. **Status: planned.**
 - Rare-event misses: a Sunday-only CronJob's egress won't appear in 7 days of flow logs. Mitigation: extend observation to 2 weeks for namespaces with weekly CronJobs.
 - Mass-rollout cascade: the 26h March 2026 outage (memory id=390) was a mass-change cascade. Mitigation: phased per-namespace with health-check pauses, similar to the 2026-05-17 Keel phased rollout (memory id=1972).
 
+#### Deriving the per-namespace egress allowlist from the edge trail (Wave 1 W1.7)
+
+The durable **east-west flow trail** (below) is now the preferred data source for
+the *internal* (namespace-to-namespace) half of each Wave-1 egress allowlist —
+faster and identity-stamped vs the original iptables-`LOG`→journald→Loki path
+(ADR-0014: "Enforcement gains a better data source"). The unique observed
+namespace pairs live in CNPG DB `goldmane_edges`, table `edge`. To derive the
+namespaces a source is observed talking to (the `allow` set that seeds its
+NetworkPolicy):
+
+```sql
+SELECT DISTINCT dst_ns FROM edge WHERE src_ns='<ns>' AND action='allow' ORDER BY dst_ns;
+```
+
+The full SQL recipe (whole-cluster matrix, deny sanity-checks, the ≥7-day
+observation caveat) is in
+[runbooks/goldmane-flow-trail.md → Deriving the Wave-1 egress allowlist](../runbooks/goldmane-flow-trail.md#deriving-the-wave-1-egress-allowlist-from-the-edge-table-infra-62).
+**External / public-internet egress is NOT in this table** (empty-namespace flows
+are dropped) — for those destinations keep using the Calico flow-log observation
+(the W1.6 snapshot, `wave1-egress-observation-2026-05-22.md`). This feeds the
+existing observe-then-enforce effort (beads `code-8ywc`); **enforce-flips remain
+out of scope** of the trail — it is observe-and-derive only.
+
+### East-west flow observability (Goldmane / Whisker + edge trail) (ADR-0014)
+
+The "who-talks-to-whom" data plane that succeeds raw iptables-`LOG` lines (which
+carried no identity). **Service identity = the workload's namespace** (primary),
+refined by a `service-identity` label in the few multi-Service namespaces
+(`monitoring`, `kube-system`, `dbaas`). End-to-end trail, three layers:
+
+1. **Calico Goldmane + Whisker** (`calico-system`) — Goldmane aggregates
+   identity-stamped flows (ns/pod/workload/labels + allow-deny + policy-trace)
+   streamed from Felix over gRPC into a **~60-min in-memory ring buffer** (no
+   etcd/API writes — the etcd-cost constraint that drove the design). **Whisker**
+   is its live web UI at `whisker.viktorbarzin.me` (Authentik-gated,
+   `auth = "required"` — Whisker has no own login; an additive NetworkPolicy ORs
+   Traefik past the operator's default-deny `whisker` NP). The ring buffer is
+   **not** a trail (lost on Goldmane restart). Enabled via operator CRs in
+   `stacks/calico/main.tf`; reversible toggle (Goldmane is OSS tech-preview).
+2. **`goldmane-edge-aggregator`** (`stacks/goldmane-edge-aggregator`) — streams
+   Goldmane's gRPC `Flows.Stream` over **mTLS** and upserts the low-cardinality
+   namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,
+   flow_count)`) into CNPG DB `goldmane_edges`. Self-edges and empty-namespace
+   (public-internet) flows are dropped — in-cluster relationships only. The mTLS
+   client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`**
+   (Goldmane verifies CA-chain only, not identity) rather than copying the CA
+   private key into TF state — **re-apply the stack if the operator rotates that
+   Secret**.
+3. **`goldmane-edges-digest`** CronJob — posts first-seen edges daily to
+   **`#alerts`** (reuses the alert-digest webhook; a `#security` override 404s —
+   that webhook's Slack app isn't a member of `#security`; see runbook).
+
+The trail is **attribution-grade, not cryptographic** (reconstructs events in a
+trusted cluster; cannot prove identity against a spoofing pod — accepted trust-model
+limit; east-west stays plaintext, no mTLS between app pods). Health is covered by
+the **`AggregatorDown`** + **`DigestFailing`** alerts and cluster-health check #48
+(see monitoring.md). Full as-built, query recipes, and troubleshooting:
+[runbooks/goldmane-flow-trail.md](../runbooks/goldmane-flow-trail.md). Decision:
+[ADR-0014](../adr/0014-service-identity-and-east-west-observability.md); glossary
+`CONTEXT.md` → **Service identity**, **Goldmane / Whisker**.
+
 ### TLS & HTTP/3
 
 **Traefik** handles TLS termination:

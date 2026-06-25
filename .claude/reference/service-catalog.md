@@ -13,6 +13,8 @@
 | authentik | Identity provider (SSO) | authentik |
 | cloudflared | Cloudflare tunnel | cloudflared |
 | authelia | Auth middleware (may be merged into ebooks or removed) | platform |
+| goldmane | Calico 3.30 OSS flow aggregator (`goldmane.calico-system.svc:7443`, gRPC/mTLS). Stamps identity (ns/pod/workload/labels + allow-deny) on every flow from Felix into a ~60-min in-memory ring buffer — no etcd/API writes. East-west "who-talks-to-whom" source (ADR-0014). Enabled via operator CR (`kubectl_manifest.goldmane`). | calico |
+| whisker | Calico 3.30 OSS live flow-observability UI (`whisker.calico-system.svc:8081`) at `whisker.viktorbarzin.me` (Authentik-gated, `auth=required` — no own login; additive NP ORs Traefik past the operator default-deny). ~60-min live view of Goldmane flows, NOT history. Enabled via operator CR (`kubectl_manifest.whisker`). | calico |
 | monitoring | Prometheus/Grafana/Loki stack | monitoring |
 
 ## Storage & Security (Tier: cluster)
@@ -37,6 +39,7 @@
 ## Active Use
 | Service | Description | Stack |
 |---------|-------------|-------|
+| goldmane-edge-aggregator | Durable who-talks-to-whom audit trail (ADR-0014 / #58). Go service: `aggregate` Deployment streams Goldmane's gRPC `Flows.Stream` (mTLS) and upserts the low-cardinality namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,flow_count)`) into CNPG DB `goldmane_edges`; `goldmane-edges-digest` CronJob posts first-seen edges daily to `#security`. mTLS client cert REUSES the operator's `whisker-backend-key-pair` (re-apply if rotated). Tier-4-aux. Image `ghcr.io/viktorbarzin/goldmane-edge-aggregator` (private). Runbook: [goldmane-flow-trail.md](../../docs/runbooks/goldmane-flow-trail.md). | goldmane-edge-aggregator |
 | mailserver | Email (docker-mailserver) | mailserver |
 | shadowsocks | Proxy | shadowsocks |
 | webhook_handler | Webhook processing | webhook_handler |
@@ -161,3 +164,4 @@ procedures) are documented in `infra/docs/runbooks/`:
 | pfSense + Unbound DNS | [pfsense-unbound.md](../../docs/runbooks/pfsense-unbound.md) |
 | Mailserver PROXY-protocol / HAProxy | [mailserver-pfsense-haproxy.md](../../docs/runbooks/mailserver-pfsense-haproxy.md) |
 | Technitium apply flow | [technitium-apply.md](../../docs/runbooks/technitium-apply.md) |
+| Goldmane flow trail (east-west who-talks-to-whom) | [goldmane-flow-trail.md](../../docs/runbooks/goldmane-flow-trail.md) |

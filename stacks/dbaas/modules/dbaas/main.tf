@@ -745,7 +745,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
     labels = {
       "app" = "phpmyadmin"
       tier  = var.tier
-
+      # ADR-0014 service identity: dbaas is a multi-Service namespace, so the
+      # namespace alone can't attribute Goldmane flows. Value = the fronting
+      # Service name (kubernetes_service.phpmyadmin is named "pma").
+      "service-identity" = "pma"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -762,6 +765,10 @@ resource "kubernetes_deployment" "phpmyadmin" {
       metadata {
         labels = {
           "app" = "phpmyadmin"
+          # ADR-0014: Goldmane/Felix stamps POD labels onto flows, so the
+          # disambiguating identity must live on the pod template (not just
+          # the Deployment metadata above). Not in selector → no replace.
+          "service-identity" = "pma"
         }
       }
       spec {
@@ -812,8 +819,19 @@ resource "kubernetes_deployment" "phpmyadmin" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      # This Deployment is Keel-enrolled (keel.sh/policy=patch). Ignore the
+      # attributes Keel/Kyverno mutate at runtime so `terragrunt apply` (incl.
+      # the daily drift plan) doesn't fight them or revert the live image —
+      # canonical KEEL/KYVERNO lifecycle guard, matches linkwarden/chrome-service.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
   }
 }
 
@@ -1499,6 +1517,10 @@ resource "kubernetes_deployment" "pgadmin" {
     }
     labels = {
       tier = var.tier
+      # ADR-0014 service identity: dbaas is a multi-Service namespace, so the
+      # namespace alone can't attribute Goldmane flows. Value = the fronting
+      # Service name (kubernetes_service.pgadmin is named "pgadmin").
+      "service-identity" = "pgadmin"
     }
   }
   spec {
@@ -1514,6 +1536,10 @@ resource "kubernetes_deployment" "pgadmin" {
       metadata {
         labels = {
           app = "pgadmin"
+          # ADR-0014: Goldmane/Felix stamps POD labels onto flows, so the
+          # disambiguating identity must live on the pod template (not just
+          # the Deployment metadata above). Not in selector → no replace.
+          "service-identity" = "pgadmin"
         }
       }
       spec {
@@ -1568,8 +1594,20 @@ resource "kubernetes_deployment" "pgadmin" {
     }
   }
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      # This Deployment is Keel-enrolled (keel.sh/policy=patch) and Keel has
+      # bumped the live image (dpage/pgadmin4:9.16). Ignore the Keel/Kyverno
+      # runtime-mutated attributes so `terragrunt apply` (incl. the daily drift
+      # plan) doesn't revert the image to bare `dpage/pgadmin4` or strip Keel's
+      # annotations — canonical guard, matches linkwarden/chrome-service.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
   }
 }
 resource "kubernetes_service" "pgadmin" {
