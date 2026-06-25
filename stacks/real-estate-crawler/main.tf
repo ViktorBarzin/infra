@@ -7,6 +7,9 @@ variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -36,6 +39,9 @@ resource "kubernetes_manifest" "external_secret" {
 # DB credentials from Vault database engine (rotated automatically)
 # Provides DB_CONNECTION_STRING that auto-updates when password rotates
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -85,6 +91,9 @@ data "kubernetes_secret" "eso_secrets" {
 # fresh node would also fail. ESO renders the dockerconfigjson server-side
 # (Sprig `b64enc`) so the PAT never sits in K8s in cleartext.
 resource "kubernetes_manifest" "dockerhub_pull_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

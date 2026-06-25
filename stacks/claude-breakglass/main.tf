@@ -57,6 +57,9 @@ resource "kubernetes_service_account" "breakglass" {
 # DENIED this path (see stacks/vault/main.tf) so the shared, prompt-injectable
 # pod can never read it.
 resource "kubernetes_manifest" "external_secret_ssh" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -82,6 +85,9 @@ resource "kubernetes_manifest" "external_secret_ssh" {
 # Env secrets: the Anthropic OAuth token (shared with claude-agent-service —
 # same account) and the app bearer token (in-cluster/CLI fallback caller auth).
 resource "kubernetes_manifest" "external_secret_env" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

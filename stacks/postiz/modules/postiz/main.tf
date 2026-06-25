@@ -72,6 +72,9 @@ resource "kubernetes_persistent_volume_claim" "uploads" {
 # Helm-owned Secret resource intact. The chart's deployment already wires
 # this Secret in via `envFrom: secretRef: postiz-secrets`.
 resource "kubernetes_manifest" "external_secret_jwt" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

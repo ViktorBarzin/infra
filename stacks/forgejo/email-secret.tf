@@ -6,6 +6,9 @@
 # (stacks/authentik/email-secret.tf) — one credential, one rotation point. The
 # reloader annotation rolls the Forgejo pod if the password is ever rotated.
 resource "kubernetes_manifest" "forgejo_email_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

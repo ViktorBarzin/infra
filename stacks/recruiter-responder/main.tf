@@ -55,6 +55,9 @@ resource "kubernetes_namespace" "recruiter_responder" {
 # Schema in CNPG: `recruiter_responder` (alembic creates on first migrate).
 # DB user: created via Vault database engine — see static-creds/pg-recruiter-responder.
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -107,6 +110,9 @@ resource "kubernetes_manifest" "external_secret" {
 # Pre-req in dbaas: CNPG cluster has DB `recruiter_responder`, role
 # `recruiter_responder`, and Vault role `static-creds/pg-recruiter-responder`.
 resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

@@ -28,6 +28,9 @@ resource "kubernetes_namespace" "phpipam" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -57,6 +60,9 @@ resource "kubernetes_manifest" "external_secret" {
 }
 
 resource "kubernetes_manifest" "external_secret_pfsense_ssh" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -86,6 +92,9 @@ resource "kubernetes_manifest" "external_secret_pfsense_ssh" {
 }
 
 resource "kubernetes_manifest" "external_secret_admin" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

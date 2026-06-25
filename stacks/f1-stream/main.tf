@@ -33,6 +33,9 @@ resource "kubernetes_namespace" "f1-stream" {
 }
 
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
@@ -62,6 +65,9 @@ resource "kubernetes_manifest" "external_secret" {
 # Pull the chrome-service bearer token into this namespace as a separate
 # Secret so the verifier can reach the in-cluster Playwright pool.
 resource "kubernetes_manifest" "chrome_service_client_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

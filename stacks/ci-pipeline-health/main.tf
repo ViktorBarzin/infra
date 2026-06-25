@@ -49,6 +49,9 @@ resource "kubernetes_namespace" "ci_pipeline_health" {
 # billing on PRIVATE mirrors, which a future scoped read:packages rotation of
 # the alias could not do. Blast radius = this single-CronJob namespace.
 resource "kubernetes_manifest" "external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"

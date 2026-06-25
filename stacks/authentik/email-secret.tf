@@ -6,6 +6,9 @@
 # are non-secret and live in values.yaml. The reloader annotation rolls the
 # authentik pods if the password ever changes.
 resource "kubernetes_manifest" "authentik_email_secret" {
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
