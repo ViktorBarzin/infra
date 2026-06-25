@@ -127,6 +127,17 @@ resource "kubernetes_job" "db_init" {
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
                 PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE claude_memory OWNER claude_memory"
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
+              # pgvector extension for the hybrid-recall dense leg (halfvec(1024)+HNSW).
+              # CREATE EXTENSION is per-database and superuser-only, so connect to
+              # claude_memory as root (the claude_memory role cannot CREATE EXTENSION).
+              # Tolerant by design: if the operand image has no pgvector yet (i.e. the
+              # CNPG image swap in stacks/dbaas hasn't landed — see
+              # docs/runbooks/promote-pgvector-cnpg.md), this logs and continues so a
+              # pre-promotion deploy still succeeds. Alembic migration 005 also runs
+              # CREATE EXTENSION IF NOT EXISTS and gates the embedding column/index on
+              # the extension's presence, so app-side and infra-side are both idempotent.
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d claude_memory -c "CREATE EXTENSION IF NOT EXISTS vector" \
+                || echo "pgvector not available yet (operand image lacks it) — skipping; migration 005 will create it once the image swap lands"
               echo "Database init complete"
             EOT
           ]

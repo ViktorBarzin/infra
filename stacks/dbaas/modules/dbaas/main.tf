@@ -1108,8 +1108,22 @@ module "ingress" {
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
-    instances     = "3"
-    image         = "ghcr.io/cloudnative-pg/postgis:16"
+    instances = "3"
+    # pgvector-bundled operand image for claude-memory's hybrid-recall upgrade.
+    # Thin `FROM ghcr.io/cloudnative-pg/postgis:16` + `postgresql-16-pgvector`
+    # (built off-cluster via GHA→ghcr; Dockerfile: postgres/pgvector-postgis.Dockerfile)
+    # — keeps PostGIS + the bookworm base (no glibc/ICU collation jump) and adds
+    # pgvector >= 0.7.0 for halfvec(1024)+HNSW. If the PostGIS pre-check confirms
+    # NO tenant uses PostGIS, swap to ghcr.io/cloudnative-pg/postgresql:16-standard-bookworm
+    # (pull-only, bundles pgvector, drops PostGIS). FULL promotion procedure +
+    # ~20-tenant blast radius: docs/runbooks/promote-pgvector-cnpg.md.
+    # Bumping this `image` trigger forces CNPG to roll the cluster (replicas
+    # first, then a brief primary write-outage — CNPG default
+    # primaryUpdateMethod=restart, but an IMAGE change forces a switchover;
+    # primaryUpdateStrategy=unsupervised = fully automated). pg_params is NOT
+    # changed in the same apply: CNPG rejects an imageName+parameters change
+    # together under switchover.
+    image         = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16"
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
@@ -1142,7 +1156,9 @@ resource "null_resource" "pg_cluster" {
           enablePodAntiAffinity: true
           podAntiAffinityType: required
           topologyKey: kubernetes.io/hostname
-        imageName: ghcr.io/cloudnative-pg/postgis:16
+        # pgvector-bundled operand image (PostGIS-preserving thin build). See the
+        # `image` trigger comment above + docs/runbooks/promote-pgvector-cnpg.md.
+        imageName: ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16
         postgresql:
           parameters:
             search_path: '"$user", public'
