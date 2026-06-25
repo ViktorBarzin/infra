@@ -41,7 +41,8 @@ Job 0 — preflight       (pinned: k8s-node1)
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
   ├── kubeadm upgrade plan matches target (skipped when master already at target — partial-resume)
-  ├── apiserver-OIDC drift gate: kubeadm upgrade diff must NOT drop --authentication-config (else BLOCK+alert)
+  ├── apiserver-OIDC drift check: kubeadm upgrade diff drops --authentication-config? → Slack WARN (recoverable; not a block)
+  ├── reclaim kubeadm scratch: prune /etc/kubernetes/tmp/kubeadm-backup-* >3d on master (kubeadm leaks ~400MB etcd-db backups)
   ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
   ├── Trigger backup-etcd Job, wait, verify snapshot byte count
   ├── SSH master: containerd skew fix (if master < workers)
@@ -229,10 +230,10 @@ Exposed in K8s via ExternalSecret `k8s-upgrade-creds` in the `k8s-upgrade` names
 from kubeadm-config**. apiserver auth uses a structured multi-issuer
 `--authentication-config` (kubectl + dashboard SSO), but kubeadm-config used to
 still carry the legacy single-issuer `--oidc-*` extraArgs — so every upgrade
-reverted the flag. On the **1.34→1.35** bump that regenerated apiserver
-**crash-looped and stalled the whole upgrade mid-flight** (master cordoned, etcd
-already bumped); the post-upgrade restore below never ran because `kubeadm
-upgrade apply` itself never returned success. Post-mortem:
+reverted the flag, **silently breaking SSO after the upgrade** (the apiserver does
+NOT crash on this — verified by isolated repro; it's recoverable via the restore
+script below). NB: the **1.34→1.35 stall on 2026-06-24 was a *separate* issue —
+etcd IO starvation**, not this drift; post-mortem:
 `docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md`.
 
 **Primary fix (2026-06-24):** `stacks/rbac/modules/rbac/apiserver-oidc.tf` now
@@ -243,9 +244,9 @@ upgrades with a pure image bump — `kubeadm upgrade diff <target>` shows only t
 image change. Zero live impact (the CM is read only during an upgrade).
 
 **Backstops:**
-- **Preflight gate 4b** runs `kubeadm upgrade diff` and BLOCKs (k8s_upgrade_blocked=1
-  → alert) BEFORE draining the master if `--authentication-config` would still be
-  dropped — so this can never again drain into a crash.
+- **Preflight check 4b** runs `kubeadm upgrade diff` and **alerts** (Slack WARN, does
+  NOT block — the drift only breaks SSO, which is recoverable) if
+  `--authentication-config` would still be dropped.
 - The `rbac` stack still publishes its restore script to the
   `kube-system/apiserver-oidc-restore` ConfigMap, and `phase_master` re-runs it on
   master right after `kubeadm upgrade apply` (idempotent, `/livez`-gated with

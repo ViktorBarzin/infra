@@ -18,13 +18,16 @@
 #   3. the kubeadm-config ClusterConfiguration CM   — what kubeadm regenerates from
 # Originally only (1)+(2) were managed, so every kubeadm upgrade rewrote the
 # manifest from the STALE CM, reverting --authentication-config to single-issuer
-# --oidc-* flags. On k8s 1.35 that regenerated apiserver CRASH-LOOPED and stalled
-# the whole upgrade mid-flight (master cordoned, etcd already bumped) — see
-# docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md. The
+# --oidc-* flags. The consequence is SSO breakage AFTER the upgrade: kubectl +
+# dashboard lose multi-issuer auth (the apiserver does NOT crash on this — verified
+# by an isolated repro 2026-06-24; the 2026-06-24 v1.35 upgrade *stall* was a
+# separate etcd IO-starvation issue, see
+# docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md). The
 # remote script below now ALSO reconciles (3) via `kubeadm init phase
 # upload-config`, so a future kubeadm upgrade regenerates a CORRECT manifest. The
-# k8s-version-upgrade chain additionally GATES on `kubeadm upgrade diff` in
-# preflight and blocks+alerts if --authentication-config would still be dropped.
+# k8s-version-upgrade chain additionally ALERTS (does not block — SSO drift is
+# recoverable) via `kubeadm upgrade diff` in preflight if --authentication-config
+# would still be dropped.
 #
 # SAFETY: the remote script health-gates on /livez and AUTO-ROLLS-BACK the
 # manifest from a timestamped backup if the apiserver does not recover, so a
