@@ -416,6 +416,25 @@ phase_preflight() {
     fi
   fi
 
+  # 4b. apiserver-OIDC drift gate (backstop for the rbac stack's kubeadm-config
+  # reconciliation). A `kubeadm upgrade` REGENERATES the apiserver manifest from
+  # kubeadm-config; if kubeadm-config still carries the legacy single-issuer
+  # --oidc-* args instead of --authentication-config, the regenerated apiserver
+  # reverts structured multi-issuer auth and CRASH-LOOPS — stalling the chain
+  # mid-flight with the master cordoned and etcd already bumped (the 2026-06-24
+  # v1.35 stall; docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md).
+  # `kubeadm upgrade diff` shows exactly what the manifest regen will change; a
+  # '-' line dropping --authentication-config means the drift is still present.
+  # Skip on an at-target master (resume — no apiserver regen). Best-effort: blocks
+  # only on a POSITIVE drift signal, never merely because diff is unavailable.
+  if [ "$master_kubelet_v" != "$TARGET_VERSION" ]; then
+    local apiserver_diff
+    apiserver_diff=$(ssh "${SSH_OPTS[@]}" "$(ssh_target k8s-master)" "sudo kubeadm upgrade diff v$TARGET_VERSION 2>/dev/null" || true)
+    if echo "$apiserver_diff" | grep -qE '^-[[:space:]].*--authentication-config'; then
+      block "kubeadm upgrade would DROP --authentication-config from kube-apiserver (kubeadm-config OIDC drift → apiserver crash-loop). Re-apply the rbac stack (apiserver-oidc.tf reconciles kubeadm-config), then retry. Master NOT drained."
+    fi
+  fi
+
   # 5. Push in-flight + started_timestamp metrics + ns annotations
   $KUBECTL annotate ns "$NS" \
     "viktorbarzin.me/k8s-upgrade-in-flight=$(date -u +%FT%TZ)" \

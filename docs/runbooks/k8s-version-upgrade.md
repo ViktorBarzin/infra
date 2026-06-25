@@ -41,6 +41,7 @@ Job 0 — preflight       (pinned: k8s-node1)
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
   ├── kubeadm upgrade plan matches target (skipped when master already at target — partial-resume)
+  ├── apiserver-OIDC drift gate: kubeadm upgrade diff must NOT drop --authentication-config (else BLOCK+alert)
   ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
   ├── Trigger backup-etcd Job, wait, verify snapshot byte count
   ├── SSH master: containerd skew fix (if master < workers)
@@ -222,22 +223,34 @@ Exposed in K8s via ExternalSecret `k8s-upgrade-creds` in the `k8s-upgrade` names
 
 ## Common Operations
 
-### Post-upgrade: apiserver OIDC restore (AUTOMATED by the chain since 2026-06-19)
+### apiserver OIDC + kubeadm upgrades (kubeadm-config reconciliation since 2026-06-24)
 
 `kubeadm upgrade apply` **regenerates `/etc/kubernetes/manifests/kube-apiserver.yaml`
-and drops the `--authentication-config` flag**, silently disabling apiserver
-OIDC (kubectl/kubelogin CLI **and** the web dashboard SSO break — tokens get
-401). This used to require a manual re-apply after **every** control-plane bump.
+from kubeadm-config**. apiserver auth uses a structured multi-issuer
+`--authentication-config` (kubectl + dashboard SSO), but kubeadm-config used to
+still carry the legacy single-issuer `--oidc-*` extraArgs — so every upgrade
+reverted the flag. On the **1.34→1.35** bump that regenerated apiserver
+**crash-looped and stalled the whole upgrade mid-flight** (master cordoned, etcd
+already bumped); the post-upgrade restore below never ran because `kubeadm
+upgrade apply` itself never returned success. Post-mortem:
+`docs/post-mortems/2026-06-24-kubeadm-oidc-drift-apiserver-upgrade-stall.md`.
 
-**Now automated:** the `rbac` stack publishes its OIDC restore script to the
-`kube-system/apiserver-oidc-restore` ConfigMap, and the version-upgrade chain's
-`phase_master` re-runs it on master immediately after `kubeadm upgrade apply`
-(while tigera-operator is still quiesced, so the flag-add apiserver restart can't
-crashloop the operator). It's idempotent, health-gates `/livez` with
-auto-rollback, and is **non-fatal** — a failure only lags SSO until the next rbac
-apply (the version upgrade itself already succeeded). So a chain-driven
-control-plane bump no longer breaks SSO. The master phase self-skips when master
-is already at target, so this only runs when master was actually upgraded.
+**Primary fix (2026-06-24):** `stacks/rbac/modules/rbac/apiserver-oidc.tf` now
+**reconciles kubeadm-config** (`kubeadm init phase upload-config kubeadm`, rewriting
+`apiServer.extraArgs`: drop `--oidc-*`, add `--authentication-config`) as part of
+its remote script. So kubeadm regenerates a **correct** manifest and the apiserver
+upgrades with a pure image bump — `kubeadm upgrade diff <target>` shows only the
+image change. Zero live impact (the CM is read only during an upgrade).
+
+**Backstops:**
+- **Preflight gate 4b** runs `kubeadm upgrade diff` and BLOCKs (k8s_upgrade_blocked=1
+  → alert) BEFORE draining the master if `--authentication-config` would still be
+  dropped — so this can never again drain into a crash.
+- The `rbac` stack still publishes its restore script to the
+  `kube-system/apiserver-oidc-restore` ConfigMap, and `phase_master` re-runs it on
+  master right after `kubeadm upgrade apply` (idempotent, `/livez`-gated with
+  auto-rollback, non-fatal) — now redundant belt-and-suspenders that *also*
+  re-reconciles kubeadm-config. Self-skips when master is already at target.
 
 **Manual fallback** — only for an out-of-band/manual `kubeadm` upgrade, or if the
 chain logged `WARN: --authentication-config absent after re-apply`:
