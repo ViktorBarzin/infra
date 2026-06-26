@@ -60,9 +60,10 @@ alertmanager:
       receiver: slack-warning
       routes:
         # Wave 1 security lane — matches alerts that set `lane = "security"`
-        # (K2-K9, V1-V7, S1 from Loki ruler). Routes to dedicated #security
-        # channel regardless of severity. Defined first + continue: false so
-        # security alerts never fall through to the generic #alerts channel.
+        # (K2-K9, V1-V7, S1 from Loki ruler). Posts via the slack-security
+        # receiver (distinct [SECURITY] styling) to #alerts; the dedicated
+        # #security channel was abandoned 2026-06-25 (shared webhook can't reach
+        # it). continue: false so they get the security-styled receiver.
         - receiver: slack-security
           group_wait: 10s
           group_interval: 1m
@@ -235,7 +236,10 @@ alertmanager:
       - name: slack-security
         slack_configs:
           - send_resolved: true
-            channel: "#security"
+            # #security was abandoned 2026-06-25 — the shared incoming webhook's
+            # Slack app isn't a member of it (channel override 404s). Security-lane
+            # alerts keep their distinct [SECURITY] styling but post to #alerts.
+            channel: "#alerts"
             color: '{{ if eq .Status "firing" }}{{ if eq (index .Alerts 0).Labels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
             fallback: '{{ if eq .Status "firing" }}[SECURITY-{{ (index .Alerts 0).Labels.severity | toUpper }}]{{ else }}[RESOLVED]{{ end }}: {{ .GroupLabels.alertname }}'
             title: '{{ if eq .Status "firing" }}[SECURITY/{{ (index .Alerts 0).Labels.severity | toUpper }}]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
@@ -1504,7 +1508,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "goldmane-edges-digest CronJob failing — new edges captured but not posted to #security"
+              summary: "goldmane-edges-digest CronJob failing — new edges captured but not posted to #alerts"
               description: "The daily edge digest Job {{ $labels.job_name }} failed. Edges may still be landing in the goldmane_edges DB but no one is being notified of new namespace-pairs. `kubectl -n goldmane-edge-aggregator logs job/{{ $labels.job_name }}`."
       - name: Infrastructure Health
         rules:
@@ -3246,7 +3250,8 @@ serverFiles:
       # means blackbox's fail_if_header_matches caught a Location -> Authentik:
       # a path-scoped `auth = "none"` carve-out was clobbered (TF revert, deploy,
       # ingress_factory default flipping back to auth="required"). lane=security
-      # routes it to the #security Slack receiver (Slack-only, no paging).
+      # routes it to the slack-security receiver, which posts to #alerts
+      # (#security abandoned 2026-06-25; Slack-only, no paging).
       - name: Authentik Walling Off
         rules:
           - alert: AuthentikWallingOffPublicPath

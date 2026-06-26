@@ -67,7 +67,7 @@ small no matter how much traffic flows.
 
 ### Slack `#alerts` — daily digest
 
-> **Channel note (2026-06-25):** posts to **`#alerts`**, not `#security`. The shared `alertmanager_slack_api_url` incoming webhook's Slack app is not a member of `#security`, so a channel override there returns HTTP `404 channel_not_found` (this almost certainly also breaks alertmanager's `slack-security` receiver — verify separately). To route the digest (and security alerts) to `#security`: invite that webhook's Slack app to `#security`, then set `SLACK_CHANNEL=#security` in `stacks/goldmane-edge-aggregator` and re-apply.
+> **Channel note (2026-06-25):** posts to **`#alerts`**. The dedicated `#security` channel was abandoned — the shared `alertmanager_slack_api_url` incoming webhook's Slack app is not a member of it, so a channel override there returns HTTP `404 channel_not_found`. Everything now posts to `#alerts` (this digest plus alertmanager's `slack-security` receiver, which keeps its `[SECURITY]` styling so security-lane alerts still stand out there).
 
 - CronJob `goldmane-edges-digest` (08:00 Europe/London) posts edges first seen
   in the last 24h. Quiet when there are none. Reuses the existing alert-digest
@@ -282,7 +282,7 @@ ExternalSecret resolved. A dry run / smoke test: run the image with `args:
 > Known state (2026-06-25): the digest CronJob's first Job **failed** and it has
 > never successfully posted (`lastSuccessfulTime` empty) — the digest leg is the
 > live gap; `DigestFailing` is catching it. Edges still land in the DB via the
-> `aggregate` Deployment; only the `#security` notification is affected.
+> `aggregate` Deployment; only the `#alerts` digest notification is affected.
 > Investigation/fix belongs to the aggregator slice (#58/#60), not monitoring.
 
 **No edges at all in the table.** Confirm Goldmane is enabled
