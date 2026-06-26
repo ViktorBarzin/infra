@@ -1,454 +1,146 @@
 ---
 name: cluster-health
 description: |
-  Check Kubernetes cluster health and fix common issues. Use when:
-  (1) User asks to check the cluster, check health, or "what's wrong",
-  (2) User asks about pod status, node health, or deployment issues,
-  (3) User asks to fix stuck pods, evicted pods, or CrashLoopBackOff,
-  (4) User mentions "health check", "cluster status", "cluster health",
-  (5) User asks "is everything running" or "any problems".
-  Runs 47 cluster-wide checks (nodes, workloads, monitoring, certs,
-  backups, external reachability, PVE host thermals + load, HA Sofia
-  status dashboard, Immich smart-search, Proxmox CSI ghost-disk drift)
-  with safe auto-fix for evicted pods.
+  Personalized for emo. Check whether the homelab Kubernetes cluster is
+  affecting ha-sofia or the Sofia smart-home devices it runs (Tuya devices,
+  the MPPT ATS, lights, climate, security, irrigation). Use when:
+  (1) "is ha-sofia ok", "are my devices / the ATS / the lights down",
+  (2) "is the cluster affecting Sofia / my devices",
+  (3) "check the cluster", "cluster health", "is everything running",
+  (4) a device on the Барзини → Статус dashboard looks offline.
+  Runs the cluster-wide healthcheck read-only and triages it by what
+  ha-sofia actually depends on; the rest of the cluster is the admin's area.
 author: Claude Code
-version: 2.0.0
-date: 2026-04-19
+version: 3.0.0-emo
+date: 2026-06-26
 ---
 
-# Cluster Health Check
+# Cluster Health — personalized for emo (ha-sofia focus)
 
-## MANDATORY: Run the script first
+## What you actually care about
 
-When this skill is invoked, your **first action** must be to run the
-cluster health check script and reason over its output before doing
-anything else. Do not improvise individual `kubectl` calls — the
-script is the authoritative surface.
+You care about **ha-sofia** and the **Sofia smart-home devices** it runs —
+the Tuya devices, the **MPPT ATS**, and the lights / climate / security /
+irrigation on your **Барзини → Статус** dashboard. The wider Kubernetes
+cluster matters to you **only when it's breaking something ha-sofia or your
+devices depend on.** Anything else is the admin's (wizard's) area — note it in
+one line and move on; don't chase it.
+
+You have **read-only** cluster access. You can SEE everything but change
+nothing — so when something on your chain is broken, the job is to confirm it
+and hand it off, not to repair it.
+
+## How ha-sofia depends on the cluster
+
+ha-sofia itself runs at the house (HAOS at https://ha-sofia.viktorbarzin.me) —
+**not** in the cluster. The cluster reaches it through exactly two things:
+
+1. **tuya-bridge** (namespace `tuya-bridge`) — the REST API ha-sofia calls for
+   every Tuya device **and the MPPT ATS**. If it's unhealthy, your Tuya devices
+   + ATS stop responding. **This is the #1 thing to check.**
+2. **The path that carries ha-sofia ⇄ tuya-bridge and keeps ha-sofia
+   reachable**: cloudflared (tunnel) → Traefik (LB) → the ingress + TLS cert
+   for `tuya-bridge.viktorbarzin.me` and `ha-sofia.viktorbarzin.me`, plus
+   Technitium DNS. If any of these break, ha-sofia can't reach tuya-bridge and
+   you can't reach ha-sofia remotely.
+
+Everything else in the cluster is unrelated to you unless it's hosting one of
+those pods.
+
+## Step 1 — run the healthcheck (read-only, with your HA token)
+
+Your account can't read Vault, so load your own ha-sofia token first (it was
+minted for you and lives at `~/.config/cluster-health/haos_token`). Then run
+the script from YOUR clone, read-only:
 
 ```bash
-cd /home/wizard/code
-bash infra/scripts/cluster_healthcheck.sh --json | tee /tmp/cluster-health.json
+cd /home/emo/code
+export HOME_ASSISTANT_SOFIA_TOKEN="$(cat ~/.config/cluster-health/haos_token)"
+bash scripts/cluster_healthcheck.sh --no-fix --quiet
+# machine-readable instead:
+# bash scripts/cluster_healthcheck.sh --no-fix --quiet --json | tee /tmp/cluster-health.json
 ```
 
-If the session is rooted elsewhere, fall back to the absolute path:
+- **Never pass `--fix`** — it deletes pods (a write); you're read-only and it
+  will fail.
+- Exit codes: `0` healthy, `1` warnings, `2` failures.
+
+With the token exported, the **ha-sofia checks run for you**:
+26 Entity Availability · 27 Integration Health · 28 Automation Status ·
+29 System Resources · **45 Status Dashboard** — your Барзини → Статус view,
+classifying every device tile as OK / ⚠️ / Offline across Сигурност, Мрежа &
+IT, Енергия, Климат, Уреди, Мултимедия, Осветление, Поливна. Check 30 also
+covers the **tuya** exporter.
+
+## Step 2 — triage the output by relevance to YOU
+
+Read the PASS/WARN/FAIL summary, then split the WARN/FAIL items in two:
+
+- **On your chain → this is what matters.** Anything touching: `tuya-bridge`,
+  `cloudflared`, `traefik`, DNS (check 21), the TLS cert / ingress for your two
+  hosts (checks 12, 22, 31, 32), or a **node** hosting those pods — plus all the
+  **ha-sofia** checks (26–29, 45) and the **tuya** exporter (30).
+- **Not on your chain → one line, then drop it.** Summarise as "N unrelated
+  cluster issues (admin's area)" and don't investigate.
+
+## Step 3 — read-only checks for your chain
+
+All of these work with your read-only access:
 
 ```bash
-bash /home/wizard/code/infra/scripts/cluster_healthcheck.sh --json
-```
+# tuya-bridge — your devices + the ATS
+kubectl get pods -n tuya-bridge
+kubectl rollout status deploy/tuya-bridge -n tuya-bridge
+kubectl logs -n tuya-bridge deploy/tuya-bridge --tail=50
 
-Then:
-
-1. Parse the JSON. Report the PASS/WARN/FAIL counts + overall verdict.
-2. Iterate every FAIL and WARN check, describe what tripped, and propose
-   the remediation path (use the recipes below).
-3. Only reach for ad-hoc `kubectl` commands when investigating a
-   specific failure beyond what the script reported.
-
-Exit codes: `0` = healthy, `1` = warnings only, `2` = failures.
-
-## Quick flags
-
-```bash
-# Human-readable report (default), no auto-fix
-bash infra/scripts/cluster_healthcheck.sh
-
-# Machine-readable JSON summary
-bash infra/scripts/cluster_healthcheck.sh --json
-
-# Only show WARN + FAIL (suppress PASS noise)
-bash infra/scripts/cluster_healthcheck.sh --quiet
-
-# Enable auto-fix (delete evicted pods, kick stuck CrashLoop pods)
-bash infra/scripts/cluster_healthcheck.sh --fix
-
-# Combined: quiet JSON without auto-fix
-bash infra/scripts/cluster_healthcheck.sh --no-fix --quiet --json
-
-# Custom kubeconfig
-bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
-```
-
-## What It Checks (47 checks)
-
-| # | Check | Notes |
-|---|-------|-------|
-| 1 | Node Status | NotReady nodes, version drift |
-| 2 | Node Resources | CPU/mem >80% (warn) / >90% (fail) |
-| 3 | Node Conditions | MemoryPressure / DiskPressure / PIDPressure |
-| 4 | Problematic Pods | CrashLoopBackOff / Error / ImagePullBackOff |
-| 5 | Evicted/Failed Pods | `status.phase=Failed` |
-| 6 | DaemonSets | desired == ready |
-| 7 | Deployments | ready == desired replicas |
-| 8 | PVC Status | all Bound |
-| 9 | HPA Health | targets not `<unknown>`, utilization <100% |
-| 10 | CronJob Failures | job conditions `Failed=True` in last 24h |
-| 11 | CrowdSec Agents | all pods Running |
-| 12 | Ingress Routes | every ingress has an LB IP + Traefik LB |
-| 13 | Prometheus Alerts | count of firing alerts |
-| 14 | Uptime Kuma Monitors | internal + external monitors up |
-| 15 | ResourceQuota Pressure | any quota >80% used |
-| 16 | StatefulSets | ready == desired |
-| 17 | Node Disk Usage | ephemeral-storage <80% |
-| 18 | Helm Release Health | all `deployed` (no `pending-*`) |
-| 19 | Kyverno Policy Engine | all pods Running |
-| 20 | NFS Connectivity | 192.168.1.127 showmount / port 2049 |
-| 21 | DNS Resolution | Technitium resolves internal + external |
-| 22 | TLS Certificate Expiry | TLS `Secret` certs >30d valid |
-| 23 | GPU Health | nvidia namespace + device-plugin Running |
-| 24 | Cloudflare Tunnel | pods Running |
-| 25 | Resource Usage | node CPU/mem headroom |
-| 26 | HA Sofia — Entity Availability | Home Assistant unavailable/unknown count |
-| 27 | HA Sofia — Integration Health | config entries setup_error / not_loaded |
-| 28 | HA Sofia — Automation Status | disabled / stale (>30d) automations |
-| 29 | HA Sofia — System Resources | HA CPU / mem / disk |
-| 30 | Hardware Exporters | snmp / idrac-redfish / proxmox / tuya pods + scrapes |
-| 31 | cert-manager — Certificate Readiness | Certificate CRs with `Ready!=True` |
-| 32 | cert-manager — Certificate Expiry (<14d) | notAfter within 14d |
-| 33 | cert-manager — Failed CertificateRequests | `Ready=False, reason=Failed` |
-| 34 | Backup Freshness — Per-DB Dumps | MySQL + PG dumps within 25h |
-| 35 | Backup Freshness — Offsite Sync | Pushgateway `backup_last_success_timestamp` <27h |
-| 36 | Backup Freshness — LVM PVC Snapshots | newest thin snapshot <25h (SSH PVE) |
-| 37 | Monitoring — Prometheus + Alertmanager | `/-/ready` + AM pods Running |
-| 38 | Monitoring — Vault Sealed Status | `vault status` reports `Sealed: false` |
-| 39 | Monitoring — ClusterSecretStore Ready | `vault-kv` + `vault-database` Ready |
-| 40 | External — Cloudflared + Authentik Replicas | deployments fully ready |
-| 41 | External — ExternalAccessDivergence Alert | alert not firing |
-| 42 | External — Traefik 5xx Rate (15m) | top-10 services emitting 5xx |
-| 43 | PVE Host Thermals | package + per-core temps via `/sys/class/hwmon` (SSH). Baseline 55-65 °C. PASS <65 °C, WARN 65-82 °C (a VM is burning too much CPU), FAIL ≥83 °C (TjMax) |
-| 44 | PVE Host Load | `/proc/loadavg` via SSH. PASS 5m <30, WARN 30-37, FAIL ≥38 of 44 threads |
-| 45 | HA Sofia — Status Dashboard | emo's curated Барзини → Статус view (`dashboard-barzini` / path `status`). Pulls the lovelace config via WS, batch-renders every `custom:mushroom-template-card` secondary template against `/api/template`, classifies each rendered line: FAIL on `Offline` / `Disconnected` / `Разкачен` / `— No data`; WARN on `⚠️` / `Abnormal` / `Trouble (` / `(ниска)` / `Пълен резервоар` / `Грешка` / `attention` / `Внимание`. Verdict rolls up across the 8 sections (Сигурност, Мрежа & IT, Енергия, Климат, Уреди, Мултимедия, Осветление, Поливна) |
-| 46 | Immich Smart Search | `clip_index` residency in PG `shared_buffers` + representative ANN probe latency (in immich-postgresql). FAIL >1.5s or <50% resident; WARN >0.5s or <90% resident. Cold cache → check `clip-index-prewarm` CronJob |
-| 47 | Proxmox CSI — Ghost-Disk Drift | Per node, compares real virtio-scsi CSI disks in `qm config <vmid>` (SSH PVE) vs attached proxmox-CSI VolumeAttachments k8s tracks. Catches orphaned "ghost" disks left by failed detaches (`query-pci` QMP timeouts) that the scheduler's 28-LUN guard can't see. PASS reconciled; WARN drift>0 or real 20-24; FAIL real ≥25 (near LUN cap → imminent wedge). Cleanup: detach ghosts via `qm set <vmid> --delete scsiN` (frees slot, retains LV) |
-
-## Safe Auto-Fix Rules
-
-`--fix` only performs operations that are genuinely reversible and
-observable. Nothing here rewrites Terraform state or mutates the cluster
-beyond "delete pod".
-
-### Done automatically by `--fix`
-
-- **Evicted / Failed pods** — delete them; the controller recreates.
-  ```bash
-  kubectl delete pods -A --field-selector=status.phase=Failed
-  ```
-- **CrashLoopBackOff pods with >10 restarts** — delete once to reset
-  backoff timer.
-
-### NEVER auto-fix (requires human investigation)
-
-- NotReady nodes
-- MemoryPressure / DiskPressure / PIDPressure
-- ImagePullBackOff (usually a bad tag / registry credential)
-- Deployment ready-replica mismatch
-- Pending PVCs
-- Node CPU/memory >90%
-- CronJob failures
-- DaemonSet desired != ready
-- Vault sealed
-- ClusterSecretStore not Ready
-- cert-manager Certificate failures
-- Backup freshness regressions
-- Any external-reachability failure
-
-## Deep-investigation recipes per failure mode
-
-### Node Issues (checks 1, 3, 17, 25)
-
-```bash
-kubectl describe node <node>
-kubectl top nodes
-kubectl get events --field-selector involvedObject.name=<node> --sort-by='.lastTimestamp'
-# SSH to the node
-ssh root@10.0.20.10X
-systemctl status kubelet
-journalctl -u kubelet --since "30 minutes ago" | tail -100
-df -h ; free -h
-```
-
-Node IPs: `10.0.20.100` master, `.101` node1 (GPU), `.102` node2,
-`.103` node3, `.104` node4.
-
-### Pod Issues (checks 4, 5, 11, 19)
-
-```bash
-kubectl describe pod -n <ns> <pod>
-kubectl logs -n <ns> <pod> --tail=200
-kubectl logs -n <ns> <pod> --previous --tail=200
-kubectl get events -n <ns> --sort-by='.lastTimestamp' | tail -20
-```
-
-Common failure causes: OOMKilled (raise mem limit in Terraform), bad
-config / missing env var, DB connection failure (check `dbaas` pods),
-NFS mount failure (`showmount -e 192.168.1.127`), stale
-imagePullSecret.
-
-### Deployment / StatefulSet / DaemonSet (checks 6, 7, 16)
-
-```bash
-kubectl describe deployment -n <ns> <name>
-kubectl rollout status deployment -n <ns> <name>
-kubectl rollout history deployment -n <ns> <name>
-kubectl get rs -n <ns> -l app=<app>
-```
-
-### PVC (check 8)
-
-```bash
-kubectl describe pvc -n <ns> <pvc>
-kubectl get events -n <ns> --field-selector reason=FailedMount --sort-by='.lastTimestamp'
-kubectl get pv | grep <pvc>
-showmount -e 192.168.1.127
-```
-
-### cert-manager (checks 31, 32, 33)
-
-```bash
-kubectl get certificate -A
-kubectl describe certificate -n <ns> <name>
-kubectl get certificaterequest -A
-kubectl describe certificaterequest -n <ns> <name>
-kubectl logs -n cert-manager deploy/cert-manager | tail -50
-```
-
-Common causes: ACME HTTP-01 challenge blocked, ClusterIssuer missing
-DNS provider secret, rate-limit from Let's Encrypt.
-
-### Backups (checks 34, 35, 36)
-
-```bash
-# Per-DB dumps (inside the DB pod)
-kubectl exec -n dbaas mysql-standalone-0 -- ls -lah /backup/per-db/
-kubectl exec -n dbaas pg-cluster-0 -- ls -lah /backup/per-db/
-
-# Pushgateway metrics
-kubectl exec -n monitoring deploy/prometheus-server -- \
-    wget -qO- http://prometheus-prometheus-pushgateway:9091/metrics | \
-    grep backup_last_success_timestamp
-
-# LVM snapshots on PVE host
-ssh -o BatchMode=yes root@192.168.1.127 \
-    'lvs -o lv_name,lv_time,lv_size --noheadings | grep snap'
-```
-
-If offsite sync is stale, the common cause is the
-`offsite-sync-backup.service` systemd unit on the PVE host failing.
-`ssh root@192.168.1.127 'systemctl status offsite-sync-backup'`.
-
-### Monitoring stack (checks 37, 38, 39)
-
-```bash
-# Prometheus
-kubectl exec -n monitoring deploy/prometheus-server -- wget -qO- http://localhost:9090/-/ready
-kubectl logs -n monitoring deploy/prometheus-server --tail=100
-
-# Alertmanager
-kubectl get pods -n monitoring | grep alertmanager
-kubectl logs -n monitoring -l app=prometheus-alertmanager --tail=100
-
-# Vault
-kubectl exec -n vault vault-0 -- sh -c 'VAULT_ADDR=http://127.0.0.1:8200 vault status'
-# If sealed: check raft peers with `vault operator raft list-peers` and unseal.
-
-# ClusterSecretStore
-kubectl get clustersecretstore
-kubectl describe clustersecretstore vault-kv vault-database
-kubectl logs -n external-secrets deploy/external-secrets --tail=100
-```
-
-### External reachability (checks 40, 41, 42)
-
-```bash
-# Cloudflared
+# the reachability path ha-sofia uses
 kubectl get pods -n cloudflared
-kubectl logs -n cloudflared -l app=cloudflared --tail=100
+kubectl get pods -n traefik
+kubectl get ingress -A | grep -Ei 'tuya-bridge|ha-sofia'
 
-# Authentik (Helm chart names the deployment goauthentik-server)
-kubectl get deployment -n authentik goauthentik-server
-kubectl logs -n authentik deploy/goauthentik-server --tail=100
-
-# ExternalAccessDivergence alert
-kubectl exec -n monitoring deploy/prometheus-server -- \
-    wget -qO- 'http://localhost:9090/api/v1/alerts' | \
-    python3 -m json.tool | grep -A 5 ExternalAccessDivergence
-
-# Traefik 5xx — find the hot service
-kubectl exec -n monitoring deploy/prometheus-server -- \
-    wget -qO- 'http://localhost:9090/api/v1/query?query=topk(10,rate(traefik_service_requests_total{code=~%225..%22}%5B15m%5D))' \
-    | python3 -m json.tool
+# whole external path in one shot (DNS + tunnel + Traefik + cert):
+curl -sI --max-time 10 https://tuya-bridge.viktorbarzin.me | head -1
+#   reachable  -> HTTP/2 200 / 401 / 403  (any HTTP response = path is up)
+#   broken     -> curl: timeout / could not resolve host
 ```
 
-### OOMKilled remediation
+The fastest **device-level** signal is your own dashboard: open
+**https://ha-sofia.viktorbarzin.me → Барзини → Статус**. If devices show
+Offline / Разкачен / ⚠️ **but tuya-bridge is healthy**, the problem is at the
+house (device power / Wi-Fi / the Sofia TP-Link network) — **not** the cluster.
 
-1. `kubectl describe pod -n <ns> <pod> | grep -A 5 Limits`
-2. Edit `infra/modules/kubernetes/<service>/main.tf` and raise
-   `resources.limits.memory`.
-3. `cd /home/wizard/code/infra && scripts/tg apply` (Tier 1) or
-   `terraform apply -target=module.<service>` as appropriate.
+## Step 4 — if something on your chain is broken
 
-### ImagePullBackOff remediation
-
-1. `kubectl describe pod -n <ns> <pod> | grep -A 5 Events`
-2. Verify tag exists on the source registry.
-3. Check pull-through cache at `10.0.20.10:{5000,5010,5020,5030}`.
-4. Update the image tag in Terraform + re-apply.
-
-### Persistent CrashLoopBackOff after auto-fix
-
-1. `kubectl logs -n <ns> <pod> --previous --tail=200`
-2. `kubectl describe pod -n <ns> <pod>` and check Last State:
-   - `OOMKilled` → raise memory limit
-   - Exit code 137 → OOM or probe killed
-   - Exit code 143 → SIGTERM / graceful shutdown failed
-3. Cross-check dbaas + NFS + secrets are healthy.
-
-## Performance forensics — top consumers + optimization hints
-
-When the cluster is healthy (script returns 0) but the host is hot or load
-is elevated, switch from "what broke?" to "what's expensive?". Run these
-in order; stop as soon as the root cause is obvious.
-
-### Step 1 — Snapshot top consumers cluster-wide
+You can't fix the cluster (read-only), so **capture + hand off**:
 
 ```bash
-# Top 15 pods by current CPU
-kubectl top pods --all-namespaces --sort-by=cpu --no-headers | head -15
-
-# Top 5 nodes by CPU + memory pressure
-kubectl top nodes
-
-# Top 15 by 5-min rolling rate (smoothed — kills noise from one-off spikes)
-kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
-  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(namespace,pod)%20(rate(container_cpu_usage_seconds_total%7Bcontainer!%3D''%7D%5B5m%5D)))" \
-  | python3 -m json.tool | head -80
+kubectl describe pod -n tuya-bridge <pod>
+kubectl logs -n tuya-bridge <pod> --previous --tail=200
 ```
 
-### Step 2 — For each suspect pod, get the WHY
+Then file it for the admin with the **`/file-issue`** skill — e.g. *"ha-sofia
+Tuya devices + ATS unresponsive; tuya-bridge pod CrashLooping"* with the output
+above. cloudflared / Traefik / DNS outages are cluster-wide — the admin's
+alerting is already firing, but file it so it's tracked from your side too.
 
-For every pod in the top-N, gather these BEFORE proposing a fix:
+## What will skip for you (expected — not failures)
 
-```bash
-NS=<namespace>; POD=<pod>; CONT=$(kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].name}')
+A few checks need access your account doesn't have. They warn/skip — that's
+normal, and **none of them are on your ha-sofia chain**:
 
-# What it does (image + command)
-kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].image}{"\n"}{.spec.containers[0].args}{"\n"}'
+- **Uptime Kuma (14)** — needs an admin password from Vault.
+- **PVE host checks** — 36 (LVM snapshots), 43 (host thermals), 44 (host load),
+  and the Proxmox CSI ghost-disk check — all need root SSH to the Proxmox host.
+- **`--fix`** — pod deletion (a write); not available to you.
 
-# Resource limits + current usage
-kubectl -n $NS top pod $POD --containers
-kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].resources}'
+(The ha-sofia checks are **not** in this list — your token makes them work.)
 
-# Recent logs filtered for reconcile loops, watch storms, slow queries
-kubectl -n $NS logs $POD -c $CONT --tail=200 --since=5m 2>&1 \
-  | grep -iE 'reconcil|watch|scrape|index|loop|retry|slow|timeout' | tail -20
+## Your ha-sofia token
 
-# Restart count + recent OOM
-kubectl -n $NS describe pod $POD | grep -E 'Restart Count|Last State|Reason'
-
-# Self-exported metrics (for apps that publish on /metrics)
-kubectl -n $NS exec $POD -c $CONT -- wget -qO- localhost:<port>/metrics 2>/dev/null | head -50
-```
-
-### Step 3 — apiserver / etcd specific deep-dive (when control-plane is hot)
-
-```bash
-# Top request producers by verb+resource (last 30 min)
-kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
-  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(resource,verb)%20(rate(apiserver_request_total%5B30m%5D)))" \
-  | python3 -m json.tool
-
-# Top user agents (which clients are hammering)
-kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
-  "http://localhost:9090/api/v1/query?query=topk(15,sum%20by%20(user_agent)%20(rate(apiserver_request_total%5B30m%5D)))" \
-  | python3 -m json.tool
-
-# Long-running requests (WATCH / CONNECT — log streams, pod-watchers)
-kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
-  "http://localhost:9090/api/v1/query?query=apiserver_longrunning_requests" \
-  | python3 -m json.tool
-
-# etcd write rate + DB size
-kubectl -n monitoring exec deploy/prometheus-server -- wget -qO- \
-  "http://localhost:9090/api/v1/query?query=rate(etcd_disk_wal_fsync_duration_seconds_count%5B5m%5D)" \
-  | python3 -m json.tool
-```
-
-### Step 4 — PVE host specific deep-dive (when temp / load is high)
-
-Checks 43 + 44 capture package temp + 5-min load avg with PASS/WARN/FAIL
-thresholds — that's the first stop. When those WARN or FAIL, the
-follow-up commands below trace which VM / process is the source:
-
-```bash
-# Per-core temps (broader than the package summary in check 43)
-ssh root@192.168.1.127 'for f in /sys/class/hwmon/hwmon0/temp*_input; do
-    base=${f%_input}; label=$(cat ${base}_label 2>/dev/null || echo "${base##*/}")
-    val=$(cat "$f"); echo "  $label: $((val/1000))°C"
-done'
-
-# Per-VM CPU (each VM = one kvm process)
-ssh root@192.168.1.127 'top -bn1 -o %CPU | grep kvm | head -10'
-
-# pvestatd anomaly check — bursts > 50% usually mean LV count > 1000
-ssh root@192.168.1.127 'lvs --noheadings 2>/dev/null | wc -l'
-
-# Stale snapshots (any '_pre-*' that survived past their rollback window)
-ssh root@192.168.1.127 'lvs --noheadings -o lv_name 2>/dev/null | awk "/_pre-/" | head -20'
-```
-
-### Step 5 — Optimization decision
-
-For each consumer in the top-N, fill in a row:
-
-| Pod / Process | CPU (m) | Why busy | Tunable | Est saving | Trade-off | Effort |
-|---|---|---|---|---|---|---|
-
-Then rank by ROI (saving / effort) and surface the top 3-5. **Hold back the ones where saving < 50m unless effort is also < 5 min.**
-
-### Common causes + tunables (catalogue)
-
-| Symptom | Likely cause | Tunable |
-|---|---|---|
-| **`kube-apiserver` > 1 core sustained** | `CONNECT pods/log` streams from `alloy`/`promtail` using apiserver-tail; OR Kyverno PolicyReport churn (background+enforce mode); OR VPA fanout (309 VPAs cause ~7 req/s) | Switch alloy/promtail to `loki.source.file`; raise Kyverno `backgroundScanInterval`; reduce VPA count |
-| **`pvestatd` 70-100% bursts** | LV metadata scan over > 1000 LVs (typically stale `_pre-*` snapshots from ad-hoc node ops) | Delete stale snapshots; `/usr/local/bin/lvm-pvc-snapshot prune` |
-| **Frigate > 2 cores** | Birdseye `mode: continuous` (16% on frigate.output); LPR debug; debug logging; too many active cameras × detect.fps | `birdseye.mode: motion`; `lpr.debug_save_plates: false`; remove debug loggers |
-| **`vault-0` looping ERRORs every ~10s** | DB static-role not in connection's `allowed_roles` list (drift between role and connection) | Add role to `vault_database_secret_backend_connection.*.allowed_roles` in TF |
-| **Alloy DS > 100m/pod** | `loki.source.kubernetes` (apiserver-tail) instead of `loki.source.file` | Switch to file-tail (~5× drop per pod) |
-| **Prometheus default 1m scrape** | Chart default; new sample every minute | Raise `server.global.scrape_interval` to 2m; pin critical jobs (snmp-ups) to 30s; bump `for: 1m` alerts to `for: 3m` |
-| **`kube-controller-manager` periodic ERROR loop** | Aggregated APIService discovery fails (calico/metrics-server unreachable, OR stuck Terminating pod still in endpoints) | Force-delete stuck pod; verify APIService Available; check pod runc bug on k8s-master |
-| **etcd write > 1 MB/s** | PolicyReport thrash, too-frequent secret rotation, or audit log mode = RequestResponse | Trim Kyverno reports config; raise rotation_period; downgrade audit policy to Metadata for noisy resources |
-
-### What NOT to touch
-
-- **calico-node, etcd write rate, kube-controller-manager core work, pg-cluster replication** — structural cost, touching them risks correctness.
-- **Pods doing legitimate request-serving work** (web servers, databases under load) — optimize the workload, not the runtime.
-- **Anything where Goldilocks VPA upperBound is already close to current request** — no headroom to cut.
-
-### Source-of-truth notes
-
-- **All infra mutations go via Terraform** (`scripts/tg plan/apply`). The recipes above are diagnostic; the FIX lives in `infra/stacks/<name>/main.tf` or chart values.
-- **Pod-internal config files** (e.g., Frigate's `/config/config.yml` on a PVC) are not TF-managed — edit in-pod and document in `infra/docs/runbooks/`.
-- **PVE host-level state** (LVM snapshots, pvestatd) — SSH + manual ops; record in memory if the pattern recurs.
-
-## Notes on the canonical / hardlink setup
-
-The authoritative copy of this SKILL.md lives at
-`/home/wizard/code/.claude/skills/cluster-health/SKILL.md`. A hardlink
-at `/home/wizard/code/infra/.claude/skills/cluster-health/SKILL.md`
-points to the same inode so infra-rooted sessions also discover the
-skill.
-
-To verify the hardlink is intact:
-
-```bash
-stat -c '%i %n' \
-    /home/wizard/code/.claude/skills/cluster-health/SKILL.md \
-    /home/wizard/code/infra/.claude/skills/cluster-health/SKILL.md
-```
-
-Both should print the same inode number. If they diverge (e.g. `git
-checkout` replaced the file rather than updating it), re-link:
-
-```bash
-ln -f /home/wizard/code/.claude/skills/cluster-health/SKILL.md \
-      /home/wizard/code/infra/.claude/skills/cluster-health/SKILL.md
-```
+- Stored at `~/.config/cluster-health/haos_token` (yours, mode 600).
+- It's a **dedicated** long-lived token, named `emo-cluster-health` under
+  ha-sofia → your profile → **Long-Lived Access Tokens**. Revoking it there
+  affects only you.
+- It currently carries admin-level HA scope (Home Assistant only lets a token
+  be minted for the account that created it, and it was minted via the admin
+  account). If it ever stops working, tell wizard and a fresh one can be minted.
