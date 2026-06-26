@@ -5,6 +5,14 @@ exists to answer the question that drove the whole CLI — *which verbs are wort
 adding next* — with data instead of one maintainer's habits (the earlier mining
 covered a single user's ~51k commands, so the surface is shaped to that user).
 
+> **Update (2026-06-26) — the cross-user privacy *norm* below is superseded by
+> [ADR-0015](0015-os-is-the-authorization-boundary.md).** The prohibition this
+> ADR leaned on ("reading another user's `~/.claude` is off-limits even for an
+> owner in-session") no longer holds: the managed-settings policy now **defers
+> to OS/sudo authorization**. The `usage top` telemetry design itself is
+> unchanged and still current — only the "never read homes" framing in the
+> third decision below is overtaken.
+
 ## Decisions
 
 - **Emit on dispatch, in `dispatch()`.** The longest-prefix match already knows
