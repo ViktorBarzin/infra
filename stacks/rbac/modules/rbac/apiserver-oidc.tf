@@ -150,6 +150,15 @@ locals {
     MANIFEST=/etc/kubernetes/manifests/kube-apiserver.yaml
     AUTHCFG=/etc/kubernetes/pki/auth-config.yaml
     TS=$(date +%s)
+    # Manifest backups MUST live OUTSIDE /etc/kubernetes/manifests/ — the kubelet
+    # treats EVERY file in that dir as a static pod, so a kube-apiserver.yaml.bak
+    # there becomes a SECOND apiserver static pod. On a kubeadm upgrade (when the
+    # real manifest's image changes) the two conflict, the kubelet flip-flops, the
+    # new apiserver never stabilises → kubeadm "static Pod hash did not change" →
+    # rollback. This stalled the 1.34->1.35 upgrade for days (root cause found
+    # 2026-06-26; the old `cp "$MANIFEST" "$MANIFEST.bak"` planted it on 2026-06-18).
+    BAKDIR=/etc/kubernetes/apiserver-oidc-bak
+    sudo install -d -m 700 "$BAKDIR"
 
     # 1. Write the structured AuthenticationConfiguration (hot-reloaded by the
     #    apiserver on change; mounted into the pod via the existing pki hostPath).
@@ -159,7 +168,7 @@ locals {
     # 2. Ensure the apiserver references it. Only touch the manifest (→ restart)
     #    when the flag is missing; otherwise the file write above hot-reloads.
     if ! sudo grep -q -- '--authentication-config=' "$MANIFEST"; then
-      sudo cp "$MANIFEST" "$MANIFEST.bak.$TS"
+      sudo cp "$MANIFEST" "$BAKDIR/kube-apiserver.yaml.$TS"
       sudo sed -i '/--oidc-issuer-url/d;/--oidc-client-id/d;/--oidc-username-claim/d;/--oidc-groups-claim/d' "$MANIFEST"
       echo '${base64encode(local.apiserver_flag_insert_py)}' | base64 -d | sudo python3 - "$MANIFEST"
     fi
@@ -178,7 +187,7 @@ locals {
     done
     if [ "$ok" != "1" ]; then
       echo "kube-apiserver UNHEALTHY after change — rolling back"
-      BAK=$(ls -t "$MANIFEST".bak.* 2>/dev/null | head -1)
+      BAK=$(ls -t "$BAKDIR"/kube-apiserver.yaml.* 2>/dev/null | head -1)
       if [ -n "$BAK" ]; then sudo cp "$BAK" "$MANIFEST"; fi
       for i in $(seq 1 60); do sleep 2; if curl -sk https://localhost:6443/livez 2>/dev/null | grep -q '^ok'; then break; fi; done
       echo "rolled back to previous manifest"; exit 1
