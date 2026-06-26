@@ -19,11 +19,14 @@ unpinned-CLI dependencies out of the hourly **root** reconcile.
 
 - `mattpocock/skills` (https://github.com/mattpocock/skills) — all except `find-skills`
 - `vercel-labs/skills` (https://github.com/vercel-labs/skills) — `find-skills`
-- **homelab-local** — `cluster-health` is vendored from this repo's own
-  `.claude/skills/cluster-health/` (the canonical copy, a project skill in the
-  infra clone). It is NOT in `~/.agents/skills/`, so the `cp -a` refresh below
-  does NOT update it — re-copy it explicitly when the canonical skill changes
-  (see Refreshing).
+- **homelab-local, emo-PERSONALIZED** — `cluster-health` here is an
+  **emo-specific variant**, not a copy of the canonical skill. It started as a
+  copy of this repo's `.claude/skills/cluster-health/` but was rewritten on
+  2026-06-26 to focus on ha-sofia + emo's Sofia devices (emo is the only entry
+  in `SKILL_USERS`, a read-only power-user). The canonical admin skill
+  (`.claude/skills/cluster-health/`) is the full 47-check version and is left
+  untouched. **Do NOT `cp -a` the canonical copy over this one** — that would
+  clobber the personalization. Maintain the two independently.
 
 ## Refreshing
 
@@ -33,10 +36,12 @@ Re-snapshot the upstream skills from a current install and commit the diff:
 cp -a ~/.agents/skills/. scripts/workstation/claude-skills/
 ```
 
-Re-sync the homelab-local skill(s) from their canonical in-repo copy:
+`cluster-health` is hand-maintained (emo variant) — it is **not** covered by the
+`cp -a` above and must **not** be overwritten from `.claude/skills/`. Edit it in
+place here when emo's needs change, then refresh his live copy (the provisioner's
+`install_skills()` is if-absent, so it won't update an existing `~/.agents/skills`
+copy — `cp` the new `SKILL.md` to `/home/emo/.agents/skills/cluster-health/` and
+`chown emo:emo`, or remove emo's copy and re-run the reconcile).
 
-```sh
-cp -a .claude/skills/cluster-health scripts/workstation/claude-skills/
-```
-
-Snapshot taken 2026-06-23 (upstream); `cluster-health` vendored 2026-06-26.
+Snapshot taken 2026-06-23 (upstream); `cluster-health` vendored 2026-06-26,
+personalized for emo 2026-06-26.
