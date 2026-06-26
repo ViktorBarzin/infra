@@ -272,7 +272,7 @@ Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
 
 The block below documents the locked design.
 
-Response model: **(I) Slack-only, daily skim.** All security alerts land in a new `#security` Slack channel via Alertmanager. No paging. Mean detection time accepted as ~12-24h; the design weight sits on prevention (Kyverno enforce, NetworkPolicy default-deny egress) rather than runtime detection.
+Response model: **(I) Slack-only, daily skim.** All security alerts post to **`#alerts`** via Alertmanager (the `slack-security` receiver keeps its distinct `[SECURITY/<sev>]` title styling so security-lane alerts still stand out). The dedicated `#security` channel was abandoned (2026-06-25) — the shared `alertmanager_slack_api_url` incoming webhook's Slack app isn't a member of it, so a channel override there returns HTTP `404 channel_not_found`; everything consolidated to `#alerts`. No paging. Mean detection time accepted as ~12-24h; the design weight sits on prevention (Kyverno enforce, NetworkPolicy default-deny egress) rather than runtime detection.
 
 #### Detection sources
 
@@ -285,7 +285,7 @@ Response model: **(I) Slack-only, daily skim.** All security alerts land in a ne
 
 #### Alert rules (16 total)
 
-Routed via **Loki ruler → Alertmanager → `#security` Slack receiver**. Same handling path as existing infra alerts — silenceable in Alertmanager UI, history queryable, severity labels (critical/warning/info) inside the single `#security` channel.
+Routed via **Loki ruler → Alertmanager → the `slack-security` receiver, which posts to `#alerts`** (it keeps its `[SECURITY/<sev>]` title styling so security-lane alerts stand out there; the dedicated `#security` channel was abandoned 2026-06-25 — the shared webhook's Slack app isn't a member of it). Same handling path as existing infra alerts — silenceable in Alertmanager UI, history queryable, severity labels (critical/warning/info) carried in the alert.
 
 **K8s API audit (K2-K9, 8 rules — K1 cluster-admin-grant intentionally skipped):**
 
@@ -413,8 +413,10 @@ refined by a `service-identity` label in the few multi-Service namespaces
    private key into TF state — **re-apply the stack if the operator rotates that
    Secret**.
 3. **`goldmane-edges-digest`** CronJob — posts first-seen edges daily to
-   **`#alerts`** (reuses the alert-digest webhook; a `#security` override 404s —
-   that webhook's Slack app isn't a member of `#security`; see runbook).
+   **`#alerts`** (reuses the alert-digest webhook). All Slack now consolidates to
+   `#alerts`; the `#security` channel was abandoned 2026-06-25 because that
+   webhook's Slack app isn't a member of it (a `#security` override 404s). See
+   runbook.
 
 The trail is **attribution-grade, not cryptographic** (reconstructs events in a
 trusted cluster; cannot prove identity against a spoofing pod — accepted trust-model

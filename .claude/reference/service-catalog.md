@@ -39,7 +39,7 @@
 ## Active Use
 | Service | Description | Stack |
 |---------|-------------|-------|
-| goldmane-edge-aggregator | Durable who-talks-to-whom audit trail (ADR-0014 / #58). Go service: `aggregate` Deployment streams Goldmane's gRPC `Flows.Stream` (mTLS) and upserts the low-cardinality namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,flow_count)`) into CNPG DB `goldmane_edges`; `goldmane-edges-digest` CronJob posts first-seen edges daily to `#security`. mTLS client cert REUSES the operator's `whisker-backend-key-pair` (re-apply if rotated). Tier-4-aux. Image `ghcr.io/viktorbarzin/goldmane-edge-aggregator` (private). Runbook: [goldmane-flow-trail.md](../../docs/runbooks/goldmane-flow-trail.md). | goldmane-edge-aggregator |
+| goldmane-edge-aggregator | Durable who-talks-to-whom audit trail (ADR-0014 / #58). Go service: `aggregate` Deployment streams Goldmane's gRPC `Flows.Stream` (mTLS) and upserts the low-cardinality namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,flow_count)`) into CNPG DB `goldmane_edges`; `goldmane-edges-digest` CronJob posts first-seen edges daily to `#alerts` (the `#security` channel was abandoned 2026-06-25 — shared webhook's app isn't a member of it). mTLS client cert REUSES the operator's `whisker-backend-key-pair` (re-apply if rotated). Tier-4-aux. Image `ghcr.io/viktorbarzin/goldmane-edge-aggregator` (private). Runbook: [goldmane-flow-trail.md](../../docs/runbooks/goldmane-flow-trail.md). | goldmane-edge-aggregator |
 | mailserver | Email (docker-mailserver) | mailserver |
 | shadowsocks | Proxy | shadowsocks |
 | webhook_handler | Webhook processing | webhook_handler |

@@ -456,14 +456,11 @@ resource "kubernetes_cron_job_v1" "digest" {
               }
               env {
                 name = "SLACK_CHANNEL"
-                # The shared alertmanager_slack_api_url incoming webhook's Slack
-                # app is NOT a member of #security, so overriding the channel to
-                # it returns HTTP 404 channel_not_found (verified 2026-06-25).
-                # alertmanager's own slack-security receiver shares this webhook
-                # and almost certainly hits the same wall. Post to #alerts (the
-                # webhook's working channel, same as alert-digest) until the app
-                # is invited to #security, then flip this back. See
-                # docs/runbooks/goldmane-flow-trail.md.
+                # Posts to #alerts. The dedicated #security channel was abandoned
+                # 2026-06-25 — the shared alertmanager_slack_api_url webhook's
+                # Slack app isn't a member of it (channel override 404s), so all
+                # Slack (incl. alertmanager's security-lane alerts) consolidated
+                # to #alerts. See docs/runbooks/goldmane-flow-trail.md.
                 value = "#alerts"
               }
 
