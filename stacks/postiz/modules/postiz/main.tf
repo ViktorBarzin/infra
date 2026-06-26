@@ -191,17 +191,18 @@ resource "kubernetes_service" "temporal" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Backup CronJob — nightly pg_dump of the bundled postiz-postgresql to NFS.
+# Backup CronJob — nightly pg_dump of the postiz database to NFS.
 #
-# The bundled PostgreSQL StatefulSet uses local-path storage on the K8s node
-# OS disk (chart default), which is NOT covered by Layer 1 (LVM thin
-# snapshots) or Layer 2 (sda file backup) of the 3-2-1 pipeline. A pg_dump
-# CronJob writing to /srv/nfs/postiz-backup/ closes the gap: dumps land on
-# Proxmox host NFS → covered by inotify-driven offsite sync to Synology.
-# Three databases are dumped: postiz (app data), temporal (workflow engine),
-# temporal_visibility (workflow search). Bitnami chart-default credentials
-# are used — same creds the Postiz pod itself uses, scoped to the postiz
-# namespace via ClusterIP-only Services.
+# Postiz's database lives on the SHARED CNPG cluster
+# (pg-cluster-rw.dbaas.svc.cluster.local/postiz) — the chart's bundled
+# PostgreSQL was dropped in the CNPG migration, so the old `postiz-postgresql`
+# host no longer resolves (this CronJob was failing on it for weeks —
+# BackupCronJobFailed; repointed 2026-06-26). The dump now connects via the
+# app's own DATABASE_URL (from the postiz-secrets Secret) so it always tracks
+# the live host + credentials. Dumps land on /srv/nfs/postiz-backup/ → covered
+# by inotify-driven offsite sync to Synology, closing the gap (CNPG data PVCs
+# live in dbaas, excluded from the LVM-snapshot leg). Only the postiz app DB is
+# dumped here; temporal's DBs are not.
 # ──────────────────────────────────────────────────────────────────────────────
 
 module "nfs_backup_host" {
@@ -251,10 +252,9 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
                 STATUS=0
                 for db in postiz; do
                   echo "Dumping $db..."
-                  if PGPASSWORD=postiz-password pg_dump -h postiz-postgresql -U postiz \
+                  if pg_dump -d "$DATABASE_URL" \
                        --format=custom --compress=6 \
-                       --file="$BACKUP_DIR/$db-$TIMESTAMP.dump" \
-                       "$db"; then
+                       --file="$BACKUP_DIR/$db-$TIMESTAMP.dump"; then
                     echo "  OK: $db ($(du -h "$BACKUP_DIR/$db-$TIMESTAMP.dump" | cut -f1))"
                   else
                     echo "  FAIL: $db" >&2
@@ -271,6 +271,18 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
                 exit $STATUS
                 EOT
               ]
+              # Connect to the live CNPG database using the app's own
+              # DATABASE_URL (postgresql://postiz:…@pg-cluster-rw.dbaas…/postiz)
+              # instead of a hardcoded host/password — survives credential changes.
+              env {
+                name = "DATABASE_URL"
+                value_from {
+                  secret_key_ref {
+                    name = "postiz-secrets"
+                    key  = "DATABASE_URL"
+                  }
+                }
+              }
               volume_mount {
                 name       = "backup"
                 mount_path = "/backup"
