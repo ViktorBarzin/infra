@@ -1123,7 +1123,7 @@ resource "null_resource" "pg_cluster" {
     # primaryUpdateStrategy=unsupervised = fully automated). pg_params is NOT
     # changed in the same apply: CNPG rejects an imageName+parameters change
     # together under switchover.
-    image         = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16"
+    image         = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16-pgvector0.8.0"
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
@@ -1147,6 +1147,13 @@ resource "null_resource" "pg_cluster" {
         # — during a long WAL backlog the failover would stall the drain.
         # Bumped 2026-05-16 ahead of Monday's first post-fix kured cycle.
         instances: 3
+        # Operand-image swap (pgvector promotion): control the rolling update so the
+        # primary is updated by a graceful SWITCHOVER (promote an already-updated
+        # replica) rather than an in-place restart, and ONLY when manually approved
+        # (supervised) — minimises the multi-tenant write blip and lets the operator
+        # pick the moment. Revert to defaults (unsupervised/restart) after promotion.
+        primaryUpdateStrategy: supervised
+        primaryUpdateMethod: switchover
         # Hard anti-affinity: force one PG instance per node. Default is
         # `preferred` which let all 3 pods collapse onto k8s-node1 during
         # the 2026-05-26 node4 outage — losing node1 would have killed the
@@ -1158,7 +1165,7 @@ resource "null_resource" "pg_cluster" {
           topologyKey: kubernetes.io/hostname
         # pgvector-bundled operand image (PostGIS-preserving thin build). See the
         # `image` trigger comment above + docs/runbooks/promote-pgvector-cnpg.md.
-        imageName: ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16
+        imageName: ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16-pgvector0.8.0
         postgresql:
           parameters:
             search_path: '"$user", public'
