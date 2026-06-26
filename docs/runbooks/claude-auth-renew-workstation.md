@@ -11,6 +11,11 @@ inference every six hours and backs up only the `claudeAiOauth` object to:
 secret/workstation/claude-users/<os-user>
 ```
 
+The backup **merges** into that path (`vault kv patch -method=rw`, falling back to
+`kv put` only when the path does not exist yet), so keys that other tools
+co-locate there — notably `homelab vault`'s `vaultwarden_*` credentials — survive.
+A blind `kv put` here silently wiped them on every six-hourly run (fixed 2026-06-26).
+
 The user's unrelated `mcpOAuth` credentials never leave their home directory.
 Each renewal service has a distinct 32-day periodic Vault token, mode `0600`, at
 `~/.config/claude-auth-sync/vault-token`. Its policy can access only that user's

@@ -82,7 +82,17 @@ cas_backup() {
     return 1
   }
   expires="$(jq -r '.expiresAt' <<<"$oauth")"
-  vault kv put "$CAS_VAULT_PATH" \
+  # MERGE into the shared path so sibling keys other tools co-locate there
+  # (e.g. `homelab vault`'s vaultwarden_* creds) survive. `kv patch -method=rw`
+  # is read+update (needs no `patch` capability) but requires the secret to
+  # already exist, so create it with `kv put` on the very first backup only.
+  local -a write_cmd
+  if vault kv get "$CAS_VAULT_PATH" >/dev/null 2>&1; then
+    write_cmd=(vault kv patch -method=rw "$CAS_VAULT_PATH")
+  else
+    write_cmd=(vault kv put "$CAS_VAULT_PATH")
+  fi
+  "${write_cmd[@]}" \
     claude_ai_oauth_json="$oauth" \
     credential_expires_at_ms="$expires" \
     backed_up_at="$(date -Is)" >/dev/null || {
