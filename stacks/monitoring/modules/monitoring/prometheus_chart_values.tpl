@@ -253,6 +253,19 @@ alertmanager:
       memory: 256Mi
     limits:
       memory: 256Mi
+# kube-state-metrics idles ~45Mi but briefly spikes past the monitoring-namespace
+# LimitRange default (256Mi) during a full object relist (450+ pods, 150+ jobs, all
+# secrets/endpoints), so it gets OOMKilled. Each OOM blacks out KSM-derived series
+# for ~5min and cascades into a wall of false "<svc>Down" criticals that self-resolve
+# (storm 2026-06-26 08:42). Burstable: low request (minimal reservation) + a 512Mi
+# limit to absorb the relist peak. No CPU limit (cluster-wide policy).
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
 prometheus-node-exporter:
   enabled: true
   resources:
