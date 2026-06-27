@@ -21,7 +21,7 @@ resource "kubernetes_config_map" "frame_config_emo" {
     "Settings.yml" = <<-EOF
     General:
         Layout: single
-        Interval: 30
+        Interval: 45
         ImageZoom: true
         ShowAlbumName: false
         ShowProgressBar: false
