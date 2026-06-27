@@ -217,6 +217,20 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_TIKA_GOTENBERG_ENDPOINT"
             value = "http://gotenberg.paperless-ngx.svc.cluster.local:3000"
           }
+          # Processing concurrency, tuned for the bulk Emo import (~13.7k docs).
+          # 2 workers = 2 docs in parallel (≈2x throughput); kept modest because
+          # archive writes land on the shared sdc HDD that etcd also uses (IO
+          # storm risk, code-oflt). 2 threads/worker speeds per-doc OCR using the
+          # node's spare CPU. Watch etcd apply latency; dial workers back to 1 if
+          # it degrades. Revert both to defaults once the import is done.
+          env {
+            name  = "PAPERLESS_TASK_WORKERS"
+            value = "2"
+          }
+          env {
+            name  = "PAPERLESS_THREADS_PER_WORKER"
+            value = "2"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
@@ -228,7 +242,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
               memory = "2Gi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "4Gi"
             }
           }
 
