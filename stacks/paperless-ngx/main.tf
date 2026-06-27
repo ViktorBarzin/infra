@@ -77,7 +77,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     annotations = {
       "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
+      "resize.topolvm.io/storage_limit" = "30Gi"
     }
   }
   spec {
@@ -185,6 +185,20 @@ resource "kubernetes_deployment" "paperless-ngx" {
           env {
             name  = "PAPERLESS_OCR_USER_ARGS"
             value = "{\"invalidate_digital_signatures\": true}"
+          }
+          # OCR language(s) used per document. bul+eng covers the Bulgarian
+          # (Cyrillic) + English document set being imported (e.g. emo's
+          # archive). Multiple langs => tesseract tries all; "+" not " ".
+          env {
+            name  = "PAPERLESS_OCR_LANGUAGE"
+            value = "bul+eng"
+          }
+          # Language data packages installed at container start (space-
+          # separated). The image ships eng (+deu/fra/ita/spa); bul must be
+          # apt-installed here so OCR_LANGUAGE=bul+eng resolves.
+          env {
+            name  = "PAPERLESS_OCR_LANGUAGES"
+            value = "bul eng"
           }
           volume_mount {
             name       = "data"
