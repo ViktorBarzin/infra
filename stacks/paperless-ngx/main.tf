@@ -217,15 +217,17 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_TIKA_GOTENBERG_ENDPOINT"
             value = "http://gotenberg.paperless-ngx.svc.cluster.local:3000"
           }
-          # Processing concurrency, tuned for the bulk Emo import (~13.7k docs).
-          # 2 workers = 2 docs in parallel (≈2x throughput); kept modest because
-          # archive writes land on the shared sdc HDD that etcd also uses (IO
-          # storm risk, code-oflt). 2 threads/worker speeds per-doc OCR using the
-          # node's spare CPU. Watch etcd apply latency; dial workers back to 1 if
-          # it degrades. Revert both to defaults once the import is done.
+          # Processing concurrency, tuned for the bulk Emo import (~13.7k docs,
+          # mostly scanned/office => OCR/convert-bound, ~3-4 docs/min/worker).
+          # 6 workers = 6 docs in parallel; paperless is a single pod (RWO PVC)
+          # pinned to one ~8-core node, so 6 leaves headroom for system + the
+          # node's co-tenants (8 would saturate it). OCR temp stays on ephemeral
+          # scratch (fast); the consume QUEUE is on the PVC (below) so a restart
+          # never loses queued work. Watch etcd apply latency; dial back if it
+          # degrades. Revert workers/threads/mem to defaults once import is done.
           env {
             name  = "PAPERLESS_TASK_WORKERS"
-            value = "4"
+            value = "6"
           }
           env {
             name  = "PAPERLESS_THREADS_PER_WORKER"
@@ -238,6 +240,30 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
             value = "with_text"
           }
+          # Bulk-import ingest path = the CONSUME DIRECTORY on the PVC (not the
+          # API). post_document writes each upload to ephemeral scratch then
+          # queues it in redis -> a pod or redis restart loses in-flight work
+          # ("File not found"). The consume dir instead lives on the encrypted
+          # PVC, and POLLING re-scans the whole dir every 60s (watchdog snapshot
+          # resets on startup, so files dropped while paperless was down are
+          # picked up too) with a size+mtime stability check (won't grab a
+          # half-copied file). Net: restart-safe, self-healing bulk ingest — the
+          # folder IS the durable queue. RECURSIVE walks subdirs (source tree is
+          # copied in with structure, avoiding basename collisions). Owner+tag
+          # are applied by a consumption workflow scoped to the import subdir.
+          # Revert (remove these three env blocks) once the import is done.
+          env {
+            name  = "PAPERLESS_CONSUMPTION_DIR"
+            value = "/usr/src/paperless/data/consume"
+          }
+          env {
+            name  = "PAPERLESS_CONSUMER_RECURSIVE"
+            value = "true"
+          }
+          env {
+            name  = "PAPERLESS_CONSUMER_POLLING"
+            value = "60"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
@@ -249,7 +275,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
               memory = "2Gi"
             }
             limits = {
-              memory = "8Gi"
+              memory = "10Gi"
             }
           }
 
