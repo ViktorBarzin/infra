@@ -234,7 +234,12 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 2
+        # 0 retries: the */2 schedule IS the retry cadence. backoff_limit=2 made
+        # k8s re-run a failing pod up to 3x within seconds, hammering Cloudflare's
+        # Lists-API write limit inside one 60s window and escalating the throttle
+        # until it stopped clearing (2026-06-27 outage). One attempt per cycle +
+        # the 429-soft-skip in lapi_kv_sync.py keeps the sync gentle/self-healing.
+        backoff_limit              = 0
         ttl_seconds_after_finished = 3600
         template {
           metadata {
