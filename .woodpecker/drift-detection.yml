@@ -85,6 +85,13 @@ steps:
           stack=$(basename "$stack_dir")
           [ -f "$stack_dir/terragrunt.hcl" ] || continue
 
+          # Tier-0 `vault` is human-applied via OIDC; the CI `ci` Vault role lacks
+          # Vault-admin perms (sys/mounts + sys/policies/acl), so `terragrunt plan`
+          # on it ERRORs (detailed-exitcode 1) and fails the whole nightly drift
+          # run. Skip it — drift on Tier-0 vault is caught at human apply time.
+          # (2026-06-27)
+          [ "$stack" = "vault" ] && continue
+
           echo -n "[$stack] planning... "
           OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1)
           EXIT=$?

@@ -213,6 +213,12 @@ steps:
         if [ -s .platform_apply ]; then
           echo "=== Applying platform stacks (serial, locked) ==="
           while read -r stack; do
+            # Tier-0 `vault` is human-applied via OIDC; the CI `ci` Vault role
+            # lacks Vault-admin perms (sys/mounts + sys/policies/acl), so a CI
+            # apply always 403s and fails the pipeline. Kept in PLATFORM_STACKS
+            # (so the app-stack detector still excludes it) but skipped here.
+            # (2026-06-27 — see docs/architecture/ci-cd.md)
+            if [ "$stack" = "vault" ]; then echo "[vault] SKIPPED (Tier-0, human-applied via OIDC)"; continue; fi
             echo "[$stack] Starting apply..."
             set +e
             OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
