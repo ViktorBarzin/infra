@@ -115,8 +115,19 @@ claude-agent-service, claude-memory-mcp, kms-website, Freedify,
 instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
 fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
 pilot, 2026-06-09). Earlier public-repo apps already on GHA (Website,
-k8s-portal, apple-health-data, audiblez-web, plotting-book, insta2spotify,
+k8s-portal, apple-health-data, audiblez-web, insta2spotify,
 audiobook-search) now also land on ghcr.
+
+**plotting-book** is a special case (a GitHub-first repo owned by Anca,
+ADR-0003): the build runs in *her* GitHub repo
+(`PassionProjectsAnca/Plotting-Your-Dream-Book`) and pushes to **private
+`ghcr.io/passionprojectsanca/book-plotter`** — under her org's ghcr namespace,
+not `viktorbarzin`, using the workflow's built-in `GITHUB_TOKEN` (no shared
+PAT). The cluster pulls it via the Kyverno-synced `ghcr-credentials` secret (the
+`plotting-book` namespace is on the allowlist; the shared `ghcr_pull_token` has
+read access). Migrated off public DockerHub (`viktorbarzin/book-plotter`) on
+2026-06-27. The Woodpecker deploy hook (repo 43, registered to Anca's repo) is
+unchanged.
 
 ### Infra-owned images (issues #29 / #30)
 

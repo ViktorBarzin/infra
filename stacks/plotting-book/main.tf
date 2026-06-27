@@ -118,6 +118,12 @@ resource "kubernetes_deployment" "plotting-book" {
         }
       }
       spec {
+        # Pull the PRIVATE ghcr image. The ghcr-credentials secret is cloned
+        # into this namespace by the Kyverno generate policy in stacks/kyverno
+        # (plotting-book is on its ghcr_private_namespaces allowlist).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         volume {
           name = "data"
           persistent_volume_claim {
@@ -125,10 +131,12 @@ resource "kubernetes_deployment" "plotting-book" {
           }
         }
         container {
-          # Baseline only — CI owns the live tag (GHA builds viktorbarzin/book-plotter:<sha8>,
-          # Woodpecker repo 43 set-images it; see ignore_changes above). :latest is pushed by
-          # the same GHA build, so a from-scratch apply starts on current code.
-          image             = "viktorbarzin/book-plotter:latest"
+          # Baseline only — CI owns the live tag (GHA in Anca's repo builds
+          # ghcr.io/passionprojectsanca/book-plotter:vX.Y.Z, Woodpecker repo 43
+          # set-images it; see ignore_changes above). :latest is pushed by the
+          # same GHA build, so a from-scratch apply starts on current code.
+          # PRIVATE package — pulled via the ghcr-credentials secret below.
+          image             = "ghcr.io/passionprojectsanca/book-plotter:latest"
           name              = "plotting-book"
           image_pull_policy = "Always"
           env {
