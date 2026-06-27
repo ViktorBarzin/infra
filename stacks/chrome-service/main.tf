@@ -337,7 +337,10 @@ resource "kubernetes_deployment" "chrome_service" {
           # (keel.sh/policy=never, below) and :latest/IfNotPresent won't re-pull a
           # rebuilt image, so a new noVNC entrypoint only deploys when this digest
           # is bumped here. Bump after build-chrome-service-novnc.yml pushes a new
-          # SHA tag. 2026-06-27: bumped to land the x11vnc-supervision self-heal fix
+          # SHA tag — then WAIT for that apply pipeline to finish before pushing
+          # anything else: Woodpecker cancel-previous SIGKILLs an in-flight apply
+          # mid-run (memory id=1957), which is exactly how the 2026-06-27 apply got
+          # killed. 2026-06-27: bumped to land the x11vnc-supervision self-heal fix
           # (noVNC went black after a browser-container restart; see
           # docs/architecture/chrome-service.md "x11vnc supervision").
           image             = "ghcr.io/viktorbarzin/chrome-service-novnc:19d0f0933a8ec75be6cfa077db88e0f8c3760f40"
