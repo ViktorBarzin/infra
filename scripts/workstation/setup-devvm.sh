@@ -72,11 +72,14 @@ if [[ -n "$want_t3" && "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/
 fi
 
 # 2c) Bitwarden CLI — backs `homelab vault` (per-user no-HITL Vaultwarden access).
-#     npm-global so every user's PATH resolves it. Pinned major; best-effort (a
-#     failure only disables `homelab vault`, nothing else on the box).
-if ! command -v bw >/dev/null; then
-  log "npm: installing @bitwarden/cli (homelab vault backend)"
-  npm install -g "@bitwarden/cli@^2024" >/dev/null 2>&1 || log "WARN: @bitwarden/cli install failed; homelab vault unavailable"
+#     Install SYSTEM-WIDE (npm prefix /usr → /usr/bin/bw) so EVERY user's PATH
+#     resolves it. The guard tests the SYSTEM path, NOT `command -v bw`: the
+#     latter is satisfied by an admin's own ~/.local/bin/bw and would skip the
+#     system install, leaving non-admins (emo, anca, …) with no backend. Pinned
+#     major; best-effort (a failure only disables `homelab vault`).
+if [ ! -x /usr/bin/bw ] && [ ! -x /usr/local/bin/bw ]; then
+  log "npm: installing @bitwarden/cli system-wide (homelab vault backend)"
+  npm install -g --prefix /usr "@bitwarden/cli@^2024" >/dev/null 2>&1 || log "WARN: @bitwarden/cli install failed; homelab vault unavailable"
 fi
 
 # 3) kubelogin (kubectl oidc-login) system-wide — NOT the apt 'kubelogin' (= Azure tool).
