@@ -128,6 +128,53 @@ func loadCreds(run cmdRunner, user string) (vwCreds, error) {
 var vaultCurrentUser = func() string { return os.Getenv("USER") }
 var vaultCurrentUID = func() string { return fmt.Sprintf("%d", os.Getuid()) }
 
+// scopedTokenPath is where claude-auth-sync keeps the user's scoped Vault token.
+// MUST match CAS_VAULT_TOKEN_FILE in scripts/workstation/claude-auth-sync.sh.
+func scopedTokenPath(home string) string {
+	return home + "/.config/claude-auth-sync/vault-token"
+}
+
+// vaultTokenSource decides which Vault token the `vault` child processes should
+// use. Precedence: an explicit $VAULT_TOKEN, then a native ~/.vault-token (what
+// admins carry), then the per-user scoped token claude-auth-sync maintains at
+// scopedTokenPath(HOME) (policy workstation-claude-<user>, which grants exactly
+// the create/read/update this tool needs on the user's own path). Returns the
+// token to export — "" when nothing must be exported because the vault CLI reads
+// the ambient credential natively — plus a source tag for tests/logging.
+func vaultTokenSource(envToken string, haveVaultTokenFile bool, scopedToken string) (token, source string) {
+	switch {
+	case envToken != "":
+		return "", "env"
+	case haveVaultTokenFile:
+		return "", "file"
+	default:
+		if t := strings.TrimSpace(scopedToken); t != "" {
+			return t, "scoped"
+		}
+		return "", "none"
+	}
+}
+
+// fileNonEmpty reports whether path exists and has content.
+func fileNonEmpty(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Size() > 0
+}
+
+// ensureVaultToken wires vaultTokenSource to the real environment: when the user
+// has no ambient Vault credential, it exports the claude-auth-sync scoped token
+// so the `vault` child processes authenticate as workstation-claude-<user>. It
+// is idempotent and safe for admins, whose explicit $VAULT_TOKEN / ~/.vault-token
+// take precedence and are left untouched.
+func ensureVaultToken() {
+	home := os.Getenv("HOME")
+	scoped, _ := os.ReadFile(scopedTokenPath(home))
+	tok, src := vaultTokenSource(os.Getenv("VAULT_TOKEN"), home != "" && fileNonEmpty(home+"/.vault-token"), string(scoped))
+	if src == "scoped" {
+		os.Setenv("VAULT_TOKEN", tok)
+	}
+}
+
 // bwBaseEnv is the minimal non-secret environment bw/node need. We deliberately
 // do NOT inherit the full parent env (keeps stray secrets out of the child).
 func bwBaseEnv(appdata string) []string {
@@ -157,10 +204,10 @@ func bwSecretEnv(appdata string, c vwCreds, session string) []string {
 	return env
 }
 
-func bwLoginArgs() []string  { return []string{"login", "--apikey"} }
-func bwUnlockArgs() []string { return []string{"unlock", "--passwordenv", "BW_PASSWORD", "--raw"} }
+func bwLoginArgs() []string                 { return []string{"login", "--apikey"} }
+func bwUnlockArgs() []string                { return []string{"unlock", "--passwordenv", "BW_PASSWORD", "--raw"} }
 func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
-func bwStatusArgs() []string { return []string{"status"} }
+func bwStatusArgs() []string                { return []string{"status"} }
 
 // bwNeedsLogin parses `bw status` JSON and reports whether a `bw login` is
 // required. Unparseable/empty output → true (safer to attempt login).
@@ -443,6 +490,7 @@ func runList(run cmdRunner, user, uid, search string) ([]string, error) {
 
 func vaultList(args []string) error {
 	hardenProcess()
+	ensureVaultToken()
 	search := ""
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--search" && i+1 < len(args) {
@@ -477,6 +525,7 @@ func vaultSearch(args []string) error {
 
 func vaultCode(args []string) error {
 	hardenProcess()
+	ensureVaultToken()
 	if len(args) == 0 {
 		return fmt.Errorf("usage: homelab vault code <name>")
 	}
@@ -516,6 +565,7 @@ func statusSummary(run cmdRunner, user, uid string) string {
 
 func vaultStatus(args []string) error {
 	hardenProcess()
+	ensureVaultToken()
 	uid := vaultCurrentUID()
 	unlock, err := withUserLock(uid)
 	if err != nil {
@@ -542,32 +592,61 @@ func vaultLock(args []string) error {
 	return nil // lock/logout best-effort; never error the caller
 }
 
-// vaultPatchPublicArgs writes the non-secret identifiers via argv. Neither the
+// kvWriteVerb selects the KV write semantics. merge=true → `kv patch -method=rw`
+// (read-modify-write: needs only read+update, NOT the `patch` capability the
+// scoped workstation-claude-<user> policy lacks, and preserves co-located keys
+// such as claude-auth-sync's claude_ai_oauth_json). merge=false → `kv put`
+// (creates the path on first use, before any sibling keys exist).
+func kvWriteVerb(merge bool) []string {
+	if merge {
+		return []string{"kv", "patch", "-method=rw"}
+	}
+	return []string{"kv", "put"}
+}
+
+// vaultWritePublicArgs writes the non-secret identifiers via argv. Neither the
 // email nor the API client_id is a usable credential on its own.
-func vaultPatchPublicArgs(user, email, clientID string) []string {
-	return []string{"kv", "patch", vwCredsPath(user),
-		"vaultwarden_email=" + email,
-		"vaultwarden_client_id=" + clientID,
-	}
+func vaultWritePublicArgs(merge bool, user, email, clientID string) []string {
+	return append(kvWriteVerb(merge), vwCredsPath(user),
+		"vaultwarden_email="+email,
+		"vaultwarden_client_id="+clientID,
+	)
 }
 
-// vaultPatchSecretArgs writes ONE secret value via the `key=-` stdin form, so
-// the value never appears in argv (ps / /proc/<pid>/cmdline). The value is fed
-// on stdin by realRunnerStdin.
-func vaultPatchSecretArgs(user, key string) []string {
-	return []string{"kv", "patch", vwCredsPath(user), key + "=-"}
+// vaultWriteSecretArgs writes ONE secret value via the `key=-` stdin form, so the
+// value never appears in argv (ps / /proc/<pid>/cmdline). Fed on stdin by
+// realRunnerStdin.
+func vaultWriteSecretArgs(merge bool, user, key string) []string {
+	return append(kvWriteVerb(merge), vwCredsPath(user), key+"=-")
 }
 
-// writeCreds stores all four fields in the user's Vault path. The two real
-// secrets (master password, API client_secret) go via stdin — never argv.
-func writeCreds(user string, c vwCreds) error {
-	if _, err := realRunner("vault", vaultPatchPublicArgs(user, c.Email, c.ClientID), nil); err != nil {
+// credsPathExists reports whether the user's KV path already holds data. Used to
+// pick create (`kv put`) vs merge (`kv patch -method=rw`) for the first write:
+// claude-auth-sync usually creates the path first (Claude OAuth backup), but a
+// user could run `homelab vault setup` before that ever happens.
+func credsPathExists(run cmdRunner, user string) bool {
+	_, err := run("vault", []string{"kv", "get", "-format=json", vwCredsPath(user)}, nil)
+	return err == nil
+}
+
+// cmdRunnerStdin is realRunnerStdin's shape, injected so writeCreds is testable.
+type cmdRunnerStdin func(name string, argv, envv []string, stdin string) (string, error)
+
+// writeCreds stores all four fields in the user's Vault path using only the
+// capabilities the scoped policy grants (create/read/update — NOT `patch`). The
+// first (public) write creates the path when absent; the two real secrets then
+// merge in via read-modify-write so the public keys — and any claude-auth-sync
+// keys already present — survive. Secret values travel on stdin, never argv.
+func writeCreds(run cmdRunner, runStdin cmdRunnerStdin, user string, c vwCreds) error {
+	merge := credsPathExists(run, user)
+	if _, err := run("vault", vaultWritePublicArgs(merge, user, c.Email, c.ClientID), nil); err != nil {
 		return err
 	}
-	if _, err := realRunnerStdin("vault", vaultPatchSecretArgs(user, "vaultwarden_master_password"), nil, c.MasterPassword); err != nil {
+	// The path now exists regardless of the branch above → merge the secrets in.
+	if _, err := runStdin("vault", vaultWriteSecretArgs(true, user, "vaultwarden_master_password"), nil, c.MasterPassword); err != nil {
 		return err
 	}
-	if _, err := realRunnerStdin("vault", vaultPatchSecretArgs(user, "vaultwarden_client_secret"), nil, c.ClientSecret); err != nil {
+	if _, err := runStdin("vault", vaultWriteSecretArgs(true, user, "vaultwarden_client_secret"), nil, c.ClientSecret); err != nil {
 		return err
 	}
 	return nil
@@ -593,6 +672,7 @@ func promptLine(prompt string) (string, error) {
 
 func vaultSetup(args []string) error {
 	hardenProcess()
+	ensureVaultToken()
 	fmt.Fprintln(os.Stderr, "One-time setup. Stored ONLY in your own Vault path; the admin never sees it.")
 	fmt.Fprintln(os.Stderr, "Get your API key at https://vaultwarden.viktorbarzin.me → Settings → Security → Keys → View API key.")
 	email, err := promptLine("Vaultwarden email: ")
@@ -615,7 +695,7 @@ func vaultSetup(args []string) error {
 		return fmt.Errorf("all fields are required")
 	}
 	c := vwCreds{Email: email, MasterPassword: master, ClientID: clientID, ClientSecret: clientSecret}
-	if err := writeCreds(vaultCurrentUser(), c); err != nil {
+	if err := writeCreds(realRunner, realRunnerStdin, vaultCurrentUser(), c); err != nil {
 		return fmt.Errorf("writing creds to your Vault path failed (scoped token present?): %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Stored. Verifying unlock…")
@@ -634,6 +714,7 @@ func vaultSetup(args []string) error {
 
 func vaultGet(args []string) error {
 	hardenProcess()
+	ensureVaultToken()
 	o, err := parseGetArgs(args)
 	if err != nil {
 		return err
@@ -660,4 +741,3 @@ func vaultGet(args []string) error {
 	emitSecret(val)
 	return nil
 }
-
