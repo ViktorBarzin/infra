@@ -127,7 +127,54 @@ PAT). The cluster pulls it via the Kyverno-synced `ghcr-credentials` secret (the
 `plotting-book` namespace is on the allowlist; the shared `ghcr_pull_token` has
 read access). Migrated off public DockerHub (`viktorbarzin/book-plotter`) on
 2026-06-27. The Woodpecker deploy hook (repo 43, registered to Anca's repo) is
-unchanged.
+unchanged. Flow:
+
+```text
+ DEVELOP ───────────────────────────────────────────────────────────────────────
+   Anca (Codex / t3 web agent)
+        │  git push → main
+        ▼
+ ┌──────────────────────────────────────────────────────────────┐
+ │ GitHub: PassionProjectsAnca/Plotting-Your-Dream-Book (private)│  ← canonical
+ │   .github/workflows/build-and-deploy.yml     on: push → main  │
+ └───────────────────────────┬──────────────────────────────────┘
+                             │  GitHub Actions runner (off-infra build · ADR-0002)
+        ┌────────────────────┴─────────────────────────────────┐
+        ▼                                                        ▼
+ ┌─────────────────────────────────────────────┐      ╔═══════════════════════════════════════╗
+ │ build job                                   │ push ║  GHCR · PRIVATE package                ║
+ │  • svu next --always → tag vX.Y.Z (→ repo)  │═════▶║  ghcr.io/passionprojectsanca/         ║
+ │  • buildx linux/amd64, provenance:false     │ tags ║       book-plotter  :vX.Y.Z  :latest  ║
+ │  • login ghcr (GITHUB_TOKEN, packages:write)│      ╚═══════════════════╤═══════════════════╝
+ │  • delete-package-versions (keep newest 10) │                          │
+ └───────────────────────┬─────────────────────┘                          │ pull (private,
+                         ▼  deploy job  [gate: repo var DEPLOY_ENABLED ≠ "false"]  via secret)
+   POST ci.viktorbarzin.me/api/repos/43/pipelines {IMAGE_TAG, IMAGE_NAME}         │
+                         ▼                                                         │
+ ┌─────────────────────────────────────────────────────────────┐                 │
+ │ Woodpecker repo 43 · .woodpecker/deploy.yml (event: manual)  │                 │
+ │   kubectl set image deployment/plotting-book = <ghcr>:vX.Y.Z │                 │
+ │   kubectl rollout status                                     │                 │
+ └───────────────────────────┬─────────────────────────────────┘                 │
+                             ▼                                                     │
+ ═══════════════ Kubernetes · ns: plotting-book ════════════════════════════      │
+ ┌─────────────────────────────────────────────────────────────┐                 │
+ │ Deployment plotting-book  (Recreate · image = ignore_changes)│                 │
+ │   imagePullSecrets: ghcr-credentials ────────pull───────────┼─────────────────┘
+ │   Pod → Express :3001  +  SQLite on PVC (proxmox-lvm)        │
+ └─────────────────────────────────────────────────────────────┘
+   guards / supporting:
+     • Kyverno require-trusted-registries [Enforce] → ghcr.io/* ALLOWED   (admission)
+     • Keel policy=patch @1h → watches GHCR via ghcr-credentials          (backstop)
+     • ghcr-credentials ⇐ Kyverno generate-clone ⇐ Vault secret/viktor/ghcr_pull_token
+
+ ═══════════════ Serving path (unchanged) ══════════════════════════════════
+   Browser ─▶ plotting-book.viktorbarzin.me  (non-proxied DNS → Traefik .203)
+           ─▶ Authentik forward-auth (gate) ─▶ Service :80 ─▶ Pod :3001
+```
+
+Governance: the Deployment + Kyverno allowlist are Terraform (`stacks/plotting-book`,
+`stacks/kyverno`); the live image *tag* is CI-owned (`ignore_changes`).
 
 ### Infra-owned images (issues #29 / #30)
 
